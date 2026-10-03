@@ -1,10 +1,14 @@
 /// <reference types="vitest/globals" />
 
-import { CellValue, Workbook } from 'exceljs';
+import { CellValue, Workbook } from '@cj-tech-master/excelts';
 import { csvToJsonAction } from '../src/lib/actions/convert-csv-to-json';
 import { excelToCsvAction } from '../src/lib/actions/convert-excel-to-csv';
 import { jsonToCsvAction } from '../src/lib/actions/convert-json-to-csv';
 import { createMockActionContext } from '@aiqadam/qadams-framework';
+import { prototypeIntegrity } from '../src/lib/common/prototype-integrity';
+import { xlsxArchive } from '../src/lib/common/xlsx-archive';
+import { SHEETJS_WRITTEN_WORKBOOK_BASE64 } from './sheetjs-written-workbook';
+import { minimalWorkbook, zipFixture, ZipFixtureEntry } from './zip-fixture';
 
 async function makeXlsxBase64(sheets: Record<string, (string | number)[][]>): Promise<string> {
   return buildWorkbookBase64((workbook) => {
@@ -18,6 +22,24 @@ async function buildWorkbookBase64(build: (workbook: Workbook) => void): Promise
   const workbook = new Workbook();
   build(workbook);
   return Buffer.from(await workbook.xlsx.writeBuffer()).toString('base64');
+}
+
+function zipBase64(entries: ZipFixtureEntry[]): string {
+  return zipFixture.build(entries).toString('base64');
+}
+
+function readParts(base64: string): ZipFixtureEntry[] {
+  const parts = xlsxArchive.extractEntries({ buffer: Buffer.from(base64, 'base64'), maxUncompressedBytes: Infinity, skipPart: () => false });
+  return Object.entries(parts).map(([name, data]) => ({ name, data }));
+}
+
+function builtInPrototypeKeys(): Record<string, string[]> {
+  return {
+    object: Reflect.ownKeys(Object.prototype).map(String),
+    array: Reflect.ownKeys(Array.prototype).map(String),
+    function: Reflect.ownKeys(Function.prototype).map(String),
+    string: Reflect.ownKeys(String.prototype).map(String),
+  };
 }
 
 async function convert({ base64, sheetName = '', delimiter = ',' }: { base64: string; sheetName?: string; delimiter?: ',' | '\t' | ';' }) {
@@ -335,33 +357,210 @@ describe('excelToCsvAction', () => {
     expect(result.csv).toBe('1.5\n2.5');
   });
 
-  test('a workbook built around prototype keys leaves Object.prototype untouched', async () => {
-    const prototypeKeysBefore = Object.getOwnPropertyNames(Object.prototype);
+  test('caps a sheet at 512 distinct number formats and renders the rest as General', async () => {
     const base64 = await buildWorkbookBase64((workbook) => {
-      for (const name of ['__proto__', 'constructor', 'prototype']) {
+      const sheet = workbook.addWorksheet('Formats');
+      for (let row = 1; row <= 513; row++) {
+        sheet.getCell(row, 1).value = 1.5;
+        sheet.getCell(row, 1).numFmt = `0.0"#${row}"`;
+      }
+    });
+    const lines = (await convert({ base64 })).csv.split('\n');
+    expect(lines).toHaveLength(513);
+    expect(lines[0]).toBe('1.5#1');
+    expect(lines[511]).toBe('1.5#512');
+    expect(lines[512]).toBe('1.5');
+  });
+
+  test('rounds General numbers with a ten-digit integer part to ten significant digits', async () => {
+    const values = [1234567890.6, -1234567890.6, 1000000000.5, 6666666666.67, 1234567890, 9999999999.5, -9999999999.5, 12345678901.6, 123456789.6];
+    const base64 = await buildWorkbookBase64((workbook) => {
+      const sheet = workbook.addWorksheet('General');
+      values.forEach((value, index) => {
+        sheet.getCell(index + 1, 1).value = value;
+      });
+      sheet.getCell(values.length + 1, 1).value = 1234567890.6;
+      sheet.getCell(values.length + 1, 1).numFmt = 'General';
+    });
+    const result = await convert({ base64 });
+    expect(result.csv.split('\n')).toEqual([
+      '1234567891',
+      '-1234567891',
+      '1000000001',
+      '6666666667',
+      '1234567890',
+      '1E+10',
+      '-1E+10',
+      '12345678901',
+      '123456789.6',
+      '1234567891',
+    ]);
+  });
+
+  test('renders a negative serial under a date or time format as an empty field', async () => {
+    const base64 = await buildWorkbookBase64((workbook) => {
+      const sheet = workbook.addWorksheet('Dates');
+      const cells: [number, string][] = [
+        [-1234.5, 'yyyy-mm-dd'],
+        [-0.5, 'h:mm'],
+        [-1, 'm/d/yy h:mm'],
+        [-1234.5, '0.00'],
+      ];
+      cells.forEach(([value, numFmt], index) => {
+        const cell = sheet.getCell(index + 1, 1);
+        cell.value = value;
+        cell.numFmt = numFmt;
+      });
+    });
+    const result = await convert({ base64 });
+    expect(result.csv).toBe('\n\n\n-1234.50');
+  });
+
+  test('renders built-in formats 14 and 22 the way Excel displays them', async () => {
+    const base64 = await buildWorkbookBase64((workbook) => {
+      const sheet = workbook.addWorksheet('Builtin');
+      sheet.getCell('A1').value = 45306.4375;
+      sheet.getCell('A1').numFmt = 'mm-dd-yy';
+      sheet.getCell('A2').value = 45306.4375;
+      sheet.getCell('A2').numFmt = 'm/d/yy h:mm';
+    });
+    const result = await convert({ base64 });
+    expect(result.csv).toBe('1/15/24\n1/15/24 10:30');
+  });
+
+  test('reads a SheetJS-written workbook as the previous parser did', async () => {
+    const result = await convert({ base64: SHEETJS_WRITTEN_WORKBOOK_BASE64 });
+    expect(result.sheet_name).toBe('SheetJS');
+    expect(result.csv).toBe('a\rb,"x\r\ny",tab\there\n1/15/24,1/15/24 12:00,1234567891\nTRUE,,');
+  });
+
+  test('decodes _xHHHH_ escapes in plain string values and formula results, and keeps escaped literals', async () => {
+    const base64 = zipBase64(
+      minimalWorkbook.parts({
+        sheetData:
+          '<row r="1"><c r="A1" t="str"><v>cr_x000d_here</v></c></row>' +
+          '<row r="2"><c r="A2" t="str"><f>"a"&amp;CHAR(13)&amp;"b"</f><v>a_x000D_b</v></c></row>' +
+          '<row r="3"><c r="A3" t="inlineStr"><is><t>literal _x005F_x000D_ text</t></is></c></row>',
+      })
+    );
+    const result = await convert({ base64 });
+    expect(result.csv).toBe('cr\rhere\na\rb\nliteral _x000D_ text');
+  });
+
+  test('reads dates from a workbook that declares the 1904 date system as "true"', async () => {
+    const written = await buildWorkbookBase64((workbook) => {
+      workbook.properties.date1904 = true;
+      const cell = workbook.addWorksheet('Dates').getCell('A1');
+      cell.value = new Date(Date.UTC(2024, 0, 15));
+      cell.numFmt = 'yyyy-mm-dd';
+    });
+    const parts = readParts(written).map((part) =>
+      part.name === 'xl/workbook.xml'
+        ? { name: part.name, data: Buffer.from(part.data).toString('utf8').replace('date1904="1"', 'date1904="true"') }
+        : part
+    );
+    expect(parts.find((part) => part.name === 'xl/workbook.xml')?.data).toContain('date1904="true"');
+    const result = await convert({ base64: zipBase64(parts) });
+    expect(result.csv).toBe('2024-01-15');
+  });
+
+  test('converts sheets, values and number formats named like built-in object members as plain text', async () => {
+    const prototypeKeysBefore = builtInPrototypeKeys();
+    const sheetNames = ['__proto__', 'constructor', 'prototype'];
+    const base64 = await buildWorkbookBase64((workbook) => {
+      for (const name of sheetNames) {
         const sheet = workbook.addWorksheet(name);
-        sheet.addRows([
-          ['__proto__', 'constructor', 'prototype'],
-          ['polluted', 'polluted', 'polluted'],
-        ]);
+        sheet.addRow(['__proto__', 'constructor', 'prototype']);
+        sheet.getCell('A2').value = 42;
         sheet.getCell('A2').numFmt = '__proto__';
+        sheet.getCell('B2').value = 7;
+        sheet.getCell('B2').numFmt = 'hasOwnProperty';
         if (name === 'constructor') {
-          sheet.getCell('A3').value = { formula: '__proto__', result: 'polluted' };
+          sheet.getCell('A3').value = { formula: '__proto__', result: 'x' };
         }
       }
     });
 
-    const results = await Promise.all(
-      ['__proto__', 'constructor', 'prototype'].map((sheetName) => convert({ base64, sheetName }))
+    const results = await Promise.all(sheetNames.map((sheetName) => convert({ base64, sheetName })));
+
+    expect(builtInPrototypeKeys()).toEqual(prototypeKeysBefore);
+    expect(results.map((result) => result.sheet_name)).toEqual(sheetNames);
+    expect(results[0].available_sheets).toEqual(sheetNames);
+    expect(results[0].csv).toBe('__proto__,constructor,prototype\n42,7,');
+    expect(results[1].csv).toBe('__proto__,constructor,prototype\n42,7,\nx,,');
+  });
+
+  test('defined names that reference special sheet names leave built-in prototypes unchanged', async () => {
+    const prototypeKeysBefore = builtInPrototypeKeys();
+    const base64 = zipBase64(
+      minimalWorkbook.parts({
+        sheetData: '<row r="1"><c r="A1" t="inlineStr"><is><t>name</t></is></c><c r="B1"><v>1.5</v></c></row>',
+        workbookExtra:
+          '<definedNames>' +
+          "<definedName name=\"first\">'__proto__'!$A$1:$B$2</definedName>" +
+          '<definedName name="second">constructor!$A$1</definedName>' +
+          '<definedName name="third">prototype!$C$3</definedName>' +
+          '</definedNames>',
+      })
     );
 
-    expect(Object.getOwnPropertyNames(Object.prototype)).toEqual(prototypeKeysBefore);
-    expect(Object.prototype).not.toHaveProperty('polluted');
-    const probe: Record<string, unknown> = {};
-    expect(probe['polluted']).toBeUndefined();
-    expect(results.map((result) => result.sheet_name)).toEqual(['__proto__', 'constructor', 'prototype']);
-    expect(results[0].available_sheets).toEqual(['__proto__', 'constructor', 'prototype']);
-    expect(results[0].csv).toBe('__proto__,constructor,prototype\npolluted,polluted,polluted');
-    expect(results[1].csv).toBe('__proto__,constructor,prototype\npolluted,polluted,polluted\npolluted,,');
+    const result = await convert({ base64 });
+
+    expect(builtInPrototypeKeys()).toEqual(prototypeKeysBefore);
+    expect(result.available_sheets).toEqual(['Data']);
+    expect(result.csv).toBe('name,1.5');
+  });
+
+  test('fails the run and reverts the change when reading modifies a built-in prototype', async () => {
+    const prototypeKeysBefore = builtInPrototypeKeys();
+    const originalJoin = Array.prototype.join;
+    const injectedKey = 'injectedByParser';
+
+    await expect(
+      prototypeIntegrity.guard(async () => {
+        Object.defineProperty(Object.prototype, injectedKey, { value: 1, configurable: true, writable: true });
+        Object.defineProperty(Array.prototype, 'join', { value: () => 'replaced', configurable: true, writable: true });
+        return 'parsed';
+      })
+    ).rejects.toThrow('A built-in prototype was modified while reading the file');
+
+    expect(builtInPrototypeKeys()).toEqual(prototypeKeysBefore);
+    expect(Object.prototype).not.toHaveProperty(injectedKey);
+    expect(Array.prototype.join).toBe(originalJoin);
+  });
+
+  test('refuses a workbook whose parts decompress beyond the size cap', async () => {
+    const parts = minimalWorkbook.parts({ sheetData: '<row r="1"><c r="A1"><v>1</v></c></row>' });
+    const base64 = zipBase64(
+      parts.map((part) => (part.name === 'xl/worksheets/sheet1.xml' ? { ...part, declaredSize: 101 * 1024 * 1024 } : part))
+    );
+    await expect(convert({ base64 })).rejects.toThrow('The workbook is too large to convert');
+  });
+
+  test('refuses a part that decompresses to more than the size it declares', async () => {
+    const sheetXml = `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${'<row/>'.repeat(200_000)}</sheetData></worksheet>`;
+    const parts = minimalWorkbook
+      .parts({ sheetData: '' })
+      .map((part) => (part.name === 'xl/worksheets/sheet1.xml' ? { name: part.name, data: sheetXml, declaredSize: 1000 } : part));
+    await expect(convert({ base64: zipBase64(parts) })).rejects.toThrow('does not match the size it declares');
+  });
+
+  test('skips parts the conversion never reads, whatever size they declare', async () => {
+    const parts = [
+      ...minimalWorkbook.parts({ sheetData: '<row r="1"><c r="A1"><v>1</v></c></row>' }),
+      { name: 'xl/media/image1.png', data: 'not inflated', declaredSize: 500 * 1024 * 1024 },
+      { name: 'xl/charts/chart1.xml', data: '<chartSpace/>' },
+    ];
+    const result = await convert({ base64: zipBase64(parts) });
+    expect(result.csv).toBe('1');
+  });
+
+  test('refuses a sheet whose used range exceeds the cell budget', async () => {
+    const base64 = await buildWorkbookBase64((workbook) => {
+      const sheet = workbook.addWorksheet('Sparse');
+      sheet.getCell('A1').value = 'first';
+      sheet.getCell('XFD400').value = 'last';
+    });
+    await expect(convert({ base64 })).rejects.toThrow('Sheet "Sparse" is too large to convert: its used range is 400 rows by 16384 columns');
   });
 });
