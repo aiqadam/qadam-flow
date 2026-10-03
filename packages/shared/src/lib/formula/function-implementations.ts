@@ -189,7 +189,7 @@ export function evaluateRaw(expression: string, vars: Record<string, unknown>): 
         // null-prototype `values` means every `Object.prototype` name is
         // `undefined` here rather than an inherited built-in. The earlier steps
         // (`parser.functions`, `parser.unaryOps`) are covered separately — see
-        // D2 in the RCE DEFENCE comment below.
+        // D2 in the SANDBOX DEFENCE comment below.
         return parsed.evaluate(Object.assign(Object.create(null), vars))
     }
     finally {
@@ -719,7 +719,7 @@ for (const key of Object.keys(parser.functions)) {
     }
 }
 
-// RCE DEFENCE — enforced before any evaluation runs, by `findSecurityViolation`
+// SANDBOX DEFENCE — enforced before any evaluation runs, by `findSecurityViolation`
 // (a single pass over the parsed instruction tree) plus the null-prototyping
 // below and `operators.fndef: false` on the parser. Read this before touching
 // `Object.setPrototypeOf` on any expr-eval table.
@@ -786,7 +786,8 @@ for (const key of Object.keys(parser.functions)) {
 // their inherited `Object.prototype` is also an accidental parse-time barrier
 // (`TokenStream.isNamedOp` tokenizes `constructor`, found there through the
 // prototype, as an operator so `x.constructor` fails to parse). Nulling those
-// removes that barrier and, in a prior revision, enabled RCE; it was reverted.
+// removes that barrier and, in a prior revision, reopened a sandbox escape; it
+// was reverted.
 // The defences above do not depend on that accident — they work on the parsed
 // instruction tree and on the resolution tables, which is why `functions`/
 // `consts`/the scope can be null-prototyped safely while the operator tables
