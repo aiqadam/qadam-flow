@@ -2,7 +2,8 @@ import { readFile } from 'node:fs/promises'
 import { ApEnvironment, ErrorCode, isNil, PlatformWithoutFederatedAuth, QadamFlowError, tryCatch } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import Mustache from 'mustache'
-import nodemailer, { Transporter } from 'nodemailer'
+import { createTransport } from 'nodemailer'
+import type { Transporter } from 'nodemailer'
 import tinycolor from 'tinycolor2'
 import { defaultTheme } from '../../../flags/theme'
 import { platformService } from '../../../platform/platform.service'
@@ -167,7 +168,7 @@ const renderEmailBody = async ({ platform, templateData, log }: RenderEmailBodyA
 const initSmtpClient = (): Transporter => {
     const smtpPort = Number.parseInt(system.getOrThrow(AppSystemProp.SMTP_PORT))
     const useSSL = system.getBoolean(AppSystemProp.SMTP_USE_SSL) ?? (smtpPort === 465)
-    return nodemailer.createTransport({
+    return createTransport({
         host: system.getOrThrow(AppSystemProp.SMTP_HOST),
         port: smtpPort,
         secure: useSSL,
