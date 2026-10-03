@@ -1,4 +1,4 @@
-FROM node:24.14.0-bullseye-slim
+FROM node:24.21.0-bookworm-slim
 
 ENV LANG=en_US.UTF-8 \
     LANGUAGE=en_US:en \
@@ -23,9 +23,11 @@ RUN apt-get update && \
 
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "x86_64" ]; then \
-      curl -fsSL https://github.com/oven-sh/bun/releases/download/bun-v1.3.1/bun-linux-x64-baseline.zip -o /tmp/bun.zip; \
+      curl -fsSL https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-x64-baseline.zip -o /tmp/bun.zip \
+        && echo "a063908ae08b7852ca10939bbdc6ceed3ddabce8fb9402dce83d65d73b36e6c7  /tmp/bun.zip" | sha256sum -c -; \
     else \
-      curl -fsSL https://github.com/oven-sh/bun/releases/download/bun-v1.3.1/bun-linux-aarch64.zip -o /tmp/bun.zip; \
+      curl -fsSL https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-aarch64.zip -o /tmp/bun.zip \
+        && echo "a27ffb63a8310375836e0d6f668ae17fa8d8d18b88c37c821c65331973a19a3b  /tmp/bun.zip" | sha256sum -c -; \
     fi && \
     unzip -q /tmp/bun.zip -d /tmp/bun && \
     mv /tmp/bun/bun-*/bun /usr/local/bin/bun && \

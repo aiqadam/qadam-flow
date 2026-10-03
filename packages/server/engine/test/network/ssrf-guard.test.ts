@@ -258,18 +258,16 @@ describe('ssrf-guard', () => {
             expect(getGlobalDispatcher()).toBeInstanceOf(ProxyAgent)
         })
 
-        // Every mode adds the content-length shim (#677). Without an egress proxy it wraps the
-        // dispatcher already installed (e.g. Node's EnvHttpProxyAgent under NODE_USE_ENV_PROXY), so
-        // an operator's HTTP(S)_PROXY keeps applying.
-        it('leaves agents untouched and wraps the existing dispatcher when no egress proxy env is set', () => {
+        // Without an egress proxy the dispatcher already installed (e.g. Node's EnvHttpProxyAgent
+        // under NODE_USE_ENV_PROXY) stays, so an operator's HTTP(S)_PROXY keeps applying.
+        it('leaves agents and the existing dispatcher untouched when no egress proxy env is set', () => {
             delete process.env['AP_EGRESS_PROXY_URL']
             const sentinel = new SentinelAgent()
             setGlobalDispatcher(sentinel)
             const beforeHttp = http.globalAgent
             const beforeHttps = https.globalAgent
             ssrfGuard.install({ enabled: true, allowList: [] })
-            expect(getGlobalDispatcher()).not.toBe(sentinel)
-            expect(getGlobalDispatcher()).toBeInstanceOf(SentinelAgent)
+            expect(getGlobalDispatcher()).toBe(sentinel)
             expect(getGlobalDispatcher()).not.toBeInstanceOf(ProxyAgent)
             expect(http.globalAgent).toBe(beforeHttp)
             expect(https.globalAgent).toBe(beforeHttps)
@@ -284,8 +282,7 @@ describe('ssrf-guard', () => {
             const beforeHttp = http.globalAgent
             const beforeHttps = https.globalAgent
             ssrfGuard.install({ enabled: false })
-            expect(getGlobalDispatcher()).not.toBe(sentinel)
-            expect(getGlobalDispatcher()).toBeInstanceOf(SentinelAgent)
+            expect(getGlobalDispatcher()).toBe(sentinel)
             expect(getGlobalDispatcher()).not.toBeInstanceOf(ProxyAgent)
             expect(http.globalAgent).toBe(beforeHttp)
             expect(https.globalAgent).toBe(beforeHttps)
