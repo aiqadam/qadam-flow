@@ -2,7 +2,7 @@ No Enterprise Edition code exists in this repo. Never reintroduce edition gating
 
 ## Never copy upstream EE source (licensing)
 
-Upstream Activepieces is dual-licensed: the core (outside `ee/`) is MIT, but `packages/ee/` and `packages/server/api/src/app/ee` are under the proprietary **Activepieces Enterprise License** (production use requires a paid subscription; copying, publishing, distributing, sublicensing, and relicensing are forbidden — copy/modify is allowed only for dev/testing). This repo is MIT-only; its `LICENSE` states the `packages/ee/` components were removed.
+Upstream Activepieces is dual-licensed: the core (outside `ee/`) is MIT, but `packages/ee/` and `packages/server/api/src/app/ee` are under the proprietary **Activepieces Enterprise License** (production use requires a paid subscription; copying, publishing, distributing, sublicensing, and relicensing are forbidden — copy/modify is allowed only for dev/testing). This repo is MIT-only; its `NOTICE` file states the `packages/ee/` components were removed (kept out of `LICENSE` so GitHub detects the licence as MIT).
 
 Therefore, when restoring or re-enabling a feature that lived under upstream `ee/` (e.g. API keys, SSO, RBAC, audit logs, git sync):
 

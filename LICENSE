@@ -3,10 +3,6 @@ MIT License
 Copyright (c) 2020-2024 Activepieces Inc.
 Copyright (c) 2026 The Qadam Flow Authors
 
-Qadam Flow is a derivative work of Activepieces (https://github.com/activepieces/activepieces).
-The "packages/ee/" enterprise-licensed components of the upstream project have been
-removed; all remaining code is distributed under the MIT (Expat) license below.
-
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights

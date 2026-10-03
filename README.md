@@ -103,7 +103,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full dev setup, and [AGENTS.md]
 
 ## License
 
-[MIT](./LICENSE). Based on Activepieces (https://github.com/activepieces/activepieces), © 2020–2024 Activepieces Inc. Qadam Flow additions © 2026 The Qadam Flow Authors.
+[MIT](./LICENSE). Based on Activepieces (https://github.com/activepieces/activepieces), © 2020–2024 Activepieces Inc. Qadam Flow additions © 2026 The Qadam Flow Authors. See [NOTICE](./NOTICE) for the derivative-work statement.
 
 ---
 
