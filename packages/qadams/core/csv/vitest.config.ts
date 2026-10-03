@@ -7,6 +7,17 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    // The resource-bound tests feed the parser inputs that would exhaust any heap if a bound
+    // regressed; a capped worker fails them fast instead of taking the machine down with it.
+    // Together these flags put the worker's heap limit near 536 MiB. The conversion worker
+    // threads a test starts inherit them.
+    pool: 'forks',
+    poolOptions: {
+      forks: {
+        execArgv: ['--max-old-space-size=512', '--max-semi-space-size=8'],
+      },
+    },
+    setupFiles: ['test/conversion-worker-setup.ts'],
   },
   resolve: {
     alias: {
