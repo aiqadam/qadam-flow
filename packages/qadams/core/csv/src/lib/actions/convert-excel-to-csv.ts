@@ -1,3 +1,4 @@
+import { isUtf8 } from 'node:buffer';
 import { createAction, Property } from '@aiqadam/qadams-framework';
 import { isNil, tryCatch, tryCatchSync } from '@aiqadam/shared';
 import { Cell, ValueType, Workbook, Worksheet } from '@cj-tech-master/excelts';
@@ -66,8 +67,10 @@ export const excelToCsvAction = createAction({
     if (extracted.error !== null) {
       throw archiveErrorToUserError(extracted.error);
     }
-    assertWithinLoadBudget(extracted.data);
+    assertPartsAreUtf8(extracted.data);
     const parts = withWorkbookPartPrepared(extracted.data);
+    const loadEstimate = estimateLoadWithinBudget(parts);
+    const maxFields = Math.min(MAX_SHEET_CELLS, Math.floor((LOAD_BUDGET_BYTES - loadEstimate) / HEAP_BYTES_PER_FIELD));
 
     return prototypeIntegrity.guard(async () => {
       const workbook = new Workbook();
@@ -79,7 +82,7 @@ export const excelToCsvAction = createAction({
         })
       );
       if (!isNil(loadError)) {
-        throw new Error(`The file could not be read as an Excel workbook (.xlsx): ${loadError.message}`);
+        throw unreadableWorkbookError(loadError.message);
       }
 
       const sheetNames = workbook.worksheets.map((worksheet) => worksheet.name);
@@ -97,7 +100,7 @@ export const excelToCsvAction = createAction({
       }
 
       return {
-        csv: worksheetToCsv({ worksheet, delimiter: delimiter_type, date1904: workbook.properties.date1904 === true }),
+        csv: worksheetToCsv({ worksheet, delimiter: delimiter_type, date1904: workbook.properties.date1904 === true, maxFields }),
         sheet_name: targetSheet,
         available_sheets: sheetNames,
       };
@@ -109,9 +112,25 @@ const LEGACY_OR_PROTECTED_MESSAGE =
   'This file is a legacy .xls (Excel 97-2003) workbook or a password-protected workbook, which cannot be read. ' +
   'Open it in Excel or Google Sheets, save it as an unprotected .xlsx file, and try again.';
 
-// The parser keeps the whole workbook in memory, at several times its decompressed size, so a
-// workbook beyond this is refused before it is parsed.
-const MAX_UNCOMPRESSED_WORKBOOK_BYTES = 100 * 1024 * 1024;
+const MEBIBYTE = 1024 * 1024;
+
+// The parser's memory grows with the XML it is given: by up to HEAP_BYTES_PER_INPUT_BYTE for
+// every byte (the worst case is markup it accumulates one character at a time) and by up to
+// HEAP_BYTES_PER_ELEMENT more for every element it opens. Both rates are at or above the worst
+// measured for every kind of markup and element, so the estimate never undercounts whatever
+// the XML holds. A workbook whose estimate exceeds the budget is refused before the parser
+// runs. What the estimate leaves of the budget bounds the CSV, at HEAP_BYTES_PER_FIELD for
+// every field of the used range, so loading and converting together stay within it: at the
+// budget, the worst measured conversion peaked under 600 MB, inside the engine's default 1 GB
+// sandbox.
+const LOAD_BUDGET_BYTES = 480 * MEBIBYTE;
+const HEAP_BYTES_PER_INPUT_BYTE = 48;
+const HEAP_BYTES_PER_ELEMENT = 300;
+const HEAP_BYTES_PER_FIELD = 64;
+
+// No workbook whose parts add up to more than this fits the budget, so the archive reader
+// refuses it from the sizes it declares, before anything is inflated.
+const MAX_UNCOMPRESSED_WORKBOOK_BYTES = LOAD_BUDGET_BYTES / HEAP_BYTES_PER_INPUT_BYTE;
 
 // Excel's own sheet limits; a file with more row or cell elements than this is not one Excel
 // wrote, and the parser stops at the limit instead of materialising the rest.
@@ -120,16 +139,8 @@ const MAX_SHEET_COLUMNS = 16_384;
 
 // The used range of the converted sheet is materialised field by field, so a sparse sheet
 // with one cell at A1 and another at XFD1048576 would otherwise expand to 17 billion fields.
+// The load budget can lower this further for a workbook that is large itself.
 const MAX_SHEET_CELLS = 5_000_000;
-
-// The parser keeps an object of roughly 600 bytes for every cell and row element of every
-// sheet, whether or not it holds a value, and about as much for every element of the styles
-// part. While it loads it also holds every element of the shared strings part, at about a
-// quarter of that each. Their weighted total is bounded before anything is loaded; this many
-// cells' worth stays well inside the engine's default 1 GB sandbox. Excel caps a workbook at
-// 64,000 cell formats, so full weight for styles costs a real workbook nothing.
-const MAX_LOADED_CELLS = 1_200_000;
-const SHARED_STRING_ELEMENTS_PER_CELL = 4;
 
 const WORKBOOK_PART = 'xl/workbook.xml';
 const SHARED_STRINGS_PART = 'xl/sharedStrings.xml';
@@ -142,20 +153,33 @@ const WORKSHEET_PART = /^xl\/worksheets\/sheet\d+\.xml$/;
 // support installed, and all of it would cost memory for nothing.
 const CONVERTED_PARTS = new Set(['_rels/.rels', WORKBOOK_PART, 'xl/_rels/workbook.xml.rels', SHARED_STRINGS_PART, STYLES_PART]);
 
+// A namespace prefix: one or more segments of any characters that cannot end a name, non-ASCII
+// included, each followed by a colon.
+const NAMESPACE_PREFIX = String.raw`(?:[^\s<>/:]+:)*`;
+
 // xsd:boolean allows "true" as well as "1", and SheetJS writes date1904="true", but the parser
 // only recognises "1" and would read such a workbook's dates four years and a day early.
-const DATE_1904_TRUE_ATTRIBUTE = /(<(?:\w+:)?workbookPr\b[^<>]*?\bdate1904\s*=\s*)(["'])true\2/;
+const DATE_1904_TRUE_ATTRIBUTE = new RegExp(String.raw`(<${NAMESPACE_PREFIX}workbookPr\b[^<>]*?\bdate1904\s*=\s*)(["'])true\2`);
 
 // The CSV never uses defined names, and the parser materialises every cell a defined name
 // covers. Renaming the element, in its opening and closing tags alike, leaves the XML well
-// formed and makes the parser skip it with everything inside.
-const DEFINED_NAMES_TAG = /<(\/?)((?:[A-Za-z_][\w.-]*:)?)definedNames(?=[\s/>])/g;
+// formed and makes the parser skip it with everything inside. A workbook part in which the
+// element can still be found after renaming is refused rather than loaded.
+const DEFINED_NAMES_TAG = new RegExp(String.raw`<(\/?)(${NAMESPACE_PREFIX})definedNames`, 'g');
 const IGNORED_DEFINED_NAMES_TAG = 'ignoredDefinedNames';
+const REMAINING_DEFINED_NAMES_TAG = /[<:/]definedNames/;
 
-// Only cell data is read; skipping the rest of the worksheet XML keeps markup this action
-// never uses away from the parser. Merged ranges are among it: the CSV puts a merged value in
-// its top-left cell only, as the cells themselves do, and the parser would otherwise
-// materialise every cell a merged range covers.
+// The parser silently drops these characters wherever they appear, so markup split by one
+// would be read as markup the checks above never saw. XML forbids them, and Excel never writes
+// them; a workbook.xml holding one is refused.
+const SKIPPED_CONTROL_BYTES = new Set([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x0b, 0x0c, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x7f]);
+const SKIPPED_NON_CHARACTERS = [Buffer.from([0xef, 0xbf, 0xbe]), Buffer.from([0xef, 0xbf, 0xbf])];
+
+// Only cell data is read, so every other node the parser maps in a worksheet is skipped, and
+// markup this action never uses stays away from the parser. Merged ranges are among it: the
+// CSV puts a merged value in its top-left cell only, as the cells themselves do, and the
+// parser would otherwise materialise every cell a merged range covers. A test checks this list
+// against the parser's own worksheet map.
 const UNUSED_WORKSHEET_NODES = [
   'sheetPr',
   'dimension',
@@ -165,6 +189,7 @@ const UNUSED_WORKSHEET_NODES = [
   'autoFilter',
   'mergeCells',
   'rowBreaks',
+  'colBreaks',
   'hyperlinks',
   'pageMargins',
   'dataValidations',
@@ -177,12 +202,13 @@ const UNUSED_WORKSHEET_NODES = [
   'tableParts',
   'conditionalFormatting',
   'extLst',
+  'ignoredErrors',
 ];
 
 const LESS_THAN = 0x3c;
-const COLON = 0x3a;
-const SHEET_ELEMENTS = [Buffer.from('c'), Buffer.from('row')];
-const ELEMENT_NAME_TERMINATORS = new Set([0x20, 0x09, 0x0a, 0x0d, 0x2f, 0x3e]);
+// After "<", these open an end tag, a comment, CDATA, a declaration or a processing
+// instruction rather than an element.
+const NON_ELEMENT_MARKERS = new Set([0x2f, 0x21, 0x3f]);
 
 // numfmt caches every pattern it parses for the life of the process (~6 KB each), and parse
 // time grows with pattern length. Excel itself caps a workbook at roughly 250 custom formats
@@ -213,18 +239,18 @@ const ELAPSED_TIME_TOKEN = /\[(?:h+|m+|s+)\]/i;
 
 function archiveErrorToUserError(error: Error): Error {
   if (!(error instanceof XlsxArchiveError)) {
-    return new Error(`The file could not be read as an Excel workbook (.xlsx): ${error.message}`);
+    return unreadableWorkbookError(error.message);
   }
   switch (error.reason) {
     case 'too-large':
       return new Error(
-        `The workbook is too large to convert: its contents exceed ${MAX_UNCOMPRESSED_WORKBOOK_BYTES / (1024 * 1024)} MB once decompressed. ` +
+        `The workbook is too large to convert: its contents exceed ${MAX_UNCOMPRESSED_WORKBOOK_BYTES / MEBIBYTE} MB once decompressed. ` +
         'Split it into smaller workbooks, or delete unused sheets, and try again.'
       );
     case 'encrypted':
       return new Error(LEGACY_OR_PROTECTED_MESSAGE);
     case 'corrupt':
-      return new Error(`The file could not be read as an Excel workbook (.xlsx): ${error.message}`);
+      return unreadableWorkbookError(error.message);
   }
 }
 
@@ -232,76 +258,53 @@ function isUnusedPart(name: string): boolean {
   return !CONVERTED_PARTS.has(name) && !WORKSHEET_PART.test(name);
 }
 
-// Counted on the raw XML before the parser runs, because the parser allocates as it reads: a
-// workbook over budget is refused before any of it is materialised.
-function assertWithinLoadBudget(parts: Record<string, Uint8Array>): void {
-  const cost = Object.entries(parts).reduce(
-    (total, [name, bytes]) => (total > MAX_LOADED_CELLS ? total : total + partLoadCost({ name, bytes, budget: MAX_LOADED_CELLS - total })),
+// The parser decodes a part it is given without checking it, so a part that is not valid UTF-8
+// is refused here instead.
+function assertPartsAreUtf8(parts: Record<string, Uint8Array>): void {
+  const invalid = Object.keys(parts).find((name) => !isUtf8(parts[name]));
+  if (!isNil(invalid)) {
+    throw unreadableWorkbookError(`${invalid} is not valid UTF-8 text.`);
+  }
+}
+
+// Estimated on the exact XML the parser will be given, before it runs, because the parser
+// allocates as it reads: a workbook over budget is refused before any of it is materialised.
+function estimateLoadWithinBudget(parts: Record<string, Uint8Array>): number {
+  const estimate = Object.values(parts).reduce(
+    (total, bytes) => (total > LOAD_BUDGET_BYTES ? total : total + partLoadEstimate({ bytes, remaining: LOAD_BUDGET_BYTES - total })),
     0
   );
-  if (cost > MAX_LOADED_CELLS) {
+  if (estimate > LOAD_BUDGET_BYTES) {
     throw new Error(
-      `The workbook is too large to convert: it holds more than ${MAX_LOADED_CELLS.toLocaleString('en-US')} cells' worth of ` +
-      'cells, rows, strings and styles, counting empty ones. Delete unused rows and columns, or split the workbook, and try again.'
+      'The workbook is too large to convert: its cells, rows, strings and styles, counting empty ones, need more memory than a ' +
+      'conversion may use. Delete unused rows and columns, or split the workbook, and try again.'
     );
   }
+  return estimate;
 }
 
-function partLoadCost({ name, bytes, budget }: { name: string; bytes: Uint8Array; budget: number }): number {
-  if (WORKSHEET_PART.test(name)) {
-    return countElements({ bytes, names: SHEET_ELEMENTS, limit: budget });
+function partLoadEstimate({ bytes, remaining }: { bytes: Uint8Array; remaining: number }): number {
+  const inputCost = bytes.length * HEAP_BYTES_PER_INPUT_BYTE;
+  if (inputCost > remaining) {
+    return inputCost;
   }
-  if (name === STYLES_PART) {
-    return countElements({ bytes, names: 'any', limit: budget });
-  }
-  if (name === SHARED_STRINGS_PART) {
-    return countElements({ bytes, names: 'any', limit: budget * SHARED_STRING_ELEMENTS_PER_CELL }) / SHARED_STRING_ELEMENTS_PER_CELL;
-  }
-  return 0;
+  const elementLimit = Math.floor((remaining - inputCost) / HEAP_BYTES_PER_ELEMENT);
+  return inputCost + countElementStarts({ bytes, limit: elementLimit }) * HEAP_BYTES_PER_ELEMENT;
 }
 
-// One linear pass over the bytes: every "<" that opens an element, or one of the named
-// elements, with or without a namespace prefix, is counted. Markup inside comments counts too,
-// which only errs on the side of refusing. Counting stops once the count passes the limit,
-// where the exact total no longer matters.
-function countElements({ bytes, names, limit }: { bytes: Uint8Array; names: readonly Buffer[] | 'any'; limit: number }): number {
+// Every "<" counts as an element unless the byte after it opens an end tag, a comment, CDATA,
+// a declaration or a processing instruction. Nothing about the name is examined, so no spelling
+// the parser accepts can open an element this misses; a "<" inside a comment or CDATA counts
+// too, which only errs on the side of refusing. Counting stops once the count passes the
+// limit, where the exact total no longer matters.
+function countElementStarts({ bytes, limit }: { bytes: Uint8Array; limit: number }): number {
   let count = 0;
   for (let open = bytes.indexOf(LESS_THAN); open !== -1 && count <= limit; open = bytes.indexOf(LESS_THAN, open + 1)) {
-    if (opensCountedElement({ bytes, open, names })) {
+    if (!NON_ELEMENT_MARKERS.has(bytes[open + 1])) {
       count++;
     }
   }
   return count;
-}
-
-function opensCountedElement({ bytes, open, names }: { bytes: Uint8Array; open: number; names: readonly Buffer[] | 'any' }): boolean {
-  if (names === 'any') {
-    return open + 1 < bytes.length && isNameStartByte(bytes[open + 1]);
-  }
-  const nameStart = skipNamespacePrefix({ bytes, from: open + 1 });
-  return names.some((name) => isElementName({ bytes, at: nameStart, name }));
-}
-
-function skipNamespacePrefix({ bytes, from }: { bytes: Uint8Array; from: number }): number {
-  let at = from;
-  while (at < bytes.length && isNameByte(bytes[at])) {
-    at++;
-  }
-  return at < bytes.length && bytes[at] === COLON ? at + 1 : from;
-}
-
-function isNameByte(byte: number): boolean {
-  return isNameStartByte(byte) || (byte >= 0x30 && byte <= 0x39) || byte === 0x2d || byte === 0x2e;
-}
-
-// ASCII letters, underscore, and any byte of a multi-byte UTF-8 sequence.
-function isNameStartByte(byte: number): boolean {
-  return (byte >= 0x61 && byte <= 0x7a) || (byte >= 0x41 && byte <= 0x5a) || byte === 0x5f || byte >= 0x80;
-}
-
-function isElementName({ bytes, at, name }: { bytes: Uint8Array; at: number; name: Buffer }): boolean {
-  const end = at + name.length;
-  return end < bytes.length && name.every((byte, index) => bytes[at + index] === byte) && ELEMENT_NAME_TERMINATORS.has(bytes[end]);
 }
 
 function withWorkbookPartPrepared(parts: Record<string, Uint8Array>): Record<string, Uint8Array> {
@@ -309,28 +312,42 @@ function withWorkbookPartPrepared(parts: Record<string, Uint8Array>): Record<str
   if (isNil(workbookXml)) {
     return parts;
   }
-  // The parser rejects a part that is not valid UTF-8; such a part is left for it to reject.
+  if (holdsSkippedCharacter(workbookXml)) {
+    throw unreadableWorkbookError(`${WORKBOOK_PART} contains characters that XML does not allow.`);
+  }
   const decoded = tryCatchSync(() => new TextDecoder('utf-8', { fatal: true }).decode(workbookXml));
   if (decoded.error !== null) {
-    return parts;
+    throw unreadableWorkbookError(`${WORKBOOK_PART} is not valid UTF-8 text.`);
   }
   const prepared = decoded.data
     .replace(DATE_1904_TRUE_ATTRIBUTE, (_match, attributeStart: string, quote: string) => `${attributeStart}${quote}1${quote}`)
     .replace(DEFINED_NAMES_TAG, (_match, slash: string, prefix: string) => `<${slash}${prefix}${IGNORED_DEFINED_NAMES_TAG}`);
-  return prepared === decoded.data ? parts : { ...parts, [WORKBOOK_PART]: Buffer.from(prepared, 'utf8') };
+  if (REMAINING_DEFINED_NAMES_TAG.test(prepared)) {
+    throw unreadableWorkbookError(`${WORKBOOK_PART} contains defined names in a form this action cannot skip.`);
+  }
+  return { ...parts, [WORKBOOK_PART]: Buffer.from(prepared, 'utf8') };
 }
 
-function worksheetToCsv({ worksheet, delimiter, date1904 }: { worksheet: Worksheet; delimiter: string; date1904: boolean }): string {
+function holdsSkippedCharacter(bytes: Uint8Array): boolean {
+  const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return buffer.some((byte) => SKIPPED_CONTROL_BYTES.has(byte)) || SKIPPED_NON_CHARACTERS.some((sequence) => buffer.includes(sequence));
+}
+
+function unreadableWorkbookError(reason: string): Error {
+  return new Error(`The file could not be read as an Excel workbook (.xlsx): ${reason}`);
+}
+
+function worksheetToCsv({ worksheet, delimiter, date1904, maxFields }: WorksheetToCsvParams): string {
   const range = findUsedRange(worksheet);
   if (isNil(range)) {
     return '';
   }
   const height = range.bottom - range.top + 1;
   const width = range.right - range.left + 1;
-  if (height * width > MAX_SHEET_CELLS) {
+  if (height * width > maxFields) {
     throw new Error(
       `Sheet "${worksheet.name}" is too large to convert: its used range is ${height} rows by ${width} columns, ` +
-      `more than ${MAX_SHEET_CELLS.toLocaleString('en-US')} cells. ` +
+      `more than the ${maxFields.toLocaleString('en-US')} cells this workbook leaves room for. ` +
       'Delete unused rows and columns, or split the sheet, and try again.'
     );
   }
@@ -532,6 +549,13 @@ type UsedRange = {
   bottom: number;
   left: number;
   right: number;
+};
+
+type WorksheetToCsvParams = {
+  worksheet: Worksheet;
+  delimiter: string;
+  date1904: boolean;
+  maxFields: number;
 };
 
 type EscapeDecoding = 'all' | 'lower-case';

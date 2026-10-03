@@ -30,12 +30,21 @@ export const excelTestKit = {
     };
   },
 
+  // The object that owns loadFromFiles, for tests that watch what the action hands the parser.
+  workbookLoader(): WorkbookLoader {
+    return Object.getPrototypeOf(Object.getPrototypeOf(new Workbook().xlsx));
+  },
+
   async convert({ base64, sheetName = '', delimiter = ',' }: ConvertParams) {
     const ctx = createMockActionContext({
       propsValue: { file: { base64, extension: 'xlsx', filename: 'test.xlsx' }, sheet_name: sheetName, delimiter_type: delimiter },
     });
     return excelToCsvAction.run(ctx);
   },
+};
+
+export type WorkbookLoader = {
+  loadFromFiles: (...args: unknown[]) => Promise<unknown>;
 };
 
 type ConvertParams = {

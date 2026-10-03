@@ -1,11 +1,10 @@
 /// <reference types="vitest/globals" />
 
-import { Workbook } from '@cj-tech-master/excelts';
 import { PrototypeIntegrityError, prototypeIntegrity } from '../src/lib/common/prototype-integrity';
 import { excelTestKit } from './excel-test-kit';
 import { zipFixture } from './zip-fixture';
 
-const { builtInPrototypeKeys, convert, zipBase64 } = excelTestKit;
+const { builtInPrototypeKeys, convert, workbookLoader, zipBase64 } = excelTestKit;
 
 describe('prototypeIntegrity', () => {
   test('fails the run and restores the prototype when the operation modifies one', async () => {
@@ -81,7 +80,7 @@ describe('prototypeIntegrity', () => {
 
   test('converting a workbook runs the parser inside the guard', async () => {
     const addedKey = 'addedWhileLoading';
-    const loader: WorkbookLoader = Object.getPrototypeOf(Object.getPrototypeOf(new Workbook().xlsx));
+    const loader = workbookLoader();
     const originalLoad = loader.loadFromFiles;
     const loadSpy = vi.spyOn(loader, 'loadFromFiles').mockImplementation(async function (this: unknown, ...args: unknown[]) {
       Object.defineProperty(Object.prototype, addedKey, { value: 1, configurable: true, writable: true });
@@ -112,8 +111,4 @@ function deferred(): Deferred {
 type Deferred = {
   promise: Promise<void>;
   resolve: () => void;
-};
-
-type WorkbookLoader = {
-  loadFromFiles: (...args: unknown[]) => Promise<unknown>;
 };
