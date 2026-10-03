@@ -9,11 +9,14 @@ export class FormulaSizeLimitError extends Error {
     }
 }
 
-// Thrown by the member-access filter in function-implementations.ts when a
-// formula tries to read `.constructor`/`.__proto__`/`.prototype`. Same
-// identity-over-message-regex reasoning as FormulaSizeLimitError above —
-// this is a deliberate security rejection, not a generic parse failure, and
-// needs to stay one even if its wording changes later.
+// Thrown by function-implementations.ts when a formula is refused on a
+// security ground: the pre-evaluation name pass (`.constructor`/`.__proto__`/
+// `.prototype`, inherited identifiers, inherited operator names) and the
+// runtime plain-data checks (a function value reaching a formula function, an
+// operator or the result). Same identity-over-message-regex reasoning as
+// FormulaSizeLimitError above — this is a deliberate security rejection, not
+// a generic parse failure, and needs to stay one even if its wording changes
+// later.
 export class FormulaSecurityError extends Error {
     constructor(message: string) {
         super(message)

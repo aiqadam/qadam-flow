@@ -34,7 +34,8 @@ declare module 'expr-eval-fork' {
         binaryOps: { '||': (a: unknown, b: unknown) => unknown, [key: string]: unknown }
         // Not in expr-eval's own `.d.ts` either. `findSecurityViolation` reads
         // this only to test own-key membership (`Object.hasOwn`) of operator
-        // names, never to invoke an entry, so `unknown` values are enough.
+        // names, and the S2 guard loop re-assigns each callable entry wrapped;
+        // nothing here invokes an entry, so `unknown` values are enough.
         ternaryOps: Record<string, unknown>
     }
     // `Expression.tokens` (the parsed instruction array) is not part of
@@ -152,9 +153,16 @@ const builtInFunctionsSnapshot: Record<string, unknown> = { ...parser.functions 
 // removing the `finally` and watching it fail before restoring it).
 let currentBuiltStringBudget: { remaining: number } | null = null
 let currentJsonValueBudget: { remaining: number } | null = null
+// Objects already known to hold no function at any depth, for THIS
+// evaluation: everything the plain-data scope conversion produced, plus every
+// object `assertHoldsNoFunction` has walked. Lets the per-call checks skip a
+// scope value that is merely passed along (a large list handed to
+// `filter_list`, then to `count`) instead of re-walking it on every step.
+// Same lifetime and same re-entrancy constraint as the two budgets above.
+let currentVerifiedPlainData: WeakSet<object> | null = null
 
 export function evaluateRaw(expression: string, vars: Record<string, unknown>): unknown {
-    if (currentBuiltStringBudget !== null || currentJsonValueBudget !== null) {
+    if (currentBuiltStringBudget !== null || currentJsonValueBudget !== null || currentVerifiedPlainData !== null) {
         // Not a formula error — a bug in evaluateRaw's own bookkeeping (a
         // missing/misplaced `finally`, or genuine re-entrancy this design
         // does not support). It is still a plain `Error`, not a
@@ -172,29 +180,31 @@ export function evaluateRaw(expression: string, vars: Record<string, unknown>): 
     }
     currentBuiltStringBudget = { remaining: FORMULA_MAX_BUILT_STRING_LENGTH }
     currentJsonValueBudget = { remaining: FORMULA_MAX_JSON_VALUE_BUDGET }
+    currentVerifiedPlainData = new WeakSet()
     try {
         // Parsed once, then checked, then evaluated — rather than
         // `parser.evaluate(expression, vars)` in one call — so
-        // `findSecurityViolation` can reject a dangerous name before a single
-        // guarded function, operator, or user callback runs. See that
-        // function's comment for why this walks the parsed instruction tree
-        // instead of the raw text.
+        // `findSecurityViolation` can reject a forbidden name before a single
+        // guarded function or operator runs. See that function's comment for
+        // why this walks the parsed instruction tree instead of the raw text.
         const parsed = parser.parse(expression)
         const violation = findSecurityViolation(parsed.tokens)
         if (violation !== null) {
             throw new FormulaSecurityError(violation)
         }
-        // Own-property-only scope: the last step of expr-eval's identifier
-        // resolution is `values[name]`, which walks the prototype chain. A
-        // null-prototype `values` means every `Object.prototype` name is
-        // `undefined` here rather than an inherited built-in. The earlier steps
-        // (`parser.functions`, `parser.unaryOps`) are covered separately — see
-        // D2 in the SANDBOX DEFENCE comment below.
-        return parsed.evaluate(Object.assign(Object.create(null), vars))
+        // The formula reads a plain-data copy of the caller's scope, never the
+        // caller's objects (see `toPlainDataScope`): own enumerable properties
+        // only, JSON-shaped values only, no functions at any depth, and a
+        // null-prototype root so the last step of the library's identifier
+        // resolution (`values[name]`) finds own keys only. The result is held
+        // to the same rule as every function and operator result (S2 in the
+        // RUNTIME DATA INVARIANTS comment below).
+        return assertHoldsNoFunction(parsed.evaluate(toPlainDataScope(vars)))
     }
     finally {
         currentBuiltStringBudget = null
         currentJsonValueBudget = null
+        currentVerifiedPlainData = null
     }
 }
 
@@ -713,69 +723,84 @@ for (const key of Object.keys(parser.functions)) {
     }
 }
 
-// SANDBOX DEFENCE — enforced before any evaluation runs, by `findSecurityViolation`
-// (a single pass over the parsed instruction tree) plus the null-prototyping
-// below and `operators.fndef: false` on the parser. Read this before touching
+// RUNTIME DATA INVARIANTS — what this module guarantees about the values a
+// formula evaluates over, and how. Read this before touching `evaluateRaw`,
+// `toPlainDataScope`, `assertHoldsNoFunction`, the guard loop below or
 // `Object.setPrototypeOf` on any expr-eval table.
 //
 // `expr-eval-fork` carries the upstream fixes for the two `evaluate()`
-// advisories (it refuses to call a function that is not registered on
-// `parser.functions`, and refuses `__proto__`/`prototype`/`constructor` names
-// at evaluation time — a loose pattern that also rejects names merely containing
-// "prototype", ending in "constructor" or starting with "__proto__", e.g. a
-// `my_prototype_id` key read with `.member` syntax). Those are kept as a second
-// line; the layers below are this module's own and do not depend on them, so a
-// regression in the library cannot reopen a hole on its own.
+// advisories: at a call (`IFUNCALL`) it refuses any callee that is not an
+// entry of `parser.functions` (or an own value of a scope object that is a
+// `Math` function or such an entry), and it refuses `__proto__`/`prototype`/
+// `constructor` names at evaluation time with a loose pattern that also
+// rejects names merely containing "prototype", ending in "constructor" or
+// starting with "__proto__" (e.g. a `my_prototype_id` key read with `.member`
+// syntax). The library pushes a function onto its own value stack in places
+// this module cannot intercept — a bare identifier naming a registered
+// function or a unary operator, and a `.member` read off a primitive
+// (`"a".at`) or off another function — so this module does NOT try to track
+// where function values are on that stack. It constrains the DATA instead:
 //
-// expr-eval resolves a bare identifier (`IVAR`) in this order:
-// `name in expr.functions`, then `name in expr.unaryOps` (for an enabled
-// operator), then `values[name]` — and `in` walks the prototype chain. With
-// plain objects, an identifier spelled like an `Object.prototype` member
-// therefore resolves to a live built-in rather than failing as an unknown
-// name, and from a live built-in, plain member access and ordinary calls can
-// reach `Function`. A member-name filter alone does not cover that route.
+// S1. THE SCOPE IS PLAIN DATA. `evaluateRaw` evaluates against a copy of the
+//    caller's scope built by `toPlainDataScope`: own enumerable string keys
+//    only, JSON semantics (`toJSON` honoured, so a `Date` becomes its ISO
+//    string; functions, symbols, `undefined`, `bigint` dropped from objects
+//    and read as `null` in arrays and at the root; non-finite numbers become
+//    `null`; class instances flatten to their own enumerable properties),
+//    plain objects and arrays with a null-prototype root. The formula never
+//    touches the caller's objects and no function exists anywhere in its
+//    scope. Consequently the library's "own value of a scope object" callee
+//    allowance above can never match, so the only callable things are entries
+//    of `parser.functions`.
 //
-// The layers now in force (D1/D2's identifier check/D3a/D3b are branches of
-// `findSecurityViolation`; D2's tables and D4 are the surrounding hardening):
+// S2. NOTHING THAT CROSSES A FUNCTION OR OPERATOR BOUNDARY HOLDS A FUNCTION.
+//    Every entry of `parser.functions`, `parser.unaryOps`, `parser.binaryOps`
+//    and `parser.ternaryOps` is wrapped (the loop below) so each argument it
+//    receives and the value it returns is walked by `assertHoldsNoFunction`
+//    — own enumerable keys, array elements, cycle-safe, cached per evaluation
+//    — and a function at any depth throws `FormulaSecurityError`. The final
+//    result of the evaluation is held to the same rule in `evaluateRaw`. So a
+//    function value the library puts on its stack can only be: discarded
+//    (`IENDSTATEMENT`), read with `.member` (yielding another function, a
+//    string or a number — with the names in D3a refused), or offered as a
+//    callee, where the library's allowlist applies. It cannot be stored in a
+//    variable (`=` is a binary operator), placed in a value a function or
+//    operator builds, or returned. Scope data holds no function to begin with
+//    (S1), so with S2 nothing a formula can name, build or return does.
+//    The library treats an object whose `type` field is its internal
+//    deferred-expression tag as an expression to run; because no
+//    formula-reachable value holds a function, that path can only throw a
+//    type error, never run anything.
 //
-// D1. FUNCTION VALUES ARE CALL-ONLY (the primary defence). A function value
-//    can only come from a bare `IVAR` naming an OWN key of `parser.functions`
-//    (our registered formula functions), and it can only be consumed as the
-//    callee of the call that immediately uses it — never stored, passed,
-//    operated on or returned. Every `IFUNCALL`'s callee must be such a value.
-//    Invariant: no function value that a formula produces ever reaches the
-//    evaluator's runtime data, so no library code path that inspects or
-//    invokes such data can be handed one by the formula. (Values the caller
-//    places in the scope are the caller's own data and are outside this
-//    guarantee.) No legitimate formula uses a function other than
-//    as `name(args)` (verified against the docs and the whole test suite).
+// The pre-evaluation pass (`findSecurityViolation`) and the table hardening
+// below are independent of S1/S2 and are kept:
 //
-// D2. OWN-PROPERTY-ONLY RESOLUTION. Each table on the identifier path is
-//    covered separately, because they cannot all be handled the same way:
+// D2. OWN-PROPERTY-ONLY RESOLUTION. The library resolves a bare identifier
+//    (`IVAR`) as `name in expr.functions`, then `name in expr.unaryOps`, then
+//    `values[name]` — and `in` walks the prototype chain. Each table on that
+//    path is covered separately, because they cannot all be handled the same
+//    way:
 //    - `parser.functions` and `parser.consts` are null-prototyped below;
-//    - `evaluateRaw` evaluates against a null-prototype copy of the scope;
+//    - the scope root built by `toPlainDataScope` is null-prototyped;
 //    - `parser.unaryOps` is NOT null-prototyped (see below), so the gate
 //      instead refuses any identifier `unaryOps` would only find through its
 //      prototype (`isInheritedIdentifier`).
-//    Together a bare identifier can only resolve to one of our registered
-//    functions, a real operator, or a scope variable — never to an inherited
-//    `Object.prototype` member. `resolveVariable` (formula-evaluator.ts) and
-//    `readField`/`readPath` below apply the same own-property rule to the
-//    data paths they walk.
+//    `resolveVariable` (formula-evaluator.ts) and `readField`/`readPath`
+//    below apply the same own-property rule to the data paths they walk.
 //
 // D3a. FORBIDDEN NAMES. `constructor`/`__proto__`/`prototype` are rejected as
 //    `IMEMBER` access, as bare `IVAR` identifiers and as `IVARNAME` assignment
 //    targets, walking into nested `IEXPR` branches (ternary / `and` / `or` /
-//    assignment right-hand sides).
+//    assignment right-hand sides). Independent of the library's own pattern.
 //
 // D3b. OPERATOR OWN-KEY. An operator (`IOP1`/`IOP2`/`IOP3`) must be an OWN key
 //    of its operator table. The operator tables keep `Object.prototype`, so an
 //    inherited name used in the unary-operator call form would otherwise
 //    resolve and run.
 //
-// D4. `operators.fndef: false` (the `new Parser(...)` call above) independently
-//    removes expr-eval's `()=` function-definition operator — the other path to
-//    a user-callable function body — with the `IFUNDEF` gate branch as backstop.
+// D4. `operators.fndef: false` (the `new Parser(...)` call above) removes the
+//    library's `()=` function-definition operator — the one way a formula
+//    could define a function body — with the `IFUNDEF` gate branch as backstop.
 //
 // Never call `Expression.toJSFunction`: it compiles the expression with
 // `new Function()` and is the subject of an advisory the fork does not
@@ -787,19 +812,149 @@ for (const key of Object.keys(parser.functions)) {
 // (`TokenStream.isNamedOp` tokenizes `constructor`, found there through the
 // prototype, as an operator so `x.constructor` fails to parse). Invariant:
 // the operator tables keep `Object.prototype` and are checked by own-key, so
-// that parse barrier stays in place in addition to the defences below.
-// The defences above do not depend on that accident — they work on the parsed
-// instruction tree and on the resolution tables, which is why `functions`/
-// `consts`/the scope can be null-prototyped safely while the operator tables
-// are deliberately left alone and checked by own-key instead. Bracket
-// notation (`x["name"]`) is not a property-access path either: expr-eval's
-// `[` is `arrayIndex`, coercing its operand to a number.
+// that parse barrier stays in place in addition to D3a. Bracket notation
+// (`x["name"]`) is not a property-access path either: the library's `[` is
+// `arrayIndex`, coercing its operand to a number.
 
-// Own-property-only identifier resolution (layer 2): a bare identifier can no
+// Own-property-only identifier resolution (D2): a bare identifier can no
 // longer walk the prototype chain of these two tables.
 // Done AFTER every registration and the allowlist sweep so own keys are intact.
 Object.setPrototypeOf(parser.functions, null)
 Object.setPrototypeOf(parser.consts, null)
+
+// S2: wrap every function and operator the library can invoke. Installed
+// LAST — after every registration, the `||` size guard, the default-argument
+// padding and the allowlist sweep — so the guard is the outermost layer on
+// every entry and no later registration can slip in unwrapped. The sweep
+// above compares identities against `builtInFunctionsSnapshot`, so it must
+// run before this loop changes them. The `||` guard, `isOwnOperator` and
+// `isInheritedIdentifier` only look keys up by name, so they are unaffected.
+const guardedTables: Record<string, unknown>[] = [parser.functions, parser.unaryOps, parser.binaryOps, parser.ternaryOps]
+for (const table of guardedTables) {
+    for (const key of Object.keys(table)) {
+        const impl = table[key]
+        if (isCallable(impl)) {
+            table[key] = guardPlainData(impl)
+        }
+    }
+}
+
+// S1 (see RUNTIME DATA INVARIANTS above). Builds the scope a formula reads:
+// a null-prototype root whose values are plain-data copies of the caller's
+// values, converted once per evaluation. A root entry whose value is not
+// plain data (a function, a symbol) reads as `null` rather than disappearing,
+// so the variable still exists and `{{x}}` behaves like a missing value
+// instead of an unknown identifier. Every object this produces is recorded in
+// `currentVerifiedPlainData`, so the S2 checks never walk scope data twice.
+function toPlainDataScope(vars: Record<string, unknown>): Record<string, unknown> {
+    const verified = currentVerifiedPlainData ?? new WeakSet<object>()
+    const scope: Record<string, unknown> = Object.create(null)
+    for (const key of Object.keys(vars)) {
+        const converted = toPlainData({ value: vars[key], verified, ancestors: new WeakSet<object>() })
+        scope[key] = converted === undefined ? null : converted
+    }
+    verified.add(scope)
+    return scope
+}
+
+// One value, with `JSON.parse(JSON.stringify(value))` semantics: `toJSON` is
+// honoured first (a `Date` becomes its ISO string, a `Buffer` its
+// `{ type, data }` form) and the object it returns is then converted without
+// consulting `toJSON` again, exactly as `JSON.stringify` does. Returns
+// `undefined` for a value JSON has no representation for; the caller decides
+// whether that means "omit the key" (objects) or `null` (arrays, scope root).
+// Known deviation from the JSON round trip: a boxed primitive (`new
+// Number(1)`) becomes `{}` rather than its primitive; nothing that reaches a
+// formula produces one. A cycle is reported as an error rather than relying
+// on the recursion overflowing.
+function toPlainData({ value, verified, ancestors }: PlainDataConversion): unknown {
+    if (isRecord(value) && hasToJson(value)) {
+        return toPlainDataNode({ value: value.toJSON(), verified, ancestors })
+    }
+    return toPlainDataNode({ value, verified, ancestors })
+}
+
+function toPlainDataNode({ value, verified, ancestors }: PlainDataConversion): unknown {
+    if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null
+    if (!isRecord(value)) return undefined
+    if (ancestors.has(value)) {
+        throw new Error('Formula input data contains a circular reference')
+    }
+    ancestors.add(value)
+    let converted: Record<string, unknown> | unknown[]
+    if (Array.isArray(value)) {
+        const items: unknown[] = value
+        converted = items.map((item) => toPlainData({ value: item, verified, ancestors }) ?? null)
+    }
+    else {
+        const copy: Record<string, unknown> = {}
+        for (const key of Object.keys(value)) {
+            const item = toPlainData({ value: value[key], verified, ancestors })
+            if (item !== undefined) copy[key] = item
+        }
+        converted = copy
+    }
+    ancestors.delete(value)
+    verified.add(converted)
+    return converted
+}
+
+// S2 (see RUNTIME DATA INVARIANTS above). Walks `value` — array elements and
+// own enumerable string keys of objects, with an explicit stack — and throws
+// if a function sits anywhere in it. Objects already in
+// `currentVerifiedPlainData` are skipped and newly walked ones are added, so
+// a scope value that is only passed along costs one identity check, and a
+// cycle terminates. An object is recorded before its children are walked;
+// if a child then turns out to be a function the throw ends the evaluation
+// and the per-evaluation set with it, so the early record is never trusted.
+// Returns `value` so it can wrap a return expression.
+function assertHoldsNoFunction<T>(value: T): T {
+    const verified = currentVerifiedPlainData ?? new WeakSet<object>()
+    const pending: unknown[] = [value]
+    while (pending.length > 0) {
+        const current = pending.pop()
+        if (typeof current === 'function') {
+            throw new FormulaSecurityError(FUNCTION_VALUE_MESSAGE)
+        }
+        if (!isRecord(current) || verified.has(current)) continue
+        verified.add(current)
+        if (Array.isArray(current)) {
+            const items: unknown[] = current
+            for (const item of items) pending.push(item)
+        }
+        else {
+            for (const key of Object.keys(current)) pending.push(current[key])
+        }
+    }
+    return value
+}
+
+// S2's wrapper for one `parser.functions` / operator-table entry: every
+// argument in, and the value out, must hold no function. Variadic on purpose
+// — the library calls entries positionally with differing arities (`=` is
+// `setVar(name, value, variables)`, `[` is `arrayIndex(array, index)`), and the
+// default-argument padding above reads `args.length`, so nothing may be
+// reshaped on the way through. Arguments are checked BEFORE the entry runs,
+// so `=` never writes a refused value into the scope.
+function guardPlainData(impl: (...args: unknown[]) => unknown): (...args: unknown[]) => unknown {
+    return (...args: unknown[]) => {
+        for (const arg of args) assertHoldsNoFunction(arg)
+        return assertHoldsNoFunction(impl(...args))
+    }
+}
+
+function isCallable(value: unknown): value is (...args: unknown[]) => unknown {
+    return typeof value === 'function'
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null
+}
+
+function hasToJson(value: object): value is { toJSON: () => unknown } {
+    return 'toJSON' in value && typeof value.toJSON === 'function'
+}
 
 function toArray(value: unknown): unknown[] {
     if (Array.isArray(value)) return value
@@ -921,129 +1076,84 @@ const IFUNCALL_INSTRUCTION_TYPE = 'IFUNCALL'
 const UNKNOWN_CONSTRUCT_MESSAGE = 'Formula contains a construct that is not allowed'
 const FUNCTION_VALUE_MESSAGE = 'Formula functions can only be called, not used as values'
 
-// The single security gate over a parsed formula, run in `evaluateRaw` before
+// The pre-evaluation pass over a parsed formula, run in `evaluateRaw` before
 // evaluation. Walks the PARSED instruction tree (`Expression.tokens`, what
 // `.evaluate()` runs) rather than the raw text, because
 // `wrapStringArgs`/`normalizeExpression` (formula-evaluator.ts) rewrite the
 // string before it is parsed, so a raw-text check would inspect something other
 // than what runs. Returns a user-facing message for the first violation, or
-// null. It enforces, in one stack-simulating pass:
+// null. It checks NAMES only — it does not model the evaluator's value stack
+// and makes no claim about which values are functions at runtime; that is
+// S1/S2 in the RUNTIME DATA INVARIANTS comment above. What it refuses:
 //
-//   LAYER 1 — FUNCTION VALUES ARE CALL-ONLY (primary defence). The only way a
-//   formula can name a function is a bare `IVAR` that resolves to an OWN key of
-//   `parser.functions` (a registered formula function), and that value may be
-//   consumed only as the callee of the `IFUNCALL` that immediately uses it. It
-//   can never be passed as an argument, stored in an array, object or
-//   variable, used as an operand or member-access target, or left as the
-//   result of a statement or branch. Every `IFUNCALL` callee must be such a
-//   value. A name that resolves to a unary-operator implementation instead
-//   (`abs`, `sqrt`, ... written as a value rather than applied as an operator)
-//   is refused outright. Consequently a formula can never produce a function
-//   value at runtime, so nothing downstream — expr-eval's own per-access
-//   function checks, or its handling of values shaped like its internal
-//   deferred-expression objects — can be steered by one the formula built.
-//   (Values in the caller-supplied scope are the caller's data.) No
-//   legitimate formula uses a function other than as `name(args)` (verified
-//   against the docs and the whole test suite).
+//   D3a — `constructor`/`__proto__`/`prototype` as member access (`IMEMBER`),
+//   as a bare identifier (`IVAR`) and as an assignment target (`IVARNAME`).
 //
-//   The simulated stack holds one boolean per value expr-eval's evaluator would
-//   hold: `true` only for such a registered-function value. Every instruction
-//   pops exactly as many operands as expr-eval's `evaluate()` pops for it and
-//   pushes `false` for its result; popping a `true` anywhere but as an
-//   `IFUNCALL` callee is a violation, as is a `true` still on the stack when a
-//   (sub)expression ends. An instruction type this pass does not know is
-//   refused rather than guessed at, so a new expr-eval instruction cannot
-//   desynchronise the simulation silently.
+//   D2 (identifier half) — an identifier a resolution table would only find
+//   through its prototype. See `isInheritedIdentifier`.
 //
-//   LAYER 2 (identifier half) — an identifier must resolve through OWN
-//   properties only. See `isInheritedIdentifier`.
+//   A unary operator's name written as a value (`(abs)`, `[sqrt]`) rather
+//   than applied (`abs -3`). It would resolve to the operator's implementation
+//   as a function value; no documented formula does this, so it is refused up
+//   front with a message that names the problem rather than left to S2, which
+//   refuses it wherever a function or operator would consume it.
 //
-//   LAYER 3a — forbidden NAMES. `constructor`/`__proto__`/`prototype` are
-//   rejected as member access (`IMEMBER`), as a bare identifier (`IVAR`) and as
-//   an assignment target (`IVARNAME`).
+//   D3b — a unary/binary/ternary operator whose name is only inherited from
+//   `Object.prototype` (`toString`, `valueOf`, ...): `isNamedOp` uses `in`, so
+//   such a name tokenizes as an operator; requiring own-ness blocks those while
+//   leaving every real operator (`+`, `-`, `!`, `sin`, `and`, `||`, `[`, `?`,
+//   ...) untouched.
 //
-//   LAYER 3b — operator names must be OWN. A unary-operator token whose name
-//   is only inherited from `Object.prototype` (`toString`, `valueOf`, ...) is
-//   tokenized as an operator because `isNamedOp` uses `in`; requiring own-ness
-//   blocks those while leaving every real operator (`+`, `-`, `!`, `sin`,
-//   `and`, `||`, `[`, `?`, ...) untouched.
+//   D4 backstop — `IFUNDEF`, unreachable with `fndef: false`.
+//
+//   Any instruction type this module has not reviewed. Refused rather than
+//   evaluated, so a future library version cannot add a construct silently.
 //
 // `IEXPR` wraps a nested sub-array (ternary branches, the right-hand side of
-// `and`/`or`/assignment), evaluated by expr-eval on its own stack, so each is
-// walked recursively and simulated independently.
+// `and`/`or`/assignment) that the library evaluates on its own, so each is
+// walked recursively.
 function findSecurityViolation(tokens: ExprEvalInstruction[]): string | null {
-    const stack: boolean[] = []
-    // Removes the top `count` slots; reports whether any of them held a
-    // function value, which may only ever be consumed as a callee.
-    const discardHoldsFunction = (count: number): boolean =>
-        stack.splice(Math.max(0, stack.length - count)).includes(true)
     for (const instruction of tokens) {
         const value = instruction.value
         switch (instruction.type) {
             case INUMBER_INSTRUCTION_TYPE:
-                stack.push(false)
+            case IFUNCALL_INSTRUCTION_TYPE:
+            case 'IENDSTATEMENT':
+            case 'IARRAY':
                 break
-            case IVAR_INSTRUCTION_TYPE: {
-                const violation = identifierViolation(value)
-                if (violation !== null) return violation
-                stack.push(typeof value === 'string' && isOwnFunctionKey(value))
-                break
-            }
+            case IVAR_INSTRUCTION_TYPE:
             case IVARNAME_INSTRUCTION_TYPE: {
                 const violation = identifierViolation(value)
                 if (violation !== null) return violation
-                stack.push(false)
                 break
             }
             case IMEMBER_INSTRUCTION_TYPE:
                 if (typeof value !== 'string' || FORBIDDEN_MEMBER_NAMES.has(value)) {
                     return `Formula cannot access ".${String(value)}" — this property name is not allowed`
                 }
-                if (discardHoldsFunction(1)) return FUNCTION_VALUE_MESSAGE
-                stack.push(false)
-                break
-            case IFUNCALL_INSTRUCTION_TYPE:
-                if (discardHoldsFunction(typeof value === 'number' ? value : 0)) return FUNCTION_VALUE_MESSAGE
-                if (stack.pop() !== true) return 'Formula can only call built-in formula functions'
-                stack.push(false)
                 break
             case 'IOP1':
                 if (!isOwnOperator({ table: parser.unaryOps, name: value })) return operatorViolationMessage(value)
-                if (discardHoldsFunction(1)) return FUNCTION_VALUE_MESSAGE
-                stack.push(false)
                 break
             case 'IOP2':
                 if (!isOwnOperator({ table: parser.binaryOps, name: value })) return operatorViolationMessage(value)
-                if (discardHoldsFunction(2)) return FUNCTION_VALUE_MESSAGE
-                stack.push(false)
                 break
             case 'IOP3':
                 if (!isOwnOperator({ table: parser.ternaryOps, name: value })) return operatorViolationMessage(value)
-                if (discardHoldsFunction(3)) return FUNCTION_VALUE_MESSAGE
-                stack.push(false)
-                break
-            case 'IENDSTATEMENT':
-                if (discardHoldsFunction(1)) return FUNCTION_VALUE_MESSAGE
-                break
-            case 'IARRAY':
-                if (discardHoldsFunction(typeof value === 'number' ? value : 0)) return FUNCTION_VALUE_MESSAGE
-                stack.push(false)
                 break
             case 'IFUNDEF':
-                // Unreachable (fndef is disabled); refuse loudly if it ever appears.
                 return 'Defining functions inside a formula is not supported'
             case IEXPR_INSTRUCTION_TYPE: {
                 if (!isInstructionArray(value)) return UNKNOWN_CONSTRUCT_MESSAGE
                 const nested = findSecurityViolation(value)
                 if (nested !== null) return nested
-                stack.push(false)
                 break
             }
             default:
                 return UNKNOWN_CONSTRUCT_MESSAGE
         }
     }
-    return stack.includes(true) ? FUNCTION_VALUE_MESSAGE : null
+    return null
 }
 
 function identifierViolation(name: unknown): string | null {
@@ -1059,8 +1169,8 @@ function identifierViolation(name: unknown): string | null {
 
 // expr-eval resolves a bare identifier with `name in expr.functions`, then
 // `name in expr.unaryOps`, then `values[name]` — and `in` walks the prototype
-// chain. `parser.functions` is null-prototyped and the scope is a
-// null-prototype copy, but `parser.unaryOps` deliberately keeps
+// chain. `parser.functions` is null-prototyped and the scope root built by
+// `toPlainDataScope` is too, but `parser.unaryOps` deliberately keeps
 // `Object.prototype` (see "Why NOT null the operator tables" above), so a name
 // such as `toString` would otherwise resolve to the inherited
 // `Object.prototype` method as a value. Refusing every identifier that a
@@ -1087,11 +1197,13 @@ function operatorViolationMessage(name: unknown): string {
 
 // Self-check, run once at module load: parses tiny known expressions with THIS
 // parser instance and asserts the instruction tree carries the tags
-// `findSecurityViolation` assumes. These instruction-type strings are expr-eval
-// internals, not published API — if a future version renames one, the gate would
-// silently stop matching and a defence would be defeated with zero signal, the same
-// failure shape as the `builtInConcat`/`Reflect.deleteProperty` checks. Throwing
-// here turns that into a loud failure at startup.
+// `findSecurityViolation` assumes, and that the library still refuses a callee
+// that is not an entry of `parser.functions`. These instruction-type strings
+// and that callee check are library internals, not published API — if a future
+// version renames a tag or drops the check, the corresponding barrier would
+// silently stop applying with zero signal, the same failure shape as the
+// `builtInConcat`/`Reflect.deleteProperty` checks. Throwing here turns that
+// into a loud failure at startup.
 {
     const memberAccessProbe = parser.parse('a.b')
     if (!memberAccessProbe.tokens.some((token) => token.type === IMEMBER_INSTRUCTION_TYPE)) {
@@ -1108,17 +1220,31 @@ function operatorViolationMessage(name: unknown): string {
     const identifierProbe = parser.parse('abc')
     if (!identifierProbe.tokens.some((token) => token.type === IVAR_INSTRUCTION_TYPE)) {
         throw new Error(
-            `expr-eval no longer tags a bare identifier ("abc") as "${IVAR_INSTRUCTION_TYPE}" — the identifier-name filter and call allowlist are no longer effective`,
+            `expr-eval no longer tags a bare identifier ("abc") as "${IVAR_INSTRUCTION_TYPE}" — the identifier-name filter is no longer effective`,
         )
     }
     const callProbe = parser.parse('uppercase("x")')
     if (!callProbe.tokens.some((token) => token.type === IFUNCALL_INSTRUCTION_TYPE)) {
         throw new Error(
-            `expr-eval no longer tags a function call ("uppercase(...)") as "${IFUNCALL_INSTRUCTION_TYPE}" — the call allowlist is no longer effective`,
+            `expr-eval no longer tags a function call ("uppercase(...)") as "${IFUNCALL_INSTRUCTION_TYPE}" — the parsed tree no longer has the shape this module was checked against`,
         )
     }
     if (findSecurityViolation(callProbe.tokens) !== null) {
-        throw new Error('the formula security gate rejects a legitimate call to a registered function — the stack simulation no longer matches expr-eval')
+        throw new Error('the formula pre-evaluation pass rejects a legitimate call to a registered function')
+    }
+    // A method read off a string literal is a function the library itself
+    // puts on its stack; calling it must be refused by the library's callee
+    // allowlist (S1 relies on that check being in place). Evaluated directly,
+    // not through `evaluateRaw`, so this probes the library and nothing else.
+    let unregisteredCalleeRefused = false
+    try {
+        parser.parse('"a".at(0)').evaluate({})
+    }
+    catch {
+        unregisteredCalleeRefused = true
+    }
+    if (!unregisteredCalleeRefused) {
+        throw new Error('expr-eval-fork no longer refuses to call a function that is not an entry of parser.functions — only registered formula functions may be callable')
     }
 }
 
@@ -1144,4 +1270,13 @@ export const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'
 type ExprEvalInstruction = {
     type: string
     value: unknown
+}
+
+// One step of the S1 scope conversion. `verified` is the per-evaluation set
+// every produced object is recorded in; `ancestors` holds the input objects
+// currently being converted, for cycle detection.
+type PlainDataConversion = {
+    value: unknown
+    verified: WeakSet<object>
+    ancestors: WeakSet<object>
 }

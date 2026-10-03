@@ -23,7 +23,7 @@
           "error",
           {
             "property": "toJSFunction",
-            "message": "expr-eval's toJSFunction() compiles the expression with new Function() and has an unfixed code-execution advisory. Evaluate with parser.parse(...).evaluate(...) behind findSecurityViolation instead (see function-implementations.ts)."
+            "message": "expr-eval's toJSFunction() compiles the expression with new Function() and has an unfixed code-execution advisory. Evaluate through evaluateRaw instead (see function-implementations.ts)."
           }
         ]
       }

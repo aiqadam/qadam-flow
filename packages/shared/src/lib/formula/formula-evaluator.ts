@@ -149,7 +149,7 @@ function evaluateSingleFormula({ expression, sampleData }: EvaluateExpressionPar
     }
     catch (e) {
         if (e instanceof FormulaSizeLimitError || e instanceof FormulaSecurityError) return { result: null, error: e.message }
-        return { result: null, error: friendlyError(e) }
+        return { result: null, error: friendlyError({ error: e, expression: trimmed }) }
     }
 }
 
@@ -417,8 +417,8 @@ function validateFunctionArgs(expr: string): string | null {
     return null
 }
 
-function friendlyError(e: unknown): string {
-    const msg = String((e as Error).message ?? e)
+function friendlyError({ error, expression }: { error: unknown, expression: string }): string {
+    const msg = String((error as Error).message ?? error)
     // Already a complete, specific, user-facing sentence — thrown by
     // rewriteLazyIf's defensive fallback (see there), which should be
     // unreachable given validateFunctionArgs runs first, but is worded for
@@ -435,11 +435,28 @@ function friendlyError(e: unknown): string {
     if (/function definition is not permitted/i.test(msg)) {
         return 'Defining functions inside a formula is not supported'
     }
+    // The library's own refusal to call (or read as a member) anything that
+    // is not a registered formula function — see S1 in function-
+    // implementations.ts for why that check is the one that decides what a
+    // formula can call. Native, like the messages above.
+    if (/is not an allowed function/i.test(msg)) {
+        return 'Formula can only call built-in formula functions'
+    }
     if (/division by zero/i.test(msg)) {
         return 'Cannot divide by zero'
     }
     if (/parse error|Expected EOF|unexpected token|value expected|unexpected \)/i.test(msg)) {
         return 'Invalid formula — check for empty values or mismatched parentheses'
+    }
+    // `undefined variable: x` is the library's phrasing for a bare name that
+    // is neither a registered function, an operator nor a scope variable.
+    // When the formula text calls that name — `pow(2; 3)`, one of the
+    // built-ins the allowlist sweep removed — the user wrote a call to
+    // something that is not a formula function, and the message says so.
+    // A bare unknown name keeps the generic message below.
+    const unknownName = msg.match(/undefined variable: (\w+)/)?.[1]
+    if (unknownName !== undefined && new RegExp(`\\b${unknownName}\\s*\\(`).test(expression)) {
+        return 'Formula can only call built-in formula functions'
     }
     if (/is not defined/i.test(msg)) {
         const m = msg.match(/(\w+) is not defined/)

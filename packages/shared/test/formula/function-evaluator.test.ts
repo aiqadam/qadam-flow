@@ -1172,18 +1172,14 @@ describe('formula size bounds', () => {
 // names is removed even while the fork's runtime checks are still present.
 // Both callers reach the same entry point, formulaEvaluator.evaluate: the
 // engine path (props-resolver.ts) and the web builder preview
-// (tiptap-editor.tsx). Invariant: whatever the scope holds, a formula can only
-// call a registered formula function, and it can never itself produce, store
-// or pass a function value. Values a caller places in the scope are evaluated
-// as that caller's data: the web preview passes JSON sample data, and the
-// engine passes values resolved from the flow's own tokens.
-//
-// Every test here must fail if the specific defence it names is removed — the
-// defences live in function-implementations.ts (findSecurityViolation +
-// null-prototyped tables + operators.fndef:false). The defences, by layer:
-//   D1 function values are call-only: an IFUNCALL callee must be a bare
-//      identifier naming an OWN registered formula function, and such a value
-//      can never be stored, passed, operated on or returned.
+// (tiptap-editor.tsx). What the evaluator guarantees, and what each test
+// below checks, is stated in terms of DATA, not of the library's value stack:
+//   S1 the scope a formula reads is plain data — a JSON-shaped copy of the
+//      caller's values with no function at any depth (function-
+//      implementations.ts, toPlainDataScope).
+//   S2 every argument a registered function or operator receives, every value
+//      one returns, and the final result hold no function at any depth
+//      (assertHoldsNoFunction, installed on every table entry).
 //   D2 own-property resolution: identifiers and {{path}} references never
 //      resolve to an inherited Object.prototype member.
 //   D3a forbidden names: constructor/__proto__/prototype as member, identifier
@@ -1191,6 +1187,14 @@ describe('formula size bounds', () => {
 //   D3b operator own-key: an operator must be an OWN key of its table (blocks
 //      inherited Object.prototype names used as operators, e.g. toString(1)).
 //   D4 fndef disabled: expr-eval's ()= function-definition operator.
+// Which functions a formula can CALL is decided by the library's own callee
+// allowlist (an IFUNCALL callee must be an entry of parser.functions); S1 is
+// what makes its "own value of a scope object" allowance unreachable, and a
+// module-load self-check asserts the allowlist is still in place. The tests
+// in the "callee" group below therefore assert the library's refusal, mapped
+// to a user-facing message, not an in-tree check.
+//
+// Every S/D test here must fail if the in-tree check it names is removed.
 // ---------------------------------------------------------------------------
 describe('expr-eval advisories (#616)', () => {
     const canary = { hit: false }
@@ -1221,11 +1225,12 @@ describe('expr-eval advisories (#616)', () => {
     })
 
     // GHSA-jc85-fpwf-qm7x / CVE-2025-12735 (high) — evaluate() does not restrict
-    // the functions reachable through the scope it is given. The call allowlist
-    // (D1) refuses any callee that is not a registered formula function, so a
-    // function reached by name, member, or index cannot be invoked.
+    // the functions reachable through the scope it is given. S1 means no such
+    // function is in the scope a formula reads (the slot reads as null or is
+    // absent), and the library's callee allowlist refuses whatever the formula
+    // then tries to call in its place.
     describe('GHSA-jc85-fpwf-qm7x (functions passed to evaluate)', () => {
-        it('a function reached by member is not callable (D1)', () => {
+        it('a function reached by member is not callable', () => {
             canary.hit = false
             const { result: r, error } = ok('{{o}}.exec("x")', { o: { exec: canaryFn } })
             expect(canary.hit).toBe(false)
@@ -1233,7 +1238,7 @@ describe('expr-eval advisories (#616)', () => {
             expect(error).toBe('Formula can only call built-in formula functions')
         })
 
-        it('a function reached by index is not callable (D1)', () => {
+        it('a function reached by index is not callable', () => {
             canary.hit = false
             const { result: r, error } = ok('{{a}}[0]("x")', { a: [canaryFn] })
             expect(canary.hit).toBe(false)
@@ -1241,7 +1246,7 @@ describe('expr-eval advisories (#616)', () => {
             expect(error).toBe('Formula can only call built-in formula functions')
         })
 
-        it('a function in scope is not callable by name (D1)', () => {
+        it('a function in scope is not callable by name', () => {
             canary.hit = false
             const { result: r, error } = ok('{{fn}}("x")', { fn: canaryFn })
             expect(canary.hit).toBe(false)
@@ -1342,42 +1347,79 @@ describe('expr-eval advisories (#616)', () => {
         })
     })
 
-    describe('function values are call-only (D1)', () => {
+    describe('evaluation scope holds plain data only (S1)', () => {
+        const march15 = new Date(Date.UTC(2024, 2, 15, 10, 30))
+
+        it('a function-valued field is absent from the scope', () => {
+            expect(result('keys({{o}})', { o: { f: canaryFn, b: 1 } })).toEqual(['b'])
+            expect(result('{{l}}', { l: [canaryFn, 1] })).toEqual([null, 1])
+        })
+
+        it('a function-valued variable reads as empty', () => {
+            expect(result('is_empty({{fn}})', { fn: canaryFn })).toBe(true)
+        })
+
+        it('a date reads as its ISO string and still formats', () => {
+            expect(result('{{d}}', { d: march15 })).toBe('2024-03-15T10:30:00.000Z')
+            expect(result('format_date({{d}}; "YYYY-MM-DD")', { d: march15 })).toBe('2024-03-15')
+            expect(result('add_days({{d}}; 1)', { d: march15 })).toBe('2024-03-16T10:30:00.000Z')
+        })
+
+        it('a class instance reads as its own enumerable properties', () => {
+            class Item {
+                constructor(readonly name: string) {}
+                describe(): string {
+                    return this.name
+                }
+            }
+            expect(result('{{i}}', { i: new Item('a') })).toStrictEqual({ name: 'a' })
+            expect(result('{{m}}', { m: new Map([['a', 1]]) })).toStrictEqual({})
+        })
+
+        it('non-finite numbers read as null', () => {
+            expect(result('{{l}}', { l: [NaN, Infinity, 1] })).toEqual([null, null, 1])
+        })
+
+        it('the formula reads a copy, never the caller\'s own object', () => {
+            const o = { a: [1] }
+            const r = result('{{o}}', { o })
+            expect(r).toEqual({ a: [1] })
+            expect(r).not.toBe(o)
+        })
+
+        it('scope values keep resolving as before', () => {
+            expect(result('{{o}}.a.b', { o: { a: { b: 'x' } } })).toBe('x')
+            expect(result('{{l}}[1]', { l: ['zero', 'one'] })).toBe('one')
+            expect(result('{{n}} + 1', { n: 2 })).toBe(3)
+            expect(result('{{b}} ? "y" : "n"', { b: false })).toBe('n')
+            expect(result('{{e}}', { e: null })).toBeNull()
+        })
+    })
+
+    describe('values a formula builds never hold functions (S2)', () => {
         const FUNCTION_VALUE_ERROR = 'Formula functions can only be called, not used as values'
 
-        it('a conditional expression never yields a callable value', () => {
-            canary.hit = false
-            for (const expr of ['(uppercase ? {{fn}} : 0)("x")', '((1 > 0) ? uppercase : lowercase)("x")']) {
-                const { result: r, error } = ok(expr, { fn: canaryFn })
-                expect(r).toBeNull()
-                expect(error).toBe(FUNCTION_VALUE_ERROR)
-            }
-            expect(canary.hit).toBe(false)
-        })
-
-        it('a binary operator never yields a callable value', () => {
-            for (const expr of ['(uppercase || "a")("x")', '(uppercase and 1)("x")', '(uppercase == 1)("x")']) {
-                const { result: r, error } = ok(expr)
-                expect(r).toBeNull()
-                expect(error).toBe(FUNCTION_VALUE_ERROR)
+        it('a registered function is refused as an argument, an operand or an assigned value', () => {
+            for (const expr of ['first_item([uppercase])', 'keys(uppercase)', 'uppercase + 1', 'uppercase || "a"', 'uppercase == 1', 'x = uppercase']) {
+                expect(ok(expr)).toEqual({ result: null, error: FUNCTION_VALUE_ERROR })
             }
         })
 
-        it('a function value can only be called, never stored or passed', () => {
-            const cases = [
-                'uppercase',
-                'uppercase + 1',
-                'uppercase.name',
-                'first_item([uppercase])',
-                'first_item([(abs)])',
-                'x = uppercase',
-                '(1 > 0) ? uppercase : lowercase',
-                'count(m = build_object("f"; first_item([(abs)]))) + m.f',
-            ]
-            for (const expr of cases) {
-                const { result: r, error } = ok(expr)
-                expect(r).toBeNull()
-                expect(error).toBe(FUNCTION_VALUE_ERROR)
+        it('the result of a formula is plain data', () => {
+            for (const expr of ['uppercase', '(1 > 0) ? uppercase : lowercase', '[uppercase]']) {
+                expect(ok(expr)).toEqual({ result: null, error: FUNCTION_VALUE_ERROR })
+            }
+        })
+
+        it('a method read off a text value is a function and is refused like any other', () => {
+            for (const expr of ['{{s}}.at', 'x = {{s}}.at', 'count([{{s}}.at])']) {
+                expect(ok(expr, { s: 'a' })).toEqual({ result: null, error: FUNCTION_VALUE_ERROR })
+            }
+        })
+
+        it('a unary operator name is refused as a value before evaluation', () => {
+            for (const expr of ['(abs)', 'first_item([(abs)])', '(sqrt)']) {
+                expect(ok(expr)).toEqual({ result: null, error: FUNCTION_VALUE_ERROR })
             }
         })
 
@@ -1408,10 +1450,12 @@ describe('expr-eval advisories (#616)', () => {
             expect(Date.now() - started).toBeLessThan(2000)
         })
 
-        it('a call result is never callable', () => {
-            const { result: r, error } = ok('uppercase("a")("b")')
-            expect(r).toBeNull()
-            expect(error).toBe('Formula can only call built-in formula functions')
+        it('a large scope value passed through many steps is checked once, not per step', () => {
+            const big = Array.from({ length: 50000 }, (_, i) => ({ k: i }))
+            const started = Date.now()
+            const chained = `count(${'if_empty('.repeat(200)}{{big}}${'; 0)'.repeat(200)})`
+            expect(ok(chained, { big })).toEqual({ result: 50000, error: null })
+            expect(Date.now() - started).toBeLessThan(2000)
         })
 
         it('registered functions stay callable inside operators, branches and arguments', () => {
@@ -1419,6 +1463,38 @@ describe('expr-eval advisories (#616)', () => {
             expect(result('uppercase("a") || lowercase("B")')).toBe('Ab')
             expect(result('combine(uppercase("a"); trim(" b "))')).toBe('Ab')
             expect(result('-absolute(-3) + 1')).toBe(-2)
+            expect(result('(x = uppercase("a")) || "b"')).toBe('Ab')
+        })
+    })
+
+    // Decided by the library's callee allowlist (see the header). S1 makes
+    // its scope-based allowance unreachable, so the only callable values are
+    // the registered formula functions.
+    describe('a callee is always a registered formula function', () => {
+        const CALLEE_ERROR = 'Formula can only call built-in formula functions'
+
+        it('a call result is never callable', () => {
+            expect(ok('uppercase("a")("b")')).toEqual({ result: null, error: CALLEE_ERROR })
+        })
+
+        it('a method of a text value is not callable', () => {
+            expect(ok('{{s}}.at(0)', { s: 'a' })).toEqual({ result: null, error: CALLEE_ERROR })
+        })
+
+        it('a non-function selected by a conditional or an operator is not callable', () => {
+            canary.hit = false
+            for (const expr of ['(uppercase ? {{fn}} : 0)("x")', '(uppercase and 1)("x")']) {
+                expect(ok(expr, { fn: canaryFn })).toEqual({ result: null, error: CALLEE_ERROR })
+            }
+            expect(canary.hit).toBe(false)
+        })
+
+        it('a registered function selected by a conditional is called like a direct call', () => {
+            expect(result('((1 > 0) ? uppercase : lowercase)("x")')).toBe('X')
+        })
+
+        it('a call to a removed library built-in is reported as a call to a non-formula function', () => {
+            expect(error('pow(2; 3)')).toBe(CALLEE_ERROR)
         })
     })
 
@@ -1436,7 +1512,9 @@ describe('expr-eval advisories (#616)', () => {
             expect(result('pluck({{l}}; "constructor")', { l: [{ a: 1 }, { constructor: 'own' }] })).toEqual([undefined, 'own'])
             expect(result('find_by({{l}}; "constructor"; "own")', { l: [{ a: 1 }, { constructor: 'own' }] })).toEqual({ constructor: 'own' })
             expect(result('filter_list({{l}}; "constructor"; "native"; "contains")', { l: [{ a: 1 }] })).toEqual([])
-            expect(result('sort_list({{l}}; "constructor")', { l: [{ constructor: 2 }, {}, { constructor: 1 }] })).toEqual([{ constructor: 1 }, { constructor: 2 }, {}])
+            const unsorted: Record<string, unknown>[] = [{ constructor: 2 }, {}, { constructor: 1 }]
+            const sorted: Record<string, unknown>[] = [{ constructor: 1 }, { constructor: 2 }, {}]
+            expect(result('sort_list({{l}}; "constructor")', { l: unsorted })).toEqual(sorted)
         })
     })
 })
