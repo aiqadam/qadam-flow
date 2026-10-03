@@ -71,6 +71,8 @@ export const qadamInstaller = (log: Logger, apiClient: WorkerToApiContract) => (
     },
 
     getCustomPiecesPath,
+
+    hasInstallableCoordinates,
 })
 
 function getCustomPiecesPath(platformId: string): string {
@@ -807,10 +809,10 @@ function getPackageArchivePathForQadam(rootWorkspace: string, qadamPackage: Priv
 // an older API image, still arrive here, and other tenants' members can share this workspace, so
 // the check fails closed rather than trusting the caller.
 function qadamPath({ rootWorkspace, piece }: QadamPathParams): string {
-    if (!NPM_PACKAGE_NAME_REGEX.test(piece.qadamName)) {
+    if (!isInstallableName(piece.qadamName)) {
         throw new Error(`[qadamInstaller] Refusing qadam name ${JSON.stringify(piece.qadamName)}: it is not a valid npm package name`)
     }
-    if (piece.qadamVersion.length === 0 || /[\\/]/.test(piece.qadamVersion)) {
+    if (!isSinglePathSegment(piece.qadamVersion)) {
         throw new Error(`[qadamInstaller] Refusing qadam version ${JSON.stringify(piece.qadamVersion)} for ${piece.qadamName}: it is not a single path segment`)
     }
     const member = join(rootWorkspace, QADAMS_DIR, `${piece.qadamName}-${piece.qadamVersion}`)
@@ -819,6 +821,20 @@ function qadamPath({ rootWorkspace, piece }: QadamPathParams): string {
         throw new Error(`[qadamInstaller] Refusing ${piece.qadamName}@${piece.qadamVersion}: its directory resolves outside ${membersRoot}`)
     }
     return member
+}
+
+// The same two checks `qadamPath` throws on, for callers that would rather set such a qadam
+// aside than fail the batch it arrived in.
+function hasInstallableCoordinates(piece: QadamPackage): boolean {
+    return isInstallableName(piece.qadamName) && isSinglePathSegment(piece.qadamVersion)
+}
+
+function isInstallableName(qadamName: string): boolean {
+    return NPM_PACKAGE_NAME_REGEX.test(qadamName)
+}
+
+function isSinglePathSegment(value: string): boolean {
+    return value.length > 0 && !/[\\/]/.test(value)
 }
 
 function relativeQadamPath({ rootWorkspace, piece }: QadamPathParams): string {

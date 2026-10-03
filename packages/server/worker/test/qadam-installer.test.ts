@@ -386,7 +386,7 @@ describe('qadamInstaller', () => {
         expect(bunfig).not.toContain('@aiqadam/qadam-slack')
     })
 
-    it('never writes a name that is not a package name into the excludes array', async () => {
+    it('refuses a name that is not a package name before bunfig.toml or any member is written', async () => {
         const injected = makeQadam('@acme/x"]\nregistry = "http://evil.example')
         const installer = qadamInstaller(fakeLog, fakeApiClient)
 
@@ -405,6 +405,7 @@ describe('qadamInstaller', () => {
             ['@acme/qadam-a/../../x'],
             ['/x'],
             ['Upper'],
+            ['~a'],
             [''],
         ])('rejects name %j, outside the npm package-name grammar, before touching the filesystem', async (name) => {
             await expectRefusedWithoutWrites({ piece: makeQadam(name), message: 'not a valid npm package name' })
@@ -419,7 +420,6 @@ describe('qadamInstaller', () => {
         })
 
         it('rejects an ARCHIVE qadam before its archive is fetched or written', async () => {
-            const getQadamArchive = vi.fn()
             const archive: QadamPackage = {
                 packageType: PackageType.ARCHIVE,
                 qadamType: QadamType.CUSTOM,
@@ -428,11 +428,11 @@ describe('qadamInstaller', () => {
                 archiveId: 'archive_1',
                 platformId: 'platform_1',
             }
-            const installer = qadamInstaller(fakeLog, { getQadamArchive } as never)
+            // `fakeApiClient` has no getQadamArchive: reaching the fetch would fail with a different error.
+            const installer = qadamInstaller(fakeLog, fakeApiClient)
 
             await expect(installer.install({ pieces: [archive], includeFilters: true })).rejects.toThrow('not a valid npm package name')
 
-            expect(getQadamArchive).not.toHaveBeenCalled()
             expect(await readdir(testWorkspace)).toEqual([])
         })
 
@@ -448,7 +448,7 @@ describe('qadamInstaller', () => {
         })
 
         it('still installs scoped and unscoped names inside the grammar', async () => {
-            const scoped = makeQadam('@acme/qadam-a.b_c~d')
+            const scoped = makeQadam('@acme/qadam-a.b_c-d')
             const unscoped = makeQadam('qadam-plain')
             const installer = qadamInstaller(fakeLog, fakeApiClient)
             mockInstall.mockImplementation(simulateBunInstall)

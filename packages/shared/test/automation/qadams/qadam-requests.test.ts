@@ -6,9 +6,8 @@ describe('AddQadamRequestBody qadamName', () => {
     it.each([
         ['@acme/qadam-a'],
         ['qadam-a'],
-        ['@acme/qadam.a_b~c'],
+        ['@acme/qadam.a_b-c'],
         ['a'],
-        ['~a'],
         ['0-9'],
     ])('accepts %j, inside the npm package-name grammar', (qadamName) => {
         expect(AddQadamRequestBody.safeParse(registryBody({ qadamName })).success).toBe(true)
@@ -32,6 +31,8 @@ describe('AddQadamRequestBody qadamName', () => {
         ['a\\b'],
         ['a b'],
         ['a\n'],
+        ['~a'],
+        ['@acme/a~b'],
     ])('rejects %j, outside the npm package-name grammar, with an i18n key', (qadamName) => {
         for (const body of [registryBody({ qadamName }), archiveBody({ qadamName })]) {
             const result = AddQadamRequestBody.safeParse(body)
