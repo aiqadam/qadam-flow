@@ -25,7 +25,7 @@ import { trace } from '@opentelemetry/api'
 import { nanoid } from 'nanoid'
 import type { Logger } from 'pino'
 import { io, Socket } from 'socket.io-client'
-import { qadamInstaller } from './cache/qadams/qadam-installer'
+import { qadamWarmup } from './cache/qadams/qadam-warmup'
 import { getApiUrl, system, WorkerSystemProp } from './config/configs'
 import { logger } from './config/logger'
 import { workerSettings } from './config/worker-settings'
@@ -206,7 +206,7 @@ export const worker = {
             if (stopped) {
                 return
             }
-            void warmupPiecesOnStartup(apiClient)
+            void qadamWarmup.warmupUsedQadams({ apiClient, log: logger })
             if (isNil(pollingWorkers)) {
                 pollingWorkers = launchPollingWorkers(apiClient)
             }
@@ -898,33 +898,6 @@ async function buildSandboxInfo(): Promise<SandboxInformation[]> {
         busy: sandbox.busy,
         memoryUsageBytes: await systemUsage.getProcessTreeMemoryBytes(sandbox.pid),
     })))
-}
-
-async function warmupPiecesOnStartup(apiClient: WorkerToApiContract): Promise<void> {
-    const { data: pieces, error } = await tryCatch(() => apiClient.getUsedQadams({}))
-    if (error) {
-        logger.error({ error }, 'Failed to fetch used pieces for warmup')
-        return
-    }
-    if (!pieces || pieces.length === 0) {
-        logger.info('No pieces to warm up')
-        return
-    }
-    logger.info({ count: pieces.length }, 'Starting piece cache warmup')
-    const { error: installError } = await tryCatch(() =>
-        // Filtered, like the provisioner's install: without `--filter`, bun installs every
-        // workspace in the shared cache, and it does so while holding the cross-replica
-        // fileLock that job provisioning also waits on. That was inert while the workspaces
-        // glob matched nothing; it is not any more.
-        qadamInstaller(logger, apiClient).install({ pieces, includeFilters: true }),
-    )
-    if (installError) {
-        logger.error({ error: installError }, 'Failed to install pieces during startup warmup')
-    }
-    else {
-        void tryCatch(() => apiClient.markQadamAsUsed({ pieces }))
-    }
-    logger.info({ count: pieces.length }, 'Piece cache warmup complete')
 }
 
 function buildErrorMessage(execError: Error | undefined, result: JobResult | undefined): string | undefined {

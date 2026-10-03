@@ -1,4 +1,4 @@
-import { access, glob, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { access, glob, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -90,6 +90,16 @@ function readyFilePath(qadam: QadamPackage): string {
 
 async function pathExists(p: string): Promise<boolean> {
     return access(p).then(() => true, () => false)
+}
+
+async function expectRefusedWithoutWrites({ piece, message }: { piece: QadamPackage, message: string }): Promise<void> {
+    const installer = qadamInstaller(fakeLog, fakeApiClient)
+    mockInstall.mockImplementation(simulateBunInstall)
+
+    await expect(installer.install({ pieces: [piece], includeFilters: true })).rejects.toThrow(message)
+
+    expect(mockInstall).not.toHaveBeenCalled()
+    expect(await readdir(testWorkspace)).toEqual([])
 }
 
 function readWorkspaceGlobs(packageJson: unknown): string[] {
@@ -376,17 +386,78 @@ describe('qadamInstaller', () => {
         expect(bunfig).not.toContain('@aiqadam/qadam-slack')
     })
 
-    it('never writes a name that is not a package name into the excludes array', async () => {
+    it('refuses a name that is not a package name before bunfig.toml or any member is written', async () => {
         const injected = makeQadam('@acme/x"]\nregistry = "http://evil.example')
         const installer = qadamInstaller(fakeLog, fakeApiClient)
 
         mockInstall.mockImplementation(simulateBunInstall)
 
-        await installer.install({ pieces: [injected], includeFilters: true })
+        await expect(installer.install({ pieces: [injected], includeFilters: true })).rejects.toThrow('not a valid npm package name')
 
-        const bunfig = await readFile(join(testWorkspace, 'bunfig.toml'), 'utf8')
-        expect(bunfig).toContain('minimumReleaseAgeExcludes = []')
-        expect(bunfig).not.toContain('evil.example')
+        expect(mockInstall).not.toHaveBeenCalled()
+        expect(await pathExists(join(testWorkspace, 'bunfig.toml'))).toBe(false)
+    })
+
+    describe('refuses qadam coordinates that do not name a member directory', () => {
+        it.each([
+            ['../x'],
+            ['@acme/../x'],
+            ['@acme/qadam-a/../../x'],
+            ['/x'],
+            ['Upper'],
+            ['~a'],
+            [''],
+        ])('rejects name %j, outside the npm package-name grammar, before touching the filesystem', async (name) => {
+            await expectRefusedWithoutWrites({ piece: makeQadam(name), message: 'not a valid npm package name' })
+        })
+
+        it.each([
+            ['1.0.0/../../x'],
+            ['1.0.0\\x'],
+            [''],
+        ])('rejects version %j, not a single path segment, before touching the filesystem', async (version) => {
+            await expectRefusedWithoutWrites({ piece: makeQadam('@acme/qadam-a', version), message: 'not a single path segment' })
+        })
+
+        it('rejects an ARCHIVE qadam before its archive is fetched or written', async () => {
+            const archive: QadamPackage = {
+                packageType: PackageType.ARCHIVE,
+                qadamType: QadamType.CUSTOM,
+                qadamName: '../x',
+                qadamVersion: '1.0.0',
+                archiveId: 'archive_1',
+                platformId: 'platform_1',
+            }
+            // `fakeApiClient` has no getQadamArchive: reaching the fetch would fail with a different error.
+            const installer = qadamInstaller(fakeLog, fakeApiClient)
+
+            await expect(installer.install({ pieces: [archive], includeFilters: true })).rejects.toThrow('not a valid npm package name')
+
+            expect(await readdir(testWorkspace)).toEqual([])
+        })
+
+        it('fails the whole install, leaving a valid qadam in the same batch uninstalled', async () => {
+            const valid = makeQadam('@acme/qadam-a')
+            const installer = qadamInstaller(fakeLog, fakeApiClient)
+            mockInstall.mockImplementation(simulateBunInstall)
+
+            await expect(installer.install({ pieces: [valid, makeQadam('../x')], includeFilters: true })).rejects.toThrow('not a valid npm package name')
+
+            expect(mockInstall).not.toHaveBeenCalled()
+            expect(await readdir(testWorkspace)).toEqual([])
+        })
+
+        it('still installs scoped and unscoped names inside the grammar', async () => {
+            const scoped = makeQadam('@acme/qadam-a.b_c-d')
+            const unscoped = makeQadam('qadam-plain')
+            const installer = qadamInstaller(fakeLog, fakeApiClient)
+            mockInstall.mockImplementation(simulateBunInstall)
+
+            await installer.install({ pieces: [scoped, unscoped], includeFilters: true })
+
+            expect(await pathExists(readyFilePath(scoped))).toBe(true)
+            expect(await pathExists(readyFilePath(unscoped))).toBe(true)
+        })
     })
 
     it('the workspaces glob matches the directory qadams are written to', async () => {

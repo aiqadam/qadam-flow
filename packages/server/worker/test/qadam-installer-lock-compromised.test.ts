@@ -398,9 +398,10 @@ describe('qadamInstaller after an install that stopped without rolling back', ()
         expect(await pathExists(join(qadamDirPath(slashed), 'ready'))).toBe(true)
     })
 
-    // A qadam name is not checked against npm's naming rules on the way here, so the layout under
-    // `qadams/` cannot be read off the first path segment: `a/b` puts a ready member inside a
-    // directory that is not a member, and a bare `@foo` is a member, not a scope.
+    // Directories already on disk can predate the npm-grammar check the installer applies to
+    // qadam names, so the layout under `qadams/` cannot be read off the first path segment:
+    // `a/b` puts a ready member inside a directory that is not a member, and a bare `@foo` is a
+    // member, not a scope.
     it('removes only directories that are members, and never one holding a ready member', async () => {
         const slashed = makeQadam('acme/tools')
         const bareAt = makeQadam('@foo')
