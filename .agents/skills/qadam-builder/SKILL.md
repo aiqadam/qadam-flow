@@ -179,10 +179,10 @@ Which segment you bump depends on the version the qadam is on now. The slot rule
 |---|---|---|
 | **Breaking**: remove an action/trigger/prop; add a **required prop with no `defaultValue`** to an existing action/trigger (see below — give it a default instead if the old behavior can be preserved); change existing behavior | **minor** (`0.4.15` → `0.5.0`) | **major** (`1.1.6` → `2.0.0`) |
 | **Non-breaking addition**: add a new action or trigger; add an **optional** prop; add a **required prop that carries a `defaultValue`** reproducing the old behavior; add an output attribute | **patch** | **minor** |
-| **New export**: a new named export from the qadam's `src/index.ts` (e.g. re-exporting its auth so another qadam can import it) | **minor** | **minor** |
+| **New export**: a new named export from the qadam's `src/index.ts` — most often a new helper (e.g. a client factory another qadam imports) or a re-exported auth | **minor** | **minor** |
 | **Fix**: fix a bug | **patch** | **patch** |
 
-A new action or trigger is **not** a "new export" in AGENTS.md's sense. A qadam's package entry exports its `createQadam(...)` object (and, for a few qadams, its auth). Actions and triggers are entries inside that object, reached only through the platform; no consumer imports them by name. Adding one is a non-breaking addition, which AGENTS.md puts on patch for `0.x`. The "new export" row is for the rarer case where `src/index.ts` itself gains a named export.
+A new action or trigger is **not** a "new export" in AGENTS.md's sense. A qadam's package entry exports its `createQadam(...)` object, and roughly a third of qadams (76 of 238 when this was written) also export their auth or helpers from it (`slackAuth`, gmail's `getAccessToken`, sftp's `getClient`). Actions and triggers are entries inside the qadam object, reached only through the platform; no consumer imports them by name. Adding one is a non-breaking addition, which AGENTS.md puts on patch for `0.x`. The "new export" row is for when `src/index.ts` itself gains a named export.
 
 Rule of thumb: **any removal is breaking; a new required prop is breaking unless it carries a `defaultValue` that preserves prior behavior; everything else is non-breaking.** When in doubt, treat the change as breaking. A break goes in the breaking slot for the qadam's line: minor on `0.x`, major from `1.0.0` on. Do not take a `0.x` qadam to `1.0.0` just to signal a break; that is a separate decision (declaring the qadam stable), not the breaking slot.
 

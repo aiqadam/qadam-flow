@@ -18,6 +18,7 @@ The version number is `MAJOR.MINOR.PATCH`. Which segment a change goes in depend
 |---|---|---|
 | Breaking change | MINOR (`0.4.15` → `0.5.0`) | MAJOR (`1.1.6` → `2.0.0`) |
 | New functionality that doesn't break existing flows | PATCH | MINOR |
+| New named export from the package entry (`src/index.ts`) | MINOR | MINOR |
 | Bug fix that doesn't change behavior | PATCH | PATCH |
 
 On `0.x`, MINOR is the breaking segment. npm reads versions the same way: the range `^0.4.15` accepts `0.4.16` but not `0.5.0`. The builder's version dialog also warns whenever an upgrade crosses a minor or major boundary, so a breaking change on `0.x` reaches the people upgrading a step with that warning. Don't move a `0.x` qadam to `1.0.0` only to mark a breaking change; `1.0.0` is the point where you declare the qadam stable.

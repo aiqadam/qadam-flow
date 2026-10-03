@@ -51,10 +51,10 @@ the language rules OCR already merges from its system layer.
   (the `0.x` breaking slot, e.g. `0.6.14` → `0.7.0`) for a removed
   action/trigger/prop, a new *required* prop with no `defaultValue` that
   preserves the old behaviour, or any other change to existing behaviour (a
-  required prop *with* such a default is a non-breaking addition). On a qadam already at `1.0.0` or later the breaking slot is major
-  and a non-breaking addition is minor. A diff can legitimately touch several
-  qadams in one PR — check each changed qadam's own `package.json`, not just
-  one of them.
+  required prop *with* such a default is a non-breaking addition). On a qadam
+  already at `1.0.0` or later the breaking slot is major and a non-breaking
+  addition is minor. A diff can legitimately touch several qadams in one PR —
+  check each changed qadam's own `package.json`, not just one of them.
 - **A `StaticDropdown`/`StaticMultiSelectDropdown` prop's own `defaultValue`
   must be one of its own declared `options`** (#427). The framework's
   `staticDropdownSchema` accepts a prop's own out-of-list default so the form

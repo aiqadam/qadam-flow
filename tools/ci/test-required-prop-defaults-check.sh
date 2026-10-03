@@ -267,6 +267,7 @@ read -r dir base head <<< "$(build_case reject-new-required-trigger community 0.
 createTrigger)"
 run_check "$dir" "$base" "$head"
 expect_status 1 "createTrigger is scanned, not just createAction"
+expect_contains "createTrigger('demo_action')" "the violation is a real finding naming the trigger factory, not a crash exiting 1"
 
 echo "== on 0.x, the same change paired with a MINOR bump (the 0.x breaking slot) passes (#670) =="
 
@@ -299,6 +300,7 @@ read -r dir base head <<< "$(build_case reject-patch-bump-on-0x-nonzero-minor co
     execution_mode: Property.ShortText({ displayName: 'Execution Mode', required: true }),")"
 run_check "$dir" "$base" "$head"
 expect_status 1 "0.x qadam already on minor 5, patch bump 0.5.0 -> 0.5.1 -> FAIL — mutation: accepting any head minor above 0 instead of above the base minor makes this PASS"
+expect_contains "0.5.0 -> 0.5.1" "violation names the version pair (a crash also exits 1, so the status alone proves nothing)"
 
 echo "== on 0.x, a MAJOR bump (0.x -> 1.0.0) is past the breaking slot and still passes =="
 
@@ -360,6 +362,7 @@ read -r dir base head <<< "$(build_case reject-default-undefined community 0.1.0
     execution_mode: Property.ShortText({ displayName: 'Execution Mode', required: true, defaultValue: undefined }),")"
 run_check "$dir" "$base" "$head"
 expect_status 1 "defaultValue: undefined is not a real default -> FAIL"
+expect_contains "became required with no defaultValue" "the exit 1 comes from a real violation, not a crash"
 
 echo "== a defaultValue of literally null does NOT count as a default (F6) =="
 
@@ -370,6 +373,7 @@ read -r dir base head <<< "$(build_case reject-default-null community 0.1.0 \
     execution_mode: Property.ShortText({ displayName: 'Execution Mode', required: true, defaultValue: null }),")"
 run_check "$dir" "$base" "$head"
 expect_status 1 "defaultValue: null is not a real default -> FAIL"
+expect_contains "became required with no defaultValue" "the exit 1 comes from a real violation, not a crash"
 
 echo "== a defaultValue of literally void 0 does NOT count as a default (F6/finding 9) =="
 
@@ -380,6 +384,7 @@ read -r dir base head <<< "$(build_case reject-default-void community 0.1.0 \
     execution_mode: Property.ShortText({ displayName: 'Execution Mode', required: true, defaultValue: void 0 }),")"
 run_check "$dir" "$base" "$head"
 expect_status 1 "defaultValue: void 0 is not a real default -> FAIL"
+expect_contains "became required with no defaultValue" "the exit 1 comes from a real violation, not a crash"
 
 echo "== a defaultValue of an empty string does NOT count as a default (finding 9) =="
 
@@ -390,6 +395,7 @@ read -r dir base head <<< "$(build_case reject-default-empty-string community 0.
     execution_mode: Property.ShortText({ displayName: 'Execution Mode', required: true, defaultValue: '' }),")"
 run_check "$dir" "$base" "$head"
 expect_status 1 "defaultValue: '' is as unconfigured as no default at all -> FAIL, for consistency with AGENTS.md's dropdown-defaults empty-string sentinel"
+expect_contains "became required with no defaultValue" "the exit 1 comes from a real violation, not a crash"
 
 echo "== a defaultValue removed from an already-required prop is caught =="
 
@@ -399,6 +405,7 @@ read -r dir base head <<< "$(build_case reject-default-removed community 0.1.0 \
 "    execution_mode: Property.ShortText({ displayName: 'Execution Mode', required: true }),")"
 run_check "$dir" "$base" "$head"
 expect_status 1 "defaultValue dropped from an already-required prop, patch bump only -> FAIL"
+expect_contains "became required with no defaultValue" "the exit 1 comes from a real violation, not a crash"
 
 echo "== (F2a) a call outside Property.*/QadamAuth.* is unresolvable, even with a literal required:true =="
 
