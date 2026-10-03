@@ -1,5 +1,5 @@
 import { Parser } from 'expr-eval-fork'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { formulaEvaluator } from '../../src/lib/formula/formula-evaluator'
 
 const ok = (expr: string, data: Record<string, unknown> = {}) =>
@@ -352,7 +352,7 @@ describe('build_object', () => {
             { bad: { polluted: 1 }, ok: 'yes' },
         )
         expect(r).toEqual({ safe: 'yes' })
-        expect(({} as Record<string, unknown>).polluted).toBeUndefined()
+        expect(Object.prototype).not.toHaveProperty('polluted')
     })
 })
 
@@ -1080,14 +1080,14 @@ describe('formula size bounds', () => {
     // `x.prototype` parsed and evaluated successfully on `main`, since
     // those two names are not both inherited on every operator table the
     // way `constructor` is). These three tests are the ones that would fail
-    // if `findForbiddenMemberAccess` were ever removed without something
+    // if `findSecurityViolation` were ever removed without something
     // else replacing it — `.constructor` alone would still happen to be
     // caught by the accident.
     // `.constructor` specifically still hits the accidental parse-time
     // barrier BEFORE reaching the deliberate filter — `constructor` is
     // inherited on all three operator tables (unlike `__proto__`/
     // `prototype` below), so expr-eval never successfully parses this into
-    // an IMEMBER instruction for `findForbiddenMemberAccess` to see. Still
+    // an IMEMBER instruction for `findSecurityViolation` to see. Still
     // rejected, just via the older mechanism — asserted generically rather
     // than pinning the specific (accidental) message, since that message
     // is not this fix's to own.
@@ -1112,7 +1112,7 @@ describe('formula size bounds', () => {
     // A forbidden member name hidden inside a ternary branch or an
     // assignment's right-hand side is stored by expr-eval as a nested IEXPR
     // sub-array of instructions, not flattened into the top-level token
-    // list — findForbiddenMemberAccess must recurse into those or this
+    // list — findSecurityViolation must recurse into those or this
     // slips through.
     it('a forbidden member name inside a ternary branch is still rejected', () => {
         const { result: r, error } = ok('(1 > 0) ? {{obj}}.__proto__ : 2', { obj: { a: 1 } })
@@ -1208,18 +1208,16 @@ describe('expr-eval advisories (#616)', () => {
             // Stub toJSFunction on the shared Expression prototype to throw. If
             // the evaluator ever compiled formulas through it, these ordinary
             // formulas would throw; they must still evaluate normally.
-            const expressionProto = Object.getPrototypeOf(new Parser().parse('1')) as { toJSFunction: unknown }
-            const original = expressionProto.toJSFunction
-            expressionProto.toJSFunction = () => {
+            const toJSFunctionSpy = vi.spyOn(Object.getPrototypeOf(new Parser().parse('1')), 'toJSFunction').mockImplementation(() => {
                 throw new Error('toJSFunction must not be used by the formula evaluator')
-            }
+            })
             try {
                 expect(result('uppercase("hi")')).toBe('HI')
                 expect(result('add({{x}};{{y}})', { x: 2, y: 3 })).toBe(5)
                 expect(result('{{o}}.name', { o: { name: 'Bob' } })).toBe('Bob')
             }
             finally {
-                expressionProto.toJSFunction = original
+                toJSFunctionSpy.mockRestore()
             }
         })
     })
@@ -1269,7 +1267,7 @@ describe('expr-eval advisories (#616)', () => {
             const { result: r, error } = ok('({{o}}.__proto__.polluted = 1)', { o: {} })
             expect(r).toBeNull()
             expect(error).toBe('Formula cannot access ".__proto__" — this property name is not allowed')
-            expect(({} as Record<string, unknown>).polluted).toBeUndefined()
+            expect(Object.prototype).not.toHaveProperty('polluted')
         })
 
         it('.prototype member access is rejected (D3a)', () => {
@@ -1284,7 +1282,7 @@ describe('expr-eval advisories (#616)', () => {
             expect(error).toBe('Formula cannot use "__proto__" — this name is not allowed')
         })
 
-        it('bracket access with a string key is an array index, returning the first element, not a property (D)', () => {
+        it('bracket access with a string key is an array index, returning the first element, not a property', () => {
             // expr-eval's `[` coerces its operand to a number, so "constructor"
             // becomes index 0 — if `[` were a property lookup this would be the
             // constructor function, not the array's first element.

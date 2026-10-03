@@ -545,10 +545,7 @@ parser.functions.item_at = (list: unknown, idx: unknown) =>
 parser.functions.count = (list: unknown) => toArray(list).length
 parser.functions.sum = (list: unknown, field: unknown) => {
     return toArray(list).reduce<number>((acc, item) => {
-        const v =
-            typeof item === 'object' && item !== null
-                ? Number((item as Record<string, unknown>)[String(field)])
-                : 0
+        const v = Number(readField(item, String(field)))
         return acc + (isNaN(v) ? 0 : v)
     }, 0)
 }
@@ -556,10 +553,7 @@ parser.functions.average = (list: unknown, field: unknown) => {
     const arr = toArray(list)
     if (!arr.length) return 0
     const total = arr.reduce<number>((acc, item) => {
-        const v =
-            typeof item === 'object' && item !== null
-                ? Number((item as Record<string, unknown>)[String(field)])
-                : 0
+        const v = Number(readField(item, String(field)))
         return acc + (isNaN(v) ? 0 : v)
     }, 0)
     return total / arr.length
@@ -577,7 +571,7 @@ parser.functions.deduplicate = (list: unknown, field: unknown) => {
     return toArray(list).filter((item) => {
         const key =
             typeof item === 'object' && item !== null
-                ? (item as Record<string, unknown>)[String(field)]
+                ? readField(item, String(field))
                 : item
         if (seen.has(key)) return false
         seen.add(key)
@@ -727,9 +721,11 @@ for (const key of Object.keys(parser.functions)) {
 // `expr-eval-fork` carries the upstream fixes for the two `evaluate()`
 // advisories (it refuses to call a function that is not registered on
 // `parser.functions`, and refuses `__proto__`/`prototype`/`constructor` names
-// at evaluation time). Those are kept as a second line; the layers below are
-// this module's own and do not depend on them, so a regression in the library
-// cannot reopen a hole on its own.
+// at evaluation time — a loose pattern that also rejects names merely containing
+// "prototype", ending in "constructor" or starting with "__proto__", e.g. a
+// `my_prototype_id` key read with `.member` syntax). Those are kept as a second
+// line; the layers below are this module's own and do not depend on them, so a
+// regression in the library cannot reopen a hole on its own.
 //
 // expr-eval resolves a bare identifier (`IVAR`) in this order:
 // `name in expr.functions`, then `name in expr.unaryOps` (for an enabled
@@ -1000,17 +996,17 @@ function findSecurityViolation(tokens: ExprEvalInstruction[]): string | null {
                 stack.push(false)
                 break
             case 'IOP1':
-                if (!isOwnOperator(parser.unaryOps, value)) return operatorViolationMessage(value)
+                if (!isOwnOperator({ table: parser.unaryOps, name: value })) return operatorViolationMessage(value)
                 discard(1)
                 stack.push(false)
                 break
             case 'IOP2':
-                if (!isOwnOperator(parser.binaryOps, value)) return operatorViolationMessage(value)
+                if (!isOwnOperator({ table: parser.binaryOps, name: value })) return operatorViolationMessage(value)
                 discard(2)
                 stack.push(false)
                 break
             case 'IOP3':
-                if (!isOwnOperator(parser.ternaryOps, value)) return operatorViolationMessage(value)
+                if (!isOwnOperator({ table: parser.ternaryOps, name: value })) return operatorViolationMessage(value)
                 discard(3)
                 stack.push(false)
                 break
@@ -1064,7 +1060,7 @@ function isOwnFunctionKey(name: string): boolean {
     return Object.hasOwn(parser.functions, name)
 }
 
-function isOwnOperator(table: Record<string, unknown>, name: unknown): boolean {
+function isOwnOperator({ table, name }: { table: Record<string, unknown>, name: unknown }): boolean {
     return typeof name === 'string' && Object.hasOwn(table, name)
 }
 
@@ -1075,10 +1071,10 @@ function operatorViolationMessage(name: unknown): string {
 }
 
 // Self-check, run once at module load: parses tiny known expressions with THIS
-// parser instance and asserts the instruction tree carries the tags the two
-// filters above assume. These instruction-type strings are expr-eval internals,
-// not published API — if a future version renames one, a filter would silently
-// stop matching and a defence would be defeated with zero signal, the same
+// parser instance and asserts the instruction tree carries the tags
+// `findSecurityViolation` assumes. These instruction-type strings are expr-eval
+// internals, not published API — if a future version renames one, the gate would
+// silently stop matching and a defence would be defeated with zero signal, the same
 // failure shape as the `builtInConcat`/`Reflect.deleteProperty` checks. Throwing
 // here turns that into a loud failure at startup.
 {
