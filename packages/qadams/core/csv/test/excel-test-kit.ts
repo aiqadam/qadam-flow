@@ -15,6 +15,11 @@ export const excelTestKit = {
     return zipFixture.build(entries).toString('base64');
   },
 
+  // Every part of a workbook, as the conversion worker receives them.
+  workbookParts(base64: string): Record<string, Uint8Array> {
+    return xlsxArchive.extractEntries({ buffer: Buffer.from(base64, 'base64'), maxUncompressedBytes: Infinity, skipPart: () => false });
+  },
+
   readParts(base64: string): ZipFixtureEntry[] {
     const parts = xlsxArchive.extractEntries({ buffer: Buffer.from(base64, 'base64'), maxUncompressedBytes: Infinity, skipPart: () => false });
     return Object.entries(parts).map(([name, data]) => ({ name, data }));

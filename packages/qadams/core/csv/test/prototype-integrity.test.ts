@@ -1,10 +1,11 @@
 /// <reference types="vitest/globals" />
 
 import { PrototypeIntegrityError, prototypeIntegrity } from '../src/lib/common/prototype-integrity';
+import { workbookToCsv } from '../src/lib/common/workbook-to-csv';
 import { excelTestKit } from './excel-test-kit';
 import { zipFixture } from './zip-fixture';
 
-const { builtInPrototypeKeys, convert, workbookLoader, zipBase64 } = excelTestKit;
+const { builtInPrototypeKeys, workbookLoader, workbookParts, zipBase64 } = excelTestKit;
 
 describe('prototypeIntegrity', () => {
   test('fails the run and restores the prototype when the operation modifies one', async () => {
@@ -78,7 +79,7 @@ describe('prototypeIntegrity', () => {
     await expect(outcome).rejects.toThrow('Could not restore: Number.prototype[Symbol(permanent)]');
   });
 
-  test('converting a workbook runs the parser inside the guard', async () => {
+  test('a conversion runs the parser inside the guard', async () => {
     const addedKey = 'addedWhileLoading';
     const loader = workbookLoader();
     const originalLoad = loader.loadFromFiles;
@@ -89,7 +90,7 @@ describe('prototypeIntegrity', () => {
     const base64 = zipBase64(zipFixture.minimalWorkbookParts({ sheetData: '<row r="1"><c r="A1"><v>1</v></c></row>' }));
 
     try {
-      await expect(convert({ base64 })).rejects.toThrow(PrototypeIntegrityError);
+      await expect(workbookToCsv.convertGuarded({ parts: workbookParts(base64), sheetName: undefined, delimiter: ',' })).rejects.toThrow(PrototypeIntegrityError);
       expect(loadSpy).toHaveBeenCalledTimes(1);
       expect(Object.prototype).not.toHaveProperty(addedKey);
     }

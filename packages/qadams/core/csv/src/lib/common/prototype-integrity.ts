@@ -1,8 +1,10 @@
-import { tryCatch } from '@aiqadam/shared';
+import { workerUtils } from './worker-utils';
 
-// The engine may run several projects' steps in one process, so a parser that writes onto a
-// built-in prototype would leak into every other run. Whatever the parser added or replaced
-// is put back, and the run fails instead of returning output from a parser that misbehaved.
+// The parser runs in a conversion worker whose realm is discarded after each conversion, so a
+// parser that writes onto a built-in prototype cannot reach the engine's. Within the worker the
+// CSV is still built after parsing, by code that relies on those prototypes, so whatever the
+// parser added or replaced is put back and the conversion fails instead of returning output a
+// misbehaving parser shaped.
 // Guarded sections run one at a time: a snapshot taken while another section is in flight
 // would attribute that section's changes to the wrong run, or let them through unnoticed.
 export const prototypeIntegrity = {
@@ -36,7 +38,7 @@ const GUARDED_PROTOTYPES: GuardedPrototype[] = [
 
 async function guardOnce<T>(operation: () => Promise<T>): Promise<T> {
   const snapshots = GUARDED_PROTOTYPES.map(takeSnapshot);
-  const result = await tryCatch(operation);
+  const result = await workerUtils.tryCatch(operation);
   const changes = snapshots.flatMap(findChanges);
   if (changes.length > 0) {
     const unrestored = changes.filter((change) => !revertChange(change));

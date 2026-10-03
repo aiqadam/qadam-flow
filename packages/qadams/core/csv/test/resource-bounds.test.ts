@@ -3,17 +3,20 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { getHeapStatistics } from 'node:v8';
+import { workbookToCsv } from '../src/lib/common/workbook-to-csv';
 import { excelTestKit } from './excel-test-kit';
 import { zipFixture, ZipFixtureEntry } from './zip-fixture';
 
-const { convert, workbookLoader, zipBase64 } = excelTestKit;
+const { convert, workbookLoader, workbookParts, zipBase64 } = excelTestKit;
 
 // Every test here would exhaust memory, or run for minutes, if the bound it checks regressed.
-// vitest.config.ts caps the worker heap so such a regression fails fast instead of taking the
-// runner down, and each test carries its own time limit.
+// vitest.config.ts caps the test process's heap, and with it the heap of every conversion
+// worker it starts, so such a regression fails fast instead of taking the runner down.
 const BOUNDED_TEST = { timeout: 15_000 };
-// The worker flags in vitest.config.ts put the limit near 536 MiB; without them it is several GB.
-const MAX_WORKER_HEAP_BYTES = 600 * 1024 * 1024;
+// These fill a conversion worker's heap to its limit before it is stopped.
+const HEAP_FILLING_TEST = { timeout: 60_000 };
+// The flags in vitest.config.ts put the limit near 536 MiB; without them it is several GB.
+const MAX_TEST_HEAP_BYTES = 600 * 1024 * 1024;
 const MEBIBYTE = 1024 * 1024;
 
 const SPREADSHEET_MAIN = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
@@ -21,20 +24,20 @@ const RELATIONSHIPS = 'http://schemas.openxmlformats.org/officeDocument/2006/rel
 const SPREADSHEET_MAIN_NS = `xmlns="${SPREADSHEET_MAIN}"`;
 const ONE_CELL = '<row r="1"><c r="A1"><v>1</v></c></row>';
 const WHOLE_SHEET = 'Data!$A$1:$XFD$1048576';
-const TOO_LARGE = 'The workbook is too large to convert';
-const OVER_LOAD_BUDGET = 'need more memory than a conversion may use';
+const OVER_SIZE_CAP = 'The workbook is too large to convert: its contents exceed 64 MB once decompressed';
+const OVER_MEMORY_LIMIT = 'The workbook is too large to convert: converting it needs more than the 512 MB of memory a conversion may use';
 
 describe('excelToCsvAction resource bounds', () => {
   test('runs under a capped heap', () => {
-    expect(getHeapStatistics().heap_size_limit).toBeLessThan(MAX_WORKER_HEAP_BYTES);
+    expect(getHeapStatistics().heap_size_limit).toBeLessThan(MAX_TEST_HEAP_BYTES);
   });
 
   test('refuses a workbook whose parts decompress beyond the size cap', BOUNDED_TEST, async () => {
     const parts = zipFixture.minimalWorkbookParts({ sheetData: ONE_CELL });
     const base64 = zipBase64(
-      parts.map((part) => (part.name === 'xl/worksheets/sheet1.xml' ? { ...part, declaredSize: 101 * MEBIBYTE } : part))
+      parts.map((part) => (part.name === 'xl/worksheets/sheet1.xml' ? { ...part, declaredSize: 65 * MEBIBYTE } : part))
     );
-    await expect(convert({ base64 })).rejects.toThrow(TOO_LARGE);
+    await expect(convert({ base64 })).rejects.toThrow(OVER_SIZE_CAP);
   });
 
   test('refuses a part that decompresses to more than the size it declares', BOUNDED_TEST, async () => {
@@ -60,70 +63,58 @@ describe('excelToCsvAction resource bounds', () => {
     ['CDATA sections', (payload: string) => `<extra><![CDATA[${payload}]]></extra>`],
     ['processing instructions', (payload: string) => `<?extra ${payload}?>`],
   ])('refuses %s beyond the size cap, before inflating them', BOUNDED_TEST, async (_label, wrap) => {
-    const sheetExtra = wrap('a'.repeat(11 * MEBIBYTE));
+    const sheetExtra = wrap('a'.repeat(65 * MEBIBYTE));
     const base64 = zipBase64(zipFixture.minimalWorkbookParts({ sheetData: ONE_CELL, sheetExtra }));
-    await expect(convert({ base64 })).rejects.toThrow(TOO_LARGE);
+    await expect(convert({ base64 })).rejects.toThrow(OVER_SIZE_CAP);
   });
 
-  test('refuses a sheet whose used range exceeds the cell budget', BOUNDED_TEST, async () => {
+  test('refuses a sheet whose used range exceeds the cell limit', BOUNDED_TEST, async () => {
     const base64 = zipBase64(
       zipFixture.minimalWorkbookParts({
         sheetData: '<row r="1"><c r="A1"><v>1</v></c></row><row r="400"><c r="XFD400"><v>2</v></c></row>',
       })
     );
     await expect(convert({ base64 })).rejects.toThrow(
-      'Sheet "Data" is too large to convert: its used range is 400 rows by 16384 columns'
+      'Sheet "Data" is too large to convert: its used range is 400 rows by 16384 columns, more than the 5,000,000 cells a conversion allows'
     );
   });
 
-  test('lowers the used-range budget by what loading the workbook takes', BOUNDED_TEST, async () => {
-    const sheetData = `${'<row/>'.repeat(400_000)}<row r="400001"><c r="A400001"><v>1</v></c></row><row r="400300"><c r="XFD400300"><v>2</v></c></row>`;
-    const outcome = convert({ base64: zipBase64(zipFixture.minimalWorkbookParts({ sheetData })) });
-    await expect(outcome).rejects.toThrow('its used range is 300 rows by 16384 columns, more than the');
-    const message = await outcome.catch((error: Error) => error.message);
-    const allowed = Number(/more than the ([\d,]+) cells/.exec(message)?.[1].replace(/,/g, ''));
-    expect(allowed).toBeLessThan(300 * 16384);
+  test('refuses a sheet whose CSV would be longer than the length cap, however small the workbook', BOUNDED_TEST, async () => {
+    const sharedStrings = `<sst ${SPREADSHEET_MAIN_NS}><si><t>${'a'.repeat(MEBIBYTE)}</t></si></sst>`;
+    const parts = withWorkbookPart({ part: { name: 'xl/sharedStrings.xml', data: sharedStrings }, relationship: 'sharedStrings' });
+    const sheetData = rows({ cell: '<c t="s"><v>0</v></c>', perRow: 1, count: 100 });
+    const base64 = zipBase64(replacePart({ parts, part: { name: 'xl/worksheets/sheet1.xml', data: worksheetXml({ sheetData }) } }));
+    await expect(convert({ base64 })).rejects.toThrow('Sheet "Data" is too large to convert: its CSV would be longer than 67,108,864 characters');
   });
 
-  test('refuses a workbook whose sheets hold more cells and rows than the load budget, before loading it', BOUNDED_TEST, async () => {
-    const emptyRow = `<row>${'<c/>'.repeat(1200)}</row>`;
-    const base64 = zipBase64(zipFixture.minimalWorkbookParts({ sheetData: emptyRow.repeat(1000) }));
-    await expect(convert({ base64 })).rejects.toThrow(OVER_LOAD_BUDGET);
-  });
-
-  test('counts cell and row elements with a namespace prefix towards the load budget', BOUNDED_TEST, async () => {
-    const prefixedRow = `<x:row>${'<x:c/>'.repeat(1200)}</x:row>`;
-    const sheetXml = `<?xml version="1.0" encoding="UTF-8"?><x:worksheet xmlns:x="${SPREADSHEET_MAIN}"><x:sheetData>${prefixedRow.repeat(1000)}</x:sheetData></x:worksheet>`;
-    const parts = replacePart({ parts: zipFixture.minimalWorkbookParts({ sheetData: '' }), part: { name: 'xl/worksheets/sheet1.xml', data: sheetXml } });
-    await expect(convert({ base64: zipBase64(parts) })).rejects.toThrow(OVER_LOAD_BUDGET);
-  });
-
-  test('counts every element start towards the load budget, however its name is delimited', BOUNDED_TEST, async () => {
-    const row = `<row>${'<\u000bc/><c\f/>'.repeat(600)}</row>`;
-    const base64 = zipBase64(zipFixture.minimalWorkbookParts({ sheetData: row.repeat(1000) }));
-    await expect(convert({ base64 })).rejects.toThrow(OVER_LOAD_BUDGET);
-  });
-
+  // Sized at about twice what a conversion worker's heap holds, at the rates measured for each,
+  // and built only when the test runs.
   test.each([
-    ['shared strings', { name: 'xl/sharedStrings.xml', root: 'sst', unit: '<si/>', count: 1_500_000, relationship: 'sharedStrings' }],
-    ['styles', { name: 'xl/styles.xml', root: 'styleSheet', unit: '<xf/>', count: 1_250_000, relationship: 'styles' }],
-  ])('refuses a workbook whose %s exceed the load budget, before loading it', BOUNDED_TEST, async (_label, { name, root, unit, count, relationship }) => {
-    const parts = withWorkbookPart({ part: { name, data: repeatedPart({ root, unit, count }) }, relationship });
-    await expect(convert({ base64: zipBase64(parts) })).rejects.toThrow(OVER_LOAD_BUDGET);
+    ['valued cells', () => worksheetParts({ sheetData: rows({ cell: '<c><v>1</v></c>', perRow: 1000, count: 3000 }) })],
+    ['relationships', () => replacePart({ parts: zipFixture.minimalWorkbookParts({ sheetData: ONE_CELL }), part: { name: 'xl/_rels/workbook.xml.rels', data: relationshipsPart(3_000_000) } })],
+    ['comments', () => worksheetParts({ sheetData: ONE_CELL, sheetExtra: `<!--${'a'.repeat(40 * MEBIBYTE)}-->` })],
+    ['CDATA sections', () => worksheetParts({ sheetData: ONE_CELL, sheetExtra: `<extra><![CDATA[${'a'.repeat(40 * MEBIBYTE)}]]></extra>` })],
+    ['processing instructions', () => worksheetParts({ sheetData: ONE_CELL, sheetExtra: `<?extra ${'a'.repeat(40 * MEBIBYTE)}?>` })],
+  ])('stops a conversion whose %s need more memory than a conversion may use, and the caller keeps working', HEAP_FILLING_TEST, async (_label, buildParts) => {
+    await expect(convert({ base64: zipBase64(buildParts()) })).rejects.toThrow(OVER_MEMORY_LIMIT);
+    await expectCallerStillConverts();
   });
 
-  test('refuses a workbook whose relationships exceed the load budget, before loading it', BOUNDED_TEST, async () => {
-    const relationships = `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${RELATIONSHIPS}/worksheet" Target="worksheets/sheet1.xml"/>${'<Relationship/>'.repeat(600_000)}</Relationships>`;
-    const parts = replacePart({ parts: zipFixture.minimalWorkbookParts({ sheetData: ONE_CELL }), part: { name: 'xl/_rels/workbook.xml.rels', data: relationships } });
-    await expect(convert({ base64: zipBase64(parts) })).rejects.toThrow(OVER_LOAD_BUDGET);
-  });
-
+  // The parser keeps little or nothing of these, so at the size cap they may convert; either
+  // way the conversion ends within the memory limit.
   test.each([
-    ['page breaks', `<colBreaks>${'<brk/>'.repeat(1_200_000)}</colBreaks>`],
-    ['ignored errors', `<ignoredErrors>${'<ignoredError/>'.repeat(600_000)}</ignoredErrors>`],
-  ])('refuses a sheet whose %s exceed the load budget, before loading it', BOUNDED_TEST, async (_label, sheetExtra) => {
-    const base64 = zipBase64(zipFixture.minimalWorkbookParts({ sheetData: ONE_CELL, sheetExtra }));
-    await expect(convert({ base64 })).rejects.toThrow(OVER_LOAD_BUDGET);
+    ['empty cells', () => worksheetParts({ sheetData: rows({ cell: '<c/>', perRow: 1000, count: 15_000 }) })],
+    ['shared strings', () => withWorkbookPart({ part: { name: 'xl/sharedStrings.xml', data: repeatedPart({ root: 'sst', unit: '<si/>', count: 12_000_000 }) }, relationship: 'sharedStrings' })],
+    ['styles', () => withWorkbookPart({ part: { name: 'xl/styles.xml', data: repeatedPart({ root: 'styleSheet', unit: '<xf/>', count: 12_000_000 }) }, relationship: 'styles' })],
+    ['page breaks', () => worksheetParts({ sheetData: ONE_CELL, sheetExtra: `<colBreaks>${'<brk/>'.repeat(10_000_000)}</colBreaks>` })],
+    ['ignored errors', () => worksheetParts({ sheetData: ONE_CELL, sheetExtra: `<ignoredErrors>${'<ignoredError/>'.repeat(4_000_000)}</ignoredErrors>` })],
+  ])('ends a conversion whose %s fill the size cap within the memory limit, and the caller keeps working', HEAP_FILLING_TEST, async (_label, buildParts) => {
+    const outcome = await convert({ base64: zipBase64(buildParts()) }).then(
+      () => 'converted',
+      (error: Error) => error.message
+    );
+    expect(outcome === 'converted' || outcome.startsWith(OVER_MEMORY_LIMIT)).toBe(true);
+    await expectCallerStillConverts();
   });
 
   test('ignores defined names, merged ranges and other worksheet nodes the CSV does not use', BOUNDED_TEST, async () => {
@@ -161,7 +152,8 @@ describe('excelToCsvAction resource bounds', () => {
     const loader = workbookLoader();
     const loadSpy = vi.spyOn(loader, 'loadFromFiles');
     try {
-      await convert({ base64: zipBase64(zipFixture.minimalWorkbookParts({ sheetData: ONE_CELL })) });
+      const parts = workbookParts(zipBase64(zipFixture.minimalWorkbookParts({ sheetData: ONE_CELL })));
+      await workbookToCsv.convert({ parts, sheetName: undefined, delimiter: ',' });
       const options: unknown = loadSpy.mock.calls[0]?.[1];
       const ignoreNodes = typeof options === 'object' && options !== null && 'ignoreNodes' in options ? options.ignoreNodes : undefined;
       expect([...(Array.isArray(ignoreNodes) ? ignoreNodes : [])].sort()).toEqual(parserWorksheetNodes().filter((node) => node !== 'sheetData').sort());
@@ -197,8 +189,27 @@ describe('excelToCsvAction resource bounds', () => {
   });
 });
 
+async function expectCallerStillConverts(): Promise<void> {
+  expect((await convert({ base64: zipBase64(zipFixture.minimalWorkbookParts({ sheetData: ONE_CELL })) })).csv).toBe('1');
+}
+
 function worksheetXml({ sheetData }: { sheetData: string }): string {
   return `<?xml version="1.0" encoding="UTF-8"?><worksheet ${SPREADSHEET_MAIN_NS}><sheetData>${sheetData}</sheetData></worksheet>`;
+}
+
+function worksheetParts({ sheetData, sheetExtra }: { sheetData: string; sheetExtra?: string }): ZipFixtureEntry[] {
+  return zipFixture.minimalWorkbookParts({ sheetData, sheetExtra });
+}
+
+function rows({ cell, perRow, count }: { cell: string; perRow: number; count: number }): string {
+  return `<row>${cell.repeat(perRow)}</row>`.repeat(count);
+}
+
+function relationshipsPart(count: number): string {
+  return (
+    '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    `<Relationship Id="rId1" Type="${RELATIONSHIPS}/worksheet" Target="worksheets/sheet1.xml"/>${'<Relationship/>'.repeat(count)}</Relationships>`
+  );
 }
 
 function repeatedPart({ root, unit, count }: { root: string; unit: string; count: number }): Uint8Array {
