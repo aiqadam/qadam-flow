@@ -78,17 +78,29 @@ function createAxios(config?: AxiosRequestConfig, { httpsAgentOptions }: SafeAxi
         allowList,
         httpsAgentOptions,
     })
-    // `proxy: false` keeps proxying inside the agents above, the one place the target is checked
-    // before anything goes to a proxy; axios' own proxy support would put a tunnelling agent of its
-    // own in place of `httpsAgent`. The interceptor pins it per request as well, because a request's
-    // own config overrides the instance default.
+    // Invariant: every request leaves through the agents above, which filter the target on the
+    // direct route and on the proxied one alike. So axios' own proxy handling stays off, and the
+    // interceptor re-pins everything that decides which code opens the connection, because a
+    // request's own config overrides the instance defaults: the agents, the HTTP/1.1 transport
+    // (the HTTP/2 one does not use agents), the Node `http` adapter, and no custom `transport`,
+    // `socketPath` or `lookup`.
     const instance = axios.create({
         ...config,
         httpAgent,
         httpsAgent,
         proxy: false,
     })
-    instance.interceptors.request.use((requestConfig) => ({ ...requestConfig, proxy: false }))
+    instance.interceptors.request.use((requestConfig) => ({
+        ...requestConfig,
+        httpAgent,
+        httpsAgent,
+        proxy: false,
+        httpVersion: 1,
+        adapter: 'http',
+        transport: undefined,
+        socketPath: undefined,
+        lookup: undefined,
+    }))
     return attachSsrfErrorInterceptor(instance)
 }
 

@@ -15,9 +15,8 @@ import { HttpsProxyAgent } from 'https-proxy-agent'
 // The axios instances therefore run with axios' own proxy handling switched off (`proxy: false`)
 // and these agents take it over: they read the proxy environment per request, send a request that
 // `NO_PROXY` exempts straight to the filtering agent, and resolve-and-check the target of every
-// other one before handing it to a tunnelling agent. Keeping the agent chain explicit is the point:
-// axios' built-in proxy support installs a tunnelling agent of its own in place of the configured
-// `httpsAgent`, and the guarantee has to hold for whichever agent actually opens the connection.
+// other one before handing it to a tunnelling agent. Proxying is done by these SSRF-filtered agents
+// only; axios' own proxy handling stays off on every safeHttp instance.
 export const safeHttpProxy = {
     buildProxyAwareAgents,
 }
@@ -33,7 +32,7 @@ function buildProxyAwareAgents({ direct, allowList, httpsAgentOptions }: BuildPr
     }
 }
 
-class ProxyAwareFilteringAgent extends AgentBase {
+export class ProxyAwareFilteringAgent extends AgentBase {
     private readonly direct: http.Agent
     private readonly allowList: string[]
     private readonly tunnels = new Map<string, http.Agent>()
@@ -49,7 +48,8 @@ class ProxyAwareFilteringAgent extends AgentBase {
     // Positional parameters are agent-base's contract, not a choice made here.
     override async connect(_req: http.ClientRequest, opts: AgentConnectOpts): Promise<http.Agent> {
         const host = stripBrackets(opts.host ?? 'localhost')
-        const proxyUrl = proxyUrlFor({ secure: opts.secureEndpoint, host, port: opts.port })
+        const port = effectivePort({ port: opts.port, secure: opts.secureEndpoint })
+        const proxyUrl = proxyUrlFor({ secure: opts.secureEndpoint, host, port })
         if (proxyUrl === null) {
             return this.direct
         }
@@ -67,20 +67,26 @@ class ProxyAwareFilteringAgent extends AgentBase {
         if (cached !== undefined) {
             return cached
         }
+        // Plain HTTP opens one proxy connection per request. agent-base calls `connect()` after the
+        // request header is already buffered, and http-proxy-agent rewrites that buffer into the
+        // absolute-form line, with `Proxy-Authorization`, only when it opens a new socket. A reused
+        // socket would send the buffered origin-form line as it stands. A CONNECT tunnel carries the
+        // request unchanged end to end, so HTTPS keeps its pooled tunnels.
         const tunnel = secure
             ? new HttpsProxyAgent(proxyUrl, { keepAlive: true })
-            : new OriginPinnedHttpProxyAgent(proxyUrl, { keepAlive: true })
+            : new OriginPinnedHttpProxyAgent(proxyUrl, { keepAlive: false })
         this.tunnels.set(key, tunnel)
         return tunnel
     }
 }
 
 // A forward proxy dials whatever origin the absolute-form request line names. `HttpProxyAgent`
-// builds that line from the `Host` header and resolves the request path against it, so a
-// caller-supplied `Host` header, or a path that starts with `//`, would name an origin other than
-// the one `connect()` just checked. The line is rebuilt here from the very host and port that were
-// checked; the `Host` header still travels, but a proxy must ignore it for routing when the request
-// line is absolute (RFC 9112 §3.2.2).
+// builds that line from the `Host` header and resolves the request path against it, so the line is
+// rebuilt here from the host and port `connect()` checked; a caller-supplied `Host` header, or a
+// path that starts with `//`, cannot name another origin. Every proxied plain-HTTP request goes
+// through this, because each one opens its own connection (see `tunnelFor`). The `Host` header
+// still travels, but a proxy must ignore it for routing when the request line is absolute
+// (RFC 9112 §3.2.2).
 class OriginPinnedHttpProxyAgent extends HttpProxyAgent<string> {
     override setRequestProps(req: HttpProxyRequest, opts: AgentConnectOpts): void {
         const originPath = req.path
@@ -89,8 +95,8 @@ class OriginPinnedHttpProxyAgent extends HttpProxyAgent<string> {
         }
         super.setRequestProps(req, opts)
         const host = formatHostForUrl(stripBrackets(opts.host ?? 'localhost'))
-        const port = opts.port === 80 ? '' : `:${opts.port}`
-        req.path = `http://${host}${port}${originPath}`
+        const port = effectivePort({ port: opts.port, secure: false })
+        req.path = `http://${host}${port === 80 ? '' : `:${port}`}${originPath}`
     }
 }
 
@@ -124,12 +130,11 @@ async function resolveAll(host: string): Promise<string[]> {
     }
 }
 
-// Mirrors the environment contract axios and `proxy-from-env` follow, so moving the decision here
-// does not change which requests are proxied: `<scheme>_proxy`, then `all_proxy`, lower case before
-// upper; a value without a scheme takes the request's own.
+// Reads the variables in the order `proxy-from-env` (which axios uses) does: `<scheme>_proxy`, then
+// `all_proxy`, lower case before upper; a value without a scheme takes the request's own.
 function proxyUrlFor({ secure, host, port }: ProxyTarget): URL | null {
     const scheme = secure ? 'https' : 'http'
-    if (bypassesProxy({ host, port })) {
+    if (isExemptFromProxy({ host, port })) {
         return null
     }
     const raw = readEnv(`${scheme}_proxy`) || readEnv('all_proxy')
@@ -143,15 +148,19 @@ function proxyUrlFor({ secure, host, port }: ProxyTarget): URL | null {
     return proxyUrl
 }
 
-// The `NO_PROXY` grammar axios 1.20 accepts, CIDR entries included — those are common in container
-// environments, and ignoring them would push internal traffic onto the proxy. Only where a request
-// is routed depends on this; both routes are filtered.
-function bypassesProxy({ host, port }: { host: string, port: number }): boolean {
+// A request skips the proxy when either `proxy-from-env` or axios' own `NO_PROXY` check would
+// exempt it, so an operator's `NO_PROXY` routes the same way it does for plain axios: `*` alone;
+// exact hostnames; `.example.com` and `*example.com` suffixes; `host:port` and `[v6]:port`; CIDR
+// ranges; trailing dots ignored on either side; IPv4-mapped IPv6 compared as IPv4; and `localhost`,
+// `127.0.0.0/8`, `0.0.0.0`, `::1` and `::` all treated as the same loopback host. IPv4 shorthand in
+// an entry (`127.1`) is not expanded. Only where a request is routed depends on this; both routes
+// are filtered.
+function isExemptFromProxy({ host, port }: { host: string, port: number }): boolean {
     const noProxy = readEnv('no_proxy').toLowerCase()
     if (noProxy === '') {
         return false
     }
-    const hostname = host.toLowerCase()
+    const hostname = normalizeNoProxyHost(host.toLowerCase())
     return noProxy.split(/[\s,]+/).some((entry) => entry !== '' && noProxyEntryMatches({ entry, hostname, port }))
 }
 
@@ -166,11 +175,14 @@ function noProxyEntryMatches({ entry, hostname, port }: { entry: string, hostnam
     if (entryPort !== null && entryPort !== port) {
         return false
     }
-    const pattern = entryHost.replace(/^\*/, '')
+    const pattern = normalizeNoProxyHost(entryHost)
+    if (pattern.startsWith('*')) {
+        return hostname.endsWith(pattern.slice(1))
+    }
     if (pattern.startsWith('.')) {
         return hostname.endsWith(pattern)
     }
-    return hostname === pattern
+    return hostname === pattern || (isLoopbackHost(hostname) && isLoopbackHost(pattern))
 }
 
 function splitHostAndPort(entry: string): { entryHost: string, entryPort: number | null } {
@@ -191,7 +203,7 @@ function isInCidr({ ip, cidr }: { ip: string, cidr: string }): boolean {
     if (match === null || family === 0) {
         return false
     }
-    const base = stripBrackets(match[1])
+    const base = normalizeNoProxyHost(match[1])
     if (net.isIP(base) !== family) {
         return false
     }
@@ -206,6 +218,50 @@ function isInCidr({ ip, cidr }: { ip: string, cidr: string }): boolean {
     return blockList.check(ip, type)
 }
 
+function isLoopbackHost(host: string): boolean {
+    if (host === 'localhost' || host === '0.0.0.0') {
+        return true
+    }
+    const family = net.isIP(host)
+    if (family === 0) {
+        return false
+    }
+    return LOOPBACK_ADDRESSES.check(host, family === 4 ? 'ipv4' : 'ipv6')
+}
+
+function normalizeNoProxyHost(host: string): string {
+    return unmapIpv4Mapped(stripBrackets(host).replace(/\.+$/, ''))
+}
+
+// The URL parser prints `[::ffff:127.0.0.1]` as `::ffff:7f00:1`, so both spellings are unwrapped.
+function unmapIpv4Mapped(host: string): string {
+    const dotted = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(host)
+    if (dotted !== null) {
+        return dotted[1]
+    }
+    const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(host)
+    if (hex === null) {
+        return host
+    }
+    const high = parseInt(hex[1], 16)
+    const low = parseInt(hex[2], 16)
+    return [Math.floor(high / 256), high % 256, Math.floor(low / 256), low % 256].join('.')
+}
+
+function buildLoopbackAddresses(): net.BlockList {
+    const blockList = new net.BlockList()
+    blockList.addSubnet('127.0.0.0', 8, 'ipv4')
+    blockList.addAddress('::1', 'ipv6')
+    blockList.addAddress('::', 'ipv6')
+    return blockList
+}
+
+// axios passes the port as a string, and leaves it empty for the scheme's default.
+function effectivePort({ port, secure }: { port: number | string | undefined, secure: boolean }): number {
+    const parsed = Number(port)
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : secure ? 443 : 80
+}
+
 function readEnv(name: string): string {
     return process.env[name.toLowerCase()] || process.env[name.toUpperCase()] || ''
 }
@@ -217,6 +273,8 @@ function stripBrackets(host: string): string {
 function formatHostForUrl(host: string): string {
     return net.isIPv6(host) ? `[${host}]` : host
 }
+
+const LOOPBACK_ADDRESSES = buildLoopbackAddresses()
 
 type HttpProxyRequest = Parameters<HttpProxyAgent<string>['setRequestProps']>[0]
 

@@ -1,10 +1,19 @@
-import { LookupAddress } from 'node:dns'
-import dns from 'node:dns/promises'
+import type { LookupAddress, LookupAllOptions } from 'node:dns'
 import http from 'node:http'
 import { AddressInfo } from 'node:net'
 import { Duplex } from 'node:stream'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { safeHttp } from '../src/safe-http'
+
+// The proxied-target check resolves through `node:dns/promises`, always with `{ all: true }`. The
+// mock keeps the real resolver by default and lets a test queue a one-off answer.
+const lookupAll = vi.hoisted(() => vi.fn<(hostname: string, options: LookupAllOptions) => Promise<LookupAddress[]>>())
+
+vi.mock('node:dns/promises', async (importOriginal) => {
+    const actual = await importOriginal<DnsPromisesModule>()
+    lookupAll.mockImplementation((hostname, options) => actual.default.lookup(hostname, options))
+    return { ...actual, default: { ...actual.default, lookup: lookupAll } }
+})
 
 // Invariant under test: a request sent through an `HTTP(S)_PROXY` has its target checked by the
 // same SSRF policy as a direct one, and nothing reaches the proxy for a target the policy refuses.
@@ -16,7 +25,6 @@ import { safeHttp } from '../src/safe-http'
 let proxy: RecordingProxy
 let origin: RecordingOrigin
 let savedEnv: Record<string, string | undefined>
-let fakeLookupRecords: LookupAddress[] = []
 
 beforeAll(async () => {
     proxy = await startRecordingProxy()
@@ -35,11 +43,11 @@ beforeEach(() => {
     process.env['HTTP_PROXY'] = proxy.url
     process.env['HTTPS_PROXY'] = proxy.url
     proxy.seen.length = 0
+    proxy.received.length = 0
     origin.seen.length = 0
 })
 
 afterEach(() => {
-    vi.restoreAllMocks()
     ENV_UNDER_TEST.forEach((name) => {
         const value = savedEnv[name]
         if (value === undefined) {
@@ -80,11 +88,10 @@ describe('safeHttp through an egress proxy', () => {
 
     it('refuses a hostname when any one of its addresses is blocked, because the proxy may pick any', async () => {
         process.env['AP_SSRF_ALLOW_LIST'] = ALLOWED_TARGET
-        fakeLookupRecords = [
+        lookupAll.mockResolvedValueOnce([
             { address: ALLOWED_TARGET, family: 4 },
             { address: '10.0.0.1', family: 4 },
-        ]
-        vi.spyOn(dns, 'lookup').mockImplementation(fakeLookup)
+        ])
         const instance = safeHttp.createAxios({ timeout: REQUEST_TIMEOUT_MS })
 
         await expect(instance.get('http://mixed-records.example.test/')).rejects.toMatchObject({
@@ -94,7 +101,7 @@ describe('safeHttp through an egress proxy', () => {
     })
 
     it('fails closed when the target cannot be resolved locally', async () => {
-        vi.spyOn(dns, 'lookup').mockRejectedValue(new Error('getaddrinfo ENOTFOUND unresolvable.example.test'))
+        lookupAll.mockRejectedValueOnce(new Error('getaddrinfo ENOTFOUND unresolvable.example.test'))
         const instance = safeHttp.createAxios({ timeout: REQUEST_TIMEOUT_MS })
 
         await expect(instance.get('http://unresolvable.example.test/')).rejects.toMatchObject({
@@ -107,10 +114,10 @@ describe('safeHttp through an egress proxy', () => {
         process.env['AP_SSRF_ALLOW_LIST'] = ALLOWED_TARGET
         const instance = safeHttp.createAxios({ timeout: REQUEST_TIMEOUT_MS })
 
-        const response = await instance.get(`http://${ALLOWED_TARGET}/status?probe=1`)
+        const response = await instance.get(`http://${ALLOWED_TARGET}/status?check=1`)
 
         expect(response.data).toBe(PROXY_BODY)
-        expect(proxy.seen).toEqual([`GET http://${ALLOWED_TARGET}/status?probe=1`])
+        expect(proxy.seen).toEqual([`GET http://${ALLOWED_TARGET}/status?check=1`])
     })
 
     it('tunnels an allow-listed https target with CONNECT to the checked host', async () => {
@@ -183,6 +190,82 @@ describe('safeHttp through an egress proxy', () => {
         })
     })
 
+    it.each([
+        ['http', 'http://[::1]/'],
+        ['https', 'https://[::1]/'],
+    ])('refuses a literal IPv6 loopback %s target before contacting the proxy', async (_scheme, url) => {
+        const instance = safeHttp.createAxios({ timeout: REQUEST_TIMEOUT_MS })
+
+        await expect(instance.get(url)).rejects.toMatchObject({
+            message: expect.stringMatching(/IP ::1 .*is not allowed/),
+        })
+        expect(proxy.seen).toEqual([])
+    })
+
+    it('sends every request on one instance as an absolute-form line with proxy credentials, whatever its Host header', async () => {
+        useCredentialedProxy()
+        process.env['AP_SSRF_ALLOW_LIST'] = ALLOWED_TARGET
+        const instance = safeHttp.createAxios({ timeout: REQUEST_TIMEOUT_MS })
+
+        await sendThreeRequests({ get: (url, headers) => instance.get(url, { headers }) })
+
+        expect(proxy.received).toEqual(expectedCredentialedRequests())
+    })
+
+    it('does the same for the shared safeHttp.axios instance', async () => {
+        useCredentialedProxy()
+        process.env['AP_SSRF_ALLOW_LIST'] = ALLOWED_TARGET
+
+        await sendThreeRequests({ get: (url, headers) => safeHttp.axios.get(url, { headers, timeout: REQUEST_TIMEOUT_MS }) })
+
+        expect(proxy.received).toEqual(expectedCredentialedRequests())
+    })
+
+    it('honours a host:port NO_PROXY entry when the URL names its port', async () => {
+        process.env['NO_PROXY'] = new URL(origin.url).host
+        process.env['AP_SSRF_ALLOW_LIST'] = '127.0.0.1'
+        const instance = safeHttp.createAxios({ timeout: REQUEST_TIMEOUT_MS })
+
+        const response = await instance.get(`${origin.url}/explicit-port`)
+
+        expect(response.data).toBe(ORIGIN_BODY)
+        expect(origin.seen).toEqual(['GET /explicit-port'])
+        expect(proxy.seen).toEqual([])
+    })
+
+    it.each([
+        ['localhost', 'a loopback name for a loopback address'],
+        ['localhost.', 'a trailing dot'],
+        ['[::1]', 'a bracketed IPv6 loopback for an IPv4 one'],
+        ['127.0.0.0/8', 'a CIDR range'],
+    ])('treats NO_PROXY=%s as matching 127.0.0.1 (%s), as axios does', async (entry) => {
+        process.env['NO_PROXY'] = entry
+        process.env['AP_SSRF_ALLOW_LIST'] = '127.0.0.1'
+        const instance = safeHttp.createAxios({ timeout: REQUEST_TIMEOUT_MS })
+
+        await instance.get(`${origin.url}/loopback`)
+
+        expect(origin.seen).toEqual(['GET /loopback'])
+        expect(proxy.seen).toEqual([])
+    })
+
+    it.each([
+        ['*example.invalid', 'api.example.invalid'],
+        ['.example.invalid', 'api.example.invalid'],
+        ['*.example.invalid', 'api.example.invalid'],
+        ['api.example.invalid.', 'api.example.invalid'],
+    ])('routes a host matching NO_PROXY=%s directly', async (entry, host) => {
+        process.env['NO_PROXY'] = entry
+        const instance = safeHttp.createAxios({ timeout: REQUEST_TIMEOUT_MS })
+
+        // `.invalid` never resolves (RFC 6761), so the direct route fails in its own DNS lookup.
+        const error: unknown = await instance.get(`http://${host}/`).catch((caught: unknown) => caught)
+
+        expect(error).toBeInstanceOf(Error)
+        expect(String(error)).not.toMatch(/egress proxy/)
+        expect(proxy.seen).toEqual([])
+    })
+
     // The AWS SDK's NodeHttpHandler takes these agents and never reads the proxy environment
     // itself, so they must keep connecting straight to the target, where the filter sees it.
     it('keeps buildDefaultAgents on the direct route even with a proxy configured', async () => {
@@ -202,17 +285,38 @@ describe('safeHttp through an egress proxy', () => {
     })
 })
 
-// Overloaded so it fits the `dns.lookup` overload set without a cast; the `{ all: true }` form is
-// the only one the code under test calls.
-function fakeLookup(hostname: string): Promise<LookupAddress>
-async function fakeLookup(_hostname: string): Promise<LookupAddress | LookupAddress[]> {
-    return fakeLookupRecords
+function useCredentialedProxy(): void {
+    const credentialed = new URL(proxy.url)
+    credentialed.username = PROXY_USER
+    credentialed.password = PROXY_PASSWORD
+    process.env['HTTP_PROXY'] = credentialed.href
+}
+
+async function sendThreeRequests({ get }: { get: (url: string, headers: Record<string, string>) => Promise<unknown> }): Promise<void> {
+    await get(`http://${ALLOWED_TARGET}/first`, {})
+    await get(`http://${ALLOWED_TARGET}/second`, { Host: '169.254.169.254' })
+    await get(`http://${ALLOWED_TARGET}/third`, { Host: '10.0.0.1:8080' })
+}
+
+function expectedCredentialedRequests(): ProxiedRequest[] {
+    const proxyAuthorization = `Basic ${Buffer.from(`${PROXY_USER}:${PROXY_PASSWORD}`).toString('base64')}`
+    return [
+        { line: `GET http://${ALLOWED_TARGET}/first`, proxyAuthorization, host: ALLOWED_TARGET },
+        { line: `GET http://${ALLOWED_TARGET}/second`, proxyAuthorization, host: '169.254.169.254' },
+        { line: `GET http://${ALLOWED_TARGET}/third`, proxyAuthorization, host: '10.0.0.1:8080' },
+    ]
 }
 
 async function startRecordingProxy(): Promise<RecordingProxy> {
     const seen: string[] = []
+    const received: ProxiedRequest[] = []
     const server = http.createServer((req, res) => {
         seen.push(`${req.method} ${req.url}`)
+        received.push({
+            line: `${req.method} ${req.url}`,
+            proxyAuthorization: req.headers['proxy-authorization'],
+            host: req.headers.host,
+        })
         if (req.url?.endsWith(REDIRECT_TO_METADATA_PATH) === true) {
             res.writeHead(302, { location: 'http://169.254.169.254/latest/meta-data/' }).end()
             return
@@ -224,7 +328,7 @@ async function startRecordingProxy(): Promise<RecordingProxy> {
         socket.end('HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
     })
     const port = await listen(server)
-    return { server, seen, port, url: `http://127.0.0.1:${port}` }
+    return { server, seen, received, port, url: `http://127.0.0.1:${port}` }
 }
 
 async function startRecordingOrigin(): Promise<RecordingOrigin> {
@@ -256,14 +360,29 @@ const ENV_UNDER_TEST = [
     'no_proxy', 'NO_PROXY', 'AP_SSRF_ALLOW_LIST',
 ]
 const ALLOWED_TARGET = '198.51.100.7'
+const PROXY_USER = 'egress'
+const PROXY_PASSWORD = 'test-only'
 const REDIRECT_TO_METADATA_PATH = '/redirect-to-metadata'
 const PROXY_BODY = 'via-proxy'
 const ORIGIN_BODY = 'from-origin'
 const REQUEST_TIMEOUT_MS = 3000
 
+type DnsPromisesModule = {
+    default: {
+        lookup: (hostname: string, options: LookupAllOptions) => Promise<LookupAddress[]>
+    }
+}
+
+type ProxiedRequest = {
+    line: string
+    proxyAuthorization: string | undefined
+    host: string | undefined
+}
+
 type RecordingProxy = {
     server: http.Server
     seen: string[]
+    received: ProxiedRequest[]
     port: number
     url: string
 }
