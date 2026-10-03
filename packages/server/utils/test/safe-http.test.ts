@@ -28,8 +28,8 @@ describe('safeHttp.buildAgents', () => {
 })
 
 describe('safeHttp.createAxios', () => {
-    // Left to axios, an egress proxy replaces the configured `httpsAgent` with axios' own tunnel.
-    // safeHttp's agents handle proxying themselves, so axios' must stay off whatever the caller says.
+    // safeHttp's agents handle proxying themselves, so axios' own proxy handling stays off whatever
+    // the caller says.
     it('keeps axios proxying off so the instance\'s own agents carry every request', () => {
         const instance = safeHttp.createAxios({ proxy: { host: '127.0.0.1', port: 3128 } })
         expect(instance.defaults.proxy).toBe(false)
@@ -58,8 +58,9 @@ describe('safeHttp end-to-end blocking', () => {
     })
 
     // A request's own config overrides the instance defaults, so anything that decides which code
-    // opens the connection is pinned back per request; each override below could otherwise take
-    // the request to 10.0.0.1 without the filter seeing it.
+    // opens the connection is pinned back per request. Each override but the last could otherwise
+    // take the request to 10.0.0.1 without the filter seeing it; a `socketPath` request still goes
+    // through the filtering agent, so that row only guards the pinned value.
     it.each<[string, AxiosRequestConfig, string]>([
         ['a custom adapter', { adapter: async (config): Promise<AxiosResponse> => ({ data: 'unfiltered', status: 200, statusText: 'OK', headers: {}, config }) }, 'http://10.0.0.1/'],
         ['a custom transport', { transport: { request: rejectingTransportRequest } }, 'http://10.0.0.1/'],

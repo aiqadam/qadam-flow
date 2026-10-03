@@ -152,8 +152,10 @@ function proxyUrlFor({ secure, host, port }: ProxyTarget): URL | null {
 // exempt it, so an operator's `NO_PROXY` routes the same way it does for plain axios: `*` alone;
 // exact hostnames; `.example.com` and `*example.com` suffixes; `host:port` and `[v6]:port`; CIDR
 // ranges; trailing dots ignored on either side; IPv4-mapped IPv6 compared as IPv4; and `localhost`,
-// `127.0.0.0/8`, `0.0.0.0`, `::1` and `::` all treated as the same loopback host. IPv4 shorthand in
-// an entry (`127.1`) is not expanded. Only where a request is routed depends on this; both routes
+// `127.0.0.0/8`, `0.0.0.0`, `::1` and `::` all treated as the same loopback host. Some entries
+// match nothing here, so those requests take the proxy: IPv4 shorthand, hex or octal IPv4 entries
+// (`127.1`, `0x7f000001`), IPv4-mapped IPv6 CIDR entries (`::ffff:10.0.0.0/104`), and a `*` entry
+// with an empty suffix (`*.`, `*:80`). Only where a request is routed depends on this; both routes
 // are filtered.
 function isExemptFromProxy({ host, port }: { host: string, port: number }): boolean {
     const noProxy = readEnv('no_proxy').toLowerCase()
@@ -175,10 +177,11 @@ function noProxyEntryMatches({ entry, hostname, port }: { entry: string, hostnam
     if (entryPort !== null && entryPort !== port) {
         return false
     }
-    const pattern = normalizeNoProxyHost(entryHost)
-    if (pattern.startsWith('*')) {
-        return hostname.endsWith(pattern.slice(1))
+    if (entryHost.startsWith('*')) {
+        const suffix = normalizeNoProxyHost(entryHost.slice(1))
+        return suffix !== '' && hostname.endsWith(suffix)
     }
+    const pattern = normalizeNoProxyHost(entryHost)
     if (pattern.startsWith('.')) {
         return hostname.endsWith(pattern)
     }
@@ -256,7 +259,8 @@ function buildLoopbackAddresses(): net.BlockList {
     return blockList
 }
 
-// axios passes the port as a string, and leaves it empty for the scheme's default.
+// An explicit port arrives as a string (axios copies it from the URL); Node fills in the scheme's
+// default otherwise, so the fallback here is defensive.
 function effectivePort({ port, secure }: { port: number | string | undefined, secure: boolean }): number {
     const parsed = Number(port)
     return Number.isInteger(parsed) && parsed > 0 ? parsed : secure ? 443 : 80

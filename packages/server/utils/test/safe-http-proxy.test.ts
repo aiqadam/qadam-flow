@@ -1,5 +1,6 @@
 import type { LookupAddress, LookupAllOptions } from 'node:dns'
 import http from 'node:http'
+import https from 'node:https'
 import { AddressInfo } from 'node:net'
 import { Duplex } from 'node:stream'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -152,6 +153,18 @@ describe('safeHttp through an egress proxy', () => {
         expect(proxy.seen).toEqual([`GET http://${ALLOWED_TARGET}${REDIRECT_TO_METADATA_PATH}`])
     })
 
+    it('keeps the filtering agents on a redirect hop even when a beforeRedirect hook swaps them', async () => {
+        process.env['AP_SSRF_ALLOW_LIST'] = ALLOWED_TARGET
+        const instance = safeHttp.createAxios({ timeout: REQUEST_TIMEOUT_MS })
+        const redirectTarget = `${origin.url}/after-redirect`
+        const url = `http://${ALLOWED_TARGET}/start?${REDIRECT_TARGET_PARAM}=${encodeURIComponent(redirectTarget)}`
+
+        await expect(instance.get(url, { beforeRedirect: swapInPlainAgents })).rejects.toMatchObject({
+            message: expect.stringMatching(/IP 127\.0\.0\.1 .*is not allowed/),
+        })
+        expect(origin.seen).toEqual([])
+    })
+
     it('ignores proxy config on a request, so axios never proxies around the agents', async () => {
         Reflect.deleteProperty(process.env, 'HTTP_PROXY')
         process.env['AP_SSRF_ALLOW_LIST'] = '127.0.0.1'
@@ -268,6 +281,17 @@ describe('safeHttp through an egress proxy', () => {
 
     // The AWS SDK's NodeHttpHandler takes these agents and never reads the proxy environment
     // itself, so they must keep connecting straight to the target, where the filter sees it.
+    it.each(['*.', '*..', '*.:80', '*:80'])('treats NO_PROXY=%s as matching no host', async (entry) => {
+        process.env['NO_PROXY'] = entry
+        process.env['AP_SSRF_ALLOW_LIST'] = ALLOWED_TARGET
+        const instance = safeHttp.createAxios({ timeout: REQUEST_TIMEOUT_MS })
+
+        const response = await instance.get(`http://${ALLOWED_TARGET}/wildcard`)
+
+        expect(response.data).toBe(PROXY_BODY)
+        expect(proxy.seen).toEqual([`GET http://${ALLOWED_TARGET}/wildcard`])
+    })
+
     it('keeps buildDefaultAgents on the direct route even with a proxy configured', async () => {
         process.env['AP_SSRF_ALLOW_LIST'] = '127.0.0.1'
         const { httpAgent } = safeHttp.buildDefaultAgents()
@@ -307,6 +331,12 @@ function expectedCredentialedRequests(): ProxiedRequest[] {
     ]
 }
 
+function swapInPlainAgents(options: Record<string, unknown>): void {
+    const plainHttpAgent = new http.Agent()
+    options['agents'] = { http: plainHttpAgent, https: new https.Agent() }
+    options['agent'] = plainHttpAgent
+}
+
 async function startRecordingProxy(): Promise<RecordingProxy> {
     const seen: string[] = []
     const received: ProxiedRequest[] = []
@@ -319,6 +349,11 @@ async function startRecordingProxy(): Promise<RecordingProxy> {
         })
         if (req.url?.endsWith(REDIRECT_TO_METADATA_PATH) === true) {
             res.writeHead(302, { location: 'http://169.254.169.254/latest/meta-data/' }).end()
+            return
+        }
+        const redirectTarget = new URL(req.url ?? '/', 'http://unused.invalid').searchParams.get(REDIRECT_TARGET_PARAM)
+        if (redirectTarget !== null) {
+            res.writeHead(302, { location: redirectTarget }).end()
             return
         }
         res.writeHead(200, { 'content-type': 'text/plain' }).end(PROXY_BODY)
@@ -363,6 +398,7 @@ const ALLOWED_TARGET = '198.51.100.7'
 const PROXY_USER = 'egress'
 const PROXY_PASSWORD = 'test-only'
 const REDIRECT_TO_METADATA_PATH = '/redirect-to-metadata'
+const REDIRECT_TARGET_PARAM = 'redirect-to'
 const PROXY_BODY = 'via-proxy'
 const ORIGIN_BODY = 'from-origin'
 const REQUEST_TIMEOUT_MS = 3000

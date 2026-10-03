@@ -83,7 +83,9 @@ function createAxios(config?: AxiosRequestConfig, { httpsAgentOptions }: SafeAxi
     // interceptor re-pins everything that decides which code opens the connection, because a
     // request's own config overrides the instance defaults: the agents, the HTTP/1.1 transport
     // (the HTTP/2 one does not use agents), the Node `http` adapter, and no custom `transport`,
-    // `socketPath` or `lookup`.
+    // `socketPath` or `lookup`. A caller's `beforeRedirect` runs before every redirect hop, so the
+    // agents are pinned again after it. An instance derived from this one with `.create()` does not
+    // inherit the interceptor and must not be used for outbound requests.
     const instance = axios.create({
         ...config,
         httpAgent,
@@ -100,8 +102,21 @@ function createAxios(config?: AxiosRequestConfig, { httpsAgentOptions }: SafeAxi
         transport: undefined,
         socketPath: undefined,
         lookup: undefined,
+        beforeRedirect: pinAgentsAfterRedirectHook({
+            hook: requestConfig.beforeRedirect,
+            agents: { http: httpAgent, https: httpsAgent },
+        }),
     }))
     return attachSsrfErrorInterceptor(instance)
+}
+
+// follow-redirects picks each hop's agent from `options.agents`, after the hook has run.
+function pinAgentsAfterRedirectHook({ hook, agents }: PinRedirectAgentsParams): BeforeRedirectHook {
+    return (options, responseDetails, requestDetails) => {
+        hook?.(options, responseDetails, requestDetails)
+        options['agents'] = { ...agents }
+        options['agent'] = undefined
+    }
 }
 
 function createRetryingAxios(config?: AxiosRequestConfig, options?: SafeAxiosOptions): AxiosInstance {
@@ -395,4 +410,11 @@ export type SafeAxiosOptions = {
 type BuildAgentsParams = {
     allowList: string[]
     httpsAgentOptions?: https.AgentOptions
+}
+
+type BeforeRedirectHook = NonNullable<AxiosRequestConfig['beforeRedirect']>
+
+type PinRedirectAgentsParams = {
+    hook: AxiosRequestConfig['beforeRedirect']
+    agents: { http: http.Agent, https: http.Agent }
 }
