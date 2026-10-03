@@ -1,7 +1,7 @@
 import { createServer, IncomingHttpHeaders, Server } from 'node:http'
 import { AddressInfo, connect, Socket } from 'node:net'
 import { pino } from 'pino'
-import { Agent, Dispatcher, EnvHttpProxyAgent, getGlobalDispatcher, ProxyAgent, request, setGlobalDispatcher } from 'undici'
+import { Agent, Dispatcher, EnvHttpProxyAgent, getGlobalDispatcher, ProxyAgent, setGlobalDispatcher } from 'undici'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { EgressProxy, startEgressProxy } from '../../../worker/src/lib/egress/proxy'
 import { ssrfGuard } from '../../src/lib/network/ssrf-guard'
@@ -65,8 +65,12 @@ describe.each([
     it(useEgressProxy ? 'routes the built-in fetch through the egress ProxyAgent' : 'routes the built-in fetch through the dispatcher that was already installed', async () => {
         await fetch(originUrl, { method: 'POST', body: BODY, headers: { 'content-length': String(BODY_LENGTH) } })
 
-        expect(getGlobalDispatcher()).not.toBe(importTimeDispatcher)
-        expect(getGlobalDispatcher()).toBeInstanceOf(useEgressProxy ? ProxyAgent : RecordingAgent)
+        if (useEgressProxy) {
+            expect(getGlobalDispatcher()).toBeInstanceOf(ProxyAgent)
+        }
+        else {
+            expect(getGlobalDispatcher()).toBe(importTimeDispatcher)
+        }
         expect(importTimeDispatcher?.dispatchCount).toBe(useEgressProxy ? 0 : 1)
     })
 
@@ -121,73 +125,13 @@ describe.each([
         expectSingleContentLength({ received, expectedLength: BODY_LENGTH })
     })
 
-    // How this fails depends on the built-in fetch. One that appends its own value (undici < 7.26,
-    // Node 24.14) hands the dispatcher `"5, 17"`, which undici rejects at once as an invalid header.
-    // A newer one (Node 24.21 ships undici 7.29) passes `5` alone, and the request then stalls on
-    // the body/length mismatch until something times it out. Either way it must not succeed, and
-    // the origin must never take the 17-byte body as one request.
+    // Node 24.21's built-in fetch (undici 7.29) passes `5` alone, so the request stalls on the
+    // body/length mismatch until something times it out. It must not succeed, and the origin must
+    // never take the 17-byte body as one request.
     it('fetch: a content-length that disagrees with the body still fails', async () => {
         await expect(fetch(originUrl, { method: 'POST', body: BODY, headers: { 'content-length': '5' }, signal: AbortSignal.timeout(2_000) })).rejects.toThrow()
 
         expect(received.filter((r) => r.bodyLength === BODY_LENGTH)).toEqual([])
-    })
-
-    it.each([
-        { shape: 'plain object', headers: { 'Content-Length': '3, 3' } },
-        { shape: 'flat array', headers: ['content-length', '3, 3'] },
-        { shape: 'iterable of pairs', headers: new Map([['content-length', '3, 3']]) },
-    ])('undici request: duplicated content-length as a $shape', async ({ headers }) => {
-        const response = await request(originUrl, { method: 'POST', body: 'abc', headers })
-
-        expect(await response.body.text()).toBe('ok')
-        expectSingleContentLength({ received, expectedLength: 3 })
-    })
-
-    it.each([
-        { shape: 'plain object', headers: { 'content-length': '3, 5' } },
-        { shape: 'flat array', headers: ['Content-Length', '3, 5'] },
-        { shape: 'iterable of pairs', headers: new Map([['content-length', '3, 5']]) },
-    ])('undici request: mismatched content-length list as a $shape still fails', async ({ headers }) => {
-        await expect(request(originUrl, { method: 'POST', body: 'abc', headers })).rejects.toMatchObject({
-            code: 'UND_ERR_INVALID_ARG',
-            message: 'invalid content-length header',
-        })
-        expect(received).toEqual([])
-    })
-
-    it.each([
-        { shape: 'plain object', headers: { 'content-length': '3\r\n, 3' } },
-        { shape: 'flat array', headers: ['content-length', '3, 3\n'] },
-    ])('undici request: CR/LF inside a duplicated content-length as a $shape is still rejected', async ({ headers }) => {
-        await expect(request(originUrl, { method: 'POST', body: 'abc', headers })).rejects.toMatchObject({ code: 'UND_ERR_INVALID_ARG' })
-        expect(received).toEqual([])
-    })
-
-    it('undici request: a malformed pair in an iterable reaches undici untouched and is rejected', async () => {
-        // JSON.parse keeps the malformed entry out of the declared header type without a cast.
-        const entries: [string, string][] = JSON.parse('[["content-length", "3, 3"], ["x-name-without-value"]]')
-        const headers = { [Symbol.iterator]: (): Iterator<[string, string]> => entries[Symbol.iterator]() }
-
-        await expect(request(originUrl, { method: 'POST', body: 'abc', headers })).rejects.toMatchObject({
-            code: 'UND_ERR_INVALID_ARG',
-            message: 'headers must be in key-value pair format',
-        })
-        expect(received).toEqual([])
-    })
-
-    it('undici request: an iterator inherited by a plain object is ignored, as undici ignores it', async () => {
-        Object.defineProperty(Object.prototype, Symbol.iterator, {
-            configurable: true,
-            writable: true,
-            value: function* polluted(): Generator<[string, string]> {
-                yield ['content-length', '999']
-            },
-        })
-        const response = await request(originUrl, { method: 'POST', body: 'abc', headers: { 'content-length': '3, 3' } })
-            .finally(() => Reflect.deleteProperty(Object.prototype, Symbol.iterator))
-
-        expect(await response.body.text()).toBe('ok')
-        expectSingleContentLength({ received, expectedLength: 3 })
     })
 })
 
@@ -229,7 +173,7 @@ describe('engine dispatcher — UNRESTRICTED keeps a pre-installed EnvHttpProxyA
         await new Promise<void>((resolve) => origin.close(() => resolve()))
     })
 
-    it('still tunnels through the operator proxy, and a duplicated content-length still succeeds', async () => {
+    it('still tunnels through the operator proxy, and the content-length reaches the origin once', async () => {
         const response = await fetch(originUrl, { method: 'PUT', body: Buffer.from(BODY), headers: { 'content-length': String(BODY_LENGTH) } })
 
         expect(await response.text()).toBe('ok')

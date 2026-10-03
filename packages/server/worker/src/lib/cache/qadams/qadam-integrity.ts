@@ -48,9 +48,9 @@ export const qadamIntegrity = (log: Logger) => ({
     // engine's loader would resolve it in preference to the bundled build.
     //
     // Called ONCE per install, never per qadam. bun resolves every workspace member regardless of
-    // `--filter` (measured on bun 1.3.11 — note the runtime image pins 1.3.1 and CI 1.3.3, so
-    // this is a measurement on a NEWER bun than we ship; `assertBatchIsCovered` is what stops it
-    // from being load-bearing), so even a filtered install writes lockfile entries for
+    // `--filter` (measured on bun 1.3.11 — the image, the devcontainer and CI all pin
+    // 1.3.14 now, so this is a measurement on an OLDER bun than we ship; `assertBatchIsCovered` is
+    // what stops it from being load-bearing), so even a filtered install writes lockfile entries for
     // packages outside the filter — running this inside the per-qadam fallback loop made one
     // unverifiable entry roll back every other qadam in the batch, and blame the wrong one.
     async verifyOfficialQadams({ rootWorkspace, installed, refusedBeforeInstall }: {
@@ -204,8 +204,8 @@ function uniqueByCacheKey(packages: ResolvedPackage[]): ResolvedPackage[] {
 //
 // The whole workspace is read, not just the batch that triggered this install, because a filtered
 // `bun install` resolves every workspace member anyway: entries for packages outside `--filter`
-// are present from the first install onwards (measured on bun 1.3.11; the image pins 1.3.1 and
-// CI 1.3.3, and `assertBatchIsCovered` turns this from an assumption into a check). The cache above
+// are present from the first install onwards (measured on bun 1.3.11; the image and CI pin
+// 1.3.14, and `assertBatchIsCovered` turns this from an assumption into a check). The cache above
 // is what keeps that from re-checking the same packages on every install. An earlier version of
 // this comment claimed the lockfile is never pruned; that is wrong — removing a workspace member
 // and re-installing does drop its entries — and the difference matters, because it means a

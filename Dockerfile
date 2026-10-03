@@ -1,4 +1,4 @@
-FROM node:24.14.0-bookworm-slim AS base
+FROM node:24.21.0-bookworm-slim AS base
 
 ARG SKIP_SSL_VERIFY=
 
@@ -51,9 +51,9 @@ RUN export ARCH=$(uname -m) && \
     CURL_OPTS="-fSL"; \
     if [ -n "$SKIP_SSL_VERIFY" ]; then CURL_OPTS="$CURL_OPTS --insecure"; fi && \
     if [ "$ARCH" = "x86_64" ]; then \
-      curl $CURL_OPTS https://github.com/oven-sh/bun/releases/download/bun-v1.3.1/bun-linux-x64-baseline.zip -o bun.zip; \
+      curl $CURL_OPTS https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-x64-baseline.zip -o bun.zip; \
     elif [ "$ARCH" = "aarch64" ]; then \
-      curl $CURL_OPTS https://github.com/oven-sh/bun/releases/download/bun-v1.3.1/bun-linux-aarch64.zip -o bun.zip; \
+      curl $CURL_OPTS https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-aarch64.zip -o bun.zip; \
     fi
 
 RUN unzip bun.zip \

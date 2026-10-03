@@ -704,7 +704,7 @@ async function createInstallWorkspaceFiles({ path, qadamsToInstall }: {
 //
 // `[install]` carries the quarantine keys and NOTHING else. The repo-root bunfig.toml also sets
 // `linker = "isolated"`, and an earlier version of this comment claimed copying it here would
-// change the node_modules layout the engine's loader walks. Measured against bun 1.3.11 (newer than the 1.3.1 the image pins), that is
+// change the node_modules layout the engine's loader walks. Measured against bun 1.3.11 (older than the 1.3.14 the image pins), that is
 // wrong: the default is hoisted for a plain project but ISOLATED for a workspace, and the root
 // package.json written above declares `workspaces`, so this layout is already isolated and the
 // key would be a no-op. Leaving it out is still right — an inherited default that matches is not

@@ -320,7 +320,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         id: bun
         with:
-          bun-version: 1.3.3
+          bun-version: 1.3.14
 
       # Restore-only, same key `_verify.yml`'s `verify` job writes. The `refresh-cache` label
       # skips it for the same reason it does in `integration-run` and `e2e`: that label means
@@ -460,7 +460,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         id: bun
         with:
-          bun-version: 1.3.3
+          bun-version: 1.3.14
 
       # Restore-only, by design. Four jobs install the same tree from the same lockfile and so
       # compute the same key — `verify`, this one, `e2e` and `pack-smoke`; letting them all save
@@ -970,7 +970,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         id: bun
         with:
-          bun-version: 1.3.3
+          bun-version: 1.3.14
 
       # Restore-only, for the same reason `integration-run` is: `verify` is the writer because
       # it is the job that always runs. The key and paths MUST stay byte-identical to

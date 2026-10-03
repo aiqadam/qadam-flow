@@ -132,7 +132,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         id: bun
         with:
-          bun-version: 1.3.3
+          bun-version: 1.3.14
 
       # Restore-only, same key `_verify.yml`'s `verify` job writes — see that
       # job's cache-restore step for what each key component is for. Without
