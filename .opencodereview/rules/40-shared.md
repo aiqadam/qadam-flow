@@ -32,7 +32,7 @@ the language rules OCR already merges from its system layer.
   contract. Any change under one of those packages must bump the version in that
   package's own `package.json`: patch for fixes or non-breaking additions, minor for
   new exports or behaviour changes. They are on `0.x`, where minor is the breaking
-  slot; `@aiqadam/qadam-assemblyai` is `1.x`, so a break there is major instead. A
+  slot; on any package at or above `1.0.0` (currently only `qadam-assemblyai`) a break is major instead. A
   diff without a version bump is a finding (note the diff may put the two files in
   different review groups — check the changeset, not just this file).
 - **Agent knowledge lives in `.agents/`.** `.claude/` and `.cursor/` are

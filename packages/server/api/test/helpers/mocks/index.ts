@@ -77,12 +77,17 @@ import { TagEntitySchema } from '../../../src/app/qadams/tags/tag-entity'
 
 export const CLOUD_PLATFORM_ID = 'cloud-id'
 
+function uniqueMockEmail(): string {
+    const [localPart, domain] = faker.internet.email().split('@')
+    return `${localPart}+${apId()}@${domain}`
+}
+
 export const createMockUserIdentity = (userIdentity?: Partial<UserIdentity>): UserIdentity => {
     return {
         id: userIdentity?.id ?? apId(),
         created: userIdentity?.created ?? faker.date.recent().toISOString(),
         updated: userIdentity?.updated ?? faker.date.recent().toISOString(),
-        email: (userIdentity?.email ?? faker.internet.email()).toLowerCase().trim(),
+        email: (userIdentity?.email ?? uniqueMockEmail()).toLowerCase().trim(),
         firstName: userIdentity?.firstName ?? faker.person.firstName(),
         lastName: userIdentity?.lastName ?? faker.person.lastName(),
         tokenVersion: userIdentity?.tokenVersion ?? undefined,
@@ -151,7 +156,7 @@ export const createMockUserInvitation = (userInvitation: Partial<UserInvitation>
         id: userInvitation.id ?? apId(),
         created: userInvitation.created ?? faker.date.recent().toISOString(),
         updated: userInvitation.updated ?? faker.date.recent().toISOString(),
-        email: userInvitation.email ?? faker.internet.email(),
+        email: userInvitation.email ?? uniqueMockEmail(),
         type: userInvitation.type ?? faker.helpers.enumValue(InvitationType),
         platformId: userInvitation.platformId ?? apId(),
         projectId: userInvitation.projectId,
