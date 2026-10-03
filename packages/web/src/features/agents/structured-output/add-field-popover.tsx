@@ -59,7 +59,7 @@ export const AddFieldPopover = ({
         </Button>
       </PopoverTrigger>
       <PopoverContent
-        className="w-80"
+        className="w-80 max-h-(--radix-popover-content-available-height) overflow-y-auto"
         side="bottom"
         align="center"
         sideOffset={10}

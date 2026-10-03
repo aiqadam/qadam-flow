@@ -126,7 +126,7 @@ export function NewFieldPopup({ children }: NewFieldDialogProps) {
   return (
     <Popover open={open} modal={false} onOpenChange={setOpen}>
       <PopoverTrigger asChild>{children}</PopoverTrigger>
-      <PopoverContent className="w-[400px] py-4 px-2 drop-shadow-xl">
+      <PopoverContent className="w-[400px] py-4 px-2 drop-shadow-xl max-h-(--radix-popover-content-available-height) overflow-y-auto">
         <div className="text-lg font-semibold mb-4 px-3">{t('New Field')}</div>
 
         <Form {...form}>

@@ -88,7 +88,7 @@ const ModelFormPopover = ({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>{children}</PopoverTrigger>
-      <PopoverContent className="w-80">
+      <PopoverContent className="w-80 max-h-(--radix-popover-content-available-height) overflow-y-auto">
         <div className="grid gap-4">
           <div className="space-y-2">
             <h4 className="font-medium leading-none">

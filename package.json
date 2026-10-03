@@ -126,6 +126,7 @@
     "packages/qadams/custom/*"
   ],
   "resolutions": {
-    "rollup": "npm:@rollup/wasm-node"
+    "rollup": "npm:@rollup/wasm-node",
+    "@xmldom/xmldom": "0.8.15"
   }
 }
