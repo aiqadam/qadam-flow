@@ -22,6 +22,7 @@ const NPM_DIST_TAG_PATTERN = /^[a-z][a-z0-9-]*$/
 const SKIP_REGISTRY_CHECK_MARKER = 'PACKED-WITH-SKIP-REGISTRY-CHECK'
 const REPO_ROOT = join(__dirname, '..', '..', '..')
 const REPO_LICENSE_PATH = join(REPO_ROOT, 'LICENSE')
+const REPO_NOTICE_PATH = join(REPO_ROOT, 'NOTICE')
 // Spelled exactly as the three framework packages already spell it in their own manifests, so a
 // package that declares `repository` and one that has it filled in below are indistinguishable
 // on the registry.
@@ -195,6 +196,7 @@ export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag, pack
   // step further. `npm pack`/`npm publish` include anything present in the package root that
   // isn't excluded, so dropping these into `dist/` is enough — no `files`/manifest change needed.
   copyFileSync(REPO_LICENSE_PATH, join(outputPath, 'LICENSE'))
+  copyFileSync(REPO_NOTICE_PATH, join(outputPath, 'NOTICE'))
   writeFileSync(
     join(outputPath, 'README.md'),
     `# ${json.name}\n\n${json.description ?? ''}\n\nPart of the [Qadam Flow](https://github.com/aiqadam/qadam-flow) monorepo. See the repository for documentation. Licensed under MIT.\n`,

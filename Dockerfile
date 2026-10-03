@@ -140,6 +140,7 @@ COPY --from=build /usr/src/app/.npmrc ./
 COPY --from=build /usr/src/app/bun.lock ./
 COPY --from=build /usr/src/app/bunfig.toml ./
 COPY --from=build /usr/src/app/LICENSE .
+COPY --from=build /usr/src/app/NOTICE .
 
 # Copy workspace package.json files (needed for bun workspace resolution)
 COPY --from=build /usr/src/app/packages ./packages
