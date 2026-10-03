@@ -22,8 +22,22 @@
 // checks out with `fetch-depth: 0` and already threads `PR_BASE_SHA`/`PR_HEAD_SHA` through to
 // tools/scripts/check-migration-rollback.ts for exactly this reason. This script reuses that
 // same range. It catches a required-prop-with-no-default that a SINGLE pull request introduces
-// on an action/trigger that already existed before that PR, without also bumping the qadam's own
-// package.json major version in the same range.
+// on an action/trigger that already existed before that PR, without also moving the qadam's own
+// package.json version into the breaking slot in the same range.
+//
+// ---------------------------------------------------------------------------
+// THE BREAKING SLOT DEPENDS ON THE BASE VERSION (#670)
+// ---------------------------------------------------------------------------
+// AGENTS.md ("Published-package version bumps") puts the breaking slot on MINOR while a package
+// is on 0.x and on MAJOR from 1.0.0 on. So the bar is read off the BASE version, the one the PR
+// started from:
+// - base major is 0: a minor increase counts (0.4.15 -> 0.5.0), and so does any major increase
+//   (0.4.15 -> 1.0.0). The skill does not ask for the latter, but it is still a bump past the
+//   breaking slot, and this script does not second-guess a stronger bump.
+// - base major is 1 or more: only a major increase counts (1.1.6 -> 2.0.0). 1.1.6 -> 1.2.0 fails.
+// A patch-only bump fails on either line. Before #670 this script required a major increase
+// everywhere, which made a 0.x qadam that followed AGENTS.md fail, and passed only on the
+// wrong-slot 1.0.0 bump.
 //
 // ---------------------------------------------------------------------------
 // WHAT THIS PROVABLY CANNOT DO — read before trusting a clean run
@@ -80,7 +94,7 @@
 // - `packages/qadams/common` is NOT scanned, unlike check-dropdown-defaults.mjs, which scans it
 //   safely because it never needs a per-qadam package version. `common` is a single shared
 //   package (`@aiqadam/qadams-common`), not one subdirectory per qadam like `community`/`core` —
-//   there is no `<qadamDir>/package.json` under it to check a major bump against. An earlier
+//   there is no `<qadamDir>/package.json` under it to check a version bump against. An earlier
 //   version of this script inherited check-dropdown-defaults.mjs's QADAM_ROOTS verbatim and
 //   mis-derived `packages/qadams/common/src/package.json` (which does not exist) for every prop
 //   in it, e.g. the `createAction` in `packages/qadams/common/src/lib/helpers/index.ts` — always
@@ -93,13 +107,16 @@
 //   old), this is a diff gate: it only stops a NEW instance of the shape from landing. A required
 //   prop with no default that already shipped before this check existed will never be flagged
 //   retroactively.
-// - Bumping the major version is treated as sufficient to pass. This script does not verify the
+// - A bump into the breaking slot is treated as sufficient to pass. This script does not verify the
 //   bump is accompanied by a migration path, a changelog entry, or that `minimumSupportedRelease`
-//   was reconsidered — only that the numeric major component of the qadam's own package.json
-//   increased in the same range. That is the same bar "Versioning an existing piece" already sets
-//   for this case; this script does not raise that bar, only enforces it mechanically. If the
-//   qadam's `package.json` cannot be read at either end of the range, the prop is skipped rather
-//   than flagged — "cannot tell" must never resolve to "violation" any more than to "clean".
+//   was reconsidered — only that the qadam's own package.json version moved into the breaking slot
+//   (see "THE BREAKING SLOT DEPENDS ON THE BASE VERSION" above) in the same range. Only the
+//   numeric major and minor components are read; a prerelease or build suffix is not compared.
+//   That is the same bar "Versioning an existing piece" already sets for this case; this script
+//   does not raise that bar, only enforces it mechanically. If the qadam's `package.json` cannot
+//   be read at either end of the range, or its version's major/minor cannot be parsed, the prop
+//   is skipped rather than flagged — "cannot tell" must never resolve to "violation" any more
+//   than to "clean".
 // - `defaultValue: undefined`, `defaultValue: null`, `defaultValue: void 0`, and `defaultValue: ''`
 //   do NOT count as "has a default": each one leaves a flow authored before the prop existed
 //   exactly as unconfigured as having no `defaultValue` key at all, so treating any of them as
@@ -180,11 +197,11 @@ const main = () => {
     return
   }
 
-  console.error(`[check-required-prop-defaults] ${violations.length} newly-required prop(s) with no default, not paired with a major bump:\n`)
+  console.error(`[check-required-prop-defaults] ${violations.length} newly-required prop(s) with no default, not paired with a breaking-slot version bump:\n`)
   for (const violation of violations) {
-    console.error(`  ${violation.file} — prop '${violation.propKey}' on ${violation.factory}('${violation.actionName}') became required with no defaultValue, but ${violation.packageJsonPath} stayed at a non-major bump (${violation.baseVersion} -> ${violation.headVersion})`)
+    console.error(`  ${violation.file} — prop '${violation.propKey}' on ${violation.factory}('${violation.actionName}') became required with no defaultValue, but ${violation.packageJsonPath} did not move into the breaking slot (${violation.baseVersion} -> ${violation.headVersion}; ${violation.requiredBump})`)
   }
-  console.error('\nEither give the prop a `defaultValue` that preserves the previous behaviour, drop `required: true`, or bump the qadam\'s MAJOR version in this same change — see "Versioning an existing piece" in .agents/skills/qadam-builder/SKILL.md.')
+  console.error('\nEither give the prop a `defaultValue` that preserves the previous behaviour, drop `required: true`, or bump the qadam\'s version in the breaking slot in this same change: minor while it is on 0.x, major from 1.0.0 on (AGENTS.md, "Published-package version bumps") — see "Versioning an existing piece" in .agents/skills/qadam-builder/SKILL.md.')
   process.exitCode = 1
 }
 
@@ -269,11 +286,11 @@ const checkFile = ({ file, range }) => {
       }
 
       const packageJsonPath = findPackageJson({ file })
-      const versionCheck = checkMajorBump({ packageJsonPath, range })
-      if (!versionCheck.resolvable || versionCheck.majored) {
+      const versionCheck = checkBreakingBump({ packageJsonPath, range })
+      if (!versionCheck.resolvable || versionCheck.inBreakingSlot) {
         // Either the version pairing genuinely can't be read (stay silent, don't guess a
-        // violation from missing data) or it WAS majored (the author already paid the cost this
-        // rule asks for).
+        // violation from missing data) or it DID move into the breaking slot (the author already
+        // paid the cost this rule asks for).
         continue
       }
 
@@ -285,6 +302,7 @@ const checkFile = ({ file, range }) => {
         packageJsonPath,
         baseVersion: versionCheck.baseVersion,
         headVersion: versionCheck.headVersion,
+        requiredBump: versionCheck.requiredBump,
       })
     }
   }
@@ -321,18 +339,34 @@ const findPackageJson = ({ file }) => {
   return `${root}/${qadamDirName}/package.json`
 }
 
-const checkMajorBump = ({ packageJsonPath, range }) => {
+// See "THE BREAKING SLOT DEPENDS ON THE BASE VERSION" in this file's header: the slot is chosen by
+// the BASE version, so a 0.x qadam needs a minor (or major) increase and a 1.x+ qadam a major one.
+const checkBreakingBump = ({ packageJsonPath, range }) => {
   const baseVersion = readVersion({ sha: range.base, packageJsonPath })
   const headVersion = readVersion({ sha: range.head, packageJsonPath })
-  if (baseVersion === null || headVersion === null) {
-    return { resolvable: false, majored: false, baseVersion, headVersion }
+  const base = parseMajorMinor({ version: baseVersion })
+  const head = parseMajorMinor({ version: headVersion })
+  if (base === null || head === null) {
+    return { resolvable: false, inBreakingSlot: false, baseVersion, headVersion, requiredBump: null }
   }
-  const baseMajor = Number(baseVersion.split('.')[0])
-  const headMajor = Number(headVersion.split('.')[0])
-  if (!Number.isFinite(baseMajor) || !Number.isFinite(headMajor)) {
-    return { resolvable: false, majored: false, baseVersion, headVersion }
+  if (base.major === 0) {
+    const inBreakingSlot = head.major > 0 || head.minor > base.minor
+    return { resolvable: true, inBreakingSlot, baseVersion, headVersion, requiredBump: 'on 0.x the breaking slot is a minor increase' }
   }
-  return { resolvable: true, majored: headMajor > baseMajor, baseVersion, headVersion }
+  return { resolvable: true, inBreakingSlot: head.major > base.major, baseVersion, headVersion, requiredBump: 'from 1.0.0 on the breaking slot is a major increase' }
+}
+
+// A version whose major or minor component is not a plain non-negative integer cannot be placed
+// in a slot, so it reads as null ("cannot tell"), never as "not bumped".
+const parseMajorMinor = ({ version }) => {
+  if (version === null) {
+    return null
+  }
+  const match = /^(\d+)\.(\d+)\./.exec(version)
+  if (match === null) {
+    return null
+  }
+  return { major: Number(match[1]), minor: Number(match[2]) }
 }
 
 const readVersion = ({ sha, packageJsonPath }) => {
