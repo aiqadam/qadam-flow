@@ -2,6 +2,7 @@ import { Principal, Project } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import * as accessTokenManagerModule from '../../../../src/app/authentication/lib/access-token-manager'
+import * as userIdentityServiceModule from '../../../../src/app/authentication/user-identity/user-identity-service'
 import { databaseConnection } from '../../../../src/app/database/database-connection'
 import * as redisConnectionsModule from '../../../../src/app/database/redis-connections'
 import * as projectServiceModule from '../../../../src/app/project/project-service'
@@ -15,6 +16,7 @@ let app: FastifyInstance | null = null
 const originalAccessTokenManager = accessTokenManagerModule.accessTokenManager
 const originalDistributedLock = redisConnectionsModule.distributedLock
 const originalProjectService = projectServiceModule.projectService
+const originalUserIdentityRepository = userIdentityServiceModule.userIdentityRepository
 
 beforeAll(async () => {
     app = await setupTestEnvironment()
@@ -320,7 +322,7 @@ describe('Authentication API', () => {
             }
         })
 
-        it('commits none of the create-platform writes when a later step of the claim fails', async () => {
+        it('commits none of the create-platform writes when the project step of the claim fails', async () => {
             // arrange
             const mockSignUpRequest = createMockSignUpRequest()
             const signUpResponse = await app?.inject({
@@ -329,8 +331,6 @@ describe('Authentication API', () => {
                 body: mockSignUpRequest,
             })
             const onboardingToken = signUpResponse?.json()?.token
-            const identityRepo = databaseConnection().getRepository('user_identity')
-            const identityBefore = await identityRepo.findOneByOrFail({ email: mockSignUpRequest.email.toLocaleLowerCase().trim() })
 
             const projectServiceSpy = vi.spyOn(projectServiceModule, 'projectService').mockImplementation((log) => ({
                 ...originalProjectService(log),
@@ -355,8 +355,6 @@ describe('Authentication API', () => {
             const users = await userRepo.find()
             expect(users).toHaveLength(1)
             expect(users[0].platformId).toBeNull()
-            const identityAfter = await identityRepo.findOneByOrFail({ id: identityBefore.id })
-            expect(identityAfter.tokenVersion).toBe(identityBefore.tokenVersion)
 
             // The untouched onboarding row is still claimable once the failure is gone.
             projectServiceSpy.mockRestore()
@@ -370,6 +368,56 @@ describe('Authentication API', () => {
             expect(await userRepo.count()).toBe(1)
             const owner = await userRepo.findOneByOrFail({ id: users[0].id })
             expect(owner.platformId).toBe(retryResponse?.json()?.platformId)
+        })
+
+        // Fails the claim at its last write, the tokenVersion rotation, with no onboarding user row
+        // to reuse, so the claim has inserted its own user row, the platform and the project by the
+        // time it fails. The spy rejects any tokenVersion write whichever entity manager it goes
+        // through, so a rotation moved out of the transaction would still fail here — after the
+        // other writes had already committed.
+        it('commits none of the create-platform writes, including a user row it inserted, when the token rotation fails', async () => {
+            // arrange
+            const mockSignUpRequest = createMockSignUpRequest()
+            const signUpResponse = await app?.inject({
+                method: 'POST',
+                url: '/api/v1/authentication/sign-up',
+                body: mockSignUpRequest,
+            })
+            const onboardingToken = signUpResponse?.json()?.token
+            const userRepo = databaseConnection().getRepository('user')
+            const identityRepo = databaseConnection().getRepository('user_identity')
+            const identityBefore = await identityRepo.findOneByOrFail({ email: mockSignUpRequest.email.toLocaleLowerCase().trim() })
+            await userRepo.delete({ identityId: identityBefore.id })
+
+            vi.spyOn(userIdentityServiceModule, 'userIdentityRepository').mockImplementation((entityManager) => {
+                const repo = originalUserIdentityRepository(entityManager)
+                if (!vi.isMockFunction(repo.update)) {
+                    const realUpdate = repo.update.bind(repo)
+                    vi.spyOn(repo, 'update').mockImplementation(async (criteria, partialEntity) => {
+                        if ('tokenVersion' in partialEntity) {
+                            throw new Error('token rotation failed')
+                        }
+                        return realUpdate(criteria, partialEntity)
+                    })
+                }
+                return repo
+            })
+
+            // act
+            const response = await app?.inject({
+                method: 'POST',
+                url: '/api/v1/platforms',
+                headers: { authorization: `Bearer ${onboardingToken}` },
+                body: { name: 'Acme' },
+            })
+
+            // assert
+            expect(response?.statusCode).toBe(StatusCodes.INTERNAL_SERVER_ERROR)
+            expect(await databaseConnection().getRepository('platform').count()).toBe(0)
+            expect(await databaseConnection().getRepository('project').count()).toBe(0)
+            expect(await userRepo.countBy({ identityId: identityBefore.id })).toBe(0)
+            const identityAfter = await identityRepo.findOneByOrFail({ id: identityBefore.id })
+            expect(identityAfter.tokenVersion).toBe(identityBefore.tokenVersion)
         })
     })
 
