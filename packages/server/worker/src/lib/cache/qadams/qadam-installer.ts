@@ -8,6 +8,7 @@ import {
     isEmpty,
     isNil,
     isOfficialQadamName,
+    NPM_PACKAGE_NAME_REGEX,
     PackageType,
     PrivateQadamPackage,
     QadamPackage,
@@ -59,14 +60,6 @@ const OFFICIAL_QADAM_SCOPE = '@aiqadam'
 const OFFICIAL_QADAM_REGISTRY_URL = 'https://registry.npmjs.org/'
 // The same three days the repo-root bunfig.toml applies to this repo's own installs.
 const INSTALL_QUARANTINE_SECONDS = 259_200
-// Conservative npm package-name shape. Names reaching the excludes list below come from the
-// database (an administrator typed them when registering a custom qadam) and are interpolated
-// into a TOML array, so anything that is not plainly a package name is dropped rather than
-// written. Dropping fails safe: the name stays quarantined, and a name this rejects could not
-// have been installed from a registry anyway.
-const NPM_PACKAGE_NAME_PATTERN = /^(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/
-const relativeQadamPath = (piece: QadamPackage) => join('./', QADAMS_DIR, `${piece.qadamName}-${piece.qadamVersion}`)
-const qadamPath = (rootWorkspace: string, piece: QadamPackage) => join(rootWorkspace, QADAMS_DIR, `${piece.qadamName}-${piece.qadamVersion}`)
 
 export const qadamInstaller = (log: Logger, apiClient: WorkerToApiContract) => ({
     async install({ pieces, includeFilters }: InstallParams): Promise<void> {
@@ -78,6 +71,8 @@ export const qadamInstaller = (log: Logger, apiClient: WorkerToApiContract) => (
     },
 
     getCustomPiecesPath,
+
+    hasInstallableCoordinates,
 })
 
 function getCustomPiecesPath(platformId: string): string {
@@ -173,7 +168,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                     assertLockHeld()
                     const { error: batchError } = await tryCatch(async () => bunRunner(log).install({
                         path: rootWorkspace,
-                        filtersPath: includeFilters ? qadamsToInstall.map(relativeQadamPath) : [],
+                        filtersPath: includeFilters ? qadamsToInstall.map((piece) => relativeQadamPath({ rootWorkspace, piece })) : [],
                     }))
 
                     if (isNil(batchError)) {
@@ -376,7 +371,7 @@ async function rollbackInstallation({ rootWorkspace, pieces, before, isCompromis
     if (isRollbackForbidden({ isCompromised, rootWorkspace, log })) {
         return
     }
-    await Promise.all(pieces.map(piece => rm(path.resolve(rootWorkspace, relativeQadamPath(piece)), {
+    await Promise.all(pieces.map(piece => rm(qadamPath({ rootWorkspace, piece }), {
         recursive: true,
         force: true,
     })))
@@ -392,7 +387,7 @@ async function tryInstallQadamsIndividually({ rootWorkspace, pieces, log, isComp
         const { error } = await tryCatch(async () =>
             bunRunner(log).install({
                 path: rootWorkspace,
-                filtersPath: [relativeQadamPath(piece)],
+                filtersPath: [relativeQadamPath({ rootWorkspace, piece })],
             }),
         )
         if (error) {
@@ -540,7 +535,7 @@ async function removeAbandonedMembers({ rootWorkspace, unmarkedMembers, qadamsTo
     log: Logger
 }): Promise<void> {
     // This batch's own leftovers are rewritten by `createQadamPackageJson` and reinstalled.
-    const batchMembers = new Set(qadamsToInstall.map((piece) => qadamPath(rootWorkspace, piece)))
+    const batchMembers = new Set(qadamsToInstall.map((piece) => qadamPath({ rootWorkspace, piece })))
     const candidates = unmarkedMembers.filter((member) => !batchMembers.has(member))
     const holdsReadyMember = await Promise.all(candidates.map((member) => containsReadyMarker({ directory: member })))
     const abandoned = candidates.filter((_, index) => !holdsReadyMember[index])
@@ -719,7 +714,10 @@ function buildInstallBunfig(qadamsToInstall: QadamPackage[]): string {
         qadamsToInstall
             .filter((piece) => piece.packageType === PackageType.REGISTRY && piece.qadamType === QadamType.CUSTOM)
             .map((piece) => piece.qadamName)
-            .filter((qadamName) => NPM_PACKAGE_NAME_PATTERN.test(qadamName))
+            // These names are interpolated into a TOML array. `qadamPath` has already refused any
+            // name outside the npm grammar by the time this runs; the filter keeps this function
+            // safe on its own, and dropping fails safe — the name just stays quarantined.
+            .filter((qadamName) => NPM_PACKAGE_NAME_REGEX.test(qadamName))
             // The exemption is decided by `qadamType`, but what lands in the file is a NAME.
             // `qadamMetadataService.create` refuses a platform-scoped row under the official scope
             // since #503, but a row registered before that check and a worker whose API is an older
@@ -742,7 +740,7 @@ async function createQadamPackageJson({ rootWorkspace, qadamPackage }: {
     rootWorkspace: string
     qadamPackage: QadamPackage
 }): Promise<void> {
-    const packageJsonPath = join(qadamPath(rootWorkspace, qadamPackage), 'package.json')
+    const packageJsonPath = join(qadamPath({ rootWorkspace, piece: qadamPackage }), 'package.json')
 
     const packageJson = {
         'name': `${qadamPackage.qadamName}-${qadamPackage.qadamVersion}`,
@@ -771,7 +769,7 @@ async function partitionQadamsToInstall(rootWorkspace: string, pieces: QadamPack
 }
 
 async function qadamCheckIfAlreadyInstalled(rootWorkspace: string, piece: QadamPackage): Promise<boolean> {
-    const qadamFolder = qadamPath(rootWorkspace, piece)
+    const qadamFolder = qadamPath({ rootWorkspace, piece })
     if (usedQadamsMemoryCache[qadamFolder]) {
         return true
     }
@@ -790,7 +788,7 @@ async function qadamCheckIfAlreadyInstalled(rootWorkspace: string, piece: QadamP
 
 async function markQadamsAsUsed(rootWorkspace: string, pieces: QadamPackage[]): Promise<void> {
     const writeToDiskJobs = pieces.map(async (piece) => {
-        const qadamFolder = qadamPath(rootWorkspace, piece)
+        const qadamFolder = qadamPath({ rootWorkspace, piece })
         await fileSystemUtils.threadSafeMkdir(qadamFolder)
         await writeFileAtomic(
             join(qadamFolder, 'ready'),
@@ -801,7 +799,46 @@ async function markQadamsAsUsed(rootWorkspace: string, pieces: QadamPackage[]): 
 }
 
 function getPackageArchivePathForQadam(rootWorkspace: string, qadamPackage: PrivateQadamPackage): string {
-    return join(qadamPath(rootWorkspace, qadamPackage), `${qadamPackage.archiveId}.tgz`)
+    return join(qadamPath({ rootWorkspace, piece: qadamPackage }), `${qadamPackage.archiveId}.tgz`)
+}
+
+// Every directory the installer creates, writes into or removes for a qadam is derived here, so
+// this is where its coordinates are held to the shape a member directory needs: a name in the npm
+// package-name grammar and a version that is a single path segment, resolving strictly below
+// `qadams/`. The API refuses other names on the way in; rows stored before it did, or written by
+// an older API image, still arrive here, and other tenants' members can share this workspace, so
+// the check fails closed rather than trusting the caller.
+function qadamPath({ rootWorkspace, piece }: QadamPathParams): string {
+    if (!isInstallableName(piece.qadamName)) {
+        throw new Error(`[qadamInstaller] Refusing qadam name ${JSON.stringify(piece.qadamName)}: it is not a valid npm package name`)
+    }
+    if (!isSinglePathSegment(piece.qadamVersion)) {
+        throw new Error(`[qadamInstaller] Refusing qadam version ${JSON.stringify(piece.qadamVersion)} for ${piece.qadamName}: it is not a single path segment`)
+    }
+    const member = join(rootWorkspace, QADAMS_DIR, `${piece.qadamName}-${piece.qadamVersion}`)
+    const membersRoot = path.resolve(rootWorkspace, QADAMS_DIR)
+    if (!path.resolve(member).startsWith(`${membersRoot}${path.sep}`)) {
+        throw new Error(`[qadamInstaller] Refusing ${piece.qadamName}@${piece.qadamVersion}: its directory resolves outside ${membersRoot}`)
+    }
+    return member
+}
+
+// The same two checks `qadamPath` throws on, for callers that would rather set such a qadam
+// aside than fail the batch it arrived in.
+function hasInstallableCoordinates(piece: QadamPackage): boolean {
+    return isInstallableName(piece.qadamName) && isSinglePathSegment(piece.qadamVersion)
+}
+
+function isInstallableName(qadamName: string): boolean {
+    return NPM_PACKAGE_NAME_REGEX.test(qadamName)
+}
+
+function isSinglePathSegment(value: string): boolean {
+    return value.length > 0 && !/[\\/]/.test(value)
+}
+
+function relativeQadamPath({ rootWorkspace, piece }: QadamPathParams): string {
+    return path.relative(rootWorkspace, qadamPath({ rootWorkspace, piece }))
 }
 
 // The workspace state a rollback may have to put back — see `readWorkspaceBeforeInstall`.
@@ -846,4 +883,9 @@ type IsRollbackForbiddenParams = {
     isCompromised: () => boolean
     rootWorkspace: string
     log: Logger
+}
+
+type QadamPathParams = {
+    rootWorkspace: string
+    piece: QadamPackage
 }
