@@ -120,12 +120,12 @@ function toReceived({ req, bodyLength }: ToReceivedParams): ReceivedRequest {
         method: req.method,
         contentLength: req.headers['content-length'],
         transferEncoding: req.headers['transfer-encoding'],
-        fileType: headerValue(req.headers, 'x-ap-file-type'),
+        fileType: headerValue({ headers: req.headers, name: 'x-ap-file-type' }),
         bodyLength,
     }
 }
 
-function headerValue(headers: IncomingHttpHeaders, name: string): string | undefined {
+function headerValue({ headers, name }: HeaderValueParams): string | undefined {
     const value = headers[name]
     return Array.isArray(value) ? value.join(', ') : value
 }
@@ -159,6 +159,11 @@ type ReceivedRequest = {
 type RecordParams = {
     req: IncomingMessage
     onEnd: () => void
+}
+
+type HeaderValueParams = {
+    headers: IncomingHttpHeaders
+    name: string
 }
 
 type ToReceivedParams = {

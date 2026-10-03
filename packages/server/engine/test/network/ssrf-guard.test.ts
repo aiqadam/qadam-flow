@@ -258,29 +258,39 @@ describe('ssrf-guard', () => {
             expect(getGlobalDispatcher()).toBeInstanceOf(ProxyAgent)
         })
 
-        // The dispatcher is replaced in every mode: it carries the content-length shim (#677).
-        it('leaves agents untouched and installs a direct undici Agent when no egress proxy env is set', () => {
+        // Every mode adds the content-length shim (#677). Without an egress proxy it wraps the
+        // dispatcher already installed (e.g. Node's EnvHttpProxyAgent under NODE_USE_ENV_PROXY), so
+        // an operator's HTTP(S)_PROXY keeps applying.
+        it('leaves agents untouched and wraps the existing dispatcher when no egress proxy env is set', () => {
             delete process.env['AP_EGRESS_PROXY_URL']
-            const beforeDispatcher = getGlobalDispatcher()
+            const sentinel = new SentinelAgent()
+            setGlobalDispatcher(sentinel)
             const beforeHttp = http.globalAgent
             const beforeHttps = https.globalAgent
             ssrfGuard.install({ enabled: true, allowList: [] })
-            expect(getGlobalDispatcher()).not.toBe(beforeDispatcher)
-            expect(getGlobalDispatcher()).toBeInstanceOf(Agent)
+            expect(getGlobalDispatcher()).not.toBe(sentinel)
+            expect(getGlobalDispatcher()).toBeInstanceOf(SentinelAgent)
             expect(getGlobalDispatcher()).not.toBeInstanceOf(ProxyAgent)
             expect(http.globalAgent).toBe(beforeHttp)
             expect(https.globalAgent).toBe(beforeHttps)
+            ssrfGuard.uninstall()
+            expect(getGlobalDispatcher()).toBe(sentinel)
         })
 
         it('never routes through the egress proxy when the guard is disabled, even with the env set', () => {
             process.env['AP_EGRESS_PROXY_URL'] = 'http://127.0.0.1:4444'
+            const sentinel = new SentinelAgent()
+            setGlobalDispatcher(sentinel)
             const beforeHttp = http.globalAgent
             const beforeHttps = https.globalAgent
             ssrfGuard.install({ enabled: false })
-            expect(getGlobalDispatcher()).toBeInstanceOf(Agent)
+            expect(getGlobalDispatcher()).not.toBe(sentinel)
+            expect(getGlobalDispatcher()).toBeInstanceOf(SentinelAgent)
             expect(getGlobalDispatcher()).not.toBeInstanceOf(ProxyAgent)
             expect(http.globalAgent).toBe(beforeHttp)
             expect(https.globalAgent).toBe(beforeHttps)
+            ssrfGuard.uninstall()
+            expect(getGlobalDispatcher()).toBe(sentinel)
         })
 
         it('restores original agents and dispatcher on uninstall', () => {
@@ -296,10 +306,11 @@ describe('ssrf-guard', () => {
         })
 
         it('restores the original dispatcher on uninstall when the guard is disabled', () => {
-            const beforeDispatcher = getGlobalDispatcher()
+            const sentinel = new SentinelAgent()
+            setGlobalDispatcher(sentinel)
             ssrfGuard.install({ enabled: false })
             ssrfGuard.uninstall()
-            expect(getGlobalDispatcher()).toBe(beforeDispatcher)
+            expect(getGlobalDispatcher()).toBe(sentinel)
         })
     })
 
@@ -326,3 +337,5 @@ describe('ssrf-guard', () => {
         })
     })
 })
+
+class SentinelAgent extends Agent {}
