@@ -14,6 +14,7 @@ import {
   PROVIDER_NAME_QUERY_PARAM,
   STATE_QUERY_PARAM,
 } from '@/lib/navigation-utils';
+import { redirectUtils } from '@/lib/redirect-utils';
 
 let currentPopup: Window | null = null;
 
@@ -21,7 +22,9 @@ function useThirdPartyLogin() {
   const [searchParams] = useSearchParams();
 
   return (loginUrl: string, providerName: ThirdPartyAuthnProviderEnum) => {
-    const from = searchParams.get(FROM_QUERY_PARAM) || '/flows';
+    const from = redirectUtils.toSameOriginPath(
+      searchParams.get(FROM_QUERY_PARAM),
+    );
     const state = {
       [PROVIDER_NAME_QUERY_PARAM]: providerName,
       [FROM_QUERY_PARAM]: from,

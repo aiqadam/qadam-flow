@@ -1,7 +1,9 @@
 import {
   AddQadamRequestBody,
   ApFlagId,
+  formErrors,
   PackageType,
+  QadamPackageName,
   QadamScope,
 } from '@aiqadam/shared';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -129,6 +131,19 @@ const InstallQadamDialog = ({
         if (!data.qadamName || !data.qadamVersion) {
           throw new Error('Validation failed');
         }
+      }
+
+      if (
+        data.qadamName &&
+        !QadamPackageName.safeParse(data.qadamName).success
+      ) {
+        form.setError(
+          data.packageType === PackageType.REGISTRY
+            ? 'qadamName'
+            : 'pieceArchive',
+          { message: formErrors.invalidQadamPackageName },
+        );
+        throw new Error('Validation failed');
       }
 
       await qadamsApi.install(data);

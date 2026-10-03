@@ -2026,6 +2026,7 @@
   "invalidAzureResourceName": "Azure ресурс атауы 2–64 әріп, цифр немесе дефис болуы керек — URL немесе хост атауы емес",
   "The stored Azure resource name is not valid. Re-save this provider with a resource name of 2-64 letters, digits and hyphens.": "Сақталған Azure ресурс атауы жарамсыз. Провайдерді 2–64 әріп, цифр және дефис атауымен қайта сақтаңыз.",
   "invalidAwsRegion": "AWS аймағы кіші әріптер, цифрлар немесе дефис болуы керек — мысалы us-east-1",
+  "invalidQadamPackageName": "Qadam атауы кіші әріптермен жазылған жарамды npm пакет атауы болуы керек — мысалы @scope/qadam-name",
   "valueNotInOptions": "Мән осы өрістің қолжетімді нұсқаларының бірі болуы керек",
   "invalidBooleanValue": "Мән true, false немесе бос болуы керек",
   "invalidJsonValue": "Мән жарамды JSON немесе бос болуы керек",
