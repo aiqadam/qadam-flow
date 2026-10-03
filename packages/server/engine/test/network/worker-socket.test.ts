@@ -3,6 +3,7 @@ import { NetworkMode } from '@aiqadam/shared'
 import { HttpProxyAgent } from 'http-proxy-agent'
 import { Server as SocketIOServer } from 'socket.io'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { ssrfGuard } from '../../src/lib/network/ssrf-guard'
 import { workerSocket } from '../../src/lib/worker-socket'
 
 describe('workerSocket — STRICT-mode handshake', () => {
@@ -25,6 +26,7 @@ describe('workerSocket — STRICT-mode handshake', () => {
 
     afterEach(async () => {
         workerSocket.disconnect()
+        ssrfGuard.uninstall()
         http.globalAgent = originalHttpAgent
         if (originalNetworkMode === undefined) delete process.env['AP_NETWORK_MODE']
         else process.env['AP_NETWORK_MODE'] = originalNetworkMode
@@ -64,6 +66,24 @@ describe('workerSocket — STRICT-mode handshake', () => {
             sandboxId: 'test-sandbox',
             connectionToken: 'test-token-aaaaaaaaaaaaaaaaaaaaaaaa',
         })
+    })
+
+    it('reaches the worker RPC port with the socket guard installed, as the engine boots in STRICT mode', async () => {
+        process.env['AP_NETWORK_MODE'] = NetworkMode.STRICT
+        process.env['AP_SANDBOX_WS_PORT'] = String(wsPort)
+        ssrfGuard.install()
+
+        const connection = new Promise<string>((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error('sandbox did not connect')), 5_000)
+            io.on('connection', (socket) => {
+                clearTimeout(timer)
+                resolve(String(socket.handshake.auth.connectionToken))
+            })
+        })
+
+        workerSocket.init('test-sandbox-guarded')
+
+        await expect(connection).resolves.toBe('test-token-aaaaaaaaaaaaaaaaaaaaaaaa')
     })
 
     it('does not pin an agent outside STRICT mode', async () => {
