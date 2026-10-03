@@ -179,7 +179,7 @@ Which segment you bump depends on the version the qadam is on now. The slot rule
 |---|---|---|
 | **Breaking**: remove an action/trigger/prop; add a **required prop with no `defaultValue`** to an existing action/trigger (see below — give it a default instead if the old behavior can be preserved); change existing behavior | **minor** (`0.4.15` → `0.5.0`) | **major** (`1.1.6` → `2.0.0`) |
 | **Non-breaking addition**: add a new action or trigger; add an **optional** prop; add a **required prop that carries a `defaultValue`** reproducing the old behavior; add an output attribute | **patch** | **minor** |
-| **New export**: a new named export from the qadam's `src/index.ts` — most often a new helper (e.g. a client factory another qadam imports) or a re-exported auth | **minor** | **minor** |
+| **New export**: a new named export from the qadam's `src/index.ts` — most often a re-exported auth, sometimes a helper such as a client factory | **minor** | **minor** |
 | **Fix**: fix a bug | **patch** | **patch** |
 
 A new action or trigger is **not** a "new export" in AGENTS.md's sense. A qadam's package entry exports its `createQadam(...)` object, and roughly a third of qadams (76 of 238 when this was written) also export their auth or helpers from it (`slackAuth`, gmail's `getAccessToken`, sftp's `getClient`). Actions and triggers are entries inside the qadam object, reached only through the platform; no consumer imports them by name. Adding one is a non-breaking addition, which AGENTS.md puts on patch for `0.x`. The "new export" row is for when `src/index.ts` itself gains a named export.
