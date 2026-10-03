@@ -4,6 +4,7 @@ import {
     DefaultProjectRole,
     EngineResponseStatus,
     ErrorCode,
+    formErrors,
     PackageType,
     QadamScope,
     QadamType,
@@ -137,6 +138,51 @@ describe('POST /v1/pieces — private piece installation', () => {
 
         const persisted = await databaseConnection().getRepository('qadam_metadata').findBy({ name: officialName })
         expect(persisted).toHaveLength(0)
+    })
+
+    it.each([
+        ['../x'],
+        ['Upper'],
+    ])('should reject archive qadam name %j, outside the npm package-name grammar, before any work is done', async (qadamName) => {
+        const ctx = await createTestContext(app!)
+
+        const formData = new FormData()
+        formData.append(
+            'qadamArchive',
+            new Blob([tgzBuffer], { type: 'application/gzip' }),
+            'private-piece-test.tgz',
+        )
+        formData.append('qadamName', qadamName)
+        formData.append('qadamVersion', PIECE_VERSION)
+        formData.append('packageType', PackageType.ARCHIVE)
+        formData.append('scope', QadamScope.PLATFORM)
+
+        const response = await ctx.inject({
+            method: 'POST',
+            url: '/api/v1/qadams',
+            body: formData,
+        })
+
+        expect(response.statusCode).toBe(StatusCodes.BAD_REQUEST)
+        expect(response.body).toContain(formErrors.invalidQadamPackageName)
+        expect(interactionSpy).not.toHaveBeenCalled()
+        const persisted = await databaseConnection().getRepository('qadam_metadata').findBy({ name: qadamName })
+        expect(persisted).toHaveLength(0)
+    })
+
+    it('should reject a registry qadam name outside the npm package-name grammar', async () => {
+        const ctx = await createTestContext(app!)
+
+        const response = await ctx.post('/v1/qadams', {
+            packageType: PackageType.REGISTRY,
+            scope: QadamScope.PLATFORM,
+            qadamName: '@acme/../x',
+            qadamVersion: PIECE_VERSION,
+        })
+
+        expect(response.statusCode).toBe(StatusCodes.BAD_REQUEST)
+        expect(response.body).toContain(formErrors.invalidQadamPackageName)
+        expect(interactionSpy).not.toHaveBeenCalled()
     })
 
     it('should reject installation by a non-platform-admin user', async () => {

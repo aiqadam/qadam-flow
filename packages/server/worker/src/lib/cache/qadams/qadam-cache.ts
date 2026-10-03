@@ -1,5 +1,5 @@
 import path from 'path'
-import { ApEnvironment, EXACT_VERSION_REGEX, PackageType, QadamPackage, QadamType, WorkerToApiContract } from '@aiqadam/shared'
+import { ApEnvironment, EXACT_VERSION_REGEX, NPM_PACKAGE_NAME_REGEX, PackageType, QadamPackage, QadamType, WorkerToApiContract } from '@aiqadam/shared'
 import { trace } from '@opentelemetry/api'
 import { Logger } from 'pino'
 import { workerSettings } from '../../config/worker-settings'
@@ -10,6 +10,12 @@ const tracer = trace.getTracer('qadam-cache')
 
 export const qadamCache = (log: Logger, apiClient: WorkerToApiContract) => ({
     async getPiece({ qadamName, qadamVersion, platformId }: PieceCacheKey): Promise<QadamPackage> {
+        // The cache folder below is named after the qadam. The API refuses names outside the npm
+        // package-name grammar and the installer will not install one, so such a name is answered
+        // as not found before any path is built from it.
+        if (!NPM_PACKAGE_NAME_REGEX.test(qadamName)) {
+            throw new PieceNotFoundError(qadamName, qadamVersion)
+        }
         const isExactVersion = EXACT_VERSION_REGEX.test(qadamVersion)
 
         if (!isExactVersion) {
