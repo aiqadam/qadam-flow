@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
 # Fixture tests for tools/ci/check-required-prop-defaults.mjs (#479): a required prop with no
-# `defaultValue` added to an already-shipped action/trigger, without a paired MAJOR bump of the
-# qadam's own package.json in the same range.
+# `defaultValue` added to an already-shipped action/trigger, without a paired bump of the qadam's
+# own package.json into the breaking slot in the same range — minor while the base version is 0.x,
+# major from 1.0.0 on (#670).
 #
 # Modeled on tools/ci/test-breaking-change-gate.sh's convention, not check-dropdown-defaults's
 # `--root` fixture style: the checker under test reads two git commits (PR_BASE_SHA/PR_HEAD_SHA),
@@ -115,7 +116,7 @@ EOF
 # file under `common` (`<root>/<firstSegment>/package.json`, i.e. `common/src/package.json`),
 # pinned to a version that never changes. This is what makes "common must stay out of
 # QADAM_ROOTS" an actually falsifiable claim: if `common` were mistakenly added back to
-# QADAM_ROOTS, the checker would resolve the decoy's stable, never-majored version instead of the
+# QADAM_ROOTS, the checker would resolve the decoy's stable, never-bumped version instead of the
 # real package.json two directories up — a wrong-but-successful read, which the resolvable-version
 # skip (the OTHER half of the F1 fix) cannot catch, because the decoy read genuinely succeeds. Only
 # actually excluding `common` from QADAM_ROOTS prevents that misread.
@@ -231,7 +232,7 @@ count_occurrences() {
   printf '%s' "$haystack" | grep -o -F -- "$needle" | wc -l | tr -d ' '
 }
 
-echo "== a newly-required prop with no default and no major bump is caught =="
+echo "== a newly-required prop with no default and no breaking-slot bump is caught =="
 
 read -r dir base head <<< "$(build_case reject-new-required community 0.1.0 \
 "    mode: Property.StaticDropdown({
@@ -267,15 +268,69 @@ createTrigger)"
 run_check "$dir" "$base" "$head"
 expect_status 1 "createTrigger is scanned, not just createAction"
 
-echo "== the same change, paired with a MAJOR bump, passes =="
+echo "== on 0.x, the same change paired with a MINOR bump (the 0.x breaking slot) passes (#670) =="
 
-read -r dir base head <<< "$(build_case accept-major-bump community 0.1.0 \
+read -r dir base head <<< "$(build_case accept-minor-bump-on-0x community 0.4.15 \
+"    mode: Property.ShortText({ displayName: 'Mode', required: false })," \
+0.5.0 \
+"    mode: Property.ShortText({ displayName: 'Mode', required: false }),
+    execution_mode: Property.ShortText({ displayName: 'Execution Mode', required: true }),")"
+run_check "$dir" "$base" "$head"
+expect_status 0 "0.x qadam, new required-no-default prop, minor bump 0.4.15 -> 0.5.0 -> PASS — mutation: requiring a major increase on 0.x (the pre-#670 rule) makes this FAIL"
+
+echo "== on 0.x, the same change with only a PATCH bump still fails, and names the 0.x slot =="
+
+read -r dir base head <<< "$(build_case reject-patch-bump-on-0x community 0.4.15 \
+"    mode: Property.ShortText({ displayName: 'Mode', required: false })," \
+0.4.16 \
+"    mode: Property.ShortText({ displayName: 'Mode', required: false }),
+    execution_mode: Property.ShortText({ displayName: 'Execution Mode', required: true }),")"
+run_check "$dir" "$base" "$head"
+expect_status 1 "0.x qadam, new required-no-default prop, patch bump 0.4.15 -> 0.4.16 -> FAIL"
+expect_contains "0.4.15 -> 0.4.16" "violation names the version pair"
+expect_contains "on 0.x the breaking slot is a minor increase" "violation names the slot the base version calls for"
+
+echo "== on 0.x, a minor increase is compared against the base minor, not just any non-zero minor =="
+
+read -r dir base head <<< "$(build_case reject-patch-bump-on-0x-nonzero-minor community 0.5.0 \
+"    mode: Property.ShortText({ displayName: 'Mode', required: false })," \
+0.5.1 \
+"    mode: Property.ShortText({ displayName: 'Mode', required: false }),
+    execution_mode: Property.ShortText({ displayName: 'Execution Mode', required: true }),")"
+run_check "$dir" "$base" "$head"
+expect_status 1 "0.x qadam already on minor 5, patch bump 0.5.0 -> 0.5.1 -> FAIL — mutation: accepting any head minor above 0 instead of above the base minor makes this PASS"
+
+echo "== on 0.x, a MAJOR bump (0.x -> 1.0.0) is past the breaking slot and still passes =="
+
+read -r dir base head <<< "$(build_case accept-major-bump-on-0x community 0.1.0 \
 "    mode: Property.ShortText({ displayName: 'Mode', required: false })," \
 1.0.0 \
 "    mode: Property.ShortText({ displayName: 'Mode', required: false }),
     execution_mode: Property.ShortText({ displayName: 'Execution Mode', required: true }),")"
 run_check "$dir" "$base" "$head"
-expect_status 0 "same new required-no-default prop, but package.json majored in the same range -> PASS"
+expect_status 0 "0.x qadam, new required-no-default prop, 0.1.0 -> 1.0.0 -> PASS — mutation: on 0.x accepting only a minor increase within 0.x makes this FAIL"
+
+echo "== from 1.0.0 on, a MINOR bump is not the breaking slot and fails =="
+
+read -r dir base head <<< "$(build_case reject-minor-bump-on-1x community 1.1.6 \
+"    mode: Property.ShortText({ displayName: 'Mode', required: false })," \
+1.2.0 \
+"    mode: Property.ShortText({ displayName: 'Mode', required: false }),
+    execution_mode: Property.ShortText({ displayName: 'Execution Mode', required: true }),")"
+run_check "$dir" "$base" "$head"
+expect_status 1 "1.x qadam, new required-no-default prop, minor bump 1.1.6 -> 1.2.0 -> FAIL — mutation: applying the 0.x minor rule regardless of the base major makes this PASS"
+expect_contains "1.1.6 -> 1.2.0" "violation names the version pair"
+expect_contains "from 1.0.0 on the breaking slot is a major increase" "violation names the slot the base version calls for"
+
+echo "== from 1.0.0 on, a MAJOR bump passes =="
+
+read -r dir base head <<< "$(build_case accept-major-bump-on-1x community 1.1.6 \
+"    mode: Property.ShortText({ displayName: 'Mode', required: false })," \
+2.0.0 \
+"    mode: Property.ShortText({ displayName: 'Mode', required: false }),
+    execution_mode: Property.ShortText({ displayName: 'Execution Mode', required: true }),")"
+run_check "$dir" "$base" "$head"
+expect_status 0 "1.x qadam, new required-no-default prop, major bump 1.1.6 -> 2.0.0 -> PASS"
 
 echo "== a prop already required-with-no-default before this diff is not re-flagged =="
 
@@ -343,7 +398,7 @@ read -r dir base head <<< "$(build_case reject-default-removed community 0.1.0 \
 0.1.1 \
 "    execution_mode: Property.ShortText({ displayName: 'Execution Mode', required: true }),")"
 run_check "$dir" "$base" "$head"
-expect_status 1 "defaultValue dropped from an already-required prop, no major bump -> FAIL"
+expect_status 1 "defaultValue dropped from an already-required prop, patch bump only -> FAIL"
 
 echo "== (F2a) a call outside Property.*/QadamAuth.* is unresolvable, even with a literal required:true =="
 
@@ -770,7 +825,7 @@ expect_not_contains "ENOENT" "no crash trying to resolve a package.json path tha
 # success message would read "checked 1 modified file(s)..." instead of this one.
 expect_contains "no modified qadam action/trigger files" "common must never even be counted as a scanned file, decoy or no decoy"
 # With the decoy in place, re-adding `common` to QADAM_ROOTS makes the checker successfully read
-# the decoy's stable, never-majored version and print a violation naming its packageJsonPath — so
+# the decoy's stable, never-bumped version and print a violation naming its packageJsonPath — so
 # this string's absence is a real assertion here, not vacuous.
 expect_not_contains "package.json" "no packageJsonPath is ever printed, because no violation is ever found for a file that was never scanned"
 
@@ -804,7 +859,17 @@ printf 'not valid json{{{\n' > "${dir}/packages/qadams/community/demo-qadam/pack
 commit_all "$dir" 'feat: add a required prop while package.json is corrupted'
 head="$(git -C "$dir" rev-parse HEAD)"
 run_check "$dir" "$base" "$head"
-expect_status 0 "a genuinely unreadable package.json version must be treated as 'cannot tell', not as 'not majored' — mutation: reverting checkMajorBump's resolvable flag makes this FAIL despite there being no way to confirm a bump did NOT happen"
+expect_status 0 "a genuinely unreadable package.json version must be treated as 'cannot tell', not as 'not bumped' — mutation: reverting checkBreakingBump's resolvable flag makes this FAIL despite there being no way to confirm a bump did NOT happen"
+
+echo "== a version whose minor component is not a number cannot be placed in a slot, so it is skipped =="
+
+read -r dir base head <<< "$(build_case unparseable-minor-must-skip community 0.4.15 \
+"    mode: Property.ShortText({ displayName: 'Mode', required: false })," \
+0.x.0 \
+"    mode: Property.ShortText({ displayName: 'Mode', required: false }),
+    execution_mode: Property.ShortText({ displayName: 'Execution Mode', required: true }),")"
+run_check "$dir" "$base" "$head"
+expect_status 0 "a head version of 0.x.0 must read as 'cannot tell', not as 'not bumped' — mutation: parsing the minor with Number() and comparing NaN makes this FAIL"
 
 echo "== core qadams are scanned too =="
 

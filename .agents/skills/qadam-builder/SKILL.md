@@ -173,12 +173,18 @@ Common TS errors: missing import in `src/index.ts`, missing `tsconfig.base.json`
 
 Every change to an existing piece needs a version bump in its `package.json`. Without it, live flows never pick up your change.
 
-| Bump | When |
-|---|---|
-| **MAJOR** | Remove an action/trigger/prop; add a **required prop with no `defaultValue`** to an existing action/trigger (see below — give it a default instead if the old behavior can be preserved); change existing behavior |
-| **PATCH** | Add a new action or trigger; add an **optional** prop; add a **required prop that carries a `defaultValue`** reproducing the old behavior; add an output attribute; fix a bug |
+Which segment you bump depends on the version the qadam is on now. The slot rule is the "Published-package version bumps" bullet in [AGENTS.md](../../../AGENTS.md#coding-conventions); this table only maps qadam changes onto it. Read the qadam's current `version` before choosing: AGENTS.md also lists which packages are already past `1.0.0`.
 
-Rule of thumb: **any removal is breaking; a new required prop is breaking unless it carries a `defaultValue` that preserves prior behavior; everything else is PATCH.** When in doubt, prefer MAJOR.
+| Change | On `0.x` | On `1.0.0` and later |
+|---|---|---|
+| **Breaking**: remove an action/trigger/prop; add a **required prop with no `defaultValue`** to an existing action/trigger (see below — give it a default instead if the old behavior can be preserved); change existing behavior | **minor** (`0.4.15` → `0.5.0`) | **major** (`1.1.6` → `2.0.0`) |
+| **Non-breaking addition**: add a new action or trigger; add an **optional** prop; add a **required prop that carries a `defaultValue`** reproducing the old behavior; add an output attribute | **patch** | **minor** |
+| **New export**: a new named export from the qadam's `src/index.ts` (e.g. re-exporting its auth so another qadam can import it) | **minor** | **minor** |
+| **Fix**: fix a bug | **patch** | **patch** |
+
+A new action or trigger is **not** a "new export" in AGENTS.md's sense. A qadam's package entry exports its `createQadam(...)` object (and, for a few qadams, its auth). Actions and triggers are entries inside that object, reached only through the platform; no consumer imports them by name. Adding one is a non-breaking addition, which AGENTS.md puts on patch for `0.x`. The "new export" row is for the rarer case where `src/index.ts` itself gains a named export.
+
+Rule of thumb: **any removal is breaking; a new required prop is breaking unless it carries a `defaultValue` that preserves prior behavior; everything else is non-breaking.** When in doubt, treat the change as breaking. A break goes in the breaking slot for the qadam's line: minor on `0.x`, major from `1.0.0` on. Do not take a `0.x` qadam to `1.0.0` just to signal a break; that is a separate decision (declaring the qadam stable), not the breaking slot.
 
 ### Adding a prop to an action/trigger that has already shipped (#479)
 
@@ -187,9 +193,9 @@ A flow built against the old schema stores its configuration once, at authoring 
 So a new prop on an already-shipped action or trigger must be one of:
 
 - **Optional** (`required: false` or the key omitted) — the safe default for almost every new prop.
-- **Required, with a `defaultValue` that reproduces the exact behavior a flow authored before the prop existed already had.** This is what `executionMode` on `callFlow` did when it was added in PR #365 (addressing #363): `defaultValue: 'queue'`, matching the only behavior that existed before — the `defaultValue` pattern is worth copying. (That PR did not itself bump `qadam-subflows`'s version, which is a pre-existing gap in that PR's process, not something to copy — see the MAJOR/PATCH table above and bump yours.)
+- **Required, with a `defaultValue` that reproduces the exact behavior a flow authored before the prop existed already had.** This is what `executionMode` on `callFlow` did when it was added in PR #365 (addressing #363): `defaultValue: 'queue'`, matching the only behavior that existed before — the `defaultValue` pattern is worth copying. (That PR did not itself bump `qadam-subflows`'s version, which is a pre-existing gap in that PR's process, not something to copy — see the table above and bump yours.)
 
-A required prop with **no** default is a breaking change to the piece, not an oversight to catch in review after the fact — bump **MAJOR**, per the table above, in the *same* commit/PR that adds the prop. `npm run check-required-prop-defaults` (`tools/ci/check-required-prop-defaults.mjs`) enforces the mechanical half of this in CI: it diffs the pull request's own base and head, and fails if a prop becomes required with no default on an action/trigger that already existed before the PR, unless the qadam's own `package.json` major version increased in the same diff. Its header comment documents exactly what it can and cannot see — most importantly, it cannot audit props that already shipped this way before the check existed, and it cannot see a change that never went through a pull request.
+A required prop with **no** default is a breaking change to the piece, not an oversight to catch in review after the fact — bump the **breaking slot** (minor on `0.x`, major from `1.0.0` on), per the table above, in the *same* commit/PR that adds the prop. `npm run check-required-prop-defaults` (`tools/ci/check-required-prop-defaults.mjs`) enforces the mechanical half of this in CI: it diffs the pull request's own base and head, and fails if a prop becomes required with no default on an action/trigger that already existed before the PR, unless the qadam's own `package.json` version moved into the breaking slot in the same diff. When the base version is `0.x`, a minor increase counts (`0.4.15` → `0.5.0`); otherwise only a major increase does. A major increase always counts, so `0.4.15` → `1.0.0` also passes the check, even though the table above does not ask for it. Its header comment documents exactly what it can and cannot see — most importantly, it cannot audit props that already shipped this way before the check existed, and it cannot see a change that never went through a pull request.
 
 Giving a required prop a default does **not**, by itself, make already-published flows revalidate as configured — the resolver backfilling a schema default into a flow's already-stored `step.settings.input` is separate, unresolved machinery (tracked outside this ticket). What this rule and its CI check guarantee is narrower and entirely within a qadam author's control: the *schema* a new required prop declares does not, by construction, orphan the value a flow built under the old schema already had.
 
