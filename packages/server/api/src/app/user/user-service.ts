@@ -222,6 +222,15 @@ export const userService = (log: FastifyBaseLogger) => ({
     async getOneByIdentityAndPlatform({ identityId, platformId, entityManager }: GetOneByIdentityIdParams): Promise<User | null> {
         return userRepo(entityManager).findOneBy({ identityId, platformId: isNil(platformId) ? IsNull() : platformId })
     },
+    // Row-locks the identity's not-yet-attached user row for the rest of the caller's transaction.
+    // A concurrent caller blocks here until that transaction ends, and then no longer matches the
+    // row if it was attached in the meantime.
+    async getUnattachedByIdentityForUpdate({ identityId, entityManager }: GetUnattachedByIdentityForUpdateParams): Promise<User | null> {
+        return userRepo(entityManager).findOne({
+            where: { identityId, platformId: IsNull() },
+            lock: { mode: 'pessimistic_write' },
+        })
+    },
     async get({ id }: IdParams): Promise<User | null> {
         return userRepo().findOneBy({ id })
     },
@@ -339,15 +348,20 @@ export const userService = (log: FastifyBaseLogger) => ({
         }
     },
 
+    // Conditional on `platformId IS NULL` so a user row is attached to at most one platform no
+    // matter how the caller serialized itself: `false` means the row was already attached
+    // elsewhere and nothing was written.
     async addOwnerToPlatform({
         id,
         platformId,
-    }: UpdatePlatformIdParams): Promise<void> {
-        await userRepo().update(id, {
+        entityManager,
+    }: UpdatePlatformIdParams): Promise<boolean> {
+        const result = await userRepo(entityManager).update({ id, platformId: IsNull() }, {
             updated: dayjs().toISOString(),
             platformRole: PlatformRole.ADMIN,
             platformId,
         })
+        return (result.affected ?? 0) > 0
     },
 
     isUserPrivileged(user: User): boolean {
@@ -479,6 +493,12 @@ type IdParams = {
 type UpdatePlatformIdParams = {
     id: UserId
     platformId: string
+    entityManager?: EntityManager
+}
+
+type GetUnattachedByIdentityForUpdateParams = {
+    identityId: string
+    entityManager: EntityManager
 }
 
 type GetOrCreateWithProjectParams = {

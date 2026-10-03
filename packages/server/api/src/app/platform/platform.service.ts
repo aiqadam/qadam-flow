@@ -1,6 +1,7 @@
 import {
     apId,
     AuthenticationResponse,
+    ErrorCode,
     FilteredQadamBehavior,
     isNil,
     Platform,
@@ -11,6 +12,7 @@ import {
     PlatformWithoutFederatedAuth,
     PlatformWithoutSensitiveData,
     ProjectType,
+    QadamFlowError,
     spreadIfDefined,
     SsoDomainVerification,
     TeamProjectsLimit,
@@ -20,9 +22,11 @@ import {
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { nanoid } from 'nanoid'
+import { EntityManager } from 'typeorm'
 import { authenticationUtils } from '../authentication/authentication-utils'
 import { userIdentityRepository, userIdentityService } from '../authentication/user-identity/user-identity-service'
 import { repoFactory } from '../core/db/repo-factory'
+import { transaction } from '../core/db/transaction'
 import { distributedLock } from '../database/redis-connections'
 import { defaultTheme } from '../flags/theme'
 import { projectService } from '../project/project-service'
@@ -58,6 +62,7 @@ export const platformService = (log: FastifyBaseLogger) => ({
             logoIconUrl,
             fullLogoUrl,
             favIconUrl,
+            entityManager,
         } = params
 
         const newPlatform: NewPlatform = {
@@ -79,11 +84,20 @@ export const platformService = (log: FastifyBaseLogger) => ({
             googleAuthEnabled: true,
         }
 
-        const savedPlatform = await platformRepo().save(newPlatform)
-        await userService(log).addOwnerToPlatform({
+        const savedPlatform = await platformRepo(entityManager).save(newPlatform)
+        const ownerAttached = await userService(log).addOwnerToPlatform({
             id: ownerId,
             platformId: savedPlatform.id,
+            entityManager,
         })
+        if (!ownerAttached) {
+            throw new QadamFlowError({
+                code: ErrorCode.VALIDATION,
+                params: {
+                    message: 'Platform owner is already attached to another platform',
+                },
+            })
+        }
 
         log.info({ platformId: savedPlatform.id, ownerId }, 'Platform created')
         return stripFederatedAuth(savedPlatform)
@@ -98,12 +112,11 @@ export const platformService = (log: FastifyBaseLogger) => ({
         // via `addOwnerToPlatform`, so a pre-signUp caller with no such row yet (there is none in
         // this codebase, but nothing prevents one) still works.
         //
-        // The read-then-promote here is not atomic on its own, and two concurrent onboarding
-        // calls for the same identity (a double-click makes the second click a no-op via the
-        // Button component's `loading` guard, but two tabs or any API client would not) would
-        // otherwise both read the same existingUser row and both promote it, stranding one of the
-        // two platforms with an owner whose own platformId points at the other one. Serialize the
-        // whole claim-and-promote sequence per identity instead of just guarding the read.
+        // Two concurrent onboarding calls for the same identity (two tabs, or any API client)
+        // must not both promote the same existingUser row, which would strand one of the two
+        // platforms with an owner whose own platformId points at the other one. The database
+        // enforces that on its own (see claimOnboardingUserAndCreatePlatform); the lock only
+        // keeps the two calls from contending for the same row lock in the first place.
         return distributedLock(log).runExclusive({
             key: `create-platform-with-project:${identityId}`,
             timeoutInSeconds: 10,
@@ -261,32 +274,44 @@ async function getPlan(_log: FastifyBaseLogger, _platform: PlatformWithoutFedera
     }
 }
 
+// Every write of the claim commits together or not at all, so a failure part-way never leaves a
+// platform without its project or owner. The onboarding user row is row-locked for the whole
+// transaction: a concurrent claim for the same identity waits, then finds the row already attached
+// and inserts its own — the same outcome as when the distributed lock serializes the two calls,
+// but enforced by the database rather than by the lock's lease.
 async function claimOnboardingUserAndCreatePlatform({ identityId, name, invalidatePreviousTokens, log }: ClaimOnboardingUserAndCreatePlatformParams): Promise<AuthenticationResponse> {
-    const existingUser = await userService(log).getOneByIdentityAndPlatform({ identityId, platformId: null })
-    const newUser = existingUser ?? await userService(log).create({
-        identityId,
-        platformRole: PlatformRole.ADMIN,
-        platformId: null,
-    })
-    const platform = await platformService(log).create({ ownerId: newUser.id, name })
-    const defaultProject = await projectService(log).create({
-        displayName: `${name}'s Project`,
-        ownerId: newUser.id,
-        platformId: platform.id,
-        type: ProjectType.PERSONAL,
-    })
-    if (invalidatePreviousTokens) {
-        await userIdentityRepository().update(identityId, {
-            tokenVersion: nanoid(),
+    const { claimedUser, platform, defaultProject } = await transaction(async (entityManager) => {
+        const existingUser = await userService(log).getUnattachedByIdentityForUpdate({ identityId, entityManager })
+        const claimedUser = existingUser ?? await userService(log).create({
+            identityId,
+            platformRole: PlatformRole.ADMIN,
+            platformId: null,
+            entityManager,
         })
-    }
+        const createdPlatform = await platformService(log).create({ ownerId: claimedUser.id, name, entityManager })
+        const createdProject = await projectService(log).create({
+            displayName: `${name}'s Project`,
+            ownerId: claimedUser.id,
+            platformId: createdPlatform.id,
+            type: ProjectType.PERSONAL,
+            callPostCreateHooks: false,
+            entityManager,
+        })
+        if (invalidatePreviousTokens) {
+            await userIdentityRepository(entityManager).update(identityId, {
+                tokenVersion: nanoid(),
+            })
+        }
+        return { claimedUser, platform: createdPlatform, defaultProject: createdProject }
+    })
+    await projectService(log).callProjectPostCreateHooks(defaultProject)
     await authenticationUtils(log).sendTelemetry({
         identity: await userIdentityService(log).getOneOrFail({ id: identityId }),
-        user: newUser,
+        user: claimedUser,
         projectId: defaultProject.id,
     })
     return authenticationUtils(log).getProjectAndToken({
-        userId: newUser.id,
+        userId: claimedUser.id,
         platformId: platform.id,
         projectId: defaultProject.id,
     })
@@ -303,6 +328,7 @@ function hasFederatedAuth(platform: Platform | PlatformWithoutFederatedAuth): pl
 
 type AddParams = {
     ownerId: UserId
+    entityManager?: EntityManager
     name: string
     primaryColor?: string
     logoIconUrl?: string
