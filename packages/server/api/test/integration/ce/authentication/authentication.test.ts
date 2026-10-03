@@ -1,5 +1,7 @@
+import { Principal } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
+import * as accessTokenManagerModule from '../../../../src/app/authentication/lib/access-token-manager'
 import { databaseConnection } from '../../../../src/app/database/database-connection'
 import {
     createMockSignInRequest,
@@ -8,6 +10,7 @@ import {
 import { cleanDatabase, setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
 let app: FastifyInstance | null = null
+const originalAccessTokenManager = accessTokenManagerModule.accessTokenManager
 
 beforeAll(async () => {
     app = await setupTestEnvironment()
@@ -20,6 +23,11 @@ afterAll(async () => {
 beforeEach(async () => {
     await cleanDatabase()
 })
+
+afterEach(() => {
+    vi.restoreAllMocks()
+})
+
 describe('Authentication API', () => {
     describe('Sign up Endpoint', () => {
         it('Adds new user with onboarding token', async () => {
@@ -172,6 +180,25 @@ describe('Authentication API', () => {
             })
             const onboardingToken = signUpResponse?.json()?.token
 
+            // Both calls carry the same onboarding token, and the first claim to commit rotates the
+            // identity's tokenVersion. A call that reaches authentication only after that commit is
+            // rejected with SESSION_EXPIRED before its handler, and so the lock under test, ever
+            // runs, which left whether the two claims overlapped at all to scheduling. Hold each
+            // call just past authentication until both have passed it: both claims then reach
+            // the lock together on every run.
+            const authenticated = createArrivalBarrier({ parties: 2, timeoutMs: 10_000 })
+            vi.spyOn(accessTokenManagerModule, 'accessTokenManager').mockImplementation((log) => {
+                const real = originalAccessTokenManager(log)
+                return {
+                    ...real,
+                    verifyPrincipal: async (token: string): Promise<Principal> => {
+                        const principal = await real.verifyPrincipal(token)
+                        await authenticated.arrive()
+                        return principal
+                    },
+                }
+            })
+
             // act
             const [responseA, responseB] = await Promise.all([
                 app?.inject({
@@ -276,3 +303,34 @@ describe('Authentication API', () => {
         })
     })
 })
+
+// Resolves every arrive() once `parties` callers have arrived, or once timeoutMs has passed, so a
+// call that never arrives fails the assertions instead of hanging the test.
+function createArrivalBarrier({ parties, timeoutMs }: ArrivalBarrierParams): ArrivalBarrier {
+    let arrived = 0
+    let release: () => void = () => undefined
+    const allArrived = new Promise<void>((resolve) => {
+        release = resolve
+    })
+    const timedOut = new Promise<void>((resolve) => {
+        setTimeout(resolve, timeoutMs).unref()
+    })
+    return {
+        arrive: async (): Promise<void> => {
+            arrived += 1
+            if (arrived >= parties) {
+                release()
+            }
+            await Promise.race([allArrived, timedOut])
+        },
+    }
+}
+
+type ArrivalBarrierParams = {
+    parties: number
+    timeoutMs: number
+}
+
+type ArrivalBarrier = {
+    arrive: () => Promise<void>
+}
