@@ -73,9 +73,12 @@ RUN --mount=type=cache,target=/root/.npm \
     typescript@4.9.4 \
     esbuild@0.25.0
 
-# Install isolated-vm globally (needed for sandboxes)
+# Install isolated-vm globally (needed for sandboxes). Isolate mode resolves it only from here
+# (NODE_PATH=/usr/src/node_modules), fork mode from /usr/src/app/node_modules, so the two must be
+# the same version. The default must equal the root package.json pin; the build stage checks it (#641).
+ARG ISOLATED_VM_VERSION=7.0.0
 RUN --mount=type=cache,target=/root/.bun/install/cache \
-    cd /usr/src && bun install isolated-vm@6.0.2
+    cd /usr/src && bun install isolated-vm@${ISOLATED_VM_VERSION}
 
 ### STAGE 1: Build ###
 FROM base AS build
@@ -93,6 +96,9 @@ COPY packages/ ./packages/
 # the symptom and discarding the cause. A failed install must fail the build.
 RUN --mount=type=cache,target=/root/.bun/install/cache \
     bun install
+
+# Fail the build if the sandbox's isolated-vm (base stage) drifted from the manifests (#641).
+RUN node -e 'const v=require("/usr/src/node_modules/isolated-vm/package.json").version;const r=require("./package.json").dependencies["isolated-vm"];const e=require("./packages/server/engine/package.json").dependencies["isolated-vm"];if(v!==r||v!==e){console.error("isolated-vm mismatch: sandbox="+v+" root="+r+" engine="+e);process.exit(1)}'
 
 # Copy remaining source code (turbo config, etc.)
 COPY . .
