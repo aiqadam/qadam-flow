@@ -7,6 +7,14 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    // The resource-bound tests feed the parser inputs that would exhaust any heap if a bound
+    // regressed; a capped worker fails them fast instead of taking the machine down with it.
+    pool: 'forks',
+    poolOptions: {
+      forks: {
+        execArgv: ['--max-old-space-size=512'],
+      },
+    },
   },
   resolve: {
     alias: {

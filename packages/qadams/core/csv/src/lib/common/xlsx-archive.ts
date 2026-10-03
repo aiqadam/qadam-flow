@@ -1,11 +1,10 @@
 import { inflateRawSync } from 'node:zlib';
 import { tryCatchSync } from '@aiqadam/shared';
 
-// The workbook parser inflates every ZIP entry in full before it checks the entry's declared
-// size, so a few kilobytes of deflate can expand to gigabytes inside it. The entries are
-// inflated here instead, from the central directory, with the total capped and every entry
-// held to the size it declares; the parser then only ever sees what this function returned.
-// Skipped parts are never inflated and do not count towards the cap.
+// Entries are inflated here, from the central directory, bounded per entry by the size it
+// declares and in total by the cap; what this returns is all the caller ever parses. Skipped
+// parts are never inflated and do not count towards the cap. Part names are normalised once,
+// before the duplicate check and before skipPart sees them.
 export const xlsxArchive = {
   extractEntries({ buffer, maxUncompressedBytes, skipPart }: ExtractEntriesParams): Record<string, Uint8Array> {
     const listed = readCentralDirectory(buffer).filter((entry) => !entry.name.endsWith('/'));
@@ -114,7 +113,7 @@ function readDirectoryEntry({ buffer, offset }: { buffer: Buffer; offset: number
   const extraStart = nameStart + nameLength;
   const nextOffset = extraStart + extraLength + commentLength;
   checkedOffset({ buffer, offset: nameStart, length: nextOffset - nameStart });
-  const name = buffer.toString((flags & FLAG_UTF8_NAMES) !== 0 ? 'utf8' : 'latin1', nameStart, extraStart);
+  const name = normalizePartName(buffer.toString((flags & FLAG_UTF8_NAMES) !== 0 ? 'utf8' : 'latin1', nameStart, extraStart));
   if ((flags & FLAG_ENCRYPTED) !== 0) {
     throw new XlsxArchiveError({ reason: 'encrypted', detail: `part ${name} is encrypted` });
   }
@@ -130,6 +129,11 @@ function readDirectoryEntry({ buffer, offset }: { buffer: Buffer; offset: number
     },
   });
   return { entry: { name, method, ...sizes }, nextOffset };
+}
+
+// Some writers store Windows-style separators or a leading slash; both name the same part.
+function normalizePartName(name: string): string {
+  return name.replace(/\\/g, '/').replace(/^\/+/, '');
 }
 
 // A ZIP64 extra field carries, in this order, only those of the three values whose 32-bit

@@ -1,14 +1,14 @@
 /// <reference types="vitest/globals" />
 
-import { CellValue, Workbook } from '@cj-tech-master/excelts';
+import { CellValue } from '@cj-tech-master/excelts';
 import { csvToJsonAction } from '../src/lib/actions/convert-csv-to-json';
-import { excelToCsvAction } from '../src/lib/actions/convert-excel-to-csv';
 import { jsonToCsvAction } from '../src/lib/actions/convert-json-to-csv';
 import { createMockActionContext } from '@aiqadam/qadams-framework';
-import { prototypeIntegrity } from '../src/lib/common/prototype-integrity';
-import { xlsxArchive } from '../src/lib/common/xlsx-archive';
+import { excelTestKit } from './excel-test-kit';
 import { SHEETJS_WRITTEN_WORKBOOK_BASE64 } from './sheetjs-written-workbook';
-import { minimalWorkbook, zipFixture, ZipFixtureEntry } from './zip-fixture';
+import { zipFixture } from './zip-fixture';
+
+const { buildWorkbookBase64, zipBase64, readParts, builtInPrototypeKeys, convert } = excelTestKit;
 
 async function makeXlsxBase64(sheets: Record<string, (string | number)[][]>): Promise<string> {
   return buildWorkbookBase64((workbook) => {
@@ -16,37 +16,6 @@ async function makeXlsxBase64(sheets: Record<string, (string | number)[][]>): Pr
       workbook.addWorksheet(name).addRows(rows);
     }
   });
-}
-
-async function buildWorkbookBase64(build: (workbook: Workbook) => void): Promise<string> {
-  const workbook = new Workbook();
-  build(workbook);
-  return Buffer.from(await workbook.xlsx.writeBuffer()).toString('base64');
-}
-
-function zipBase64(entries: ZipFixtureEntry[]): string {
-  return zipFixture.build(entries).toString('base64');
-}
-
-function readParts(base64: string): ZipFixtureEntry[] {
-  const parts = xlsxArchive.extractEntries({ buffer: Buffer.from(base64, 'base64'), maxUncompressedBytes: Infinity, skipPart: () => false });
-  return Object.entries(parts).map(([name, data]) => ({ name, data }));
-}
-
-function builtInPrototypeKeys(): Record<string, string[]> {
-  return {
-    object: Reflect.ownKeys(Object.prototype).map(String),
-    array: Reflect.ownKeys(Array.prototype).map(String),
-    function: Reflect.ownKeys(Function.prototype).map(String),
-    string: Reflect.ownKeys(String.prototype).map(String),
-  };
-}
-
-async function convert({ base64, sheetName = '', delimiter = ',' }: { base64: string; sheetName?: string; delimiter?: ',' | '\t' | ';' }) {
-  const ctx = createMockActionContext({
-    propsValue: { file: { base64, extension: 'xlsx', filename: 'test.xlsx' }, sheet_name: sheetName, delimiter_type: delimiter },
-  });
-  return excelToCsvAction.run(ctx);
 }
 
 describe('csvToJsonAction', () => {
@@ -436,7 +405,7 @@ describe('excelToCsvAction', () => {
 
   test('decodes _xHHHH_ escapes in plain string values and formula results, and keeps escaped literals', async () => {
     const base64 = zipBase64(
-      minimalWorkbook.parts({
+      zipFixture.minimalWorkbookParts({
         sheetData:
           '<row r="1"><c r="A1" t="str"><v>cr_x000d_here</v></c></row>' +
           '<row r="2"><c r="A2" t="str"><f>"a"&amp;CHAR(13)&amp;"b"</f><v>a_x000D_b</v></c></row>' +
@@ -464,6 +433,25 @@ describe('excelToCsvAction', () => {
     expect(result.csv).toBe('2024-01-15');
   });
 
+  test('renders elapsed-time formats in a 1904 workbook from the serial the workbook stores', async () => {
+    const base64 = await buildWorkbookBase64((workbook) => {
+      workbook.properties.date1904 = true;
+      const sheet = workbook.addWorksheet('Elapsed');
+      const cells: [string, number | Date, string][] = [
+        ['A1', 1.5, '[h]:mm'],
+        ['B1', 1.5, '[mm]:ss'],
+        ['C1', 0.75, 'h:mm'],
+        ['D1', new Date(Date.UTC(2024, 0, 15)), 'yyyy-mm-dd'],
+      ];
+      cells.forEach(([address, value, numFmt]) => {
+        sheet.getCell(address).value = value;
+        sheet.getCell(address).numFmt = numFmt;
+      });
+    });
+    const result = await convert({ base64 });
+    expect(result.csv).toBe('36:00,2160:00,18:00,2024-01-15');
+  });
+
   test('converts sheets, values and number formats named like built-in object members as plain text', async () => {
     const prototypeKeysBefore = builtInPrototypeKeys();
     const sheetNames = ['__proto__', 'constructor', 'prototype'];
@@ -488,79 +476,5 @@ describe('excelToCsvAction', () => {
     expect(results[0].available_sheets).toEqual(sheetNames);
     expect(results[0].csv).toBe('__proto__,constructor,prototype\n42,7,');
     expect(results[1].csv).toBe('__proto__,constructor,prototype\n42,7,\nx,,');
-  });
-
-  test('defined names that reference special sheet names leave built-in prototypes unchanged', async () => {
-    const prototypeKeysBefore = builtInPrototypeKeys();
-    const base64 = zipBase64(
-      minimalWorkbook.parts({
-        sheetData: '<row r="1"><c r="A1" t="inlineStr"><is><t>name</t></is></c><c r="B1"><v>1.5</v></c></row>',
-        workbookExtra:
-          '<definedNames>' +
-          "<definedName name=\"first\">'__proto__'!$A$1:$B$2</definedName>" +
-          '<definedName name="second">constructor!$A$1</definedName>' +
-          '<definedName name="third">prototype!$C$3</definedName>' +
-          '</definedNames>',
-      })
-    );
-
-    const result = await convert({ base64 });
-
-    expect(builtInPrototypeKeys()).toEqual(prototypeKeysBefore);
-    expect(result.available_sheets).toEqual(['Data']);
-    expect(result.csv).toBe('name,1.5');
-  });
-
-  test('fails the run and reverts the change when reading modifies a built-in prototype', async () => {
-    const prototypeKeysBefore = builtInPrototypeKeys();
-    const originalJoin = Array.prototype.join;
-    const injectedKey = 'injectedByParser';
-
-    await expect(
-      prototypeIntegrity.guard(async () => {
-        Object.defineProperty(Object.prototype, injectedKey, { value: 1, configurable: true, writable: true });
-        Object.defineProperty(Array.prototype, 'join', { value: () => 'replaced', configurable: true, writable: true });
-        return 'parsed';
-      })
-    ).rejects.toThrow('A built-in prototype was modified while reading the file');
-
-    expect(builtInPrototypeKeys()).toEqual(prototypeKeysBefore);
-    expect(Object.prototype).not.toHaveProperty(injectedKey);
-    expect(Array.prototype.join).toBe(originalJoin);
-  });
-
-  test('refuses a workbook whose parts decompress beyond the size cap', async () => {
-    const parts = minimalWorkbook.parts({ sheetData: '<row r="1"><c r="A1"><v>1</v></c></row>' });
-    const base64 = zipBase64(
-      parts.map((part) => (part.name === 'xl/worksheets/sheet1.xml' ? { ...part, declaredSize: 101 * 1024 * 1024 } : part))
-    );
-    await expect(convert({ base64 })).rejects.toThrow('The workbook is too large to convert');
-  });
-
-  test('refuses a part that decompresses to more than the size it declares', async () => {
-    const sheetXml = `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${'<row/>'.repeat(200_000)}</sheetData></worksheet>`;
-    const parts = minimalWorkbook
-      .parts({ sheetData: '' })
-      .map((part) => (part.name === 'xl/worksheets/sheet1.xml' ? { name: part.name, data: sheetXml, declaredSize: 1000 } : part));
-    await expect(convert({ base64: zipBase64(parts) })).rejects.toThrow('does not match the size it declares');
-  });
-
-  test('skips parts the conversion never reads, whatever size they declare', async () => {
-    const parts = [
-      ...minimalWorkbook.parts({ sheetData: '<row r="1"><c r="A1"><v>1</v></c></row>' }),
-      { name: 'xl/media/image1.png', data: 'not inflated', declaredSize: 500 * 1024 * 1024 },
-      { name: 'xl/charts/chart1.xml', data: '<chartSpace/>' },
-    ];
-    const result = await convert({ base64: zipBase64(parts) });
-    expect(result.csv).toBe('1');
-  });
-
-  test('refuses a sheet whose used range exceeds the cell budget', async () => {
-    const base64 = await buildWorkbookBase64((workbook) => {
-      const sheet = workbook.addWorksheet('Sparse');
-      sheet.getCell('A1').value = 'first';
-      sheet.getCell('XFD400').value = 'last';
-    });
-    await expect(convert({ base64 })).rejects.toThrow('Sheet "Sparse" is too large to convert: its used range is 400 rows by 16384 columns');
   });
 });

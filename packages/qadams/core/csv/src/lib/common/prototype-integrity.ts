@@ -3,28 +3,28 @@ import { tryCatch } from '@aiqadam/shared';
 // The engine may run several projects' steps in one process, so a parser that writes onto a
 // built-in prototype would leak into every other run. Whatever the parser added or replaced
 // is put back, and the run fails instead of returning output from a parser that misbehaved.
+// Guarded sections run one at a time: a snapshot taken while another section is in flight
+// would attribute that section's changes to the wrong run, or let them through unnoticed.
 export const prototypeIntegrity = {
-  async guard<T>(operation: () => Promise<T>): Promise<T> {
-    const snapshots = GUARDED_PROTOTYPES.map(takeSnapshot);
-    const result = await tryCatch(operation);
-    const changes = snapshots.flatMap(findChanges);
-    if (changes.length > 0) {
-      changes.forEach(revertChange);
-      throw new PrototypeIntegrityError(changes.map(describeChange));
-    }
-    if (result.error !== null) {
-      throw result.error;
-    }
-    return result.data;
+  guard<T>(operation: () => Promise<T>): Promise<T> {
+    const run = pendingSections.then(() => guardOnce(operation));
+    pendingSections = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
   },
 };
 
 export class PrototypeIntegrityError extends Error {
-  constructor(changedKeys: string[]) {
-    super(`A built-in prototype was modified while reading the file (${changedKeys.join(', ')}).`);
+  constructor({ changed, unrestored }: { changed: string[]; unrestored: string[] }) {
+    const restoreNote = unrestored.length === 0 ? '' : ` Could not restore: ${unrestored.join(', ')}.`;
+    super(`A built-in prototype was modified while reading the file (${changed.join(', ')}).${restoreNote}`);
     this.name = 'PrototypeIntegrityError';
   }
 }
+
+let pendingSections: Promise<void> = Promise.resolve();
 
 const GUARDED_PROTOTYPES: GuardedPrototype[] = [
   { label: 'Object', target: Object.prototype },
@@ -33,6 +33,23 @@ const GUARDED_PROTOTYPES: GuardedPrototype[] = [
   { label: 'String', target: String.prototype },
   { label: 'Number', target: Number.prototype },
 ];
+
+async function guardOnce<T>(operation: () => Promise<T>): Promise<T> {
+  const snapshots = GUARDED_PROTOTYPES.map(takeSnapshot);
+  const result = await tryCatch(operation);
+  const changes = snapshots.flatMap(findChanges);
+  if (changes.length > 0) {
+    const unrestored = changes.filter((change) => !revertChange(change));
+    throw new PrototypeIntegrityError({
+      changed: changes.map(describeChange),
+      unrestored: unrestored.map(describeChange),
+    });
+  }
+  if (result.error !== null) {
+    throw result.error;
+  }
+  return result.data;
+}
 
 function takeSnapshot(prototype: GuardedPrototype): PrototypeSnapshot {
   return {
@@ -69,18 +86,18 @@ function sameDescriptor({ before, after }: { before: PropertyDescriptor | undefi
   );
 }
 
-function revertChange({ snapshot, key }: PrototypeChange): void {
+// Returns whether the prototype is back to its snapshot for this key; a property that was made
+// non-configurable, or a prototype that was frozen, cannot be put back.
+function revertChange({ snapshot, key }: PrototypeChange): boolean {
   const { target } = snapshot.prototype;
   if (key === null) {
-    Object.setPrototypeOf(target, snapshot.parent);
-    return;
+    return Reflect.setPrototypeOf(target, snapshot.parent);
   }
   const original = snapshot.descriptors.get(key);
   if (original === undefined) {
-    Reflect.deleteProperty(target, key);
-    return;
+    return Reflect.deleteProperty(target, key);
   }
-  Reflect.defineProperty(target, key, original);
+  return Reflect.defineProperty(target, key, original);
 }
 
 function describeChange({ snapshot, key }: PrototypeChange): string {

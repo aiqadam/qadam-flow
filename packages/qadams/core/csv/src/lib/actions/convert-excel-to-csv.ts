@@ -66,7 +66,8 @@ export const excelToCsvAction = createAction({
     if (extracted.error !== null) {
       throw archiveErrorToUserError(extracted.error);
     }
-    const parts = withDate1904FlagNormalized(extracted.data);
+    assertWithinLoadBudget(extracted.data);
+    const parts = withWorkbookPartPrepared(extracted.data);
 
     return prototypeIntegrity.guard(async () => {
       const workbook = new Workbook();
@@ -96,7 +97,7 @@ export const excelToCsvAction = createAction({
       }
 
       return {
-        csv: worksheetToCsv({ worksheet, delimiter: delimiter_type }),
+        csv: worksheetToCsv({ worksheet, delimiter: delimiter_type, date1904: workbook.properties.date1904 === true }),
         sheet_name: targetSheet,
         available_sheets: sheetNames,
       };
@@ -117,33 +118,44 @@ const MAX_UNCOMPRESSED_WORKBOOK_BYTES = 100 * 1024 * 1024;
 const MAX_SHEET_ROWS = 1_048_576;
 const MAX_SHEET_COLUMNS = 16_384;
 
-// The used range of the converted sheet is materialised cell by cell, so a sparse sheet with
-// one cell at A1 and another at XFD1048576 would otherwise expand to 17 billion fields.
+// The used range of the converted sheet is materialised field by field, so a sparse sheet
+// with one cell at A1 and another at XFD1048576 would otherwise expand to 17 billion fields.
 const MAX_SHEET_CELLS = 5_000_000;
 
-// Parts the CSV never reads. They are not handed to the parser at all: charts make it fail
-// unless chart support is installed, and images, embedded objects and pivot caches are often
-// the bulk of a workbook's size.
-const UNUSED_PART_PREFIXES = [
-  'xl/charts/',
-  'xl/drawings/',
-  'xl/media/',
-  'xl/embeddings/',
-  'xl/pivotTables/',
-  'xl/pivotCache/',
-  'xl/printerSettings/',
-  'customXml/',
-  'docProps/',
-];
+// The parser keeps an object of roughly 600 bytes for every cell and row element of every
+// sheet, whether or not it holds a value, and about as much for every element of the styles
+// part. While it loads it also holds every element of the shared strings part, at about a
+// quarter of that each. Their weighted total is bounded before anything is loaded; this many
+// cells' worth stays well inside the engine's default 1 GB sandbox. Excel caps a workbook at
+// 64,000 cell formats, so full weight for styles costs a real workbook nothing.
+const MAX_LOADED_CELLS = 1_200_000;
+const SHARED_STRING_ELEMENTS_PER_CELL = 4;
 
 const WORKBOOK_PART = 'xl/workbook.xml';
+const SHARED_STRINGS_PART = 'xl/sharedStrings.xml';
+const STYLES_PART = 'xl/styles.xml';
+const WORKSHEET_PART = /^xl\/worksheets\/sheet\d+\.xml$/;
+
+// The only parts the CSV is built from; the parser recognises worksheets by this path alone.
+// Everything else (charts, drawings, media, comments, tables, pivot caches, themes, document
+// properties, ...) is never inflated: some of it makes the parser fail without optional
+// support installed, and all of it would cost memory for nothing.
+const CONVERTED_PARTS = new Set(['_rels/.rels', WORKBOOK_PART, 'xl/_rels/workbook.xml.rels', SHARED_STRINGS_PART, STYLES_PART]);
 
 // xsd:boolean allows "true" as well as "1", and SheetJS writes date1904="true", but the parser
 // only recognises "1" and would read such a workbook's dates four years and a day early.
 const DATE_1904_TRUE_ATTRIBUTE = /(<(?:\w+:)?workbookPr\b[^<>]*?\bdate1904\s*=\s*)(["'])true\2/;
 
-// Only cell data and merges are read; skipping the rest of the worksheet XML keeps markup
-// this action never uses away from the parser.
+// The CSV never uses defined names, and the parser materialises every cell a defined name
+// covers. Renaming the element, in its opening and closing tags alike, leaves the XML well
+// formed and makes the parser skip it with everything inside.
+const DEFINED_NAMES_TAG = /<(\/?)((?:[A-Za-z_][\w.-]*:)?)definedNames(?=[\s/>])/g;
+const IGNORED_DEFINED_NAMES_TAG = 'ignoredDefinedNames';
+
+// Only cell data is read; skipping the rest of the worksheet XML keeps markup this action
+// never uses away from the parser. Merged ranges are among it: the CSV puts a merged value in
+// its top-left cell only, as the cells themselves do, and the parser would otherwise
+// materialise every cell a merged range covers.
 const UNUSED_WORKSHEET_NODES = [
   'sheetPr',
   'dimension',
@@ -151,6 +163,7 @@ const UNUSED_WORKSHEET_NODES = [
   'sheetFormatPr',
   'cols',
   'autoFilter',
+  'mergeCells',
   'rowBreaks',
   'hyperlinks',
   'pageMargins',
@@ -166,11 +179,16 @@ const UNUSED_WORKSHEET_NODES = [
   'extLst',
 ];
 
+const LESS_THAN = 0x3c;
+const COLON = 0x3a;
+const SHEET_ELEMENTS = [Buffer.from('c'), Buffer.from('row')];
+const ELEMENT_NAME_TERMINATORS = new Set([0x20, 0x09, 0x0a, 0x0d, 0x2f, 0x3e]);
+
 // numfmt caches every pattern it parses for the life of the process (~6 KB each), and parse
 // time grows with pattern length. Excel itself caps a workbook at roughly 250 custom formats
-// of at most 255 characters, so anything beyond these bounds only comes from a crafted file
-// and is rendered with General instead. The process-wide bound keeps the cache from growing
-// run after run in a long-lived engine process.
+// of at most 255 characters, so a pattern beyond these bounds is rendered with General. The
+// process-wide bound keeps the cache from growing run after run in a long-lived engine
+// process.
 const MAX_DISTINCT_NUMBER_FORMATS = 512;
 const MAX_NUMBER_FORMAT_LENGTH = 255;
 const MAX_PROCESS_NUMBER_FORMATS = 4096;
@@ -189,7 +207,9 @@ const TEN_DIGIT_BAND_START = 1e9;
 const TEN_DIGIT_BAND_END = 1e10;
 
 const EXCEL_EPOCH_OFFSET_DAYS = 25569;
+const DATE_1904_OFFSET_DAYS = 1462;
 const MS_PER_DAY = 86_400_000;
+const ELAPSED_TIME_TOKEN = /\[(?:h+|m+|s+)\]/i;
 
 function archiveErrorToUserError(error: Error): Error {
   if (!(error instanceof XlsxArchiveError)) {
@@ -209,22 +229,98 @@ function archiveErrorToUserError(error: Error): Error {
 }
 
 function isUnusedPart(name: string): boolean {
-  return UNUSED_PART_PREFIXES.some((prefix) => name.startsWith(prefix));
+  return !CONVERTED_PARTS.has(name) && !WORKSHEET_PART.test(name);
 }
 
-function withDate1904FlagNormalized(parts: Record<string, Uint8Array>): Record<string, Uint8Array> {
+// Counted on the raw XML before the parser runs, because the parser allocates as it reads: a
+// workbook over budget is refused before any of it is materialised.
+function assertWithinLoadBudget(parts: Record<string, Uint8Array>): void {
+  const cost = Object.entries(parts).reduce(
+    (total, [name, bytes]) => (total > MAX_LOADED_CELLS ? total : total + partLoadCost({ name, bytes, budget: MAX_LOADED_CELLS - total })),
+    0
+  );
+  if (cost > MAX_LOADED_CELLS) {
+    throw new Error(
+      `The workbook is too large to convert: it holds more than ${MAX_LOADED_CELLS.toLocaleString('en-US')} cells' worth of ` +
+      'cells, rows, strings and styles, counting empty ones. Delete unused rows and columns, or split the workbook, and try again.'
+    );
+  }
+}
+
+function partLoadCost({ name, bytes, budget }: { name: string; bytes: Uint8Array; budget: number }): number {
+  if (WORKSHEET_PART.test(name)) {
+    return countElements({ bytes, names: SHEET_ELEMENTS, limit: budget });
+  }
+  if (name === STYLES_PART) {
+    return countElements({ bytes, names: 'any', limit: budget });
+  }
+  if (name === SHARED_STRINGS_PART) {
+    return countElements({ bytes, names: 'any', limit: budget * SHARED_STRING_ELEMENTS_PER_CELL }) / SHARED_STRING_ELEMENTS_PER_CELL;
+  }
+  return 0;
+}
+
+// One linear pass over the bytes: every "<" that opens an element, or one of the named
+// elements, with or without a namespace prefix, is counted. Markup inside comments counts too,
+// which only errs on the side of refusing. Counting stops once the count passes the limit,
+// where the exact total no longer matters.
+function countElements({ bytes, names, limit }: { bytes: Uint8Array; names: readonly Buffer[] | 'any'; limit: number }): number {
+  let count = 0;
+  for (let open = bytes.indexOf(LESS_THAN); open !== -1 && count <= limit; open = bytes.indexOf(LESS_THAN, open + 1)) {
+    if (opensCountedElement({ bytes, open, names })) {
+      count++;
+    }
+  }
+  return count;
+}
+
+function opensCountedElement({ bytes, open, names }: { bytes: Uint8Array; open: number; names: readonly Buffer[] | 'any' }): boolean {
+  if (names === 'any') {
+    return open + 1 < bytes.length && isNameStartByte(bytes[open + 1]);
+  }
+  const nameStart = skipNamespacePrefix({ bytes, from: open + 1 });
+  return names.some((name) => isElementName({ bytes, at: nameStart, name }));
+}
+
+function skipNamespacePrefix({ bytes, from }: { bytes: Uint8Array; from: number }): number {
+  let at = from;
+  while (at < bytes.length && isNameByte(bytes[at])) {
+    at++;
+  }
+  return at < bytes.length && bytes[at] === COLON ? at + 1 : from;
+}
+
+function isNameByte(byte: number): boolean {
+  return isNameStartByte(byte) || (byte >= 0x30 && byte <= 0x39) || byte === 0x2d || byte === 0x2e;
+}
+
+// ASCII letters, underscore, and any byte of a multi-byte UTF-8 sequence.
+function isNameStartByte(byte: number): boolean {
+  return (byte >= 0x61 && byte <= 0x7a) || (byte >= 0x41 && byte <= 0x5a) || byte === 0x5f || byte >= 0x80;
+}
+
+function isElementName({ bytes, at, name }: { bytes: Uint8Array; at: number; name: Buffer }): boolean {
+  const end = at + name.length;
+  return end < bytes.length && name.every((byte, index) => bytes[at + index] === byte) && ELEMENT_NAME_TERMINATORS.has(bytes[end]);
+}
+
+function withWorkbookPartPrepared(parts: Record<string, Uint8Array>): Record<string, Uint8Array> {
   const workbookXml = parts[WORKBOOK_PART];
   if (isNil(workbookXml)) {
     return parts;
   }
-  const text = Buffer.from(workbookXml).toString('utf8');
-  if (!DATE_1904_TRUE_ATTRIBUTE.test(text)) {
+  // The parser rejects a part that is not valid UTF-8; such a part is left for it to reject.
+  const decoded = tryCatchSync(() => new TextDecoder('utf-8', { fatal: true }).decode(workbookXml));
+  if (decoded.error !== null) {
     return parts;
   }
-  return { ...parts, [WORKBOOK_PART]: Buffer.from(text.replace(DATE_1904_TRUE_ATTRIBUTE, '$1$21$2'), 'utf8') };
+  const prepared = decoded.data
+    .replace(DATE_1904_TRUE_ATTRIBUTE, (_match, attributeStart: string, quote: string) => `${attributeStart}${quote}1${quote}`)
+    .replace(DEFINED_NAMES_TAG, (_match, slash: string, prefix: string) => `<${slash}${prefix}${IGNORED_DEFINED_NAMES_TAG}`);
+  return prepared === decoded.data ? parts : { ...parts, [WORKBOOK_PART]: Buffer.from(prepared, 'utf8') };
 }
 
-function worksheetToCsv({ worksheet, delimiter }: { worksheet: Worksheet; delimiter: string }): string {
+function worksheetToCsv({ worksheet, delimiter, date1904 }: { worksheet: Worksheet; delimiter: string; date1904: boolean }): string {
   const range = findUsedRange(worksheet);
   if (isNil(range)) {
     return '';
@@ -246,7 +342,7 @@ function worksheetToCsv({ worksheet, delimiter }: { worksheet: Worksheet; delimi
   return rows
     .map((cells) =>
       cells
-        .map((cell) => toCsvField({ text: cellText({ cell, numberFormats }), delimiter }))
+        .map((cell) => toCsvField({ text: cellText({ cell, numberFormats, date1904 }), delimiter }))
         .join(delimiter)
     )
     .join('\n');
@@ -299,7 +395,7 @@ function normalizeNumberFormat(numFmt: Cell['numFmt']): string {
   return BUILT_IN_FORMAT_CORRECTIONS.get(pattern) ?? pattern;
 }
 
-function cellText({ cell, numberFormats }: { cell: Cell | undefined; numberFormats: ReadonlySet<string> }): string {
+function cellText({ cell, numberFormats, date1904 }: { cell: Cell | undefined; numberFormats: ReadonlySet<string>; date1904: boolean }): string {
   if (isNil(cell)) {
     return '';
   }
@@ -310,18 +406,18 @@ function cellText({ cell, numberFormats }: { cell: Cell | undefined; numberForma
     case ValueType.Merge:
       return '';
     case ValueType.Formula:
-      return valueText({ value: cell.result, numberFormat, escapes: 'all' });
+      return valueText({ value: cell.result, numberFormat, escapes: 'all', date1904 });
     default:
-      return valueText({ value: cell.value, numberFormat, escapes: 'lower-case' });
+      return valueText({ value: cell.value, numberFormat, escapes: 'lower-case', date1904 });
   }
 }
 
-function valueText({ value, numberFormat, escapes }: { value: unknown; numberFormat: string; escapes: EscapeDecoding }): string {
+function valueText({ value, numberFormat, escapes, date1904 }: ValueTextParams): string {
   if (typeof value === 'number') {
     return formatNumber({ value, numberFormat });
   }
   if (value instanceof Date) {
-    return formatNumber({ value: value.getTime() / MS_PER_DAY + EXCEL_EPOCH_OFFSET_DAYS, numberFormat });
+    return formatNumber({ value: dateToSerial({ date: value, numberFormat, date1904 }), numberFormat });
   }
   if (typeof value === 'boolean') {
     return value ? 'TRUE' : 'FALSE';
@@ -339,16 +435,27 @@ function valueText({ value, numberFormat, escapes }: { value: unknown; numberFor
     return value.error;
   }
   if ('text' in value) {
-    return valueText({ value: value.text, numberFormat, escapes });
+    return valueText({ value: value.text, numberFormat, escapes, date1904 });
   }
   return '';
+}
+
+// The parser turns a serial under a date format into an absolute Date. numfmt only knows the
+// 1900 date system, so the Date goes back to a 1900 serial, which shows the same calendar date
+// whichever system the workbook uses. An elapsed-time pattern shows the serial itself as a
+// duration, so in a 1904 workbook it gets the serial the workbook stores.
+function dateToSerial({ date, numberFormat, date1904 }: { date: Date; numberFormat: string; date1904: boolean }): number {
+  const serial = date.getTime() / MS_PER_DAY + EXCEL_EPOCH_OFFSET_DAYS;
+  return date1904 && ELAPSED_TIME_TOKEN.test(numberFormat) ? serial - DATE_1904_OFFSET_DAYS : serial;
 }
 
 // The parser decodes _xHHHH_ escapes in shared and inline strings, but not in t="str" values:
 // formula string results, and the plain string cells SheetJS writes (with lower-case hex, e.g.
 // _x000d_ for a carriage return). A formula result is decoded in full. A plain string may
 // already be decoded, and an escape left in it then is a literal its writer escaped on purpose
-// as _x005F_xHHHH_, which Excel writes in upper case, so only lower-case escapes are decoded.
+// as _x005F_xHHHH_, which Excel writes in upper case, so only escapes with a lower-case hex
+// digit are decoded. An all-digit escape (_x0001_) in a plain t="str" value stays as text: it
+// cannot be told apart from a decoded literal once the parser has resolved shared strings.
 function decodeEscapes({ text, escapes }: { text: string; escapes: EscapeDecoding }): string {
   if (!text.includes('_x')) {
     return text;
@@ -428,3 +535,10 @@ type UsedRange = {
 };
 
 type EscapeDecoding = 'all' | 'lower-case';
+
+type ValueTextParams = {
+  value: unknown;
+  numberFormat: string;
+  escapes: EscapeDecoding;
+  date1904: boolean;
+};
