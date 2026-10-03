@@ -15,6 +15,7 @@ import {
   PROVIDER_NAME_QUERY_PARAM,
   STATE_QUERY_PARAM,
 } from '@/lib/navigation-utils';
+import { redirectUtils } from '@/lib/redirect-utils';
 
 const RedirectPage: React.FC = React.memo(() => {
   const location = useLocation();
@@ -31,7 +32,7 @@ const RedirectPage: React.FC = React.memo(() => {
     const state = tryParseState(params.get(STATE_QUERY_PARAM));
     if (state && state[LOGIN_QUERY_PARAM] && code) {
       const providerName = state[PROVIDER_NAME_QUERY_PARAM];
-      const from = state[FROM_QUERY_PARAM];
+      const from = redirectUtils.toSameOriginPath(state[FROM_QUERY_PARAM]);
       const handleThirdPartyLogin = async () => {
         try {
           const data = await authenticationApi.claimThirdPartyRequest({
