@@ -11,6 +11,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { ssrfGuard } from '../../src/lib/network/ssrf-guard'
 
 const LOOPBACK = '127.0.0.1'
+const OTHER_LOOPBACK = '127.0.0.2'
 
 function listen({ server, target }: ListenParams): Promise<void> {
     return new Promise((resolve) => {
@@ -24,11 +25,11 @@ function connectWith(connectArgs: unknown[]): net.Socket {
     return Reflect.apply(net.Socket.prototype.connect, new net.Socket(), connectArgs)
 }
 
-function firstReadThen<T>({ first, then }: FirstReadThenParams<T>): () => T {
+function firstReadThen<T>({ first, then, firstReads = 1 }: FirstReadThenParams<T>): () => T {
     let reads = 0
     return () => {
         reads += 1
-        return reads === 1 ? first : then
+        return reads <= firstReads ? first : then
     }
 }
 
@@ -50,8 +51,13 @@ function settle(socket: net.Socket): Promise<ConnectOutcome> {
             socket.destroy()
             resolve(outcome)
         }
-        socket.once('connect', () => done({ connected: true }))
-        socket.once('secureConnect', () => done({ connected: true }))
+        const connected = (): void => done({
+            connected: true,
+            remoteAddress: socket.remoteAddress,
+            remotePort: socket.remotePort,
+        })
+        socket.once('connect', connected)
+        socket.once('secureConnect', connected)
         socket.once('error', (error) => done({ connected: false, error }))
     })
 }
@@ -115,7 +121,8 @@ describe('socket connect guard — every connect argument shape', () => {
             ['new Socket().connect(portString, host)', (): net.Socket => connectWith([String(port), LOOPBACK])],
             ['new Socket().connect([options, cb]) (pre-normalized tuple)', (): net.Socket =>
                 connectWith([[{ host: LOOPBACK, port }, null]])],
-            ['tls.connect(options)', (): net.Socket => tls.connect({ host: LOOPBACK, port, rejectUnauthorized: false })],
+            ['tls.connect(options)', (): net.Socket =>
+                tls.connect({ host: LOOPBACK, port, rejectUnauthorized: false })],
             ['tls.connect(port, host)', (): net.Socket => tls.connect(port, LOOPBACK, { rejectUnauthorized: false })],
         ])('%s', async (_shape, open) => {
             const outcome = await settle(open())
@@ -200,9 +207,11 @@ describe('socket connect guard — every connect argument shape', () => {
 
     describe('connects to exactly the target that was checked', () => {
         it.each([
+            // Socket's constructor already copies the options here, so this row pins the call shape.
             ['net.connect(options)', (options: net.NetConnectOpts): net.Socket => net.connect(options)],
             ['new Socket().connect(options)', (options: net.NetConnectOpts): net.Socket => connectWith([options])],
-            ['new Socket().connect([options, cb])', (options: net.NetConnectOpts): net.Socket => connectWith([[options, null]])],
+            ['new Socket().connect([options, cb])', (options: net.NetConnectOpts): net.Socket =>
+                connectWith([[options, null]])],
         ])('refuses a host whose value changes after it is first read: %s', async (_shape, open) => {
             ssrfGuard.install({ enabled: true, allowList: [], allowedLoopbackPorts: [] })
             const host = firstReadThen({ first: '', then: LOOPBACK })
@@ -214,11 +223,7 @@ describe('socket connect guard — every connect argument shape', () => {
         })
 
         it('lands on the checked port when the port value changes after it is first read', async () => {
-            let otherConnections = 0
             const otherServer = net.createServer((socket) => socket.end())
-            otherServer.on('connection', () => {
-                otherConnections += 1
-            })
             await listen({ server: otherServer, target: { port: 0, host: LOOPBACK } })
             try {
                 ssrfGuard.install({ enabled: true, allowList: [], allowedLoopbackPorts: [port] })
@@ -226,12 +231,55 @@ describe('socket connect guard — every connect argument shape', () => {
                 const options = Object.defineProperty({ host: LOOPBACK }, 'port', { get: readPort, enumerable: true })
                 const outcome = await settle(connectWith([options]))
                 expect(outcome.connected).toBe(true)
-                expect(acceptedConnections).toBe(1)
-                expect(otherConnections).toBe(0)
+                expect(outcome.remotePort).toBe(port)
             }
             finally {
                 await closeServer(otherServer)
             }
+        })
+
+        it.each([
+            ['inherited from the prototype', (): net.NetConnectOpts =>
+                Object.assign(Object.create({ host: LOOPBACK }), { port })],
+            ['own but not enumerable', (): net.NetConnectOpts =>
+                Object.defineProperty({ port }, 'host', { value: LOOPBACK, enumerable: false })],
+        ])('checks a host that is %s against that host', async (_how, buildOptions) => {
+            ssrfGuard.install({ enabled: true, allowList: [], allowedLoopbackPorts: [] })
+            const outcome = await settle(connectWith([buildOptions()]))
+            expect(outcome.connected).toBe(false)
+            expect(outcome.error).toBeInstanceOf(SSRFBlockedError)
+            expect(outcome.error?.message).toContain(`refusing to connect to ${LOOPBACK} `)
+            expect(acceptedConnections).toBe(0)
+        })
+
+        it.each([
+            ['an entry whose address changes after it is read', (): LookupAddress[] => {
+                // Two reads answer the checked address, so only the address actually connected to can
+                // tell a guard that reads the entry more than once apart from one that reads it once.
+                const readAddress = firstReadThen({ first: LOOPBACK, then: OTHER_LOOPBACK, firstReads: 2 })
+                return [{ family: 4, get address(): string {
+                    return readAddress()
+                } }]
+            }],
+            ['a list whose first entry changes after it is read', (): LookupAddress[] => {
+                const readEntry = firstReadThen<LookupAddress>({
+                    first: { address: LOOPBACK, family: 4 },
+                    then: { address: OTHER_LOOPBACK, family: 4 },
+                })
+                return new Proxy([{ address: LOOPBACK, family: 4 }], {
+                    get: (target, key, receiver) => key === '0' ? readEntry() : Reflect.get(target, key, receiver),
+                })
+            }],
+        ])('connects to exactly the resolved address that was checked: %s', async (_answer, buildAnswer) => {
+            ssrfGuard.install({ enabled: true, allowList: [], allowedLoopbackPorts: [port] })
+            const answer = buildAnswer()
+            const lookup: LookupFn = (_hostname, _options, callback) => {
+                callback(null, answer)
+            }
+            const outcome = await settle(net.connect({ host: 'resolver.test', port, lookup, autoSelectFamily: true }))
+            expect(outcome.connected).toBe(true)
+            expect(outcome.remoteAddress).toBe(LOOPBACK)
+            expect(outcome.remotePort).toBe(port)
         })
     })
 
@@ -337,9 +385,12 @@ type ListenParams = {
 type FirstReadThenParams<T> = {
     first: T
     then: T
+    firstReads?: number
 }
 
 type ConnectOutcome = {
     connected: boolean
     error?: Error
+    remoteAddress?: string
+    remotePort?: number
 }

@@ -11,8 +11,8 @@ export function installSocketConnectGuard(policy: GuardPolicy): UninstallFn {
             return this
         }
         // Node is handed the plain-data snapshot that was inspected, never the caller's object,
-        // re-packed as a plain (options[, cb]) call. A getter cannot answer the check and the
-        // connect differently, whichever argument shape the caller used.
+        // re-packed as a plain (options[, cb]) call. Each target value is read once, so the check
+        // and the connect see the same value whichever argument shape the caller used.
         Reflect.apply(originalConnect, this, [decision.options, ...decision.callbackArgs])
         return this
     }
@@ -69,16 +69,30 @@ function normalizeConnectArgs(args: unknown[]): NormalizedConnect | undefined {
         const [options, callback] = tuple
         if (!isConnectOptions(options)) return undefined
         if (callback !== undefined && callback !== null && typeof callback !== 'function') return undefined
-        return { options: { ...options }, callbackArgs: toCallbackArgs(callback) }
+        return { options: snapshotOptions(options), callbackArgs: toCallbackArgs(callback) }
     }
     if (args.length === 0) return { options: {}, callbackArgs: [] }
     const callbackArgs = toCallbackArgs(args[args.length - 1])
     if (typeof first === 'object' && first !== null) {
-        return isConnectOptions(first) ? { options: { ...first }, callbackArgs } : undefined
+        return isConnectOptions(first) ? { options: snapshotOptions(first), callbackArgs } : undefined
     }
     if (isPipeName(first)) return { options: { path: first }, callbackArgs }
     const host = args.length > 1 && typeof args[1] === 'string' ? args[1] : undefined
     return { options: host === undefined ? { port: first } : { port: first, host }, callbackArgs }
+}
+
+// Node reads the target keys with a plain property lookup, so an inherited or non-enumerable value
+// is the one it would connect to. Each target key is read exactly once, and only a defined value is
+// kept, which Node treats the same as an absent key. Every other own enumerable key is copied the
+// way object spread copies it.
+function snapshotOptions(source: ConnectOptions): ConnectOptions {
+    const rest = Object.fromEntries(Reflect.ownKeys(source)
+        .filter((key) => !TARGET_KEYS.includes(key) && Object.prototype.propertyIsEnumerable.call(source, key))
+        .map((key) => [key, source[key]]))
+    const targets = Object.fromEntries(TARGET_KEYS
+        .map((key) => [key, source[key]])
+        .filter(([, value]) => value !== undefined))
+    return { ...rest, ...targets }
 }
 
 function guardLookup({ resolve, port, policy }: GuardLookupParams): GuardedLookup {
@@ -91,36 +105,41 @@ function guardLookup({ resolve, port, policy }: GuardLookupParams): GuardedLooku
                 Reflect.apply(callback, undefined, [err, address, family])
                 return
             }
-            const blockedIp = findBlockedResolvedAddress({ address, port, policy })
+            // The answer is read once into plain data, and that copy is both what gets checked and
+            // what Node connects to.
+            const answer = snapshotResolvedAnswer(address)
+            const blockedIp = answer === undefined ? UNPARSED : findBlockedResolvedAddress({ answer, port, policy })
             if (blockedIp !== undefined) {
                 const error = new SSRFBlockedError({ host: String(hostname), ip: blockedIp })
                 Reflect.apply(callback, undefined, [error, '', 0])
                 return
             }
-            Reflect.apply(callback, undefined, [null, address, family])
+            Reflect.apply(callback, undefined, [null, answer, family])
         }])
     }
 }
 
 // Covers both answer shapes Node asks a resolver for: a single address, and the `all: true` list
-// used by autoSelectFamily. An answer in neither shape counts as blocked.
-function findBlockedResolvedAddress({ address, port, policy }: FindBlockedResolvedAddressParams): string | undefined {
-    if (typeof address === 'string') {
-        return isBlockedAddress({ ip: address, port, policy }) ? address : undefined
-    }
-    if (!Array.isArray(address)) return UNPARSED
-    const entries: unknown[] = address
-    for (const entry of entries) {
-        const ip = readEntryAddress(entry)
-        if (ip === undefined) return UNPARSED
-        if (isBlockedAddress({ ip, port, policy })) return ip
-    }
-    return undefined
+// used by autoSelectFamily. An answer in neither shape, or a list entry without a string address,
+// yields undefined so it counts as blocked.
+function snapshotResolvedAnswer(address: unknown): ResolvedAnswer | undefined {
+    if (typeof address === 'string') return address
+    if (!Array.isArray(address)) return undefined
+    const entries = Array.from(address, snapshotResolvedEntry)
+    return entries.every((entry): entry is ResolvedEntry => entry !== undefined) ? entries : undefined
 }
 
-function readEntryAddress(entry: unknown): string | undefined {
-    if (typeof entry !== 'object' || entry === null || !('address' in entry)) return undefined
-    return typeof entry.address === 'string' ? entry.address : undefined
+// Node reads only `address` and `family` from an entry, so those are the two values copied.
+function snapshotResolvedEntry(entry: unknown): ResolvedEntry | undefined {
+    if (typeof entry !== 'object' || entry === null) return undefined
+    const address = 'address' in entry ? entry.address : undefined
+    if (typeof address !== 'string') return undefined
+    return { address, family: 'family' in entry ? entry.family : undefined }
+}
+
+function findBlockedResolvedAddress({ answer, port, policy }: FindBlockedResolvedAddressParams): string | undefined {
+    const ips = typeof answer === 'string' ? [answer] : answer.map((entry) => entry.address)
+    return ips.find((ip) => isBlockedAddress({ ip, port, policy }))
 }
 
 function isBlockedAddress({ ip, port, policy }: IsBlockedAddressParams): boolean {
@@ -171,11 +190,13 @@ function block({ host, ip }: BlockParams): ConnectDecision {
 
 const LOOPBACK_IPS = new Set(['127.0.0.1', '::1'])
 const UNPARSED = 'unparsed connect target'
+const TARGET_KEYS: readonly PropertyKey[] = ['host', 'port', 'path', 'lookup']
 
 type GuardedLookup = (hostname: unknown, lookupOptions: unknown, callback: unknown) => void
 
 type ConnectOptions = {
     [key: string]: unknown
+    [key: symbol]: unknown
     path?: unknown
     host?: unknown
     port?: unknown
@@ -202,8 +223,15 @@ type GuardLookupParams = {
     policy: GuardPolicy
 }
 
+type ResolvedEntry = {
+    address: string
+    family: unknown
+}
+
+type ResolvedAnswer = string | ResolvedEntry[]
+
 type FindBlockedResolvedAddressParams = {
-    address: unknown
+    answer: ResolvedAnswer
     port: number | undefined
     policy: GuardPolicy
 }
