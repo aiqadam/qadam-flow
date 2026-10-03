@@ -168,8 +168,10 @@ describe('Authentication API', () => {
         // runs second finds the row already claimed (platformId no longer null) and falls back to
         // inserting its own — the same per-call-own-row outcome the code had before the reuse
         // optimization, just now reached deliberately instead of by accident. This fires two
-        // overlapping requests for real (no service-layer mocking) and asserts both platforms end
-        // up consistently owned rather than one of them corrupted.
+        // overlapping requests for real and asserts both platforms end up consistently owned rather
+        // than one of them corrupted. The service layer is not mocked; the only stand-in is a
+        // barrier at the authentication layer that makes the two claims overlap on every run (see
+        // below).
         it('serializes two concurrent create-platform calls for the same onboarding identity instead of stranding one of them', async () => {
             // arrange
             const mockSignUpRequest = createMockSignUpRequest()
@@ -216,6 +218,12 @@ describe('Authentication API', () => {
             ])
 
             // assert
+            // Checked first so that a request bypassing the spy, or failing authentication, reads
+            // as a barrier timeout rather than as an unexplained 403 below.
+            expect(
+                authenticated.releasedByArrival(),
+                'authentication barrier timed out after 10s: both create-platform calls must pass verifyPrincipal before either reaches the lock',
+            ).toBe(true)
             expect(responseA?.statusCode).toBe(StatusCodes.OK)
             expect(responseB?.statusCode).toBe(StatusCodes.OK)
 
@@ -305,24 +313,36 @@ describe('Authentication API', () => {
 })
 
 // Resolves every arrive() once `parties` callers have arrived, or once timeoutMs has passed, so a
-// call that never arrives fails the assertions instead of hanging the test.
+// call that never arrives fails the assertions instead of hanging the test. releasedByArrival()
+// tells the two apart: an arrival after the timeout does not count as a release.
 function createArrivalBarrier({ parties, timeoutMs }: ArrivalBarrierParams): ArrivalBarrier {
     let arrived = 0
+    let released = false
+    let expired = false
     let release: () => void = () => undefined
+    let expire: () => void = () => undefined
     const allArrived = new Promise<void>((resolve) => {
         release = resolve
     })
     const timedOut = new Promise<void>((resolve) => {
-        setTimeout(resolve, timeoutMs).unref()
+        expire = resolve
     })
+    const timer = setTimeout(() => {
+        expired = true
+        expire()
+    }, timeoutMs)
+    timer.unref()
     return {
         arrive: async (): Promise<void> => {
             arrived += 1
-            if (arrived >= parties) {
+            if (arrived >= parties && !released && !expired) {
+                released = true
+                clearTimeout(timer)
                 release()
             }
             await Promise.race([allArrived, timedOut])
         },
+        releasedByArrival: (): boolean => released,
     }
 }
 
@@ -333,4 +353,5 @@ type ArrivalBarrierParams = {
 
 type ArrivalBarrier = {
     arrive: () => Promise<void>
+    releasedByArrival: () => boolean
 }
