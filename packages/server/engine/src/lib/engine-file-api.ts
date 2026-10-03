@@ -14,7 +14,7 @@ export const engineFileApi = {
     // to the same file id of the engine's own project (#517 refuses another project's row), and a
     // signed S3 PUT is idempotent by definition.
     async upload({ engineToken, apiUrl, fileId, type, fileName, compression, data, retryPolicy }: UploadParams): Promise<UploadResult> {
-        const headers = buildPutHeaders({ type, fileName, compression, contentLength: data.length })
+        const headers = buildPutHeaders({ type, fileName, compression })
         const putUrl = `${apiUrl}v1/files/${fileId}?token=${encodeURIComponent(engineToken)}`
 
         const initial = await retryingFetch.fetch({
@@ -106,10 +106,11 @@ export const engineFileApi = {
     },
 }
 
-function buildPutHeaders({ type, fileName, compression, contentLength }: BuildHeadersParams): Record<string, string> {
+function buildPutHeaders({ type, fileName, compression }: BuildHeadersParams): Record<string, string> {
+    // No Content-Length: fetch derives it from the byte body, and a second copy here reached the
+    // dispatcher as "N, N" (#677).
     const headers: Record<string, string> = {
         'Content-Type': 'application/octet-stream',
-        'Content-Length': String(contentLength),
         [FILE_TYPE_HEADER]: type,
     }
     if (fileName) {
@@ -161,5 +162,4 @@ type BuildHeadersParams = {
     type: FileType
     fileName?: string
     compression?: FileCompression
-    contentLength: number
 }

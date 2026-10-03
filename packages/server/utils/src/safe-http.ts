@@ -5,6 +5,7 @@ import { httpTimeouts, isNil, tryCatch } from '@aiqadam/shared'
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios'
 import axiosRetry from 'axios-retry'
 import { RequestFilteringHttpAgent, RequestFilteringHttpsAgent } from 'request-filtering-agent'
+import { safeHttpProxy } from './safe-http-proxy'
 
 // Shared across every allow-list this process reads (SSRF's own `AP_SSRF_ALLOW_LIST` and the LDAP
 // host guard's separate `AP_LDAP_ALLOW_LIST` in `packages/server/api`) so there is exactly one
@@ -31,7 +32,10 @@ function buildAgents({ allowList, httpsAgentOptions }: BuildAgentsParams): SsrfA
     }
     return {
         httpAgent: new RequestFilteringHttpAgent(filteringOptions),
-        httpsAgent: new RequestFilteringHttpsAgent({ ...filteringOptions, ...httpsAgentOptions }),
+        // `proxyEnv` last, so no caller option can turn on Node's built-in proxy support for this
+        // agent: that would tunnel to the proxy from inside the agent, and the filter would then
+        // check the proxy's address instead of the target's.
+        httpsAgent: new RequestFilteringHttpsAgent({ ...filteringOptions, ...httpsAgentOptions, proxyEnv: undefined }),
     }
 }
 
@@ -41,6 +45,9 @@ function buildAgents({ allowList, httpsAgentOptions }: BuildAgentsParams): SsrfA
 // the process still holds exactly one SSRF implementation. `buildAgents` alone is not enough for
 // a caller outside this file: the allow list would have to be re-parsed there, and a second copy
 // of that parse is precisely how the live filter and the configured one drift apart.
+//
+// These agents always connect directly and never read `HTTP(S)_PROXY`, so the filter sees the real
+// target. Only the axios instances below route through an egress proxy.
 function buildDefaultAgents({ httpsAgentOptions }: SafeAxiosOptions = {}): SsrfAgents {
     return buildAgents({ allowList: parseAllowListFromEnv(), httpsAgentOptions })
 }
@@ -65,15 +72,53 @@ function attachSsrfErrorInterceptor(instance: AxiosInstance): AxiosInstance {
 }
 
 function createAxios(config?: AxiosRequestConfig, { httpsAgentOptions }: SafeAxiosOptions = {}): AxiosInstance {
-    const { httpAgent, httpsAgent } = buildAgents({
-        allowList: parseAllowListFromEnv(),
+    const allowList = parseAllowListFromEnv()
+    const { httpAgent, httpsAgent } = safeHttpProxy.buildProxyAwareAgents({
+        direct: buildAgents({ allowList, httpsAgentOptions }),
+        allowList,
         httpsAgentOptions,
     })
-    return attachSsrfErrorInterceptor(axios.create({
+    // Invariant: every request leaves through the agents above, which filter the target on the
+    // direct route and on the proxied one alike. So axios' own proxy handling stays off, and the
+    // interceptor re-pins everything that decides which code opens the connection, because a
+    // request's own config overrides the instance defaults: the agents, the HTTP/1.1 transport
+    // (the HTTP/2 one does not use agents), the Node `http` adapter, and no custom `transport`,
+    // `socketPath` or `lookup`. A caller's `beforeRedirect` runs before every redirect hop, so the
+    // agents are pinned again after it. An instance derived from this one with `.create()` does not
+    // inherit the interceptor and must not be used for outbound requests.
+    const instance = axios.create({
         ...config,
         httpAgent,
         httpsAgent,
+        proxy: false,
+    })
+    instance.interceptors.request.use((requestConfig) => ({
+        ...requestConfig,
+        httpAgent,
+        httpsAgent,
+        proxy: false,
+        httpVersion: 1,
+        adapter: 'http',
+        transport: undefined,
+        socketPath: undefined,
+        lookup: undefined,
+        beforeRedirect: pinAgentsAfterRedirectHook({
+            hook: requestConfig.beforeRedirect,
+            agents: { http: httpAgent, https: httpsAgent },
+        }),
     }))
+    return attachSsrfErrorInterceptor(instance)
+}
+
+// follow-redirects picks each hop's agent from `options.agents`, after the hook has run; the
+// socket path is cleared for the same reason as in the request interceptor.
+function pinAgentsAfterRedirectHook({ hook, agents }: PinRedirectAgentsParams): BeforeRedirectHook {
+    return (options, responseDetails, requestDetails) => {
+        hook?.(options, responseDetails, requestDetails)
+        options['agents'] = { ...agents }
+        options['agent'] = undefined
+        options['socketPath'] = undefined
+    }
 }
 
 function createRetryingAxios(config?: AxiosRequestConfig, options?: SafeAxiosOptions): AxiosInstance {
@@ -367,4 +412,11 @@ export type SafeAxiosOptions = {
 type BuildAgentsParams = {
     allowList: string[]
     httpsAgentOptions?: https.AgentOptions
+}
+
+type BeforeRedirectHook = NonNullable<AxiosRequestConfig['beforeRedirect']>
+
+type PinRedirectAgentsParams = {
+    hook: AxiosRequestConfig['beforeRedirect']
+    agents: { http: http.Agent, https: http.Agent }
 }

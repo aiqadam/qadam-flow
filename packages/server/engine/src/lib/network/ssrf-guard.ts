@@ -1,7 +1,7 @@
 import { NetworkMode, ssrfIpClassifier, tryCatchSync } from '@aiqadam/shared'
 import { installDnsLookupGuard } from './dns-lookup-guard'
 import { EGRESS_PROXY_URL_ENV, installGlobalProxyAgents } from './global-agent-proxy'
-import { installEnvProxyDispatcher } from './proxy-dispatcher'
+import { installEngineDispatcher } from './proxy-dispatcher'
 import { installSocketConnectGuard } from './socket-connect-guard'
 
 let currentGuard: ActiveGuard | null = null
@@ -12,7 +12,7 @@ export const ssrfGuard = {
         currentGuard = null
 
         if (!isGuardEnabled(options)) {
-            currentGuard = { enabled: false, policy: DISABLED_POLICY, uninstall: () => undefined }
+            currentGuard = { enabled: false, policy: DISABLED_POLICY, uninstall: installEngineDispatcher({ useEgressProxy: false }) }
             return
         }
 
@@ -27,7 +27,7 @@ export const ssrfGuard = {
             installDnsLookupGuard(policy),
             installSocketConnectGuard(policy),
             installGlobalProxyAgents(),
-            installEnvProxyDispatcher(),
+            installEngineDispatcher({ useEgressProxy: true }),
         ]
         currentGuard = {
             enabled: true,

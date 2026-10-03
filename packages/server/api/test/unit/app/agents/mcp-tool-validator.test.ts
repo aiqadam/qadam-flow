@@ -124,12 +124,11 @@ describe('mcpToolValidator.validateAgentMcpTool', () => {
         expect(afterHandshake.some((c) => c.config.headers?.['mcp-session-id'] === SESSION_ID)).toBe(true)
     })
 
-    // `hostname`/`protocol` are deliberately set to a proxy's here, not the
-    // target's: axios's own proxy `beforeRedirect` runs before this one and
-    // overwrites them, so a check reading those fields would refuse every
-    // redirect on any install with HTTP_PROXY set. Only `href` survives that
-    // rewrite, so only `href` may be trusted.
-    const AS_SEEN_BEHIND_A_PROXY = { hostname: 'corp-proxy.internal', protocol: 'http:' }
+    // `hostname`/`protocol` are deliberately set to values unrelated to the
+    // target, so only a check that reads `href` passes. `follow-redirects`
+    // strips the brackets off an IPv6 literal in `hostname` while `new URL()`
+    // keeps them, so `href` is the one field that compares cleanly.
+    const UNRELATED_HOST_FIELDS = { hostname: 'unrelated.internal', protocol: 'http:' }
 
     it.each([
         ['a different host', 'https://attacker.example/rpc'],
@@ -141,7 +140,7 @@ describe('mcpToolValidator.validateAgentMcpTool', () => {
 
         const beforeRedirect = capturedCalls()[0].config.beforeRedirect
         expect(beforeRedirect).toBeDefined()
-        expect(() => beforeRedirect?.({ href, ...AS_SEEN_BEHIND_A_PROXY })).toThrow()
+        expect(() => beforeRedirect?.({ href, ...UNRELATED_HOST_FIELDS })).toThrow()
     })
 
     it.each([
@@ -153,7 +152,7 @@ describe('mcpToolValidator.validateAgentMcpTool', () => {
         await mcpToolValidator.validateAgentMcpTool(buildTool())
 
         const beforeRedirect = capturedCalls()[0].config.beforeRedirect
-        expect(() => beforeRedirect?.({ href, ...AS_SEEN_BEHIND_A_PROXY })).not.toThrow()
+        expect(() => beforeRedirect?.({ href, ...UNRELATED_HOST_FIELDS })).not.toThrow()
     })
 
     // `follow-redirects` strips the brackets off `options.hostname` for an IPv6
@@ -170,7 +169,7 @@ describe('mcpToolValidator.validateAgentMcpTool', () => {
         const beforeRedirect = capturedCalls()[0].config.beforeRedirect
         expect(() => beforeRedirect?.({
             href: 'https://[2001:db8::1]/rpc/',
-            ...AS_SEEN_BEHIND_A_PROXY,
+            ...UNRELATED_HOST_FIELDS,
         })).not.toThrow()
     })
 
