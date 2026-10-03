@@ -12,17 +12,22 @@ This page is for *qadam authors* deciding what version number to publish. For ho
 
 ## Semantic versioning
 
-The version number is `MAJOR.MINOR.PATCH`:
+The version number is `MAJOR.MINOR.PATCH`. Which segment a change goes in depends on whether the qadam has reached `1.0.0`:
 
-- **MAJOR** — bump when you make a breaking change.
-- **MINOR** — bump when you add functionality without breaking existing flows.
-- **PATCH** — bump for bug fixes that don't change behavior.
+| Change | On `0.x` | From `1.0.0` on |
+|---|---|---|
+| Breaking change | MINOR (`0.4.15` → `0.5.0`) | MAJOR (`1.1.6` → `2.0.0`) |
+| New functionality that doesn't break existing flows | PATCH | MINOR |
+| New named export from the package entry (`src/index.ts`) | MINOR | MINOR |
+| Bug fix that doesn't change behavior | PATCH | PATCH |
+
+On `0.x`, MINOR is the breaking segment. npm reads versions the same way: the range `^0.4.15` accepts `0.4.16` but not `0.5.0`. The builder's version dialog also warns whenever an upgrade crosses a minor or major boundary, so a breaking change on `0.x` reaches the people upgrading a step with that warning. Don't move a `0.x` qadam to `1.0.0` only to mark a breaking change; `1.0.0` is the point where you declare the qadam stable.
 
 ## Classifying changes
 
 Use this checklist when deciding which segment to bump.
 
-### Breaking changes (MAJOR)
+### Breaking changes (MINOR on `0.x`, MAJOR from `1.0.0` on)
 
 - Remove an existing action or trigger.
 - Add a required prop to an existing action or trigger.
@@ -30,7 +35,7 @@ Use this checklist when deciding which segment to bump.
 - Remove an attribute from an action output.
 - Change the existing behavior of an action or trigger.
 
-### Non-breaking changes (MINOR or PATCH)
+### Non-breaking changes (PATCH on `0.x`, MINOR or PATCH from `1.0.0` on)
 
 - Add a new action or trigger.
 - Add an optional prop.
