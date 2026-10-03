@@ -63,14 +63,9 @@ function createSafeFetch(extraHeaders: Record<string, string>): typeof fetch {
             // outliving the timeout — which is per-socket inactivity, re-armed on
             // every hop.
             maxRedirects: MAX_REDIRECTS,
-            // Read from `href`, not from `hostname`/`protocol`: axios dispatches
-            // its own proxy callback first, and that one overwrites those two
-            // fields with the proxy's, so on any install with HTTP_PROXY set a
-            // hostname comparison refuses every redirect including the same-host
-            // one this exists to allow. `href` is the resolved redirect target and
-            // the proxy rewrite leaves it alone. It also keeps IPv6 literals
-            // comparable — `follow-redirects` strips the brackets off `hostname`
-            // while `new URL()` keeps them.
+            // Read from `href`, not from `hostname`: `follow-redirects` strips the
+            // brackets off an IPv6 literal in `hostname` while `new URL()` keeps
+            // them, so only the parsed `href` compares cleanly with `origin`.
             beforeRedirect: (options) => {
                 const target = new URL(options.href)
                 if (target.hostname !== origin.hostname) {

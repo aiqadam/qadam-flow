@@ -10,7 +10,7 @@ import { retryingFetch, RetryPolicy } from '../src/lib/retrying-fetch'
 const FAST: RetryPolicy = { budgetMs: 1_500, attemptTimeoutMs: 1_500, initialDelayMs: 20, maxDelayMs: 100 }
 const SILENT_LOG = pino({ level: 'silent' })
 
-// With AP_NETWORK_MODE=STRICT, `installEnvProxyDispatcher` makes an undici ProxyAgent the global
+// With AP_NETWORK_MODE=STRICT, `installEngineDispatcher` makes an undici ProxyAgent the global
 // dispatcher, and every engine call to the app becomes a CONNECT tunnel through this proxy (#595).
 describe('retryingFetch behind the STRICT-mode egress proxy', () => {
     let proxy: EgressProxy

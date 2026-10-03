@@ -206,7 +206,7 @@ function httpsHeadViaProxy(action) {
 
 // fetch-via-undici reproduces the exact data path a real user code-piece traverses
 // under STRICT mode: globalThis.fetch reads the undici global dispatcher (a ProxyAgent
-// installed by ssrf-guard's installEnvProxyDispatcher in engine main.ts), opens a
+// installed by ssrf-guard's installEngineDispatcher in engine main.ts), opens a
 // keep-alive client to the egress proxy, sends CONNECT for HTTPS targets, then sends
 // the request over the tunneled TLS socket. The existing https-head-via-proxy action
 // bypasses undici and the global dispatcher entirely, so it cannot detect bugs in:
