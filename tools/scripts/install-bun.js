@@ -7,6 +7,12 @@ const { packageManager } = require("../../package.json")
 // pin, so a local install resolves bun.lock exactly as CI does.
 const PINNED_VERSION = packageManager.replace(/^bun@/, "")
 
+// The value is interpolated into a shell command below, so only a plain x.y.z may reach it.
+if (!/^\d+\.\d+\.\d+$/.test(PINNED_VERSION)) {
+  console.error(`❌ package.json packageManager must be bun@<major>.<minor>.<patch>, got "${packageManager}".`);
+  process.exit(1);
+}
+
 function installedVersion() {
   try {
     return execSync("bun --version", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim()

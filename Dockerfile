@@ -51,9 +51,11 @@ RUN export ARCH=$(uname -m) && \
     CURL_OPTS="-fSL"; \
     if [ -n "$SKIP_SSL_VERIFY" ]; then CURL_OPTS="$CURL_OPTS --insecure"; fi && \
     if [ "$ARCH" = "x86_64" ]; then \
-      curl $CURL_OPTS https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-x64-baseline.zip -o bun.zip; \
+      curl $CURL_OPTS https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-x64-baseline.zip -o bun.zip \
+        && echo "a063908ae08b7852ca10939bbdc6ceed3ddabce8fb9402dce83d65d73b36e6c7  bun.zip" | sha256sum -c -; \
     elif [ "$ARCH" = "aarch64" ]; then \
-      curl $CURL_OPTS https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-aarch64.zip -o bun.zip; \
+      curl $CURL_OPTS https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-aarch64.zip -o bun.zip \
+        && echo "a27ffb63a8310375836e0d6f668ae17fa8d8d18b88c37c821c65331973a19a3b  bun.zip" | sha256sum -c -; \
     fi
 
 RUN unzip bun.zip \
