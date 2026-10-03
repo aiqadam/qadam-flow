@@ -29,7 +29,7 @@ Every flow eventually runs **user-supplied code** — Code steps, qadam actions,
 Related env vars:
 
 - `AP_SSRF_ALLOW_LIST` — comma-separated IPs that bypass the block (e.g. an internal DB or sidecar).
-- `HTTP_PROXY` / `HTTPS_PROXY` — if set, the engine routes all outbound HTTP(S) through the proxy. Loopback proxy ports are auto-exempted.
+- `HTTP_PROXY` / `HTTPS_PROXY` — if set, the engine routes all outbound HTTP(S) through the proxy. Loopback proxy ports are auto-exempted. The API server and workers honour the same variables for the outbound HTTP they send through their SSRF-filtered client; see [Egress through a proxy](#egress-through-a-proxy).
 
 ## How Isolation Works
 
@@ -136,6 +136,33 @@ If Vault, Conjur, an on-prem OAuth2 token endpoint, or an internal webhook resol
 ```
 AP_SSRF_ALLOW_LIST=10.0.5.12,192.168.10.0/24
 ```
+
+### Egress through a proxy
+
+The API server and workers honour `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` for the outbound HTTP they send through their SSRF-filtered client. Sending a request through the proxy does not change what the filter allows:
+
+- Before a request goes to the proxy, the server resolves the target hostname and checks every address it returns against the blocked ranges and `AP_SSRF_ALLOW_LIST`. A request with a blocked target is refused and never reaches the proxy.
+- The server must be able to resolve target hostnames itself. A target it cannot resolve is refused, even when the proxy could resolve it.
+- HTTPS targets are reached through a `CONNECT` tunnel, so TLS runs end to end between the server and the target.
+- A request that matches `NO_PROXY` connects directly and is filtered as usual. `NO_PROXY` takes a comma- or space-separated list:
+  - `*` matches every host.
+  - A bare hostname or IP matches only that host. `localhost`, any `127.x.x.x` address, `0.0.0.0`, `::1` and `::` count as the same host.
+  - `.example.com` and `*.example.com` match any subdomain of `example.com`.
+  - A `host:port` entry (`[::1]:8080` for IPv6) matches only that port. The scheme's default port counts when the URL has none.
+  - A CIDR range (`10.0.0.0/8`, `fd00::/8`) matches IP-literal targets inside it.
+  - Matching ignores case and trailing dots.
+  - Some entries match nothing, so those requests use the proxy: IPv4 shorthand, hex or octal IPv4 (`10.1`, `0x0a000001`), IPv4-mapped IPv6 CIDR ranges (`::ffff:10.0.0.0/104`), and a `*` with nothing after it but dots or a port (`*.`, `*:80`).
+- The proxy address does not need to be on `AP_SSRF_ALLOW_LIST`. Leave it off unless user-supplied URLs should be able to reach that address too.
+- Only `http://` and `https://` proxy URLs are supported.
+- Bedrock model listing and S3 file storage use the AWS SDK, which does not read these variables and connects directly. Bedrock model listing goes through the SSRF filter; S3 file storage connects to the endpoint you configure. Bedrock inference requests use the SSRF-filtered client, so they honour the proxy variables.
+
+<Note>
+If your API server and workers relied on the proxy to resolve external hostnames, give them a DNS resolver that answers for those hosts before you upgrade. Otherwise requests to those hosts are refused.
+</Note>
+
+<Warning>
+The proxy resolves the hostname again when it connects, so the server-side check cannot rule out a DNS answer that changes between the two lookups. Enforce your egress policy on the proxy as well, and block private, loopback, link-local and cloud-metadata ranges there too.
+</Warning>
 
 ### Relaxed TLS is still filtered
 
