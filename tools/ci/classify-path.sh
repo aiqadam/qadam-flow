@@ -66,8 +66,8 @@ classify_path() {
     # If that ever stops being true, delete these two arms.
     docs/docs.json | docs/openapi.json) echo docs ;;
 
-    # Licence texts (root LICENSE, docs/LICENSE).
-    LICENSE | */LICENSE) echo docs ;;
+    # Licence texts (root LICENSE, NOTICE, docs/LICENSE).
+    LICENSE | NOTICE | */LICENSE) echo docs ;;
 
     # ---------------------------------------------------------------------
     # Everything else is code by definition. This arm is the whole design.
