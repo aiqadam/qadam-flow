@@ -15,6 +15,7 @@ let installShouldFail: boolean
 let compileShouldFail: boolean
 let renameHook: (params: { from: string, to: string }) => Promise<void>
 let rmHook: (target: string) => Promise<void>
+let readFileHook: (target: string) => Promise<void>
 
 beforeEach(async () => {
     tempDir = await realpath(await mkdtemp(join(tmpdir(), 'code-builder-test-')))
@@ -23,13 +24,19 @@ beforeEach(async () => {
     compileShouldFail = false
     renameHook = async () => undefined
     rmHook = async () => undefined
+    readFileHook = async () => undefined
     vi.resetModules()
     // Pass-through, with hooks for the filesystem failures a shared volume can produce mid-swap.
     vi.doMock('node:fs/promises', async () => {
         const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+        // The builder reads `.source-hash` through the default export, so the hook goes there.
+        const readFileWithHook = async (...args: Parameters<typeof actual.readFile>) => {
+            await readFileHook(String(args[0]))
+            return actual.readFile(...args)
+        }
         return {
             ...actual,
-            default: actual,
+            default: { ...actual, readFile: readFileWithHook },
             rename: async (from: string, to: string) => {
                 await renameHook({ from: String(from), to: String(to) })
                 return actual.rename(from, to)
@@ -189,6 +196,29 @@ describe('codeBuilder.processCodeStep (#586)', { timeout: 30_000 }, () => {
         await processStep({ code: 'version-1' })
 
         expect(await readFile(stepIndexPath(), 'utf8')).toBe('built-before-586')
+    })
+
+    // The step directory can be swapped between the builder's first `.source-hash` read and its
+    // check that the directory exists: another replica retired the build this replica recorded and
+    // renamed its own in. Only the re-read tells that apart from a build from before #586 (#593).
+    it('rebuilds when .source-hash is missing on the first read and names another source on the re-read', async () => {
+        await processStep({ code: 'version-1' })
+
+        let sourceHashReads = 0
+        readFileHook = async (target) => {
+            if (!target.endsWith(SOURCE_HASH_FILE)) {
+                return
+            }
+            sourceHashReads++
+            if (sourceHashReads === 1) {
+                await writeOtherReplicaBuild({ code: 'other-replica', sourceHash: 'hash-of-another-source' })
+                throw Object.assign(new Error('no such file or directory'), { code: 'ENOENT' })
+            }
+        }
+        await processStep({ code: 'version-1' })
+
+        expect(sourceHashReads).toBeGreaterThanOrEqual(2)
+        expect(await readFile(stepIndexPath(), 'utf8')).toBe('version-1')
     })
 
     it('rebuilds a step whose directory is gone, although memory still records it as built', async () => {

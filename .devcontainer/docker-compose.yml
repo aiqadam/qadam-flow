@@ -32,7 +32,9 @@ services:
     # (Adding the "ports" property to this file will not forward from a Codespace.)
 
   db:
-    image: postgres:14.4
+    # pgvector because the baseline migration creates the vector extension. PostgreSQL 18 keeps its data
+    # in /var/lib/postgresql/18/docker, hence the mount one level up on a new volume (#611).
+    image: pgvector/pgvector:0.8.7-pg18
     environment:
       POSTGRES_DB: qadamflow
       POSTGRES_USER: postgres
@@ -40,12 +42,12 @@ services:
     networks:
       - qadamflow
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql
     ports:
       - "5432:5432"
 
   redis:
-    image: redis:7.0.7
+    image: valkey/valkey:8.1.10
     networks:
       - qadamflow
     volumes:
@@ -54,5 +56,5 @@ services:
       - "6379:6379"
 
 volumes:
-  postgres_data:
+  pgdata:
   redis_data:

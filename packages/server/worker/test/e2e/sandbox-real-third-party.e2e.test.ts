@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { chmod, copyFile, mkdtemp, stat } from 'node:fs/promises'
+import { chmod, copyFile, mkdtemp, readFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -297,6 +297,8 @@ const GROUP_E_HOSTS = [
 
 const MIN_GROUP_A_SUCCESSES = Math.ceil(GROUP_A_HOSTS.length * 0.8)
 
+const BUN_STORE = '/usr/src/app/node_modules/.bun'
+
 async function mirrorUndiciInto(commonDir: string): Promise<void> {
     const undiciRoot = await locateUndiciRoot()
     const dest = path.join(commonDir, 'undici')
@@ -308,13 +310,17 @@ async function mirrorUndiciInto(commonDir: string): Promise<void> {
 }
 
 async function locateUndiciRoot(): Promise<string> {
-    // Engine ships undici 7.x, bundled at build time. Inside the e2e docker image,
-    // bun installs each package version under node_modules/.bun/<name>@<ver>/.../<name>.
-    // Try the engine version first (matches what real code-pieces use), then any version.
+    // Engine ships undici, bundled at build time, and Group E has to exercise that same copy. Inside
+    // the e2e docker image bun installs each version under node_modules/.bun/<name>@<ver>/.../<name>,
+    // and other workspaces carry their own undici (the qdrant qadam's 5.x sorts first), so an
+    // unpinned glob silently tests the wrong major. The version is read from the engine's manifest
+    // because a literal here went stale on the first bump (#613); the fallback stays on its major.
+    const engineVersion = await readEngineUndiciVersion()
+    const major = engineVersion.split('.')[0]
     const candidates = [
-        '/usr/src/app/node_modules/.bun/undici@7.24.6/node_modules/undici',
+        `${BUN_STORE}/undici@${engineVersion}/node_modules/undici`,
     ]
-    const globResult = spawnSync('bash', ['-c', 'ls -d /usr/src/app/node_modules/.bun/undici@*/node_modules/undici 2>/dev/null | head -1'], { encoding: 'utf8' })
+    const globResult = spawnSync('bash', ['-c', `ls -d ${BUN_STORE}/undici@${major}.*/node_modules/undici 2>/dev/null | sort -V | tail -1`], { encoding: 'utf8' })
     if (globResult.stdout.trim()) candidates.push(globResult.stdout.trim())
     for (const c of candidates) {
         const { error } = await tryStat(path.join(c, 'package.json'))
@@ -323,8 +329,30 @@ async function locateUndiciRoot(): Promise<string> {
     throw new Error(`undici package not found in any of: ${candidates.join(', ')} — ensure the worker test image has bun-installed undici`)
 }
 
-async function tryStat(p: string): Promise<{ error?: Error }> {
-    try { await stat(p); return {} } catch (e) { return { error: e as Error } }
+async function readEngineUndiciVersion(): Promise<string> {
+    const manifestPath = path.resolve(process.cwd(), 'packages/server/engine/package.json')
+    const manifest: unknown = JSON.parse(await readFile(manifestPath, 'utf8'))
+    const dependencies = isRecord(manifest) ? manifest['dependencies'] : undefined
+    const pinned = isRecord(dependencies) ? dependencies['undici'] : undefined
+    // Exact pins only: a range would not name a single directory in the bun store.
+    if (typeof pinned !== 'string' || !/^\d+\.\d+\.\d+$/.test(pinned)) {
+        throw new Error(`expected an exact undici pin in ${manifestPath}, got ${JSON.stringify(pinned)}`)
+    }
+    return pinned
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null
+}
+
+async function tryStat(p: string): Promise<{ error?: unknown }> {
+    try {
+        await stat(p)
+        return {}
+    }
+    catch (error) {
+        return { error }
+    }
 }
 
 type ProbeAction =

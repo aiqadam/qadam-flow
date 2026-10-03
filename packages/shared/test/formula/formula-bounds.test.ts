@@ -48,18 +48,21 @@ describe('exceedsSizeBudget', () => {
         expect(Date.now() - start).toBeLessThan(1000)
     })
 
-    it('array early-abort is real: a huge oversized array is rejected in well under the time a full walk of its elements would take', () => {
+    // `.length` is O(1), so rejecting a 3,000,000-element array against a
+    // maxSize of 100 must not touch its elements at all. A regression back to
+    // "push everything, then check" reads every one of them.
+    it('array early-abort is real: a huge oversized array is rejected without reading any of its elements', () => {
         const hugeArray = Array.from({ length: 3_000_000 }, (_, i) => i)
-        const start = performance.now()
-        const exceeds = exceedsSizeBudget({ value: hugeArray, maxSize: 100 })
-        const elapsed = performance.now() - start
-        expect(exceeds).toBe(true)
-        // `.length` is O(1), so rejecting a 3,000,000-element array against a
-        // maxSize of 100 must not cost anywhere near what visiting all 3
-        // million elements would (that takes hundreds of ms in this suite's
-        // environment) — a generous 50ms still catches a regression back to
-        // "push everything, then check".
-        expect(elapsed).toBeLessThan(50)
+        let elementReads = 0
+        const counted = new Proxy(hugeArray, {
+            get(target, property, receiver): unknown {
+                if (typeof property === 'string' && /^\d+$/.test(property)) elementReads++
+                return Reflect.get(target, property, receiver)
+            },
+        })
+
+        expect(exceedsSizeBudget({ value: counted, maxSize: 100 })).toBe(true)
+        expect(elementReads).toBe(0)
     })
 
     it('a within-budget nested structure (arrays of small objects) is accepted', () => {

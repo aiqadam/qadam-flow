@@ -1,4 +1,4 @@
-import { readFile, rm, writeFile } from 'node:fs/promises'
+import { readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path, { dirname, join } from 'node:path'
 import { fileLock, fileSystemUtils } from '@aiqadam/server-utils'
 import {
@@ -134,11 +134,16 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                 pieces: qadamsToInstall.map(piece => `${piece.qadamName}-${piece.qadamVersion}`),
             }, '[qadamInstaller] acquired lock and starting to install qadams')
 
+            // Read before this install writes any member of its own, so every member without a
+            // `ready` marker found here was left by an EARLIER install that never finished: a
+            // worker killed mid-install, or one that stopped after losing this lock (#593).
+            const unmarkedMembers = await findUnmarkedMembers({ rootWorkspace })
+
             // Before anything below writes into the workspace, so a snapshot that cannot be taken
             // fails the install with no half-written member left for the workspaces glob to pick
             // up. Nothing below touches `bun.lock` — only bun does — so these are the same bytes a
             // read just before `bun install` would see.
-            const before = await readWorkspaceBeforeInstall({ rootWorkspace, officialQadamsInstallEnabled, log })
+            const before = await readWorkspaceBeforeInstall({ rootWorkspace, officialQadamsInstallEnabled, hasUnmarkedMembers: unmarkedMembers.length > 0, log })
 
             await createInstallWorkspaceFiles({
                 path: rootWorkspace,
@@ -151,6 +156,14 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                 rootWorkspace,
                 qadamPackage: piece,
             })))
+
+            // The leftovers are the only record that bun.lock may hold refusals nothing verified, so
+            // they go only once this batch's own unmarked members are on disk to carry that record
+            // on: after the snapshot that reads them, and after the writes above, any of which can
+            // fail or be cut short by a kill. Removing them first would let the next install trust
+            // the lockfile again.
+            assertLockHeld()
+            await removeAbandonedMembers({ rootWorkspace, unmarkedMembers, qadamsToInstall, log })
 
             await tracer.startActiveSpan('qadamInstaller.bunInstall', async (span) => {
                 try {
@@ -165,7 +178,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
 
                     if (isNil(batchError)) {
                         assertLockHeld()
-                        await verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed: qadamsToInstall, before, officialQadamsInstallEnabled, span, log })
+                        await verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed: qadamsToInstall, before, officialQadamsInstallEnabled, isCompromised, span, log })
                         log.info({
                             rootWorkspace,
                             qadamsCount: qadamsToInstall.length,
@@ -177,7 +190,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
 
                     if (qadamsToInstall.length === 1) {
                         log.error({ rootWorkspace, error: batchError }, '[qadamInstaller] Qadam installation failed, rolling back')
-                        await rollbackInstallation({ rootWorkspace, pieces: qadamsToInstall, before })
+                        await rollbackInstallation({ rootWorkspace, pieces: qadamsToInstall, before, isCompromised, log })
                         throw batchError
                     }
 
@@ -187,7 +200,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                         error: batchError,
                     }, '[qadamInstaller] Batch install failed, retrying qadams individually')
 
-                    const failedQadams = await tryInstallQadamsIndividually({ rootWorkspace, pieces: qadamsToInstall, log, assertLockHeld })
+                    const failedQadams = await tryInstallQadamsIndividually({ rootWorkspace, pieces: qadamsToInstall, log, isCompromised })
 
                     // Verification happens here rather than per iteration, and the survivors are
                     // marked usable only once it has passed. Per iteration was wrong twice over:
@@ -201,7 +214,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                     const installed = qadamsToInstall.filter((piece) => !failedQadams.includes(piece))
                     if (installed.length > 0) {
                         assertLockHeld()
-                        await verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, before, officialQadamsInstallEnabled, span, log })
+                        await verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, before, officialQadamsInstallEnabled, isCompromised, span, log })
                     }
                     else {
                         // No survivor, so nothing is marked `ready` and the next job reinstalls the
@@ -211,7 +224,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                         // "already refused before this install" baseline. The per-piece rollbacks
                         // in the loop above deliberately do not restore, because a survivor's
                         // entries are legitimate; this is the abandoning case they do not cover.
-                        await restoreLockfile({ rootWorkspace, before })
+                        await restoreLockfile({ rootWorkspace, before, isCompromised, log })
                     }
 
                     if (failedQadams.length > 0) {
@@ -234,13 +247,52 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
 
 // Unlike the cache.json and code-build writers, bun installs in place into the shared workspace,
 // so a second holder would corrupt it rather than just lose work. Once the lock is lost, the
-// install stops before the next `bun install` (the batch, or any one of the one-by-one retries)
-// and before verification, which is what vouches for the workspace. It does not restore the
-// lockfile on the way out: the workspace is no longer this replica's to write.
+// install stops before the next `bun install` (the batch, or any one of the one-by-one retries),
+// before verification, which is what vouches for the workspace, and before the `ready` markers.
+// Once this replica sees the lock as lost, no rollback writes the workspace on the way out — see
+// `isRollbackForbidden`: the workspace is no longer this replica's to write.
+//
+// "Sees" is the weak point. `isCompromised()` turns true only when `proper-lockfile`'s refresh
+// notices, up to one refresh interval (stale / 2, i.e. 150 s for the 5 min lock) after another
+// replica could already have taken the lock over, and with no bound at all if the refresh I/O
+// hangs. There is no fencing, so every check here narrows the window in which two holders write
+// the workspace at once; none closes it. Inside it the integrity gate can be bypassed too. A
+// former holder's restore or still-running `bun install` can rewrite this holder's `bun.lock`
+// between its install and its verification. `assertBatchIsCovered` catches that only for official
+// qadams, so a custom-only batch is then marked ready unverified. The first check comes after this
+// install's own setup writes (the workspace files, archives and member package.json), and before
+// it removes abandoned members; those setup writes are not guarded.
 function assertWorkspaceLockHeld({ isCompromised, rootWorkspace }: AssertWorkspaceLockHeldParams): void {
     if (isCompromised()) {
         throw new Error(`[qadamInstaller] Lost the lock on ${rootWorkspace} mid-install; another replica may be installing into it`)
     }
+}
+
+// Every rollback writes the shared workspace: it removes qadam directories and restores or removes
+// `bun.lock`. Once the lock is lost those are the new holder's files, so a rollback would delete
+// its half-written `qadams/<name>-<version>` (which its `markQadamsAsUsed` then recreates holding
+// only a `ready` marker) or write an older snapshot over the `bun.lock` its own `bun install` just
+// wrote, before its verification reads it (#593). The rollback is skipped instead and the caller
+// throws its own error.
+//
+// What this replica wrote stays behind, and it is not harmless: a member whose dependencies do not
+// resolve fails every later `bun install` in the workspace, `--filter` or not (measured on bun
+// 1.3.14), and the lockfile may carry refusals nothing verified. The next install to take the lock
+// handles both, because the leftover has no `ready` marker: `readWorkspaceBeforeInstall` excuses
+// none of the lockfile's refusals, and `removeAbandonedMembers` deletes the directory unless that
+// install's own batch rewrites it. A holder that took the lock over while this replica was still
+// writing can already be past that point, and its own `bun install` can then fail on the leftover;
+// the install after it cleans up.
+//
+// Checked again before the lockfile write rather than once per rollback, since the lock can be
+// lost while the directories are being removed. The window between a check and the write after it
+// is not closed — `proper-lockfile` gives no fencing — only narrowed.
+function isRollbackForbidden({ isCompromised, rootWorkspace, log }: IsRollbackForbiddenParams): boolean {
+    if (!isCompromised()) {
+        return false
+    }
+    log.warn({ rootWorkspace }, '[qadamInstaller] Lost the lock mid-install; skipping the rollback, the workspace is another replica\'s to write now')
+    return true
 }
 
 // Official qadams are compiled into the image (`Dockerfile`: "Qadams must be pre-compiled because
@@ -248,7 +300,8 @@ function assertWorkspaceLockHeld({ isCompromised, rootWorkspace }: AssertWorkspa
 // loader falls back to `packages/qadams/**/dist` for exactly that reason.
 //
 // DO NOT flip `OFFICIAL_QADAMS_INSTALL_ENABLED` on in any environment, including staging, until
-// #482 is closed. What follows is the state as of step 1a landing; read it as a status board
+// every gate in the latest gate-status comment on #477 is cleared. #482 is closed and is no longer
+// the gate list. What follows is the state as of step 1a landing; read it as a status board
 // rather than as a standing description, because two of the three facts it used to state have
 // changed and the third has not.
 //
@@ -277,14 +330,14 @@ function assertWorkspaceLockHeld({ isCompromised, rootWorkspace }: AssertWorkspa
 // the directory bun actually installs in: the `@aiqadam:registry` pin (#482 item 2), so
 // resolution for the scope cannot fall back to a mirror, proxy or stray `$HOME/.npmrc`; and the
 // `minimumReleaseAge` quarantine (#482 item 3), which the repo-root `bunfig.toml` never reached
-// because bun does not walk up the tree. #482 item 4 (integrity pinning for the official set) is
-// still open, and `--frozen-lockfile` is not the answer to it — this workspace has no
-// checked-in lockfile to freeze and gains qadams incrementally, so freezing it would fail every
-// install that adds one. See #482 before flipping anything.
+// because bun does not walk up the tree. #482 item 4 (integrity pinning for the official set)
+// landed in #508 as `qadam-integrity.ts`, and `--frozen-lockfile` was not the answer to it — this
+// workspace has no checked-in lockfile to freeze and gains qadams incrementally, so freezing it
+// would fail every install that adds one. See #477 before flipping anything.
 //
 // #433/#477 decided that official qadams become real published packages so a version pin survives
 // an image upgrade instead of resolving to whatever happens to be built. Once #475/#476 publish
-// them AND #482's preconditions are met, flipping this flag routes OFFICIAL qadams through this
+// them AND #477's gates are cleared, flipping this flag routes OFFICIAL qadams through this
 // same install path a CUSTOM qadam already takes — `qadam-cache.ts`'s `name@version` shadowing has
 // to flip with it, or the DB history this unlocks is discarded before it can be used. Landing this
 // flip before the packages are actually published breaks every existing flow's install (today,
@@ -312,25 +365,30 @@ function needsInstalling({ piece, officialQadamsInstallEnabled }: {
 // rollback inside the individual-fallback loop does not: later iterations legitimately extend the
 // lockfile, and restoring mid-loop would discard the entries of the qadams that just succeeded.
 // That loop is still covered — the integrity pass runs once over whatever bun finally wrote, and
-// if it throws, the abandoning rollback above it restores the snapshot.
-async function rollbackInstallation({ rootWorkspace, pieces, before }: {
+// if it throws, the abandoning rollback above it restores the snapshot, unless the lock was lost.
+async function rollbackInstallation({ rootWorkspace, pieces, before, isCompromised, log }: {
     rootWorkspace: string
     pieces: QadamPackage[]
     before?: WorkspaceBeforeInstall
+    isCompromised: () => boolean
+    log: Logger
 }): Promise<void> {
+    if (isRollbackForbidden({ isCompromised, rootWorkspace, log })) {
+        return
+    }
     await Promise.all(pieces.map(piece => rm(path.resolve(rootWorkspace, relativeQadamPath(piece)), {
         recursive: true,
         force: true,
     })))
     if (!isNil(before)) {
-        await restoreLockfile({ rootWorkspace, before })
+        await restoreLockfile({ rootWorkspace, before, isCompromised, log })
     }
 }
 
-async function tryInstallQadamsIndividually({ rootWorkspace, pieces, log, assertLockHeld }: TryInstallQadamsIndividuallyParams): Promise<QadamPackage[]> {
+async function tryInstallQadamsIndividually({ rootWorkspace, pieces, log, isCompromised }: TryInstallQadamsIndividuallyParams): Promise<QadamPackage[]> {
     const failures: QadamPackage[] = []
     for (const piece of pieces) {
-        assertLockHeld()
+        assertWorkspaceLockHeld({ isCompromised, rootWorkspace })
         const { error } = await tryCatch(async () =>
             bunRunner(log).install({
                 path: rootWorkspace,
@@ -342,7 +400,7 @@ async function tryInstallQadamsIndividually({ rootWorkspace, pieces, log, assert
                 piece: `${piece.qadamName}@${piece.qadamVersion}`,
                 error,
             }, '[qadamInstaller] Individual qadam installation failed, rolling back')
-            await rollbackInstallation({ rootWorkspace, pieces: [piece] })
+            await rollbackInstallation({ rootWorkspace, pieces: [piece], isCompromised, log })
             failures.push(piece)
         }
     }
@@ -364,11 +422,12 @@ async function tryInstallQadamsIndividually({ rootWorkspace, pieces, log, assert
 // a plain custom install too, and verifying them fail-closed would turn a brief registry outage
 // into a failed install where today there is none. The flag is also the documented escape hatch
 // for an npmjs key rotation, which only means anything if it gates this.
-async function verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, before, officialQadamsInstallEnabled, span, log }: {
+async function verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, before, officialQadamsInstallEnabled, isCompromised, span, log }: {
     rootWorkspace: string
     installed: QadamPackage[]
     before: WorkspaceBeforeInstall
     officialQadamsInstallEnabled: boolean
+    isCompromised: () => boolean
     span: Span
     log: Logger
 }): Promise<void> {
@@ -383,9 +442,13 @@ async function verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, before,
         if (!isNil(error)) {
             span.recordException(error instanceof Error ? error : new Error(String(error)))
             log.error({ rootWorkspace, error }, '[qadamInstaller] Integrity verification failed, rolling back')
-            await rollbackInstallation({ rootWorkspace, pieces: installed, before })
+            await rollbackInstallation({ rootWorkspace, pieces: installed, before, isCompromised, log })
             throw error
         }
+        // The pass reads the registry under a shared deadline, long enough for the lock to be lost
+        // after the check that preceded it. Its verdict then covers a lockfile another replica may
+        // be rewriting, so it vouches for nothing the `ready` markers below would record.
+        assertWorkspaceLockHeld({ isCompromised, rootWorkspace })
     }
     await markQadamsAsUsed(rootWorkspace, installed)
 }
@@ -408,9 +471,10 @@ async function verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, before,
 // What this deliberately does NOT restore is `node_modules` — nothing prunes the refused bytes
 // from the tree. The guarantee is "a refused batch is never marked usable and never launders its
 // own output into the next attempt", not "the tree is clean".
-async function readWorkspaceBeforeInstall({ rootWorkspace, officialQadamsInstallEnabled, log }: {
+async function readWorkspaceBeforeInstall({ rootWorkspace, officialQadamsInstallEnabled, hasUnmarkedMembers, log }: {
     rootWorkspace: string
     officialQadamsInstallEnabled: boolean
+    hasUnmarkedMembers: boolean
     log: Logger
 }): Promise<WorkspaceBeforeInstall> {
     // Off the flag as well as the verification itself: with the flag off nothing verifies and
@@ -432,26 +496,120 @@ async function readWorkspaceBeforeInstall({ rootWorkspace, officialQadamsInstall
     }
     // `tryCatch` reports "no value" as null; the rest of this path reads absence as undefined.
     const lockfileContents = data ?? undefined
+    // Classified from the SAME bytes that were snapshotted, not from a second read — otherwise
+    // the set restored and the set reasoned about could not be shown to be the same file.
+    const refusedKeys = qadamIntegrity(log).refusedKeysIn({ lockfileContents })
+    // A member without a `ready` marker means the last `bun install` here was never verified, so
+    // its refusals are not "already there before this install" but possibly that install's own
+    // output: a replica that lost the lock after `bun install` but before its integrity pass
+    // could not roll back (#593), and a re-request of the same qadam would then excuse the alias
+    // it brought in and mark it ready. Nothing in the lockfile says which refusal came from which
+    // member, so none is excused.
+    //
+    // The bytes are not kept for a rollback either: restoring them would put the same refusals
+    // back, and the next install — with the leftovers gone by then — would excuse them after all.
+    // A rollback therefore removes `bun.lock`, and with no lockfile nothing is ever excused. Only
+    // when there is a refusal to excuse: otherwise distrusting the bytes changes no verdict, and
+    // removing the shared lockfile would cost every tenant a full re-resolve for nothing.
+    if (hasUnmarkedMembers && refusedKeys.size > 0) {
+        log.warn({ rootWorkspace, refusedKeys: [...refusedKeys] }, '[qadamInstaller] An earlier install left a qadam directory without a ready marker; not excusing the refusals already in bun.lock')
+        return { captured: true, lockfileContents: undefined, refusedKeys: new Set() }
+    }
     return {
         captured: true,
         lockfileContents,
-        // Classified from the SAME bytes that were snapshotted, not from a second read — otherwise
-        // the set restored and the set reasoned about could not be shown to be the same file.
-        refusedKeys: qadamIntegrity(log).refusedKeysIn({ lockfileContents }),
+        refusedKeys,
     }
+}
+
+async function findUnmarkedMembers({ rootWorkspace }: { rootWorkspace: string }): Promise<string[]> {
+    const members = await listMemberDirectories({ rootWorkspace })
+    const marked = await Promise.all(members.map((member) => fileSystemUtils.fileExists(join(member, 'ready'))))
+    return members.filter((_, index) => !marked[index])
+}
+
+// bun 1.3.14, measured: `bun install --filter ./qadams/b` exits 1 when a sibling member
+// `qadams/a` declares a dependency that does not resolve, so a broken member left in the shared
+// workspace fails every later install in it, for every tenant. Run under the held lock, so the
+// only installer that could still be writing one of these is a former holder that has not yet
+// noticed it lost the lock — and that install is already abandoned.
+async function removeAbandonedMembers({ rootWorkspace, unmarkedMembers, qadamsToInstall, log }: {
+    rootWorkspace: string
+    unmarkedMembers: string[]
+    qadamsToInstall: QadamPackage[]
+    log: Logger
+}): Promise<void> {
+    // This batch's own leftovers are rewritten by `createQadamPackageJson` and reinstalled.
+    const batchMembers = new Set(qadamsToInstall.map((piece) => qadamPath(rootWorkspace, piece)))
+    const candidates = unmarkedMembers.filter((member) => !batchMembers.has(member))
+    const holdsReadyMember = await Promise.all(candidates.map((member) => containsReadyMarker({ directory: member })))
+    const abandoned = candidates.filter((_, index) => !holdsReadyMember[index])
+    if (abandoned.length === 0) {
+        return
+    }
+    log.warn({ rootWorkspace, abandoned }, '[qadamInstaller] Removing qadam directories an earlier install left without a ready marker')
+    await Promise.all(abandoned.map((member) => rm(member, { recursive: true, force: true })))
+}
+
+// A member is a directory holding the `package.json` that `createQadamPackageJson` writes; without
+// one, bun does not treat a directory as a workspace member at all. Nothing else about the layout
+// is assumed: a qadam name is not checked against npm's naming rules here, so the directories on
+// the way down to a member (an `@scope`, or the `a` of a name like `a/b`) are not members, and a
+// member can sit inside another one. The walk therefore descends into every directory except
+// `node_modules`, which is bun's tree rather than ours.
+async function listMemberDirectories({ rootWorkspace }: { rootWorkspace: string }): Promise<string[]> {
+    return findMembersBelow({ directory: join(rootWorkspace, QADAMS_DIR) })
+}
+
+async function findMembersBelow({ directory }: { directory: string }): Promise<string[]> {
+    const children = (await listDirectories({ directory })).filter((child) => child !== 'node_modules')
+    const found = await Promise.all(children.map(async (child) => {
+        const childPath = join(directory, child)
+        const below = await findMembersBelow({ directory: childPath })
+        const isMember = await fileSystemUtils.fileExists(join(childPath, 'package.json'))
+        return isMember ? [childPath, ...below] : below
+    }))
+    return found.flat()
+}
+
+// Members can nest (see `listMemberDirectories`), so removing an unmarked one could take a `ready`
+// one with it. Any `ready` file below keeps the directory; so does a directory that cannot be read
+// in full, since keeping a leftover costs a failed install and removing a ready qadam costs more.
+async function containsReadyMarker({ directory }: { directory: string }): Promise<boolean> {
+    const { data, error } = await tryCatch(async () => readdir(directory, { withFileTypes: true, recursive: true }))
+    if (!isNil(error)) {
+        return !isFileNotFound(error)
+    }
+    return (data ?? []).some((entry) => entry.isFile() && entry.name === 'ready')
+}
+
+async function listDirectories({ directory }: { directory: string }): Promise<string[]> {
+    const { data, error } = await tryCatch(async () => readdir(directory, { withFileTypes: true }))
+    if (!isNil(error)) {
+        if (isFileNotFound(error)) {
+            return []
+        }
+        throw error
+    }
+    return (data ?? []).filter((entry) => entry.isDirectory()).map((entry) => entry.name)
 }
 
 function isFileNotFound(error: unknown): boolean {
     return error instanceof Error && 'code' in error && error.code === 'ENOENT'
 }
 
-async function restoreLockfile({ rootWorkspace, before }: {
+async function restoreLockfile({ rootWorkspace, before, isCompromised, log }: {
     rootWorkspace: string
     before: WorkspaceBeforeInstall
+    isCompromised: () => boolean
+    log: Logger
 }): Promise<void> {
     // Nothing was snapshotted, so there is nothing this rollback is entitled to assert about the
     // lockfile — least of all that it should not exist.
     if (!before.captured) {
+        return
+    }
+    if (isRollbackForbidden({ isCompromised, rootWorkspace, log })) {
         return
     }
     const lockfilePath = join(rootWorkspace, LOCKFILE_NAME)
@@ -648,7 +806,9 @@ function getPackageArchivePathForQadam(rootWorkspace: string, qadamPackage: Priv
 
 // The workspace state a rollback may have to put back — see `readWorkspaceBeforeInstall`.
 // `lockfileContents` is undefined when there was no lockfile at all, which is both the
-// first-install case and the state a rollback restores to.
+// first-install case and the state a rollback restores to. It is also undefined for a lockfile
+// that cannot be trusted as a pre-image — refusals next to an unfinished earlier install, see
+// `readWorkspaceBeforeInstall` — so that a rollback removes it rather than putting it back.
 //
 // `captured` is what keeps that reading honest. With the flag off no snapshot is taken at all, and
 // an absent snapshot is NOT the same claim as "there was no lockfile" — collapsing the two turned
@@ -674,10 +834,16 @@ type TryInstallQadamsIndividuallyParams = {
     rootWorkspace: string
     pieces: QadamPackage[]
     log: Logger
-    assertLockHeld: () => void
+    isCompromised: () => boolean
 }
 
 type AssertWorkspaceLockHeldParams = {
     isCompromised: () => boolean
     rootWorkspace: string
+}
+
+type IsRollbackForbiddenParams = {
+    isCompromised: () => boolean
+    rootWorkspace: string
+    log: Logger
 }

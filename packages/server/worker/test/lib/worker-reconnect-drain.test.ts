@@ -319,6 +319,27 @@ describe('worker reconnect and drain — #585', () => {
         })
     }
 
+    /**
+     * Holds the settings answer of every connection after the first, which keeps the reconnected
+     * connection's gate closed until the test releases it. The server sees the socket before the
+     * worker has built the machine info its settings request carries, so `connections > 1` does not
+     * mean the request is in: released before it arrives, the release is lost and the gate never opens.
+     */
+    function holdSettingsAfterReconnect(): HeldSettings {
+        let release: (() => void) | null = null
+        settingsAnswered = async (connection) => {
+            if (connection > 0) {
+                await new Promise<void>((resolve) => {
+                    release = resolve
+                })
+            }
+        }
+        return {
+            requested: () => release !== null,
+            release: () => release?.(),
+        }
+    }
+
     afterEach(async () => {
         if (engine.running) {
             engine.finish()
@@ -477,22 +498,15 @@ describe('worker reconnect and drain — #585', () => {
         // The report waits for the connection with the job still this worker's, and the API comes back
         // only after the give-up: sending it then would write over the redelivered copy's run.
         it('drops a report that was waiting for the reconnect when its job was given up', async () => {
-            let answerSettings = (): void => undefined
-            settingsAnswered = async (connection) => {
-                if (connection > 0) {
-                    await new Promise<void>((resolve) => {
-                        answerSettings = resolve
-                    })
-                }
-            }
+            const settings = holdSettingsAfterReconnect()
             await waitUntil(() => engine.running, 'the job never started')
 
             ioServer.disconnectSockets(true)
-            await waitUntil(() => connections > 1, 'the worker never reconnected')
+            await waitUntil(() => settings.requested(), 'the reconnected worker never asked for its settings')
             const report = engine.report()
             leaseDeadline.expire({ token: 'token-1', leaseAgeMs: leaseTracker.trustMs })
             await waitUntil(() => jobFinishedLines().length === 1, 'the job never finished')
-            answerSettings()
+            settings.release()
 
             await expect(report).rejects.toBeInstanceOf(JobGivenUpError)
             expect(runLogUploads, 'a held report of a given-up job reached the API').toEqual([])
@@ -518,26 +532,19 @@ describe('worker reconnect and drain — #585', () => {
         // and push its redelivery back by a whole lock duration.
         it('drops a renewal that was waiting for the reconnect when its job was given up', async () => {
             const setIntervalSpy = vi.spyOn(globalThis, 'setInterval')
-            let answerSettings = (): void => undefined
-            settingsAnswered = async (connection) => {
-                if (connection > 0) {
-                    await new Promise<void>((resolve) => {
-                        answerSettings = resolve
-                    })
-                }
-            }
+            const settings = holdSettingsAfterReconnect()
             await waitUntil(() => engine.running, 'the job never started')
             const leaseTick = setIntervalSpy.mock.calls.find(([, ms]) => ms === leaseTracker.renewalIntervalMs)?.[0]
             setIntervalSpy.mockRestore()
             expect(leaseTick, 'the job never scheduled its lease renewal').toBeTypeOf('function')
 
             ioServer.disconnectSockets(true)
-            await waitUntil(() => connections > 1, 'the worker never reconnected')
+            await waitUntil(() => settings.requested(), 'the reconnected worker never asked for its settings')
             // Connected, settings not loaded yet: the gate is closed, so the renewal waits at it.
             leaseTick?.()
             leaseDeadline.expire({ token: 'token-1', leaseAgeMs: leaseTracker.trustMs })
             await waitUntil(() => jobFinishedLines().length === 1, 'the job never finished')
-            answerSettings()
+            settings.release()
             await waitUntil(() => reconnectedLines() >= 1, 'the reconnect never finished')
             await sleep(200)
 
@@ -721,6 +728,12 @@ async function waitUntil(condition: () => boolean, failureMessage: string, timeo
 type CompleteJobCall = Parameters<WorkerToApiContract['completeJob']>[0] & { connection: number }
 
 type RunLogUpload = Parameters<WorkerToApiContract['uploadRunLog']>[0] & { connection: number }
+
+type HeldSettings = {
+    /** True once the reconnected connection's settings request has reached the server and is being held. */
+    requested: () => boolean
+    release: () => void
+}
 
 type MockSandboxManager = {
     acquire: ReturnType<typeof vi.fn>

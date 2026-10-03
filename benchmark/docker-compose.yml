@@ -91,23 +91,25 @@ services:
       - bench
 
   postgres:
-    image: postgres:14.4
+    # pgvector because the baseline migration creates the vector extension. PostgreSQL 18 keeps its data
+    # in /var/lib/postgresql/18/docker, hence the mount one level up on a new volume (#611).
+    image: pgvector/pgvector:0.8.7-pg18
     environment:
       POSTGRES_DB: activepieces
       POSTGRES_PASSWORD: password
       POSTGRES_USER: postgres
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql
     networks:
       - bench
 
   redis:
-    image: redis:7.0.7
+    image: valkey/valkey:8.1.10
     networks:
       - bench
 
 volumes:
-  postgres_data:
+  pgdata:
 
 networks:
   bench:
