@@ -2,7 +2,7 @@ import dayjs from 'dayjs'
 import relativeTimeDayjs from 'dayjs/plugin/relativeTime'
 import timezoneDayjs from 'dayjs/plugin/timezone'
 import utcDayjs from 'dayjs/plugin/utc'
-import { Parser } from 'expr-eval'
+import { Parser } from 'expr-eval-fork'
 import { FORMULA_MAX_BUILT_STRING_LENGTH, FORMULA_MAX_JSON_VALUE_BUDGET, FormulaSecurityError, FormulaSizeLimitError, measureSize } from './formula-bounds'
 import { AP_FUNCTIONS } from './function-registry'
 
@@ -15,7 +15,7 @@ dayjs.extend(utcDayjs)
 // `evaluate` overload via module augmentation so consumers don't need
 // `@ts-expect-error` or `as` casts. Must be `interface` (not `type`) — only
 // interface declarations merge with the third-party class declaration.
-declare module 'expr-eval' {
+declare module 'expr-eval-fork' {
     // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
     interface Parser {
         evaluate(expression: string, values: Record<string, unknown>): unknown
@@ -33,14 +33,14 @@ declare module 'expr-eval' {
         // touches one.
         binaryOps: { '||': (a: unknown, b: unknown) => unknown, [key: string]: unknown }
         // Not in expr-eval's own `.d.ts` either. `findSecurityViolation` reads
-        // this only to test own-key membership (`hasOwnProperty`) of operator
+        // this only to test own-key membership (`Object.hasOwn`) of operator
         // names, never to invoke an entry, so `unknown` values are enough.
         ternaryOps: Record<string, unknown>
     }
     // `Expression.tokens` (the parsed instruction array) is not part of
     // expr-eval's published `.d.ts` either — `Expression` there declares
     // only `simplify`/`evaluate`/`substitute`/`symbols`/`variables`/
-    // `toJSFunction`. Added so `findForbiddenMemberAccess` below can walk
+    // `toJSFunction`. Added so `findSecurityViolation` below can walk
     // the real parsed structure instead of grepping the source text (see
     // that function's comment for why a text-level check doesn't work).
     // `ExprEvalInstruction` (defined at the bottom of this file) is a
@@ -81,9 +81,9 @@ const parser = new Parser({ operators: { fndef: false } })
 // reference, not by value: comparing `parser.functions[key] ===
 // builtInFunctionsSnapshot[key]` later tells us whether THIS key still
 // points at the untouched original implementation ("we never wanted this,
-// remove it") or was reassigned to one of ours, including the two cases
+// remove it") or was reassigned to one of ours, including the three cases
 // where we override a built-in `parser.functions` entry under its OWN name
-// (`min`/`max` below — `length` is NOT one of these: expr-eval's `length`
+// (`min`/`max`/`sum` below — `length` is NOT one of these: expr-eval's `length`
 // lives in `unaryOps`, a different table this sweep never touches, so
 // `parser.functions.length` below is a brand-new key, not an override) —
 // reassignment always produces a new function reference, so identity
@@ -175,7 +175,7 @@ export function evaluateRaw(expression: string, vars: Record<string, unknown>): 
     try {
         // Parsed once, then checked, then evaluated — rather than
         // `parser.evaluate(expression, vars)` in one call — so
-        // `findForbiddenAccess` can reject a dangerous name before a single
+        // `findSecurityViolation` can reject a dangerous name before a single
         // guarded function, operator, or user callback runs. See that
         // function's comment for why this walks the parsed instruction tree
         // instead of the raw text.
@@ -184,13 +184,12 @@ export function evaluateRaw(expression: string, vars: Record<string, unknown>): 
         if (violation !== null) {
             throw new FormulaSecurityError(violation)
         }
-        // Own-property-only scope: expr-eval resolves a bare identifier with
-        // `name in expr.functions` and `values[name]`, both of which walk the
-        // prototype chain. A null-prototype `values` means `values['constructor']`
-        // (and every other Object.prototype name) is `undefined` here rather than
-        // the global `Object`, closing the identifier route to `Function` that the
-        // member-name filter alone did not cover. `parser.functions`/`parser.consts`
-        // are null-prototyped once at module load (below) for the same reason.
+        // Own-property-only scope: the last step of expr-eval's identifier
+        // resolution is `values[name]`, which walks the prototype chain. A
+        // null-prototype `values` means every `Object.prototype` name is
+        // `undefined` here rather than an inherited built-in. The earlier steps
+        // (`parser.functions`, `parser.unaryOps`) are covered separately — see
+        // D2 in the RCE DEFENCE comment below.
         return parsed.evaluate(Object.assign(Object.create(null), vars))
     }
     finally {
@@ -215,9 +214,10 @@ function chargeSharedBudget({ tracker, amount }: { tracker: { remaining: number 
 // all. Combined with `=` (assignment) — `(a = v||v) || (b = a||a) ||
 // (c = b||b) || ...` — each step assigns the DOUBLED value to a short
 // variable name and reuses that name, so the expression TEXT grows by a
-// small constant per step while the VALUE doubles: verified against the real
-// `expr-eval@2.0.2` dependency, a 1000-char seed run through 3 such steps
-// (an ~40-character expression) produces a 14,000-character result, and a
+// small constant per step while the VALUE doubles: verified against upstream
+// `expr-eval@2.0.2` (the fork's `||` is unchanged), a 1000-char seed run
+// through 3 such steps (an ~40-character expression) produces a
+// 14,000-character result, and a
 // 290-character expression at depth 16 produced a 131,070,000-character
 // result with no error.
 //
@@ -651,13 +651,13 @@ for (const fn of AP_FUNCTIONS) {
 // Guarding size-generating `parser.functions` entries one at a time took
 // four review rounds to reach `replace`/`join_list`/`to_json`/`from_json`/
 // `split_text_to_list` and still missed expr-eval's OWN built-ins. A fresh
-// `new Parser().functions` registers exactly 16 keys; this module's
-// registrations above override only 2 of them (`min`, `max`) under their own
-// names, so the sweep below removes the other 14: `random`, `fac`, `hypot`,
-// `pyt`, `pow`, `atan2`, `if`, `gamma`, `roundTo`, `map`, `fold`, `filter`,
-// `indexOf`, `join`. Measured directly against the real `expr-eval@2.0.2`
-// dependency: nesting `join(sep, array)` four levels deep over 100-element
-// array literals (`join(join(join(join("aaaaaaaaaa",[0,1,...,99]),
+// `new Parser().functions` (expr-eval-fork@3.0.3) registers exactly 17 keys;
+// this module's registrations above override 3 of them (`min`, `max`, `sum`)
+// under their own names, so the sweep below removes the other 14: `random`,
+// `fac`, `hypot`, `pyt`, `pow`, `atan2`, `if`, `gamma`, `roundTo`, `map`,
+// `fold`, `filter`, `indexOf`, `join`. Measured directly against upstream
+// `expr-eval@2.0.2` (the fork's `join` is unchanged): nesting
+// `join(sep, array)` four levels deep over 100-element array literals (`join(join(join(join("aaaaaaaaaa",[0,1,...,99]),
 // [0,1,...,99]),[0,1,...,99]),[0,1,...,29])`) — a 994-character expression,
 // zero input data — built a 335,941,270-character string, +333MB RSS, in
 // 138ms. Worse, and NOT fixable by any size budget: `map`/`fold`/`filter`
@@ -724,50 +724,63 @@ for (const key of Object.keys(parser.functions)) {
 // below and `operators.fndef: false` on the parser. Read this before touching
 // `Object.setPrototypeOf` on any expr-eval table.
 //
-// expr-eval resolves a bare identifier (`IVAR`) by walking the prototype
-// chain: `name in expr.functions` and then `values[name]` (evaluate() in the
-// bundled source). Because `expr.functions` and the `values` scope both
-// inherit `Object.prototype`, a bare `constructor` resolves to the global
-// `Object`, and `(constructor).getOwnPropertyDescriptor((constructor).
-// getPrototypeOf(...); "constructor").value` reaches `Function` — all through
-// plain (non-forbidden) `IMEMBER`s and ordinary calls. This was a working
-// text-only RCE on `main`: an earlier version of this file blocked only the
-// three member NAMES as `IMEMBER` instructions, which never looked at `IVAR`
-// resolution at all. The member-name filter is necessary but not sufficient.
+// `expr-eval-fork` carries the upstream fixes for the two `evaluate()`
+// advisories (it refuses to call a function that is not registered on
+// `parser.functions`, and refuses `__proto__`/`prototype`/`constructor` names
+// at evaluation time). Those are kept as a second line; the layers below are
+// this module's own and do not depend on them, so a regression in the library
+// cannot reopen a hole on its own.
 //
-// The layers now in force (D1/D3a/D3b are all branches of
-// `findSecurityViolation`; D2/D4 are the surrounding hardening):
+// expr-eval resolves a bare identifier (`IVAR`) in this order:
+// `name in expr.functions`, then `name in expr.unaryOps` (for an enabled
+// operator), then `values[name]` — and `in` walks the prototype chain. With
+// plain objects, an identifier spelled like an `Object.prototype` member
+// therefore resolves to a live built-in rather than failing as an unknown
+// name, and from a live built-in, plain member access and ordinary calls can
+// reach `Function`. A member-name filter alone does not cover that route.
+//
+// The layers now in force (D1/D2's identifier check/D3a/D3b are branches of
+// `findSecurityViolation`; D2's tables and D4 are the surrounding hardening):
 //
 // D1. CALL ALLOWLIST (the primary defence). Every `IFUNCALL`'s callee must be a
 //    bare `IVAR` naming an OWN key of `parser.functions` (our registered
-//    formula functions). A member callee (`x.exec(...)`), an indexed callee
-//    (`a[0](...)`), an inherited name, or the result of any expression
-//    (`(x=f)(...)`) is rejected. The Function chain above dies at its FIRST
-//    call, and so do `{{o}}.exec("...")` / `{{a}}[0]("...")`. No legitimate
-//    formula calls a member or indexed function — every documented call is
-//    `name(args)` to a registered function (verified against the docs and the
-//    whole test suite).
+//    formula functions). A member callee, an indexed callee, an inherited
+//    name, or the result of any operator, call or nested expression is
+//    rejected. No legitimate formula calls a member or indexed function —
+//    every documented call is `name(args)` to a registered function (verified
+//    against the docs and the whole test suite).
 //
-// D2. OWN-PROPERTY-ONLY RESOLUTION (defence in depth). `parser.functions` and
-//    `parser.consts` are null-prototyped below, and `evaluateRaw` evaluates
-//    against a null-prototype copy of the scope, so a bare identifier can only
-//    resolve to one of our own registered names — never to `Object`,
-//    `Function`, `globalThis`, or an inherited `Object.prototype` method.
+// D2. OWN-PROPERTY-ONLY RESOLUTION. Each table on the identifier path is
+//    covered separately, because they cannot all be handled the same way:
+//    - `parser.functions` and `parser.consts` are null-prototyped below;
+//    - `evaluateRaw` evaluates against a null-prototype copy of the scope;
+//    - `parser.unaryOps` is NOT null-prototyped (see below), so the gate
+//      instead refuses any identifier `unaryOps` would only find through its
+//      prototype (`isInheritedIdentifier`).
+//    Together a bare identifier can only resolve to one of our registered
+//    functions, a real operator, or a scope variable — never to an inherited
+//    `Object.prototype` member. `resolveVariable` (formula-evaluator.ts) and
+//    `readField`/`readPath` below apply the same own-property rule to the
+//    data paths they walk.
 //
-// D3a. FORBIDDEN NAMES. `.constructor`/`.__proto__`/`.prototype` are rejected
-//    both as `IMEMBER` access and as bare `IVAR` identifiers, walking into
-//    nested `IEXPR` branches (ternary / assignment right-hand sides).
+// D3a. FORBIDDEN NAMES. `constructor`/`__proto__`/`prototype` are rejected as
+//    `IMEMBER` access, as bare `IVAR` identifiers and as `IVARNAME` assignment
+//    targets, walking into nested `IEXPR` branches (ternary / `and` / `or` /
+//    assignment right-hand sides).
 //
 // D3b. OPERATOR OWN-KEY. An operator (`IOP1`/`IOP2`/`IOP3`) must be an OWN key
-//    of its operator table. The operator tables are deliberately NOT
-//    null-prototyped (see below), so an inherited `Object.prototype` name used
-//    in the direct-call unary-operator form — `toString(1)`, `valueOf(1)`,
-//    `constructor("...")` — would otherwise resolve and run. This own-key
-//    check is what closes that form (the previously-accepted `toString(1)` gap).
+//    of its operator table. The operator tables keep `Object.prototype`, so an
+//    inherited name used in the unary-operator call form would otherwise
+//    resolve and run.
 //
 // D4. `operators.fndef: false` (the `new Parser(...)` call above) independently
 //    removes expr-eval's `()=` function-definition operator — the other path to
 //    a user-callable function body — with the `IFUNDEF` gate branch as backstop.
+//
+// Never call `Expression.toJSFunction`: it compiles the expression with
+// `new Function()` and is the subject of an advisory the fork does not
+// address. Nothing here uses it; `no-restricted-properties` in this
+// package's `.eslintrc.json` keeps it that way, and a test stubs it to throw.
 //
 // Why NOT null the operator tables (`unaryOps`/`binaryOps`/`ternaryOps`):
 // their inherited `Object.prototype` is also an accidental parse-time barrier
@@ -777,12 +790,12 @@ for (const key of Object.keys(parser.functions)) {
 // The defences above do not depend on that accident — they work on the parsed
 // instruction tree and on the resolution tables, which is why `functions`/
 // `consts`/the scope can be null-prototyped safely while the operator tables
-// are deliberately left alone. Bracket notation (`x["constructor"]`) is not a
-// property-access path either: expr-eval's `[` is `arrayIndex`, coercing its
-// operand to a number.
+// are deliberately left alone and checked by own-key instead. Bracket
+// notation (`x["name"]`) is not a property-access path either: expr-eval's
+// `[` is `arrayIndex`, coercing its operand to a number.
 
 // Own-property-only identifier resolution (layer 2): a bare identifier can no
-// longer walk the prototype chain to `Object`/`Function`/an inherited method.
+// longer walk the prototype chain of these two tables.
 // Done AFTER every registration and the allowlist sweep so own keys are intact.
 Object.setPrototypeOf(parser.functions, null)
 Object.setPrototypeOf(parser.consts, null)
@@ -793,8 +806,10 @@ function toArray(value: unknown): unknown[] {
     return [value]
 }
 
+// Own properties only, like `resolveVariable` in formula-evaluator.ts: a field
+// name read off a list item must never surface an inherited built-in.
 function readField(item: unknown, field: string): unknown {
-    if (item !== null && typeof item === 'object') {
+    if (item !== null && typeof item === 'object' && Object.hasOwn(item, field)) {
         return (item as Record<string, unknown>)[field]
     }
     return undefined
@@ -806,12 +821,12 @@ function readPath(item: unknown, path: string): unknown {
     // A literal key that itself contains dots (common in webhook/analytics
     // payloads like {"user.email": ...}) wins over traversal, so adding dot-path
     // support stays backward compatible with flat single-level reads.
-    if (item != null && typeof item === 'object' && Object.prototype.hasOwnProperty.call(item, path)) {
+    if (item != null && typeof item === 'object' && Object.hasOwn(item, path)) {
         return (item as Record<string, unknown>)[path]
     }
     let value = item
     for (const part of path.split('.')) {
-        if (value == null || typeof value !== 'object') return undefined
+        if (value == null || typeof value !== 'object' || !Object.hasOwn(value, part)) return undefined
         value = (value as Record<string, unknown>)[part]
     }
     return value
@@ -892,14 +907,17 @@ const FORBIDDEN_MEMBER_NAMES = new Set(['constructor', '__proto__', 'prototype']
 
 // expr-eval's own internal instruction-type tags — not part of its public
 // API, just string literals its source happens to use today. Named here,
-// once, and reused by `findForbiddenAccess`, `findDisallowedCall` and the
-// module-load self-check further down, so they can't drift apart from each
-// other even if someone edits one without the others; they can still drift
-// from expr-eval itself, which is exactly what the self-check exists to catch.
+// once, and reused by `findSecurityViolation` and the module-load self-check
+// further down, so they can't drift apart from each other even if someone
+// edits one without the others; they can still drift from expr-eval itself,
+// which is exactly what the self-check exists to catch.
 const IMEMBER_INSTRUCTION_TYPE = 'IMEMBER'
 const IEXPR_INSTRUCTION_TYPE = 'IEXPR'
 const IVAR_INSTRUCTION_TYPE = 'IVAR'
+const IVARNAME_INSTRUCTION_TYPE = 'IVARNAME'
+const INUMBER_INSTRUCTION_TYPE = 'INUMBER'
 const IFUNCALL_INSTRUCTION_TYPE = 'IFUNCALL'
+const UNKNOWN_CONSTRUCT_MESSAGE = 'Formula contains a construct that is not allowed'
 
 // The single security gate over a parsed formula, run in `evaluateRaw` before
 // evaluation. Walks the PARSED instruction tree (`Expression.tokens`, what
@@ -911,108 +929,142 @@ const IFUNCALL_INSTRUCTION_TYPE = 'IFUNCALL'
 //
 //   LAYER 1 — CALL ALLOWLIST (primary defence). Every `IFUNCALL`'s callee must
 //   be a bare `IVAR` naming an OWN key of `parser.functions` (a registered
-//   formula function). A member callee (`x.exec(...)`), indexed callee
-//   (`a[0](...)`), inherited name, or any computed value (`(x=f)(...)`) is
-//   refused. The text-only `(...).value("...")()` Function chain dies at its
-//   first call, and so do `{{o}}.exec(...)` / `{{a}}[0](...)`. No legitimate
-//   formula calls a member or indexed function (verified against the docs and
-//   the whole test suite).
+//   formula function). A member callee, an indexed callee, an inherited name,
+//   or the result of any operator, call or nested expression is refused. No
+//   legitimate formula calls anything but `name(args)` (verified against the
+//   docs and the whole test suite).
 //
-//   LAYER 3a — forbidden NAMES. `.constructor`/`.__proto__`/`.prototype` are
-//   the route to `Function` once access reaches a live object; rejected as
-//   member access (`IMEMBER`) and as a bare identifier (`IVAR`). The identifier
-//   form is how the `main` RCE began — `constructor` resolving through
-//   `expr.functions`'s prototype chain to the global `Object`.
+//   The simulated stack holds one boolean per value expr-eval's evaluator would
+//   hold: `true` only for a bare identifier that resolves to a registered
+//   function. Every instruction pops exactly as many operands as expr-eval's
+//   `evaluate()` pops for it and pushes `false` for its result — no operator,
+//   member access, call, array or nested expression is ever treated as
+//   yielding a callable, because none can be proven to yield one of ours (a
+//   conditional or binary operator can return either of its operands, so
+//   letting an operand's flag survive the operator would let `IFUNCALL` invoke
+//   whatever the operator picked). An instruction type this pass does not know
+//   is refused rather than guessed at, so a new expr-eval instruction cannot
+//   desynchronise the simulation silently.
 //
-//   LAYER 3b — operator names must be OWN. A name in an operator table through
-//   `Object.prototype` (not a real operator) is rejected: `constructor(x)` and
-//   `toString(1)` parse as a UNARY OPERATOR (`IOP1 "constructor"` / `"toString"`)
-//   because `isNamedOp` finds the inherited name in `unaryOps` and
-//   `isOperatorEnabled` returns true for it. Every real operator (`+`, `-`, `!`,
-//   `sin`, `and`, `||`, `[`, `?`, ...) is an OWN key of its table, so requiring
-//   own-ness blocks the inherited Object.prototype names (constructor, toString,
-//   valueOf, hasOwnProperty, ...) while leaving real operators untouched.
+//   LAYER 2 (identifier half) — an identifier must resolve through OWN
+//   properties only. See `isInheritedIdentifier`.
 //
-// `IEXPR` wraps a nested sub-array (ternary `?:` branches, assignment right-hand
-// sides), evaluated by expr-eval on its own stack, so each is walked
-// recursively and simulated independently. Array-literal elements
-// (`[a, b.constructor]`) are pushed flat into the same array this already scans.
-// Per-instruction stack effects mirror expr-eval's own `evaluate()`.
+//   LAYER 3a — forbidden NAMES. `constructor`/`__proto__`/`prototype` are the
+//   route to `Function` once access reaches a live object; rejected as member
+//   access (`IMEMBER`), as a bare identifier (`IVAR`) and as an assignment
+//   target (`IVARNAME`).
+//
+//   LAYER 3b — operator names must be OWN. A unary-operator token whose name
+//   is only inherited from `Object.prototype` (`toString`, `valueOf`, ...) is
+//   tokenized as an operator because `isNamedOp` uses `in`; requiring own-ness
+//   blocks those while leaving every real operator (`+`, `-`, `!`, `sin`,
+//   `and`, `||`, `[`, `?`, ...) untouched.
+//
+// `IEXPR` wraps a nested sub-array (ternary branches, the right-hand side of
+// `and`/`or`/assignment), evaluated by expr-eval on its own stack, so each is
+// walked recursively and simulated independently.
 function findSecurityViolation(tokens: ExprEvalInstruction[]): string | null {
     const stack: boolean[] = []
-    const pop = (): boolean => stack.pop() ?? false
+    const discard = (count: number): void => {
+        stack.splice(Math.max(0, stack.length - count))
+    }
     for (const instruction of tokens) {
         const value = instruction.value
         switch (instruction.type) {
-            case IMEMBER_INSTRUCTION_TYPE:
-                if (typeof value === 'string' && FORBIDDEN_MEMBER_NAMES.has(value)) {
-                    return `Formula cannot access ".${value}" — this property name is not allowed`
-                }
-                // net-zero: pops the receiver, pushes a non-callable member value
-                pop()
+            case INUMBER_INSTRUCTION_TYPE:
                 stack.push(false)
                 break
-            case IVAR_INSTRUCTION_TYPE:
-                if (typeof value === 'string' && FORBIDDEN_MEMBER_NAMES.has(value)) {
-                    return `Formula cannot use "${value}" — this name is not allowed`
-                }
+            case IVAR_INSTRUCTION_TYPE: {
+                const violation = identifierViolation(value)
+                if (violation !== null) return violation
                 stack.push(typeof value === 'string' && isOwnFunctionKey(value))
                 break
-            case IFUNCALL_INSTRUCTION_TYPE: {
-                const argCount = typeof value === 'number' ? value : 0
-                for (let i = 0; i < argCount; i++) pop()
-                if (!pop()) return 'Formula can only call built-in formula functions'
+            }
+            case IVARNAME_INSTRUCTION_TYPE: {
+                const violation = identifierViolation(value)
+                if (violation !== null) return violation
                 stack.push(false)
                 break
             }
+            case IMEMBER_INSTRUCTION_TYPE:
+                if (typeof value !== 'string' || FORBIDDEN_MEMBER_NAMES.has(value)) {
+                    return `Formula cannot access ".${String(value)}" — this property name is not allowed`
+                }
+                discard(1)
+                stack.push(false)
+                break
+            case IFUNCALL_INSTRUCTION_TYPE:
+                discard(typeof value === 'number' ? value : 0)
+                if (stack.pop() !== true) return 'Formula can only call built-in formula functions'
+                stack.push(false)
+                break
             case 'IOP1':
                 if (!isOwnOperator(parser.unaryOps, value)) return operatorViolationMessage(value)
-                pop()
+                discard(1)
                 stack.push(false)
                 break
             case 'IOP2':
                 if (!isOwnOperator(parser.binaryOps, value)) return operatorViolationMessage(value)
-                pop()
+                discard(2)
+                stack.push(false)
                 break
             case 'IOP3':
                 if (!isOwnOperator(parser.ternaryOps, value)) return operatorViolationMessage(value)
-                pop(); pop()
-                break
-            case 'IENDSTATEMENT':
-                pop()
-                break
-            case 'IARRAY': {
-                const argCount = typeof value === 'number' ? value : 0
-                for (let i = 0; i < argCount; i++) pop()
+                discard(3)
                 stack.push(false)
                 break
-            }
+            case 'IENDSTATEMENT':
+                discard(1)
+                break
+            case 'IARRAY':
+                discard(typeof value === 'number' ? value : 0)
+                stack.push(false)
+                break
             case 'IFUNDEF':
                 // Unreachable (fndef is disabled); refuse loudly if it ever appears.
                 return 'Defining functions inside a formula is not supported'
             case IEXPR_INSTRUCTION_TYPE: {
-                if (isInstructionArray(value)) {
-                    const nested = findSecurityViolation(value)
-                    if (nested !== null) return nested
-                }
+                if (!isInstructionArray(value)) return UNKNOWN_CONSTRUCT_MESSAGE
+                const nested = findSecurityViolation(value)
+                if (nested !== null) return nested
                 stack.push(false)
                 break
             }
             default:
-                // INUMBER / IVARNAME / IEXPREVAL and any operand: one non-callable slot
-                stack.push(false)
-                break
+                return UNKNOWN_CONSTRUCT_MESSAGE
         }
     }
     return null
 }
 
+function identifierViolation(name: unknown): string | null {
+    if (typeof name !== 'string') return UNKNOWN_CONSTRUCT_MESSAGE
+    if (FORBIDDEN_MEMBER_NAMES.has(name) || isInheritedIdentifier(name)) {
+        return `Formula cannot use "${name}" — this name is not allowed`
+    }
+    return null
+}
+
+// expr-eval resolves a bare identifier with `name in expr.functions`, then
+// `name in expr.unaryOps`, then `values[name]` — and `in` walks the prototype
+// chain. `parser.functions` is null-prototyped and the scope is a
+// null-prototype copy, but `parser.unaryOps` deliberately keeps
+// `Object.prototype` (see "Why NOT null the operator tables" above), so a name
+// such as `toString` would otherwise resolve to the inherited
+// `Object.prototype` method as a value. Refusing every identifier that a
+// resolution table would only find through its prototype keeps identifier
+// resolution on own properties without touching that table.
+function isInheritedIdentifier(name: string): boolean {
+    const resolutionTables: object[] = [parser.functions, parser.unaryOps]
+    return resolutionTables.some((table) => name in table && !Object.hasOwn(table, name))
+}
+
 function isOwnFunctionKey(name: string): boolean {
-    return Object.prototype.hasOwnProperty.call(parser.functions, name)
+    return Object.hasOwn(parser.functions, name)
 }
 
 function isOwnOperator(table: Record<string, unknown>, name: unknown): boolean {
-    return typeof name === 'string' && Object.prototype.hasOwnProperty.call(table, name)
+    return typeof name === 'string' && Object.hasOwn(table, name)
 }
 
 function operatorViolationMessage(name: unknown): string {

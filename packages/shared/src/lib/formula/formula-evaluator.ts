@@ -463,11 +463,14 @@ function resolveTextVars(text: string, sampleData: Record<string, unknown>): str
     })
 }
 
+// Own properties only: a `{{path}}` segment names a key of the step data, never
+// something inherited from `Object.prototype`/`Array.prototype` (which would
+// hand the formula a live built-in such as the `Object` constructor as a value).
 function resolveVariable(path: string, sampleData: Record<string, unknown>): unknown {
     const parts = path.split('.')
     let value: unknown = sampleData
     for (const part of parts) {
-        if (value == null || typeof value !== 'object') return undefined
+        if (value == null || typeof value !== 'object' || !Object.hasOwn(value, part)) return undefined
         value = (value as Record<string, unknown>)[part]
     }
     return value

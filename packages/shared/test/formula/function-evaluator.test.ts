@@ -1,4 +1,4 @@
-import { Parser } from 'expr-eval'
+import { Parser } from 'expr-eval-fork'
 import { describe, expect, it } from 'vitest'
 import { formulaEvaluator } from '../../src/lib/formula/formula-evaluator'
 
@@ -1191,8 +1191,13 @@ describe('formula size bounds', () => {
 // ---------------------------------------------------------------------------
 // expr-eval advisory regression tests (#616)
 //
-// `@aiqadam/shared` pins expr-eval@2.0.2, which carries three OSV advisories
-// with no fixed upstream release. Each advisory's proof of concept was
+// `@aiqadam/shared` used to pin expr-eval@2.0.2, which carries three OSV
+// advisories with no fixed upstream release; it now pins expr-eval-fork@3.0.3,
+// which carries the fixes for the two `evaluate()` advisories. The in-tree
+// defences below are kept on top and do not depend on the fork: every test here
+// asserts the in-tree gate's own message, so it fails if the in-tree defence it
+// names is removed even while the fork's runtime checks are still present.
+// Each advisory's proof of concept was
 // reproduced against this evaluator during the #616 investigation, through
 // both callers: the engine path (props-resolver.ts: resolveInputAsync →
 // preResolveFormulaVars → formulaEvaluator.evaluate) and the web builder
@@ -1207,8 +1212,12 @@ describe('formula size bounds', () => {
 // defences live in function-implementations.ts (findSecurityViolation +
 // null-prototyped tables + operators.fndef:false). The defences, by layer:
 //   D1 call allowlist: an IFUNCALL callee must be a bare identifier naming an
-//      OWN registered formula function.
-//   D3a forbidden names: constructor/__proto__/prototype as member OR identifier.
+//      OWN registered formula function; no operator, member access, call or
+//      nested expression ever yields a callable.
+//   D2 own-property resolution: identifiers and {{path}} references never
+//      resolve to an inherited Object.prototype member.
+//   D3a forbidden names: constructor/__proto__/prototype as member, identifier
+//      or assignment target.
 //   D3b operator own-key: an operator must be an OWN key of its table (blocks
 //      inherited Object.prototype names used as operators, e.g. toString(1)).
 //   D4 fndef disabled: expr-eval's ()= function-definition operator.
@@ -1243,10 +1252,9 @@ describe('expr-eval advisories (#616)', () => {
             }
         })
 
-        // The headline text-only RCE (reproduced on `main`): resolve the global
-        // Object through a bare `constructor`, walk to `Function` via plain
-        // members, and call it with a code string. Pinned with a live canary.
-        it('the constructor→Function code-execution chain does not run (canary)', () => {
+        // A text-only formula that tries to reach a live built-in through
+        // identifier resolution and then call it. Pinned with a live canary.
+        it('a formula can never reach and invoke a built-in constructor (canary)', () => {
             const g = globalThis as Record<string, unknown>
             g.__ap616_rce = undefined
             const { result: r, error } = ok('((((constructor).getOwnPropertyDescriptor((constructor).getPrototypeOf(constructor); "constructor")).value)("globalThis.__ap616_rce = 1; return 1"))()')
@@ -1324,28 +1332,28 @@ describe('expr-eval advisories (#616)', () => {
         })
     })
 
-    // The identifier/operator resolution routes the member-name filter alone did
-    // not cover — the core of the #616 second-review finding.
-    describe('identifier and operator resolution (#616 second review)', () => {
+    // Identifier and operator resolution — routes a member-name filter alone
+    // does not cover.
+    describe('identifier and operator resolution', () => {
         it('a bare constructor identifier is rejected (D3a)', () => {
             const { result: r, error } = ok('constructor')
             expect(r).toBeNull()
             expect(error).toBe('Formula cannot use "constructor" — this name is not allowed')
         })
 
-        it('an Object.prototype method called as a unary operator is rejected — toString (D3b)', () => {
+        it('an inherited name used as a unary operator is rejected — toString (D3b)', () => {
             const { result: r, error } = ok('toString(1)')
             expect(r).toBeNull()
             expect(error).toBe('Formula cannot use "toString" — this name is not allowed')
         })
 
-        it('an Object.prototype method called as a unary operator is rejected — valueOf (D3b)', () => {
+        it('an inherited name used as a unary operator is rejected — valueOf (D3b)', () => {
             const { result: r, error } = ok('valueOf(1)')
             expect(r).toBeNull()
             expect(error).toBe('Formula cannot use "valueOf" — this name is not allowed')
         })
 
-        it('constructor invoked directly (a unary-operator form) is rejected (D3b)', () => {
+        it('constructor used as a unary operator is rejected (D3b)', () => {
             const { result: r, error } = ok('constructor("return 7")')
             expect(r).toBeNull()
             expect(error).toBe('Formula cannot use "constructor" — this name is not allowed')
@@ -1357,6 +1365,73 @@ describe('expr-eval advisories (#616)', () => {
             expect(result('uppercase("hi")')).toBe('HI')
             expect(result('{{a}}[1]', { a: ['zero', 'one'] })).toBe('one')
             expect(result('pluck(from_json({{t}});"a")', { t: '[{"a":1},{"a":2}]' })).toEqual([1, 2])
+        })
+
+        it('identifiers never resolve to inherited properties (D2)', () => {
+            // Each name is tokenized as an operand of a real unary operator, so
+            // it reaches expr-eval's identifier resolution rather than the
+            // operator check; it must be refused, not resolved to the inherited
+            // Object.prototype member.
+            for (const [expr, name] of [['length toString', 'toString'], ['abs valueOf', 'valueOf'], ['not hasOwnProperty', 'hasOwnProperty']]) {
+                const { result: r, error } = ok(expr)
+                expect(r).toBeNull()
+                expect(error).toBe(`Formula cannot use "${name}" — this name is not allowed`)
+            }
+        })
+
+        it('an assignment never targets a forbidden name (D3a)', () => {
+            const { result: r, error } = ok('prototype = 1')
+            expect(r).toBeNull()
+            expect(error).toBe('Formula cannot use "prototype" — this name is not allowed')
+        })
+    })
+
+    describe('call allowlist stack simulation (D1)', () => {
+        it('a conditional expression never yields a callable value', () => {
+            canary.hit = false
+            const { result: r, error } = ok('(uppercase ? {{fn}} : 0)("x")', { fn: canaryFn })
+            expect(canary.hit).toBe(false)
+            expect(r).toBeNull()
+            expect(error).toBe('Formula can only call built-in formula functions')
+        })
+
+        it('a binary operator never yields a callable value', () => {
+            for (const expr of ['(uppercase || "a")("x")', '(uppercase and 1)("x")', '(uppercase == 1)("x")']) {
+                const { result: r, error } = ok(expr)
+                expect(r).toBeNull()
+                expect(error).toBe('Formula can only call built-in formula functions')
+            }
+        })
+
+        it('a call result is never callable', () => {
+            const { result: r, error } = ok('uppercase("a")("b")')
+            expect(r).toBeNull()
+            expect(error).toBe('Formula can only call built-in formula functions')
+        })
+
+        it('registered functions stay callable inside operators, branches and arguments', () => {
+            expect(result('(1 > 0) ? uppercase("y") : lowercase("N")')).toBe('Y')
+            expect(result('uppercase("a") || lowercase("B")')).toBe('Ab')
+            expect(result('combine(uppercase("a"); trim(" b "))')).toBe('Ab')
+            expect(result('-absolute(-3) + 1')).toBe(-2)
+        })
+    })
+
+    describe('data path resolution (D2)', () => {
+        it('a {{path}} reference never resolves to an inherited property', () => {
+            expect(okMixed('a{{constructor}}b|{{x.toString}}|{{x.hasOwnProperty}}', { x: {} }).result).toBe('ab||')
+            expect(ok('{{o.constructor}}', { o: {} })).toEqual({ result: null, error: null })
+        })
+
+        it('own properties, including array length and indexes, still resolve', () => {
+            expect(okMixed('{{l.length}}|{{l.1}}|{{o.constructor}}', { l: ['a', 'b'], o: { constructor: 'own' } }).result).toBe('2|b|own')
+        })
+
+        it('list field lookups never resolve to an inherited property', () => {
+            expect(result('pluck({{l}}; "constructor")', { l: [{ a: 1 }, { constructor: 'own' }] })).toEqual([undefined, 'own'])
+            expect(result('find_by({{l}}; "constructor"; "own")', { l: [{ a: 1 }, { constructor: 'own' }] })).toEqual({ constructor: 'own' })
+            expect(result('filter_list({{l}}; "constructor"; "native"; "contains")', { l: [{ a: 1 }] })).toEqual([])
+            expect(result('sort_list({{l}}; "constructor")', { l: [{ constructor: 2 }, {}, { constructor: 1 }] })).toEqual([{ constructor: 1 }, { constructor: 2 }, {}])
         })
     })
 })
