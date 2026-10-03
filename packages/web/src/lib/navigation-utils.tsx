@@ -1,6 +1,7 @@
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { useEmbedding } from '@/components/providers/embed-provider';
+import { redirectUtils } from '@/lib/redirect-utils';
 
 export const useNewWindow = () => {
   const { embedState } = useEmbedding();
@@ -27,14 +28,11 @@ export const STATE_QUERY_PARAM = 'state';
 export const LOGIN_QUERY_PARAM = 'qadamFlowLogin';
 export const PROVIDER_NAME_QUERY_PARAM = 'providerName';
 
-export const useDefaultRedirectPath = () => {
-  return '/flows';
-};
-
 export const useRedirectAfterLogin = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const defaultRedirectPath = useDefaultRedirectPath();
-  const from = searchParams.get(FROM_QUERY_PARAM) ?? defaultRedirectPath;
+  const from = redirectUtils.toSameOriginPath(
+    searchParams.get(FROM_QUERY_PARAM),
+  );
   return () => navigate(from);
 };
