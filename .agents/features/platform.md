@@ -55,7 +55,8 @@ A Platform is the top-level tenant namespace in Qadam Flow. Every installation h
 ## Service Methods
 
 ### `platformService`
-- `create({ ownerId, name, primaryColor?, logoIconUrl?, fullLogoUrl?, favIconUrl? })` — creates platform record with defaults from `defaultTheme`; calls `userService.addOwnerToPlatform`
+- `create({ ownerId, name, primaryColor?, logoIconUrl?, fullLogoUrl?, favIconUrl?, entityManager? })` — creates platform record with defaults from `defaultTheme`; calls `userService.addOwnerToPlatform`, which only attaches a user row whose `platformId` is still null, and throws if the owner is already attached elsewhere
+- `createPlatformWithProject({ identityId, name, invalidatePreviousTokens })` — the onboarding claim behind `POST /v1/platforms`: in one transaction it row-locks the identity's `platformId IS NULL` user row (or inserts one), creates the platform and its personal project, and rotates `tokenVersion` when asked. A concurrent claim for the same identity waits on the row lock and then inserts its own user row, so correctness does not depend on the `distributedLock` that also wraps it
 - `update(params)` — merges the branding / auth / qadam-filter / pinned-qadam fields onto the row and saves it. There is no plan write path: no `platformPlanService` exists, and the `plan` field on `UpdateParams` is never persisted.
 - `getOneWithPlanAndUsageOrThrow(id)` — read with the fixed plan flags attached; `usage` is always `undefined` because `getUsage()` returns `undefined` unconditionally
 - `getOneWithPlanOrThrow(id)` — plan flags only (no usage); used in auth guards for fast plan checks

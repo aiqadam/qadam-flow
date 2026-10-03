@@ -1,8 +1,11 @@
-import { Principal } from '@aiqadam/shared'
+import { Principal, Project } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import * as accessTokenManagerModule from '../../../../src/app/authentication/lib/access-token-manager'
+import * as userIdentityServiceModule from '../../../../src/app/authentication/user-identity/user-identity-service'
 import { databaseConnection } from '../../../../src/app/database/database-connection'
+import * as redisConnectionsModule from '../../../../src/app/database/redis-connections'
+import * as projectServiceModule from '../../../../src/app/project/project-service'
 import {
     createMockSignInRequest,
     createMockSignUpRequest,
@@ -11,6 +14,9 @@ import { cleanDatabase, setupTestEnvironment, teardownTestEnvironment } from '..
 
 let app: FastifyInstance | null = null
 const originalAccessTokenManager = accessTokenManagerModule.accessTokenManager
+const originalDistributedLock = redisConnectionsModule.distributedLock
+const originalProjectService = projectServiceModule.projectService
+const originalUserIdentityRepository = userIdentityServiceModule.userIdentityRepository
 
 beforeAll(async () => {
     app = await setupTestEnvironment()
@@ -163,8 +169,9 @@ describe('Authentication API', () => {
         // no longer implicitly serialized by a unique-constraint violation on a second insert: two
         // concurrent calls for the same identity would otherwise both read the same row and both
         // promote it, leaving one platform's ownerId pointing at a user whose own platformId now
-        // points somewhere else — permanently unable to sign back in. The fix is a distributedLock
-        // keyed on identityId around the whole claim, which serializes the two calls: whichever
+        // points somewhere else — permanently unable to sign back in. A distributedLock keyed on
+        // identityId around the whole claim serializes the two calls (the test after this one
+        // covers the database doing the same with the lock out of the picture): whichever
         // runs second finds the row already claimed (platformId no longer null) and falls back to
         // inserting its own — the same per-call-own-row outcome the code had before the reuse
         // optimization, just now reached deliberately instead of by accident. This fires two
@@ -247,6 +254,170 @@ describe('Authentication API', () => {
                 expect(owner.platformId).toBe(platformId)
                 expect(owner.platformRole).toBe('ADMIN')
             }
+        })
+
+        // The claim must not rely on the distributed lock for its correctness: with the lock
+        // reduced to a pass-through, two overlapping claims for the same onboarding identity must
+        // still end the same way as when the lock serializes them — two platforms, each owned by
+        // its own user row whose platformId points back at it, with no platform left without a
+        // project. A barrier inside the pass-through starts both claims together on every run.
+        it('keeps concurrent create-platform calls for the same onboarding identity consistent without the distributed lock', async () => {
+            // arrange
+            const mockSignUpRequest = createMockSignUpRequest()
+            const signUpResponse = await app?.inject({
+                method: 'POST',
+                url: '/api/v1/authentication/sign-up',
+                body: mockSignUpRequest,
+            })
+            const onboardingToken = signUpResponse?.json()?.token
+
+            const claimsStarted = createArrivalBarrier({ parties: 2, timeoutMs: 10_000 })
+            vi.spyOn(redisConnectionsModule, 'distributedLock').mockImplementation((log) => ({
+                ...originalDistributedLock(log),
+                runExclusive: async <T>({ fn }: { fn: (lockLostSignal: AbortSignal) => Promise<T> }): Promise<T> => {
+                    await claimsStarted.arrive()
+                    return fn(new AbortController().signal)
+                },
+            }))
+
+            // act
+            const [responseA, responseB] = await Promise.all([
+                app?.inject({
+                    method: 'POST',
+                    url: '/api/v1/platforms',
+                    headers: { authorization: `Bearer ${onboardingToken}` },
+                    body: { name: 'Acme A' },
+                }),
+                app?.inject({
+                    method: 'POST',
+                    url: '/api/v1/platforms',
+                    headers: { authorization: `Bearer ${onboardingToken}` },
+                    body: { name: 'Acme B' },
+                }),
+            ])
+
+            // assert
+            expect(
+                claimsStarted.releasedByArrival(),
+                'claim barrier timed out after 10s: both create-platform calls must reach the claim before either runs it',
+            ).toBe(true)
+            expect(responseA?.statusCode).toBe(StatusCodes.OK)
+            expect(responseB?.statusCode).toBe(StatusCodes.OK)
+
+            const platformIds = [responseA?.json()?.platformId, responseB?.json()?.platformId]
+            expect(new Set(platformIds).size).toBe(2)
+
+            const userRepo = databaseConnection().getRepository('user')
+            const platformRepo = databaseConnection().getRepository('platform')
+            const projectRepo = databaseConnection().getRepository('project')
+            expect(await userRepo.count()).toBe(2)
+            expect(await platformRepo.count()).toBe(2)
+            expect(await projectRepo.count()).toBe(2)
+            for (const platformId of platformIds) {
+                const platform = await platformRepo.findOneByOrFail({ id: platformId })
+                const owner = await userRepo.findOneByOrFail({ id: platform.ownerId })
+                expect(owner.platformId).toBe(platformId)
+                expect(owner.platformRole).toBe('ADMIN')
+                expect(await projectRepo.countBy({ platformId, ownerId: owner.id })).toBe(1)
+            }
+        })
+
+        it('commits none of the create-platform writes when the project step of the claim fails', async () => {
+            // arrange
+            const mockSignUpRequest = createMockSignUpRequest()
+            const signUpResponse = await app?.inject({
+                method: 'POST',
+                url: '/api/v1/authentication/sign-up',
+                body: mockSignUpRequest,
+            })
+            const onboardingToken = signUpResponse?.json()?.token
+
+            const projectServiceSpy = vi.spyOn(projectServiceModule, 'projectService').mockImplementation((log) => ({
+                ...originalProjectService(log),
+                create: async (): Promise<Project> => {
+                    throw new Error('project creation failed')
+                },
+            }))
+
+            // act
+            const failedResponse = await app?.inject({
+                method: 'POST',
+                url: '/api/v1/platforms',
+                headers: { authorization: `Bearer ${onboardingToken}` },
+                body: { name: 'Acme' },
+            })
+
+            // assert
+            expect(failedResponse?.statusCode).toBe(StatusCodes.INTERNAL_SERVER_ERROR)
+            const userRepo = databaseConnection().getRepository('user')
+            expect(await databaseConnection().getRepository('platform').count()).toBe(0)
+            expect(await databaseConnection().getRepository('project').count()).toBe(0)
+            const users = await userRepo.find()
+            expect(users).toHaveLength(1)
+            expect(users[0].platformId).toBeNull()
+
+            // The untouched onboarding row is still claimable once the failure is gone.
+            projectServiceSpy.mockRestore()
+            const retryResponse = await app?.inject({
+                method: 'POST',
+                url: '/api/v1/platforms',
+                headers: { authorization: `Bearer ${onboardingToken}` },
+                body: { name: 'Acme' },
+            })
+            expect(retryResponse?.statusCode).toBe(StatusCodes.OK)
+            expect(await userRepo.count()).toBe(1)
+            const owner = await userRepo.findOneByOrFail({ id: users[0].id })
+            expect(owner.platformId).toBe(retryResponse?.json()?.platformId)
+        })
+
+        // Fails the claim at its last write, the tokenVersion rotation, with no onboarding user row
+        // to reuse, so the claim has inserted its own user row, the platform and the project by the
+        // time it fails. The spy rejects any tokenVersion write whichever entity manager it goes
+        // through, so a rotation moved out of the transaction would still fail here — after the
+        // other writes had already committed.
+        it('commits none of the create-platform writes, including a user row it inserted, when the token rotation fails', async () => {
+            // arrange
+            const mockSignUpRequest = createMockSignUpRequest()
+            const signUpResponse = await app?.inject({
+                method: 'POST',
+                url: '/api/v1/authentication/sign-up',
+                body: mockSignUpRequest,
+            })
+            const onboardingToken = signUpResponse?.json()?.token
+            const userRepo = databaseConnection().getRepository('user')
+            const identityRepo = databaseConnection().getRepository('user_identity')
+            const identityBefore = await identityRepo.findOneByOrFail({ email: mockSignUpRequest.email.toLocaleLowerCase().trim() })
+            await userRepo.delete({ identityId: identityBefore.id })
+
+            vi.spyOn(userIdentityServiceModule, 'userIdentityRepository').mockImplementation((entityManager) => {
+                const repo = originalUserIdentityRepository(entityManager)
+                if (!vi.isMockFunction(repo.update)) {
+                    const realUpdate = repo.update.bind(repo)
+                    vi.spyOn(repo, 'update').mockImplementation(async (criteria, partialEntity) => {
+                        if ('tokenVersion' in partialEntity) {
+                            throw new Error('token rotation failed')
+                        }
+                        return realUpdate(criteria, partialEntity)
+                    })
+                }
+                return repo
+            })
+
+            // act
+            const response = await app?.inject({
+                method: 'POST',
+                url: '/api/v1/platforms',
+                headers: { authorization: `Bearer ${onboardingToken}` },
+                body: { name: 'Acme' },
+            })
+
+            // assert
+            expect(response?.statusCode).toBe(StatusCodes.INTERNAL_SERVER_ERROR)
+            expect(await databaseConnection().getRepository('platform').count()).toBe(0)
+            expect(await databaseConnection().getRepository('project').count()).toBe(0)
+            expect(await userRepo.countBy({ identityId: identityBefore.id })).toBe(0)
+            const identityAfter = await identityRepo.findOneByOrFail({ id: identityBefore.id })
+            expect(identityAfter.tokenVersion).toBe(identityBefore.tokenVersion)
         })
     })
 
