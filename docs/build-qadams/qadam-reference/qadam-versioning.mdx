@@ -30,7 +30,7 @@ Use this checklist when deciding which segment to bump.
 ### Breaking changes (MINOR on `0.x`, MAJOR from `1.0.0` on)
 
 - Remove an existing action or trigger.
-- Add a required prop to an existing action or trigger.
+- Add a required prop with no `defaultValue` to an existing action or trigger.
 - Remove an existing prop, whether required or optional.
 - Remove an attribute from an action output.
 - Change the existing behavior of an action or trigger.
@@ -39,7 +39,8 @@ Use this checklist when deciding which segment to bump.
 
 - Add a new action or trigger.
 - Add an optional prop.
+- Add a required prop that carries a `defaultValue` reproducing the previous behavior (for example, `callFlow`'s `executionMode` shipped as required with `defaultValue: 'queue'`, matching the only behavior that existed before).
 - Add an attribute to an action output.
 - Fix a bug without changing the public surface (PATCH).
 
-The rule of thumb: **any removal is breaking, any required addition is breaking, everything else is not.**
+The rule of thumb: **any removal is breaking; a new required prop is breaking unless it carries a `defaultValue` that preserves prior behavior; everything else is non-breaking.**
