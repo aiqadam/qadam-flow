@@ -1,0 +1,6 @@
+Qadam Flow is a derivative work of Activepieces
+(https://github.com/activepieces/activepieces).
+
+The "packages/ee/" enterprise-licensed components of the upstream project have
+been removed; all remaining code is distributed under the MIT (Expat) license
+in the LICENSE file.

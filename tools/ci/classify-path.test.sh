@@ -54,6 +54,7 @@ check_path docs AGENTS.md
 check_path docs CLAUDE.md                       "root symlink to AGENTS.md, still prose"
 check_path docs LICENSE
 check_path docs docs/LICENSE
+check_path docs NOTICE
 check_path docs docs/install/overview.mdx
 check_path docs docs/docs.json                  "named docs-site nav config"
 check_path docs docs/openapi.json               "named docs-site api spec"
