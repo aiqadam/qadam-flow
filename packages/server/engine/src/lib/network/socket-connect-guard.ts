@@ -10,9 +10,9 @@ export function installSocketConnectGuard(policy: GuardPolicy): UninstallFn {
             failConnect({ socket: this, error: decision.error })
             return this
         }
-        // Node is always handed the exact options object that was inspected, re-packed as a plain
-        // (options[, cb]) call, so what gets checked and what gets connected cannot diverge
-        // whichever argument shape the caller used.
+        // Node is handed the plain-data snapshot that was inspected, never the caller's object,
+        // re-packed as a plain (options[, cb]) call. A getter cannot answer the check and the
+        // connect differently, whichever argument shape the caller used.
         Reflect.apply(originalConnect, this, [decision.options, ...decision.callbackArgs])
         return this
     }
@@ -48,6 +48,7 @@ function decideConnect({ args, policy }: DecideConnectParams): ConnectDecision {
     if (lookup === undefined || lookup === null) return { kind: 'allow', options, callbackArgs }
     if (typeof lookup !== 'function') return block({ host, ip: UNPARSED })
     // A caller-supplied resolver never passes through the DNS guard, so its answers are checked here.
+    // `options` is already a plain-data snapshot, so copying it re-runs no caller getter.
     const resolve = (lookupArgs: unknown[]): void => {
         Reflect.apply(lookup, undefined, lookupArgs)
     }
@@ -57,8 +58,9 @@ function decideConnect({ args, policy }: DecideConnectParams): ConnectDecision {
 
 // Mirrors Node's internal normalizeArgs, which is how Socket#connect itself reads its arguments.
 // net.connect / net.createConnection, and so the http agents, undici and fetch built on them, hand
-// Socket#connect the already-normalized [options, cb] tuple as one array argument. Any shape outside the ones Node accepts yields
-// undefined so the guard fails closed.
+// Socket#connect the already-normalized [options, cb] tuple as one array argument. Any shape
+// outside the ones Node accepts yields undefined so the guard fails closed. Caller options are
+// copied once into a plain snapshot, which is both what gets inspected and what Node receives.
 function normalizeConnectArgs(args: unknown[]): NormalizedConnect | undefined {
     const first = args[0]
     if (Array.isArray(first)) {
@@ -67,12 +69,12 @@ function normalizeConnectArgs(args: unknown[]): NormalizedConnect | undefined {
         const [options, callback] = tuple
         if (!isConnectOptions(options)) return undefined
         if (callback !== undefined && callback !== null && typeof callback !== 'function') return undefined
-        return { options, callbackArgs: toCallbackArgs(callback) }
+        return { options: { ...options }, callbackArgs: toCallbackArgs(callback) }
     }
     if (args.length === 0) return { options: {}, callbackArgs: [] }
     const callbackArgs = toCallbackArgs(args[args.length - 1])
     if (typeof first === 'object' && first !== null) {
-        return isConnectOptions(first) ? { options: first, callbackArgs } : undefined
+        return isConnectOptions(first) ? { options: { ...first }, callbackArgs } : undefined
     }
     if (isPipeName(first)) return { options: { path: first }, callbackArgs }
     const host = args.length > 1 && typeof args[1] === 'string' ? args[1] : undefined
@@ -91,7 +93,8 @@ function guardLookup({ resolve, port, policy }: GuardLookupParams): GuardedLooku
             }
             const blockedIp = findBlockedResolvedAddress({ address, port, policy })
             if (blockedIp !== undefined) {
-                Reflect.apply(callback, undefined, [new SSRFBlockedError({ host: String(hostname), ip: blockedIp }), '', 0])
+                const error = new SSRFBlockedError({ host: String(hostname), ip: blockedIp })
+                Reflect.apply(callback, undefined, [error, '', 0])
                 return
             }
             Reflect.apply(callback, undefined, [null, address, family])

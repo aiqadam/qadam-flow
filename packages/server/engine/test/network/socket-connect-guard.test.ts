@@ -5,18 +5,31 @@ import net from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import tls from 'node:tls'
-import { SSRFBlockedError } from '@aiqadam/shared'
+import { SSRFBlockedError, tryCatch } from '@aiqadam/shared'
 import { Agent, request as undiciRequest } from 'undici'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { ssrfGuard } from '../../src/lib/network/ssrf-guard'
 
 const LOOPBACK = '127.0.0.1'
 
-function listen(server: net.Server, target: { port: number, host: string } | string): Promise<void> {
+function listen({ server, target }: ListenParams): Promise<void> {
     return new Promise((resolve) => {
         if (typeof target === 'string') server.listen(target, () => resolve())
         else server.listen(target.port, target.host, () => resolve())
     })
+}
+
+// Calls Socket#connect with the raw argument list, for shapes the typed overloads do not admit.
+function connectWith(connectArgs: unknown[]): net.Socket {
+    return Reflect.apply(net.Socket.prototype.connect, new net.Socket(), connectArgs)
+}
+
+function firstReadThen<T>({ first, then }: FirstReadThenParams<T>): () => T {
+    let reads = 0
+    return () => {
+        reads += 1
+        return reads === 1 ? first : then
+    }
 }
 
 function closeServer(server: net.Server): Promise<void> {
@@ -51,13 +64,9 @@ function resolveTo(address: string): LookupFn {
 }
 
 async function captureRejection(promise: Promise<unknown>): Promise<unknown> {
-    try {
-        await promise
-    }
-    catch (error) {
-        return error
-    }
-    throw new Error('expected the request to be rejected')
+    const { error } = await tryCatch(() => promise)
+    if (error === null) throw new Error('expected the request to be rejected')
+    return error
 }
 
 function causeOf(error: unknown): unknown {
@@ -74,7 +83,7 @@ describe('socket connect guard — every connect argument shape', () => {
         server.on('connection', () => {
             acceptedConnections += 1
         })
-        await listen(server, { port: 0, host: LOOPBACK })
+        await listen({ server, target: { port: 0, host: LOOPBACK } })
         port = portOf(server)
     })
 
@@ -99,11 +108,13 @@ describe('socket connect guard — every connect argument shape', () => {
             ['net.connect(options)', (): net.Socket => net.connect({ host: LOOPBACK, port })],
             ['net.connect(port, host)', (): net.Socket => net.connect(port, LOOPBACK)],
             ['net.createConnection(options)', (): net.Socket => net.createConnection({ host: LOOPBACK, port })],
-            ['net.createConnection(portString, host)', (): net.Socket => Reflect.apply(net.createConnection, undefined, [String(port), LOOPBACK])],
+            ['net.createConnection(portString, host)', (): net.Socket =>
+                Reflect.apply(net.createConnection, undefined, [String(port), LOOPBACK])],
             ['new Socket().connect(options)', (): net.Socket => new net.Socket().connect({ host: LOOPBACK, port })],
             ['new Socket().connect(port, host)', (): net.Socket => new net.Socket().connect(port, LOOPBACK)],
-            ['new Socket().connect(portString, host)', (): net.Socket => Reflect.apply(net.Socket.prototype.connect, new net.Socket(), [String(port), LOOPBACK])],
-            ['new Socket().connect([options, cb]) (pre-normalized tuple)', (): net.Socket => Reflect.apply(net.Socket.prototype.connect, new net.Socket(), [[{ host: LOOPBACK, port }, null]])],
+            ['new Socket().connect(portString, host)', (): net.Socket => connectWith([String(port), LOOPBACK])],
+            ['new Socket().connect([options, cb]) (pre-normalized tuple)', (): net.Socket =>
+                connectWith([[{ host: LOOPBACK, port }, null]])],
             ['tls.connect(options)', (): net.Socket => tls.connect({ host: LOOPBACK, port, rejectUnauthorized: false })],
             ['tls.connect(port, host)', (): net.Socket => tls.connect(port, LOOPBACK, { rejectUnauthorized: false })],
         ])('%s', async (_shape, open) => {
@@ -168,7 +179,8 @@ describe('socket connect guard — every connect argument shape', () => {
 
         it('refuses http.request when the lookup option answers with a private address', async () => {
             const error = await new Promise<unknown>((resolve) => {
-                const req = http.request({ host: 'resolver.test', port, lookup: resolveTo(LOOPBACK), agent: false }, () => resolve(undefined))
+                const requestOptions = { host: 'resolver.test', port, lookup: resolveTo(LOOPBACK), agent: false }
+                const req = http.request(requestOptions, () => resolve(undefined))
                 req.on('error', resolve)
                 req.end()
             })
@@ -186,6 +198,43 @@ describe('socket connect guard — every connect argument shape', () => {
         })
     })
 
+    describe('connects to exactly the target that was checked', () => {
+        it.each([
+            ['net.connect(options)', (options: net.NetConnectOpts): net.Socket => net.connect(options)],
+            ['new Socket().connect(options)', (options: net.NetConnectOpts): net.Socket => connectWith([options])],
+            ['new Socket().connect([options, cb])', (options: net.NetConnectOpts): net.Socket => connectWith([[options, null]])],
+        ])('refuses a host whose value changes after it is first read: %s', async (_shape, open) => {
+            ssrfGuard.install({ enabled: true, allowList: [], allowedLoopbackPorts: [] })
+            const host = firstReadThen({ first: '', then: LOOPBACK })
+            const options = Object.defineProperty({ port }, 'host', { get: host, enumerable: true })
+            const outcome = await settle(open(options))
+            expect(outcome.connected).toBe(false)
+            expect(outcome.error).toBeInstanceOf(SSRFBlockedError)
+            expect(acceptedConnections).toBe(0)
+        })
+
+        it('lands on the checked port when the port value changes after it is first read', async () => {
+            let otherConnections = 0
+            const otherServer = net.createServer((socket) => socket.end())
+            otherServer.on('connection', () => {
+                otherConnections += 1
+            })
+            await listen({ server: otherServer, target: { port: 0, host: LOOPBACK } })
+            try {
+                ssrfGuard.install({ enabled: true, allowList: [], allowedLoopbackPorts: [port] })
+                const readPort = firstReadThen({ first: port, then: portOf(otherServer) })
+                const options = Object.defineProperty({ host: LOOPBACK }, 'port', { get: readPort, enumerable: true })
+                const outcome = await settle(connectWith([options]))
+                expect(outcome.connected).toBe(true)
+                expect(acceptedConnections).toBe(1)
+                expect(otherConnections).toBe(0)
+            }
+            finally {
+                await closeServer(otherServer)
+            }
+        })
+    })
+
     describe('argument shapes the guard cannot read are refused', () => {
         beforeEach(() => {
             ssrfGuard.install({ enabled: true, allowList: [], allowedLoopbackPorts: [port] })
@@ -199,7 +248,7 @@ describe('socket connect guard — every connect argument shape', () => {
             ['a non-string host', [{ host: 2130706433, port }]],
             ['a non-function lookup on a hostname target', [{ host: 'resolver.test', port, lookup: 'not-a-function' }]],
         ])('%s', async (_shape, args) => {
-            const outcome = await settle(Reflect.apply(net.Socket.prototype.connect, new net.Socket(), args))
+            const outcome = await settle(connectWith(args))
             expect(outcome.error).toBeInstanceOf(SSRFBlockedError)
             expect(acceptedConnections).toBe(0)
         })
@@ -209,9 +258,11 @@ describe('socket connect guard — every connect argument shape', () => {
         it.each([
             ['net.connect(options)', (): net.Socket => net.connect({ host: LOOPBACK, port })],
             ['net.connect(port, host)', (): net.Socket => net.connect(port, LOOPBACK)],
-            ['net.connect with the port as a numeric string', (): net.Socket => Reflect.apply(net.connect, undefined, [{ host: LOOPBACK, port: String(port) }])],
-            ['new Socket().connect(portString, host)', (): net.Socket => Reflect.apply(net.Socket.prototype.connect, new net.Socket(), [String(port), LOOPBACK])],
-            ['new Socket().connect([options, cb]) (pre-normalized tuple)', (): net.Socket => Reflect.apply(net.Socket.prototype.connect, new net.Socket(), [[{ host: LOOPBACK, port: String(port) }, null]])],
+            ['net.connect with the port as a numeric string', (): net.Socket =>
+                Reflect.apply(net.connect, undefined, [{ host: LOOPBACK, port: String(port) }])],
+            ['new Socket().connect(portString, host)', (): net.Socket => connectWith([String(port), LOOPBACK])],
+            ['new Socket().connect([options, cb]) (pre-normalized tuple)', (): net.Socket =>
+                connectWith([[{ host: LOOPBACK, port: String(port) }, null]])],
         ])('a loopback port on the allowed list: %s', async (_shape, open) => {
             ssrfGuard.install({ enabled: true, allowList: [], allowedLoopbackPorts: [port] })
             const outcome = await settle(open())
@@ -258,7 +309,7 @@ describe('socket connect guard — every connect argument shape', () => {
             const dir = mkdtempSync(path.join(tmpdir(), 'socket-guard-'))
             const socketPath = path.join(dir, 'ipc.sock')
             const ipcServer = net.createServer((socket) => socket.end())
-            await listen(ipcServer, socketPath)
+            await listen({ server: ipcServer, target: socketPath })
             try {
                 ssrfGuard.install({ enabled: true, allowList: [], allowedLoopbackPorts: [] })
                 expect((await settle(net.connect({ path: socketPath }))).connected).toBe(true)
@@ -277,6 +328,16 @@ type LookupFn = (
     options: LookupOptions,
     callback: (err: NodeJS.ErrnoException | null, address: string | LookupAddress[], family?: number) => void,
 ) => void
+
+type ListenParams = {
+    server: net.Server
+    target: { port: number, host: string } | string
+}
+
+type FirstReadThenParams<T> = {
+    first: T
+    then: T
+}
 
 type ConnectOutcome = {
     connected: boolean
