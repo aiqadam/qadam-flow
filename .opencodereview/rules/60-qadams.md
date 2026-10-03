@@ -46,12 +46,15 @@ the language rules OCR already merges from its system layer.
   `packages/qadams/{community,core}/<name>/package.json`'s `version` — a step
   pins the exact qadam version it was built with
   (`flowQadamUtil.getExactVersion`), so an unbumped change is invisible to
-  every live flow. Patch for a bug fix, new optional prop, new action/trigger,
-  or new output attribute; bump the middle version segment (this repo's
-  pre-1.0 stand-in for a semver major, e.g. `0.6.14` → `0.7.0`) for a removed
-  action/trigger/prop, a new *required* prop, or any other change to existing
-  behaviour. A diff can legitimately touch several qadams in one PR — check
-  each changed qadam's own `package.json`, not just one of them.
+  every live flow. On a `0.x` qadam: patch for a bug fix, new optional prop,
+  new action/trigger, or new output attribute; bump the middle version segment
+  (the `0.x` breaking slot, e.g. `0.6.14` → `0.7.0`) for a removed
+  action/trigger/prop, a new *required* prop with no `defaultValue` that
+  preserves the old behaviour, or any other change to existing behaviour (a
+  required prop *with* such a default is a non-breaking addition). On a qadam
+  already at `1.0.0` or later the breaking slot is major and a non-breaking
+  addition is minor. A diff can legitimately touch several qadams in one PR —
+  check each changed qadam's own `package.json`, not just one of them.
 - **A `StaticDropdown`/`StaticMultiSelectDropdown` prop's own `defaultValue`
   must be one of its own declared `options`** (#427). The framework's
   `staticDropdownSchema` accepts a prop's own out-of-list default so the form
