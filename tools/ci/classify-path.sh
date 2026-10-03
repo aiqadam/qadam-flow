@@ -66,7 +66,9 @@ classify_path() {
     # If that ever stops being true, delete these two arms.
     docs/docs.json | docs/openapi.json) echo docs ;;
 
-    # Licence texts (root LICENSE, NOTICE, docs/LICENSE).
+    # Licence texts (root LICENSE, NOTICE, docs/LICENSE). The Dockerfile and the npm publish
+    # script copy LICENSE and NOTICE, so deleting or renaming either is the one docs-only change
+    # that can break the image build; the always-on build on main catches it.
     LICENSE | NOTICE | */LICENSE) echo docs ;;
 
     # ---------------------------------------------------------------------
