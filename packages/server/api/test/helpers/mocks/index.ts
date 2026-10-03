@@ -194,11 +194,11 @@ export const createMockPlatform = (platform?: Partial<Platform>): Platform => {
         allowedEmbedOrigins: platform?.allowedEmbedOrigins ?? [],
         name: platform?.name ?? faker.lorem.word(),
         primaryColor: platform?.primaryColor ?? faker.color.rgb(),
-        logoIconUrl: platform?.logoIconUrl ?? faker.image.urlPlaceholder(),
-        fullLogoUrl: platform?.fullLogoUrl ?? faker.image.urlPlaceholder(),
+        logoIconUrl: platform?.logoIconUrl ?? faker.image.url(),
+        fullLogoUrl: platform?.fullLogoUrl ?? faker.image.url(),
         emailAuthEnabled: platform?.emailAuthEnabled ?? faker.datatype.boolean(),
         pinnedQadams: platform?.pinnedQadams ?? [],
-        favIconUrl: platform?.favIconUrl ?? faker.image.urlPlaceholder(),
+        favIconUrl: platform?.favIconUrl ?? faker.image.url(),
         filteredQadamNames: platform?.filteredQadamNames ?? [],
         filteredQadamBehavior:
             platform?.filteredQadamBehavior ??
@@ -315,7 +315,7 @@ export const createMockQadamMetadata = (
         updated: qadamMetadata?.updated ?? faker.date.recent().toISOString(),
         name: qadamMetadata?.name ?? faker.lorem.word(),
         displayName: qadamMetadata?.displayName ?? faker.lorem.word(),
-        logoUrl: qadamMetadata?.logoUrl ?? faker.image.urlPlaceholder(),
+        logoUrl: qadamMetadata?.logoUrl ?? faker.image.url(),
         description: qadamMetadata?.description ?? faker.lorem.sentence(),
         directoryPath: qadamMetadata?.directoryPath,
         auth: qadamMetadata?.auth,

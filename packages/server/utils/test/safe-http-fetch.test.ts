@@ -1,6 +1,7 @@
 import http from 'node:http'
 import { AddressInfo } from 'node:net'
 import { Readable } from 'node:stream'
+import { inspect } from 'node:util'
 import { gzipSync } from 'node:zlib'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { safeHttp } from '../src/safe-http'
@@ -330,6 +331,163 @@ describe('safeHttp.fetch', () => {
     })
 })
 
+// The body is bridged from axios' Node stream to a web ReadableStream by hand (see `toWebStream`),
+// so the properties `Readable.toWeb` used to provide are pinned here rather than assumed.
+describe('safeHttp.fetch response body stream', () => {
+    it('delivers a multi-chunk body intact, as plain Uint8Array chunks', async () => {
+        const parts = ['data: one\n\n', 'data: two\n\n', 'data: three\n\n']
+        handler = (_req, res) => {
+            res.writeHead(200, { 'content-type': 'text/event-stream' })
+            let sent = 0
+            const timer = setInterval(() => {
+                res.write(parts[sent])
+                if (++sent === parts.length) {
+                    clearInterval(timer)
+                    res.end()
+                }
+            }, 20)
+        }
+
+        const response = await safeHttp.fetch(`${baseUrl}/multi-chunk`)
+        const reader = response.body!.getReader()
+        const received: Uint8Array[] = []
+        for (let next = await reader.read(); !next.done; next = await reader.read()) {
+            received.push(next.value)
+        }
+
+        expect(received.length).toBeGreaterThan(0)
+        expect(received.every((chunk) => Object.getPrototypeOf(chunk) === Uint8Array.prototype)).toBe(true)
+        expect(received.every(ownsItsBuffer)).toBe(true)
+        expect(Buffer.concat(received).toString()).toBe(parts.join(''))
+    })
+
+    // Decompressed chunks are slices of zlib's output buffer; a view would expose the rest of it.
+    it('copies decompressed chunks out of the buffer zlib wrote them into', async () => {
+        const text = Array.from({ length: 4000 }, (_, i) => `line ${i} of a gzipped answer\n`).join('')
+        handler = (_req, res) => {
+            res.writeHead(200, { 'content-type': 'text/plain', 'content-encoding': 'gzip' })
+            res.end(gzipSync(text))
+        }
+
+        const response = await safeHttp.fetch(`${baseUrl}/gzip-chunks`)
+        const reader = response.body!.getReader()
+        const received: Uint8Array[] = []
+        for (let next = await reader.read(); !next.done; next = await reader.read()) {
+            received.push(next.value)
+        }
+
+        expect(received.length).toBeGreaterThan(1)
+        expect(received.every(ownsItsBuffer)).toBe(true)
+        expect(Buffer.concat(received).toString()).toBe(text)
+    })
+
+    // Pull-based: while nobody reads, the bridge stops taking chunks from the socket, so the
+    // provider's writes back up instead of the whole answer piling up in memory here.
+    it('stops draining the provider while the caller is not reading', async () => {
+        const chunk = Buffer.alloc(64 * 1024, 'a')
+        const totalBytes = 32 * 1024 * 1024
+        let bytesWritten = 0
+        let finished = false
+        handler = (_req, res) => {
+            res.writeHead(200, { 'content-type': 'application/octet-stream' })
+            const writeMore = (): void => {
+                while (bytesWritten < totalBytes && !res.destroyed) {
+                    bytesWritten += chunk.length
+                    if (!res.write(chunk)) {
+                        res.once('drain', writeMore)
+                        return
+                    }
+                }
+                if (!res.destroyed) {
+                    finished = true
+                    res.end()
+                }
+            }
+            writeMore()
+        }
+
+        const response = await safeHttp.fetch(`${baseUrl}/backpressure`)
+        const reader = response.body!.getReader()
+        await reader.read()
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+
+        expect(finished).toBe(false)
+        expect(bytesWritten).toBeLessThan(totalBytes / 2)
+        await reader.cancel()
+    })
+
+    it('sanitises a mid-body abort like a request-phase one, so no request config or secret rides along', async () => {
+        const secret = 'sk-test-620-do-not-leak'
+        handler = (_req, res) => {
+            res.writeHead(200, { 'content-type': 'text/event-stream' })
+            res.write('data: first\n\n')
+        }
+        const controller = new AbortController()
+
+        const response = await safeHttp.fetch(`${baseUrl}/abort-with-secret`, {
+            method: 'POST',
+            headers: { 'x-api-key': secret, 'content-type': 'application/json' },
+            body: JSON.stringify({ prompt: `confidential prompt ${secret}` }),
+            signal: controller.signal,
+        })
+        const reader = response.body!.getReader()
+        await reader.read()
+        controller.abort()
+        const error: unknown = await reader.read().then(() => undefined, (e: unknown) => e)
+
+        expect(error).toBeInstanceOf(DOMException)
+        expect(error).toMatchObject({ name: 'AbortError' })
+        expect(error).not.toHaveProperty('config')
+        expect(error).not.toHaveProperty('request')
+        expect(error).not.toHaveProperty('response')
+        expect(inspect(error, { depth: 10, showHidden: true })).not.toContain(secret)
+    })
+
+    it('closes the provider connection when the caller cancels the body', async () => {
+        let connectionClosed: () => void = () => {}
+        const closed = new Promise<void>((resolve) => {
+            connectionClosed = resolve
+        })
+        handler = (_req, res) => {
+            res.on('close', connectionClosed)
+            res.writeHead(200, { 'content-type': 'text/event-stream' })
+            res.write('data: first\n\n')
+            // and then holds the connection open, as a provider mid-answer would
+        }
+
+        const response = await safeHttp.fetch(`${baseUrl}/cancel-body`)
+        const reader = response.body!.getReader()
+        await reader.read()
+        await reader.cancel()
+
+        await expect(closed).resolves.toBeUndefined()
+    })
+
+    it('rejects the pending read when the provider connection dies mid-body', async () => {
+        handler = (_req, res) => {
+            res.writeHead(200, { 'content-type': 'text/event-stream' })
+            res.write('data: first\n\n', () => {
+                setTimeout(() => res.socket?.destroy(), 20)
+            })
+        }
+
+        const response = await safeHttp.fetch(`${baseUrl}/dies-midway`)
+        const reader = response.body!.getReader()
+        await reader.read()
+
+        await expect(reader.read()).rejects.toThrow()
+    })
+
+    it('gives a 205 a null body, like the other null-body statuses', async () => {
+        handler = (_req, res) => res.writeHead(205).end()
+
+        const response = await safeHttp.fetch(`${baseUrl}/reset-content`, { method: 'POST' })
+
+        expect(response.status).toBe(205)
+        expect(response.body).toBeNull()
+    })
+})
+
 // #265: a cold local model sends nothing while it loads its weights and evaluates the prompt.
 // A single socket-inactivity timeout covers that silence as well as the gaps between chunks, so a
 // value tight enough to reclaim a dead provider killed every first message to an idle Ollama — at
@@ -376,4 +534,33 @@ describe('safeHttp.fetch timeouts', () => {
         delete process.env['AP_HTTP_STREAM_IDLE_TIMEOUT_SECONDS']
     })
 
+    // The error reaching the reader is half of it; the other half is that the socket is actually
+    // released, or a stalled provider still pins a connection after the caller has given up.
+    it('releases the provider connection when the idle guard fires', async () => {
+        process.env['AP_HTTP_FIRST_BYTE_TIMEOUT_SECONDS'] = '30'
+        process.env['AP_HTTP_STREAM_IDLE_TIMEOUT_SECONDS'] = '1'
+        let connectionClosed: () => void = () => {}
+        const closed = new Promise<void>((resolve) => {
+            connectionClosed = resolve
+        })
+        handler = (_req, res) => {
+            res.on('close', connectionClosed)
+            res.writeHead(200, { 'content-type': 'text/event-stream' })
+            res.write('data: first\n\n')
+        }
+
+        const response = await safeHttp.fetch(`${baseUrl}/stalls-then-released`)
+        const reader = response.body!.getReader()
+        await reader.read()
+
+        await expect(reader.read()).rejects.toThrow(/stopped sending data for 1s mid-response/)
+        await expect(closed).resolves.toBeUndefined()
+        delete process.env['AP_HTTP_FIRST_BYTE_TIMEOUT_SECONDS']
+        delete process.env['AP_HTTP_STREAM_IDLE_TIMEOUT_SECONDS']
+    })
+
 })
+
+function ownsItsBuffer(chunk: Uint8Array): boolean {
+    return chunk.byteOffset === 0 && chunk.buffer.byteLength === chunk.byteLength
+}

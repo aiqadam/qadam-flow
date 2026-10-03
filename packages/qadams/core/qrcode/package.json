@@ -5,7 +5,7 @@
   "types": "./dist/src/index.d.ts",
   "devDependencies": {
     "@types/qrcode": "1.5.6",
-    "vitest": "3.0.8"
+    "vitest": "3.2.7"
   },
   "dependencies": {
     "@aiqadam/qadams-common": "workspace:*",

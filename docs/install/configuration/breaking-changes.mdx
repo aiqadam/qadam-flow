@@ -219,6 +219,76 @@ happened. The assignment has been removed.
   environment — which restores exactly the old behaviour, but does so deliberately and visibly
   instead of as a side effect of one qadam making one request.
 
+#### The bundled Redis is now Valkey 8.1: refresh `docker-compose.yml` to get it, and note the switch is one-way
+
+The `redis` service in `docker-compose.yml` ran `redis:7.0.7`. The Redis 7.0 line has been end of
+life since July 2024 and never received the 2025 Lua-engine fixes, including CVE-2025-49844, a
+use-after-free that a Lua script can turn into remote code execution. The service now runs
+`valkey/valkey:8.1.10`. [Valkey](https://valkey.io) is the BSD-licensed fork of Redis, and its 8.1 line
+carries those fixes from 8.1.4 onwards
+([#612](https://github.com/aiqadam/qadam-flow/issues/612)).
+
+- **This reaches installs before the next release.** The installer downloads `docker-compose.yml`
+  from `main`, so a new install, or a re-run of the installer, gets Valkey as soon as this change is
+  merged, even while `:latest` is still the previous release. The two work together: the image only
+  needs a Redis-compatible server.
+- **Nothing breaks on upgrade.** The service is still called `redis`, on the same port, with the same
+  `redis_data` volume and the same `AP_REDIS_*` settings. Valkey 8.1 loads the RDB and AOF files that
+  `redis:7.0.7` wrote, so queued, delayed and scheduled jobs survive the switch.
+- **`docker compose pull` alone does not switch you.** The image is pinned in `docker-compose.yml`, so
+  re-run the installer, or refresh that file by hand as the
+  [upgrade steps](/install/options/docker#upgrade) describe.
+- **Going back to `redis:7.0.7` on the same volume does not work.** Once Valkey has saved, the data is in
+  RDB format 11, and Redis 7.0 refuses to start on it (`Can't handle RDB format version 11`), so the
+  `redis` container restarts in a loop. Anything that restores the old compose file brings that image
+  back: re-running the installer with `QADAM_FLOW_REF` set to an older ref, checking out an older tag of
+  the repository, or restoring a saved copy of the file. Rolling back only the Qadam Flow image
+  (`QADAM_FLOW_IMAGE`) is unaffected, because it does not change the `redis` service. If you do need the
+  old Redis image back, empty the volume first (`docker compose down`, then
+  `docker volume rm <project>_redis_data`). That loses queued jobs and run state held in Redis, but not
+  your flows, connections or run history, which live in PostgreSQL.
+- **If you override the service's `command:`**, start it with `valkey-server`. A `redis-server` command
+  still runs, through the image's compatibility symlink, but the Valkey entrypoint drops root privileges
+  only for `valkey-server`, so the server would run as root.
+- **If you run your own Redis** (`AP_REDIS_HOST` pointing outside the bundled stack), nothing changes.
+  Check that it is a supported release with the 2025 Lua fixes.
+
+#### The bundled PostgreSQL is now 18: the installer moves your data, and a compose file refreshed by hand will not start until the data is moved
+
+The `postgres` service in `docker-compose.yml` ran PostgreSQL 14 (`pgvector/pgvector:0.8.0-pg14`),
+which reaches end of life on 2026-11-12. It now runs PostgreSQL 18 with pgvector 0.8.7
+(`pgvector/pgvector:0.8.7-pg18`) on a new volume, `pgdata`
+([#611](https://github.com/aiqadam/qadam-flow/issues/611)). PostgreSQL 18 cannot open data written by
+PostgreSQL 14, so every install created before this change has to move its data once.
+
+- **This reaches installs before the next release.** The installer downloads `docker-compose.yml` from
+  `main`, so a re-run of the installer upgrades PostgreSQL as soon as this change is merged.
+- **If you use the installer, re-run it.** It stops the stack, dumps the data with the PostgreSQL 14
+  image into `backups/` in the install directory, restores it into `pgdata` with PostgreSQL 18 and
+  starts the stack again. It prints where the dump is and how to roll back. The stack is down while the
+  data is copied, and the host needs free disk space of up to twice the database size.
+- **The old data is kept.** The PostgreSQL 14 data stays in the `postgres_data` volume, and nothing
+  deletes it. A rollback starts PostgreSQL 14 on it again, with the data as it was at the upgrade. See
+  [Upgrade PostgreSQL 14 to 18](/install/guides/upgrade-postgres) for the rollback command and for
+  removing the volume once you no longer need it.
+- **Delete the dump once you are done with it.** The backup directory holds password hashes and the
+  encrypted connection credentials.
+- **Server settings are not copied.** `postgresql.conf`, `pg_hba.conf` and `ALTER SYSTEM` settings stay
+  behind. So do the settings, grants and comment of the `postgres` database itself, such as
+  `ALTER DATABASE postgres SET …`. The bundled stack sets none of them; if you
+  did, the installer warns, keeps a copy in the backup directory, and you re-apply what you need on
+  PostgreSQL 18. See
+  [What is not copied](/install/guides/upgrade-postgres#what-is-not-copied).
+- **If you refresh `docker-compose.yml` by hand**, the `postgres` service refuses to start, and logs
+  why, until the data has been moved: re-run the installer, or follow
+  [Upgrade by hand](/install/guides/upgrade-postgres#upgrade-by-hand). Without that check an install
+  refreshed by hand would have booted an empty database and looked like a fresh install.
+- **`docker compose down -v` now removes both volumes**, `pgdata` and `postgres_data`.
+- **If you set your own `command:` for the `postgres` service** in an override file, it keeps working.
+  If you set `entrypoint:`, you replace the start-up check, so move the data first.
+- **If you run your own PostgreSQL** (`AP_POSTGRES_HOST` pointing outside the bundled stack), nothing
+  changes for your data. If that server runs PostgreSQL 14, plan its upgrade before 2026-11-12.
+
 ## 2.0.0
 
 ### What has changed?

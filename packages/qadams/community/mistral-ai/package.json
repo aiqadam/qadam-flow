@@ -1,6 +1,6 @@
 {
   "name": "@aiqadam/qadam-mistral-ai",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
   "scripts": {
@@ -11,7 +11,7 @@
     "@aiqadam/qadams-common": "workspace:*",
     "@aiqadam/qadams-framework": "workspace:*",
     "@aiqadam/shared": "workspace:*",
-    "form-data": "4.0.4",
+    "form-data": "4.0.6",
     "tslib": "2.6.2"
   }
 }

@@ -1,6 +1,9 @@
 services:
   postgres:
-    image: pgvector/pgvector:0.8.0-pg14
+    # PostgreSQL 18 (#611) keeps its data in /var/lib/postgresql/18/docker, so the volume is mounted one
+    # level up, and it is a new one: the PostgreSQL 14 data in postgres_data_dev stays where it was, and a
+    # branch from before #611 still finds it there.
+    image: pgvector/pgvector:0.8.7-pg18
     container_name: qadam-flow-postgres-dev
     restart: unless-stopped
     environment:
@@ -10,7 +13,7 @@ services:
     ports:
       - '5432:5432'
     volumes:
-      - postgres_data_dev:/var/lib/postgresql/data
+      - pgdata_dev:/var/lib/postgresql
       - ./tools/postgres-init:/docker-entrypoint-initdb.d:ro
     networks:
       - qadam_flow_dev
@@ -21,7 +24,7 @@ services:
       retries: 20
 
   redis:
-    image: redis:7.0.7
+    image: valkey/valkey:8.1.10
     container_name: qadam-flow-redis-dev
     restart: unless-stopped
     ports:
@@ -31,13 +34,13 @@ services:
     networks:
       - qadam_flow_dev
     healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
+      test: ['CMD', 'valkey-cli', 'ping']
       interval: 3s
       timeout: 3s
       retries: 20
 
 volumes:
-  postgres_data_dev:
+  pgdata_dev:
   redis_data_dev:
 
 networks:

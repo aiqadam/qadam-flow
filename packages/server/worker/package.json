@@ -36,13 +36,13 @@
     "@opentelemetry/semantic-conventions": "1.37.0",
     "env-var": "7.5.0",
     "jsonc-parser": "3.3.1",
-    "nanoid": "3.3.8",
+    "nanoid": "3.3.18",
     "pino": "10.1.0",
     "pino-pretty": "13.0.0",
     "proxy-chain": "2.7.1",
-    "socket.io": "4.7.5",
+    "socket.io": "4.8.4",
     "dotenv": "17.2.3",
-    "socket.io-client": "4.8.1",
+    "socket.io-client": "4.8.4",
     "tree-kill": "1.2.2",
     "tslib": "2.6.2",
     "write-file-atomic": "5.0.1"
@@ -51,6 +51,6 @@
     "@types/node": "24.11.0",
     "@types/write-file-atomic": "4.0.3",
     "esbuild": "0.25.0",
-    "vitest": "3.0.8"
+    "vitest": "3.2.7"
   }
 }

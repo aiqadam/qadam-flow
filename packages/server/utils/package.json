@@ -22,14 +22,14 @@
     "@openrouter/ai-sdk-provider": "2.1.1",
     "ai": "^6.0.0",
     "async-mutex": "0.4.0",
-    "axios": "1.15.2",
+    "axios": "1.20.0",
     "axios-retry": "4.4.1",
     "check-disk-space": "3.4.0",
     "dayjs": "1.11.9",
     "proper-lockfile": "4.1.2",
     "request-filtering-agent": "3.2.1",
     "semver": "7.6.0",
-    "systeminformation": "5.31.6",
+    "systeminformation": "5.31.7",
     "tslib": "2.6.2"
   },
   "devDependencies": {
@@ -37,6 +37,6 @@
     "@types/proper-lockfile": "4.1.4",
     "@types/semver": "7.5.6",
     "pino": "10.1.0",
-    "vitest": "3.0.8"
+    "vitest": "3.2.7"
   }
 }

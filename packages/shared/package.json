@@ -1,6 +1,6 @@
 {
   "name": "@aiqadam/shared",
-  "version": "0.151.0",
+  "version": "0.152.0",
   "description": "Shared types, DTOs, Zod schemas and utilities for Qadam Flow and its qadams.",
   "license": "MIT",
   "repository": {
@@ -14,12 +14,12 @@
   "types": "./dist/src/index.d.ts",
   "dependencies": {
     "dayjs": "1.11.9",
-    "deepmerge-ts": "7.1.0",
+    "deepmerge-ts": "8.0.2",
     "expr-eval": "2.0.2",
     "ipaddr.js": "2.3.0",
-    "nanoid": "3.3.8",
+    "nanoid": "3.3.18",
     "semver": "7.6.0",
-    "socket.io-client": "4.8.1",
+    "socket.io-client": "4.8.4",
     "tslib": "2.6.2",
     "zod": "4.3.6"
   },
@@ -32,6 +32,6 @@
   "devDependencies": {
     "@types/node": "24.11.0",
     "@types/semver": "7.5.6",
-    "vitest": "3.0.8"
+    "vitest": "3.2.7"
   }
 }

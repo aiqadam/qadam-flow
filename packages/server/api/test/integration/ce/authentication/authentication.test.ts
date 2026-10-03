@@ -1,5 +1,7 @@
+import { Principal } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
+import * as accessTokenManagerModule from '../../../../src/app/authentication/lib/access-token-manager'
 import { databaseConnection } from '../../../../src/app/database/database-connection'
 import {
     createMockSignInRequest,
@@ -8,6 +10,7 @@ import {
 import { cleanDatabase, setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
 let app: FastifyInstance | null = null
+const originalAccessTokenManager = accessTokenManagerModule.accessTokenManager
 
 beforeAll(async () => {
     app = await setupTestEnvironment()
@@ -20,6 +23,11 @@ afterAll(async () => {
 beforeEach(async () => {
     await cleanDatabase()
 })
+
+afterEach(() => {
+    vi.restoreAllMocks()
+})
+
 describe('Authentication API', () => {
     describe('Sign up Endpoint', () => {
         it('Adds new user with onboarding token', async () => {
@@ -160,8 +168,10 @@ describe('Authentication API', () => {
         // runs second finds the row already claimed (platformId no longer null) and falls back to
         // inserting its own — the same per-call-own-row outcome the code had before the reuse
         // optimization, just now reached deliberately instead of by accident. This fires two
-        // overlapping requests for real (no service-layer mocking) and asserts both platforms end
-        // up consistently owned rather than one of them corrupted.
+        // overlapping requests for real and asserts both platforms end up consistently owned rather
+        // than one of them corrupted. The service layer is not mocked; the only stand-in is a
+        // barrier at the authentication layer that makes the two claims overlap on every run (see
+        // below).
         it('serializes two concurrent create-platform calls for the same onboarding identity instead of stranding one of them', async () => {
             // arrange
             const mockSignUpRequest = createMockSignUpRequest()
@@ -171,6 +181,25 @@ describe('Authentication API', () => {
                 body: mockSignUpRequest,
             })
             const onboardingToken = signUpResponse?.json()?.token
+
+            // Both calls carry the same onboarding token, and the first claim to commit rotates the
+            // identity's tokenVersion. A call that reaches authentication only after that commit is
+            // rejected with SESSION_EXPIRED before its handler, and so the lock under test, ever
+            // runs, which left whether the two claims overlapped at all to scheduling. Hold each
+            // call just past authentication until both have passed it: both claims then reach
+            // the lock together on every run.
+            const authenticated = createArrivalBarrier({ parties: 2, timeoutMs: 10_000 })
+            vi.spyOn(accessTokenManagerModule, 'accessTokenManager').mockImplementation((log) => {
+                const real = originalAccessTokenManager(log)
+                return {
+                    ...real,
+                    verifyPrincipal: async (token: string): Promise<Principal> => {
+                        const principal = await real.verifyPrincipal(token)
+                        await authenticated.arrive()
+                        return principal
+                    },
+                }
+            })
 
             // act
             const [responseA, responseB] = await Promise.all([
@@ -189,6 +218,12 @@ describe('Authentication API', () => {
             ])
 
             // assert
+            // Checked first so that a request bypassing the spy, or failing authentication, reads
+            // as a barrier timeout rather than as an unexplained 403 below.
+            expect(
+                authenticated.releasedByArrival(),
+                'authentication barrier timed out after 10s: both create-platform calls must pass verifyPrincipal before either reaches the lock',
+            ).toBe(true)
             expect(responseA?.statusCode).toBe(StatusCodes.OK)
             expect(responseB?.statusCode).toBe(StatusCodes.OK)
 
@@ -276,3 +311,47 @@ describe('Authentication API', () => {
         })
     })
 })
+
+// Resolves every arrive() once `parties` callers have arrived, or once timeoutMs has passed, so a
+// call that never arrives fails the assertions instead of hanging the test. releasedByArrival()
+// tells the two apart: an arrival after the timeout does not count as a release.
+function createArrivalBarrier({ parties, timeoutMs }: ArrivalBarrierParams): ArrivalBarrier {
+    let arrived = 0
+    let released = false
+    let expired = false
+    let release: () => void = () => undefined
+    let expire: () => void = () => undefined
+    const allArrived = new Promise<void>((resolve) => {
+        release = resolve
+    })
+    const timedOut = new Promise<void>((resolve) => {
+        expire = resolve
+    })
+    const timer = setTimeout(() => {
+        expired = true
+        expire()
+    }, timeoutMs)
+    timer.unref()
+    return {
+        arrive: async (): Promise<void> => {
+            arrived += 1
+            if (arrived >= parties && !released && !expired) {
+                released = true
+                clearTimeout(timer)
+                release()
+            }
+            await Promise.race([allArrived, timedOut])
+        },
+        releasedByArrival: (): boolean => released,
+    }
+}
+
+type ArrivalBarrierParams = {
+    parties: number
+    timeoutMs: number
+}
+
+type ArrivalBarrier = {
+    arrive: () => Promise<void>
+    releasedByArrival: () => boolean
+}
