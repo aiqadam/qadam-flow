@@ -7,26 +7,25 @@ export const redirectUtils = {
 
 /**
  * Post-sign-in navigation targets come from the URL (`?from=`, OAuth `state`), so they are
- * only honoured when they resolve to a path on the app's own origin. Anything else — a
- * non-string, an absolute or protocol-relative URL, a non-http scheme — yields the default
- * route, and the result is always a root-relative path no later consumer can read as a host.
+ * only honoured when they resolve to the app's own origin and scheme. The result is always
+ * a root-relative path that starts with exactly one `/`, decoded or not; anything else
+ * yields the default route.
  */
 function toSameOriginPath(target: unknown): string {
   if (typeof target !== 'string' || target.length === 0) {
     return redirectUtils.DEFAULT_REDIRECT_PATH;
   }
-  const origin = window.location.origin;
+  const { origin, protocol } = window.location;
   const { data: url } = tryCatchSync(() => new URL(target, origin));
-  if (isNil(url) || url.origin !== origin) {
+  if (isNil(url) || url.origin !== origin || url.protocol !== protocol) {
     return redirectUtils.DEFAULT_REDIRECT_PATH;
   }
-  // Dot-segment normalisation (`/.//x`) or a percent-encoded slash (`/%2F/x`) can leave a
-  // same-origin pathname that reads as protocol-relative once something decodes it or
-  // feeds it to `href`; no route of this app starts that way.
+  // Consumers may decode the path or hand it to `href`, so the root-relative shape has to
+  // hold for the decoded form too.
   const { data: decodedPathname } = tryCatchSync(() =>
     decodeURIComponent(url.pathname),
   );
-  if (isNil(decodedPathname) || /^[/\\]{2}/.test(decodedPathname)) {
+  if (isNil(decodedPathname) || !/^\/(?![/\\])/.test(decodedPathname)) {
     return redirectUtils.DEFAULT_REDIRECT_PATH;
   }
   return `${url.pathname}${url.search}${url.hash}`;

@@ -36,7 +36,6 @@ describe('redirectUtils.toSameOriginPath', () => {
     '/\\example.com',
     '\\\\example.com',
     '\\/example.com',
-    'https:/example.com',
     'javascript:void(0)',
     'data:text/html,x',
     'mailto:a@example.com',
@@ -52,17 +51,22 @@ describe('redirectUtils.toSameOriginPath', () => {
     '/%5Cexample.com',
     '%2F%2Fexample.com',
     '/%E0%A4%A',
-  ])('falls back for anything that would leave the origin: %j', (target) => {
+    `blob:${window.location.origin}/runs`,
+    `blob:${window.location.origin}/../../\\x.example/y`,
+  ])('falls back for off-origin targets: %j', (target) => {
     expect(redirectUtils.toSameOriginPath(target)).toBe(DEFAULT);
   });
 
-  it('always returns a single-slash root-relative path', () => {
-    const results = ['flows', 'http:example.com', '/runs', '//example.com'].map(
-      (target) => redirectUtils.toSameOriginPath(target),
-    );
-    for (const result of results) {
-      expect(result.startsWith('/')).toBe(true);
-      expect(/^[/\\]{2}/.test(result)).toBe(false);
-    }
+  it.each([
+    'flows',
+    '/runs',
+    'http:example.com',
+    'https:/example.com',
+    '//example.com',
+    `blob:${window.location.origin}/../../\\x.example/y`,
+    '/.//example.com',
+    '/%2F%2Fexample.com',
+  ])('always returns a path starting with exactly one slash: %j', (target) => {
+    expect(redirectUtils.toSameOriginPath(target)).toMatch(/^\/(?![/\\])/);
   });
 });
