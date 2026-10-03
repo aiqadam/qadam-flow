@@ -58,16 +58,16 @@ describe('safeHttp end-to-end blocking', () => {
     })
 
     // A request's own config overrides the instance defaults, so anything that decides which code
-    // opens the connection is pinned back per request. Each override but the last could otherwise
-    // take the request to 10.0.0.1 without the filter seeing it; a `socketPath` request still goes
-    // through the filtering agent, so that row only guards the pinned value.
+    // opens the connection is pinned back per request; each override below could otherwise send
+    // the request somewhere the filter never checks. The `socketPath` row sets `maxRedirects: 0`,
+    // the native transport, where a socket path replaces the checked host.
     it.each<[string, AxiosRequestConfig, string]>([
         ['a custom adapter', { adapter: async (config): Promise<AxiosResponse> => ({ data: 'unfiltered', status: 200, statusText: 'OK', headers: {}, config }) }, 'http://10.0.0.1/'],
         ['a custom transport', { transport: { request: rejectingTransportRequest } }, 'http://10.0.0.1/'],
         ['its own httpAgent', { httpAgent: new http.Agent() }, 'http://10.0.0.1/'],
         ['its own httpsAgent', { httpsAgent: new https.Agent() }, 'https://10.0.0.1/'],
         ['the HTTP/2 transport', { httpVersion: 2 }, 'https://10.0.0.1/'],
-        ['a socketPath', { socketPath: '/nonexistent/safe-http.sock' }, 'http://10.0.0.1/'],
+        ['a socketPath', { socketPath: '/nonexistent/safe-http.sock', maxRedirects: 0 }, 'http://10.0.0.1/'],
     ])('keeps the filter on a request that asks for %s', async (_label, override, url) => {
         const instance = safeHttp.createAxios({ timeout: 2000 })
         await expect(instance.get(url, override)).rejects.toMatchObject({

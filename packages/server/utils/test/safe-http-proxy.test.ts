@@ -2,6 +2,8 @@ import type { LookupAddress, LookupAllOptions } from 'node:dns'
 import http from 'node:http'
 import https from 'node:https'
 import { AddressInfo } from 'node:net'
+import os from 'node:os'
+import path from 'node:path'
 import { Duplex } from 'node:stream'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { safeHttp } from '../src/safe-http'
@@ -165,6 +167,37 @@ describe('safeHttp through an egress proxy', () => {
         expect(origin.seen).toEqual([])
     })
 
+    it('still runs a caller\'s beforeRedirect hook, so it can refuse a hop', async () => {
+        process.env['AP_SSRF_ALLOW_LIST'] = `${ALLOWED_TARGET},127.0.0.1`
+        process.env['NO_PROXY'] = '127.0.0.1'
+        const instance = safeHttp.createAxios({ timeout: REQUEST_TIMEOUT_MS })
+        const url = redirectingUrl({ target: `${origin.url}/after-redirect` })
+
+        await expect(instance.get(url, { beforeRedirect: refuseRedirect })).rejects.toMatchObject({
+            message: expect.stringContaining(REFUSED_BY_HOOK),
+        })
+        expect(origin.seen).toEqual([])
+    })
+
+    it('keeps a redirect hop on its target host even when a beforeRedirect hook sets a socketPath', async () => {
+        process.env['AP_SSRF_ALLOW_LIST'] = `${ALLOWED_TARGET},127.0.0.1`
+        process.env['NO_PROXY'] = '127.0.0.1'
+        const unixServer = await startUnixSocketServer()
+        try {
+            const instance = safeHttp.createAxios({ timeout: REQUEST_TIMEOUT_MS })
+            const url = redirectingUrl({ target: `${origin.url}/after-redirect` })
+
+            const response = await instance.get(url, { beforeRedirect: setSocketPath(unixServer.path) })
+
+            expect(response.data).toBe(ORIGIN_BODY)
+            expect(origin.seen).toEqual(['GET /after-redirect'])
+            expect(unixServer.seen).toEqual([])
+        }
+        finally {
+            await closeServer(unixServer.server)
+        }
+    })
+
     it('ignores proxy config on a request, so axios never proxies around the agents', async () => {
         Reflect.deleteProperty(process.env, 'HTTP_PROXY')
         process.env['AP_SSRF_ALLOW_LIST'] = '127.0.0.1'
@@ -279,8 +312,6 @@ describe('safeHttp through an egress proxy', () => {
         expect(proxy.seen).toEqual([])
     })
 
-    // The AWS SDK's NodeHttpHandler takes these agents and never reads the proxy environment
-    // itself, so they must keep connecting straight to the target, where the filter sees it.
     it.each(['*.', '*..', '*.:80', '*:80'])('treats NO_PROXY=%s as matching no host', async (entry) => {
         process.env['NO_PROXY'] = entry
         process.env['AP_SSRF_ALLOW_LIST'] = ALLOWED_TARGET
@@ -292,6 +323,8 @@ describe('safeHttp through an egress proxy', () => {
         expect(proxy.seen).toEqual([`GET http://${ALLOWED_TARGET}/wildcard`])
     })
 
+    // The AWS SDK's NodeHttpHandler takes these agents and never reads the proxy environment
+    // itself, so they must keep connecting straight to the target, where the filter sees it.
     it('keeps buildDefaultAgents on the direct route even with a proxy configured', async () => {
         process.env['AP_SSRF_ALLOW_LIST'] = '127.0.0.1'
         const { httpAgent } = safeHttp.buildDefaultAgents()
@@ -329,6 +362,31 @@ function expectedCredentialedRequests(): ProxiedRequest[] {
         { line: `GET http://${ALLOWED_TARGET}/second`, proxyAuthorization, host: '169.254.169.254' },
         { line: `GET http://${ALLOWED_TARGET}/third`, proxyAuthorization, host: '10.0.0.1:8080' },
     ]
+}
+
+function refuseRedirect(): never {
+    throw new Error(REFUSED_BY_HOOK)
+}
+
+function setSocketPath(socketPath: string): (options: Record<string, unknown>) => void {
+    return (options) => {
+        options['socketPath'] = socketPath
+    }
+}
+
+function redirectingUrl({ target }: { target: string }): string {
+    return `http://${ALLOWED_TARGET}/start?${REDIRECT_TARGET_PARAM}=${encodeURIComponent(target)}`
+}
+
+async function startUnixSocketServer(): Promise<UnixSocketServer> {
+    const seen: string[] = []
+    const socketPath = path.join(os.tmpdir(), `safe-http-${process.pid}-${Date.now()}.sock`)
+    const server = http.createServer((req, res) => {
+        seen.push(`${req.method} ${req.url}`)
+        res.writeHead(200, { 'content-type': 'text/plain' }).end('from-unix-socket')
+    })
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve))
+    return { server, seen, path: socketPath }
 }
 
 function swapInPlainAgents(options: Record<string, unknown>): void {
@@ -399,6 +457,7 @@ const PROXY_USER = 'egress'
 const PROXY_PASSWORD = 'test-only'
 const REDIRECT_TO_METADATA_PATH = '/redirect-to-metadata'
 const REDIRECT_TARGET_PARAM = 'redirect-to'
+const REFUSED_BY_HOOK = 'redirect refused by the caller hook'
 const PROXY_BODY = 'via-proxy'
 const ORIGIN_BODY = 'from-origin'
 const REQUEST_TIMEOUT_MS = 3000
@@ -421,6 +480,12 @@ type RecordingProxy = {
     received: ProxiedRequest[]
     port: number
     url: string
+}
+
+type UnixSocketServer = {
+    server: http.Server
+    seen: string[]
+    path: string
 }
 
 type RecordingOrigin = {

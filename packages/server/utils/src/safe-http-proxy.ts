@@ -148,15 +148,15 @@ function proxyUrlFor({ secure, host, port }: ProxyTarget): URL | null {
     return proxyUrl
 }
 
-// A request skips the proxy when either `proxy-from-env` or axios' own `NO_PROXY` check would
-// exempt it, so an operator's `NO_PROXY` routes the same way it does for plain axios: `*` alone;
-// exact hostnames; `.example.com` and `*example.com` suffixes; `host:port` and `[v6]:port`; CIDR
-// ranges; trailing dots ignored on either side; IPv4-mapped IPv6 compared as IPv4; and `localhost`,
-// `127.0.0.0/8`, `0.0.0.0`, `::1` and `::` all treated as the same loopback host. Some entries
-// match nothing here, so those requests take the proxy: IPv4 shorthand, hex or octal IPv4 entries
-// (`127.1`, `0x7f000001`), IPv4-mapped IPv6 CIDR entries (`::ffff:10.0.0.0/104`), and a `*` entry
-// with an empty suffix (`*.`, `*:80`). Only where a request is routed depends on this; both routes
-// are filtered.
+// `NO_PROXY` routing mirrors plain axios, which exempts a request when either `proxy-from-env` or
+// its own check does: `*` alone; exact hostnames; `.example.com` and `*example.com` suffixes;
+// `host:port` and `[v6]:port`; CIDR ranges; trailing dots ignored on either side; IPv4-mapped IPv6
+// compared as IPv4; and `localhost`, `127.0.0.0/8`, `0.0.0.0`, `::1` and `::` all treated as the
+// same loopback host. The exception is a set of entries that match nothing here, although plain
+// axios exempts some of them: IPv4 shorthand, hex or octal IPv4 (`127.1`, `0x7f000001`),
+// IPv4-mapped IPv6 CIDR ranges (`::ffff:10.0.0.0/104`), and a `*` entry with an empty suffix once
+// dots and port are removed (`*.`, `*:80`). Those requests take the proxy and its target check.
+// Only where a request is routed depends on this; both routes are filtered.
 function isExemptFromProxy({ host, port }: { host: string, port: number }): boolean {
     const noProxy = readEnv('no_proxy').toLowerCase()
     if (noProxy === '') {

@@ -110,12 +110,14 @@ function createAxios(config?: AxiosRequestConfig, { httpsAgentOptions }: SafeAxi
     return attachSsrfErrorInterceptor(instance)
 }
 
-// follow-redirects picks each hop's agent from `options.agents`, after the hook has run.
+// follow-redirects picks each hop's agent from `options.agents`, after the hook has run; the
+// socket path is cleared for the same reason as in the request interceptor.
 function pinAgentsAfterRedirectHook({ hook, agents }: PinRedirectAgentsParams): BeforeRedirectHook {
     return (options, responseDetails, requestDetails) => {
         hook?.(options, responseDetails, requestDetails)
         options['agents'] = { ...agents }
         options['agent'] = undefined
+        options['socketPath'] = undefined
     }
 }
 
