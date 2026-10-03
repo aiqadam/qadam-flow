@@ -561,6 +561,56 @@ describe('safeHttp.fetch timeouts', () => {
 
 })
 
+// `safeHttp.fetch` rides on `safeHttp.axios`, so it must inherit the egress-proxy target check
+// (`safe-http-proxy.test.ts` covers the rest of it). It lives here because this is the one file
+// allowed to call `safeHttp.fetch(...)` directly.
+describe('safeHttp.fetch through an egress proxy', () => {
+    const proxyEnv = ['http_proxy', 'HTTP_PROXY', 'https_proxy', 'HTTPS_PROXY', 'all_proxy', 'ALL_PROXY', 'no_proxy', 'NO_PROXY']
+    const seenByProxy: string[] = []
+    let proxyServer: http.Server
+    let savedEnv: Record<string, string | undefined>
+
+    beforeAll(async () => {
+        proxyServer = http.createServer((req, res) => {
+            seenByProxy.push(`${req.method} ${req.url}`)
+            res.writeHead(200, { 'content-type': 'text/plain' }).end('via-proxy')
+        })
+        await new Promise<void>((resolve) => proxyServer.listen(0, '127.0.0.1', resolve))
+        const address = proxyServer.address()
+        if (address === null || typeof address === 'string') {
+            throw new Error('the proxy fixture did not bind a TCP port')
+        }
+        savedEnv = Object.fromEntries(proxyEnv.map((name) => [name, process.env[name]]))
+        proxyEnv.forEach((name) => {
+            Reflect.deleteProperty(process.env, name)
+        })
+        process.env['HTTP_PROXY'] = `http://127.0.0.1:${address.port}`
+    })
+
+    afterAll(async () => {
+        proxyEnv.forEach((name) => {
+            const value = savedEnv[name]
+            if (value === undefined) {
+                Reflect.deleteProperty(process.env, name)
+            }
+            else {
+                process.env[name] = value
+            }
+        })
+        await new Promise<void>((resolve, reject) => proxyServer.close((err) => err ? reject(err) : resolve()))
+    })
+
+    it('refuses a blocked target before contacting the proxy, and sends an allowed one through it', async () => {
+        await expect(safeHttp.fetch('http://169.254.169.254/latest/meta-data/')).rejects.toThrow(/is not allowed/)
+        expect(seenByProxy).toEqual([])
+
+        const response = await safeHttp.fetch(`${baseUrl}/models`)
+
+        await expect(response.text()).resolves.toBe('via-proxy')
+        expect(seenByProxy).toEqual([`GET ${baseUrl}/models`])
+    })
+})
+
 function ownsItsBuffer(chunk: Uint8Array): boolean {
     return chunk.byteOffset === 0 && chunk.buffer.byteLength === chunk.byteLength
 }

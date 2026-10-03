@@ -1,9 +1,11 @@
 import http from 'node:http'
 import https from 'node:https'
 import { httpTimeouts } from '@aiqadam/shared'
+import { AxiosRequestConfig, AxiosResponse } from 'axios'
 import { RequestFilteringHttpAgent, RequestFilteringHttpsAgent } from 'request-filtering-agent'
 import { afterEach, describe, expect, it } from 'vitest'
 import { safeHttp } from '../src/safe-http'
+import { ProxyAwareFilteringAgent } from '../src/safe-http-proxy'
 
 describe('safeHttp.buildAgents', () => {
     it('returns filtering agents by default', () => {
@@ -26,16 +28,19 @@ describe('safeHttp.buildAgents', () => {
 })
 
 describe('safeHttp.createAxios', () => {
-    it('attaches filtering http and https agents to the axios instance', () => {
-        const instance = safeHttp.createAxios()
-        expect(instance.defaults.httpAgent).toBeInstanceOf(RequestFilteringHttpAgent)
-        expect(instance.defaults.httpsAgent).toBeInstanceOf(RequestFilteringHttpsAgent)
+    // safeHttp's agents handle proxying themselves, so axios' own proxy handling stays off whatever
+    // the caller says.
+    it('keeps axios proxying off so the instance\'s own agents carry every request', () => {
+        const instance = safeHttp.createAxios({ proxy: { host: '127.0.0.1', port: 3128 } })
+        expect(instance.defaults.proxy).toBe(false)
+        expect(instance.defaults.httpAgent).toBeInstanceOf(ProxyAwareFilteringAgent)
+        expect(instance.defaults.httpsAgent).toBeInstanceOf(ProxyAwareFilteringAgent)
     })
 
     it('merges caller config (e.g. baseURL) with the filtering agents', () => {
-        const instance = safeHttp.createAxios({ baseURL: 'https://example.com' })
+        const instance = safeHttp.createAxios({ baseURL: 'https://example.com', httpsAgent: new https.Agent() })
         expect(instance.defaults.baseURL).toBe('https://example.com')
-        expect(instance.defaults.httpsAgent).toBeInstanceOf(RequestFilteringHttpsAgent)
+        expect(instance.defaults.httpsAgent).toBeInstanceOf(ProxyAwareFilteringAgent)
     })
 })
 
@@ -49,6 +54,24 @@ describe('safeHttp end-to-end blocking', () => {
         const instance = safeHttp.createAxios({ timeout: 2000 })
         await expect(instance.get(url)).rejects.toMatchObject({
             message: expect.stringMatching(/DNS lookup .* not allowed|IP .* not allowed|is not allowed/i),
+        })
+    })
+
+    // A request's own config overrides the instance defaults, so anything that decides which code
+    // opens the connection is pinned back per request; each override below could otherwise send
+    // the request somewhere the filter never checks. The `socketPath` row sets `maxRedirects: 0`,
+    // the native transport, where a socket path replaces the checked host.
+    it.each<[string, AxiosRequestConfig, string]>([
+        ['a custom adapter', { adapter: async (config): Promise<AxiosResponse> => ({ data: 'unfiltered', status: 200, statusText: 'OK', headers: {}, config }) }, 'http://10.0.0.1/'],
+        ['a custom transport', { transport: { request: rejectingTransportRequest } }, 'http://10.0.0.1/'],
+        ['its own httpAgent', { httpAgent: new http.Agent() }, 'http://10.0.0.1/'],
+        ['its own httpsAgent', { httpsAgent: new https.Agent() }, 'https://10.0.0.1/'],
+        ['the HTTP/2 transport', { httpVersion: 2 }, 'https://10.0.0.1/'],
+        ['a socketPath', { socketPath: '/nonexistent/safe-http.sock', maxRedirects: 0 }, 'http://10.0.0.1/'],
+    ])('keeps the filter on a request that asks for %s', async (_label, override, url) => {
+        const instance = safeHttp.createAxios({ timeout: 2000 })
+        await expect(instance.get(url, override)).rejects.toMatchObject({
+            message: expect.stringMatching(/is not allowed/i),
         })
     })
 
@@ -123,6 +146,10 @@ describe('safeHttp provider timeout resolution', () => {
         expect(seconds * 1000).toBeLessThan(2 ** 31)
     })
 })
+
+function rejectingTransportRequest(): never {
+    throw new Error('custom transport used')
+}
 
 function requestThroughDefaultAgents({ url }: { url: string }): Promise<RequestOutcome> {
     const { httpAgent, httpsAgent } = safeHttp.buildDefaultAgents()
