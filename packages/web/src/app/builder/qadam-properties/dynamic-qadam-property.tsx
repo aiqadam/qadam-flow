@@ -230,8 +230,7 @@ type DynamicPropertiesProps = {
   disabled: boolean;
   placedInside: 'stepSettings' | 'predefinedAgentInputs';
   updateFormSchema:
-    | ((key: string, newFieldSchema: QadamPropertyMap) => void)
-    | null;
+    ((key: string, newFieldSchema: QadamPropertyMap) => void) | null;
   propertySettings: Record<string, PropertySettings> | null;
   updatePropertySettingsSchema:
     | ((

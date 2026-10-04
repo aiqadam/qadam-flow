@@ -221,8 +221,7 @@ const GlobalConnectionsTable = () => {
         : 10,
       status:
         (searchParams.getAll(STATUS_QUERY_PARAM) as
-          | AppConnectionStatus[]
-          | undefined) ?? [],
+          AppConnectionStatus[] | undefined) ?? [],
     },
     extraKeys: [location.search],
     staleTime: 0,

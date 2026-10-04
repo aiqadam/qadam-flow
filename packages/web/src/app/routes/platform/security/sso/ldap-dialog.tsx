@@ -359,12 +359,12 @@ const LdapConfigForm = ({
                             'The stored certificate will be removed when you save — the system trust store will be used instead.',
                           )
                         : isEditMode && config?.hasCaCertificate
-                        ? t(
-                            'A certificate is stored. Leave empty to keep it, or paste a new one to replace it.',
-                          )
-                        : t(
-                            'Optional. Needed only for a private certificate authority — leave empty to use the system trust store.',
-                          )}
+                          ? t(
+                              'A certificate is stored. Leave empty to keep it, or paste a new one to replace it.',
+                            )
+                          : t(
+                              'Optional. Needed only for a private certificate authority — leave empty to use the system trust store.',
+                            )}
                     </FormDescription>
                     <FormMessage />
                   </FormItem>

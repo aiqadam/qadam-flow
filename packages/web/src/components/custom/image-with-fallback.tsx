@@ -3,8 +3,7 @@ import React, { useState } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 
-interface ImageWithFallbackProps
-  extends React.ImgHTMLAttributes<HTMLImageElement> {
+interface ImageWithFallbackProps extends React.ImgHTMLAttributes<HTMLImageElement> {
   fallback?: React.ReactNode;
 }
 

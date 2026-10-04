@@ -60,9 +60,9 @@ const NODE_SELECTION_RECT_CLASS_NAME = 'react-flow__nodesselection-rect';
 const doesNodeAffectBoundingBoxWidth: (
   type: ApNodeType,
 ) => type is
-  | ApNodeType.BIG_ADD_BUTTON
-  | ApNodeType.STEP
-  | ApNodeType.LOOP_RETURN_NODE = (type) =>
+  ApNodeType.BIG_ADD_BUTTON | ApNodeType.STEP | ApNodeType.LOOP_RETURN_NODE = (
+  type,
+) =>
   type === ApNodeType.BIG_ADD_BUTTON ||
   type === ApNodeType.STEP ||
   type === ApNodeType.LOOP_RETURN_NODE;

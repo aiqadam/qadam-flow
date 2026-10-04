@@ -11,12 +11,7 @@ type ButtonWithTooltipProps = {
   tooltip: string;
   onClick: (e?: React.MouseEvent) => void;
   variant?:
-    | 'ghost'
-    | 'outline'
-    | 'default'
-    | 'destructive'
-    | 'secondary'
-    | 'link';
+    'ghost' | 'outline' | 'default' | 'destructive' | 'secondary' | 'link';
   icon: React.ReactNode;
   className?: string;
   disabled?: boolean;

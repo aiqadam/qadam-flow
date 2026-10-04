@@ -376,8 +376,8 @@ const CreateReleaseDialog = ({
             {diffRequest.type === ProjectReleaseType.GIT
               ? t('Create Git Release')
               : diffRequest.type === ProjectReleaseType.PROJECT
-              ? t('Create Project Release')
-              : `${t('Create Rollback to')} ${form.getValues('name')}`}
+                ? t('Create Project Release')
+                : `${t('Create Rollback to')} ${form.getValues('name')}`}
           </DialogTitle>
         </DialogHeader>
 

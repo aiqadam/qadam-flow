@@ -41,9 +41,8 @@ const ThirdPartyLogin = React.memo(
     ) => {
       event.preventDefault();
       event.stopPropagation();
-      const { loginUrl } = await authenticationApi.getFederatedAuthLoginUrl(
-        providerName,
-      );
+      const { loginUrl } =
+        await authenticationApi.getFederatedAuthLoginUrl(providerName);
 
       if (!loginUrl || !thirdPartyRedirectUrl) {
         internalErrorToast();

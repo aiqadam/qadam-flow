@@ -324,8 +324,7 @@ function buildOAuth2RequestSchema(
   const buildBranch = (
     schema: ZodObject<z.ZodRawShape>,
     connectionType:
-      | AppConnectionType.OAUTH2
-      | AppConnectionType.PLATFORM_OAUTH2,
+      AppConnectionType.OAUTH2 | AppConnectionType.PLATFORM_OAUTH2,
   ) => {
     const valueShape = z.object({
       value: buildOAuth2ValueSchema(auth, connectionType),
@@ -439,8 +438,7 @@ export const formUtils = {
   /**When we use deepEqual if one object has an undefined value and the other doesn't have the key, that's an unequality, so to be safe we remove undefined values */
   removeUndefinedFromInput: (step: FlowAction | FlowTrigger) => {
     const copiedStep = JSON.parse(JSON.stringify(step)) as
-      | FlowAction
-      | FlowTrigger;
+      FlowAction | FlowTrigger;
     if (
       copiedStep.type !== FlowTriggerType.PIECE &&
       copiedStep.type !== FlowActionType.PIECE

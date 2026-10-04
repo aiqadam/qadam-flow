@@ -23,14 +23,7 @@ import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 
 export type PresetKey =
-  | '7days'
-  | '14days'
-  | '30days'
-  | '90days'
-  | '7'
-  | '14'
-  | '30'
-  | '90';
+  '7days' | '14days' | '30days' | '90days' | '7' | '14' | '30' | '90';
 
 type DateTimePickerWithRangeProps = {
   onChange: (date: DateRange | undefined) => void;

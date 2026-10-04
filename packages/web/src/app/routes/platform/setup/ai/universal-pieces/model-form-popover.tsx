@@ -226,5 +226,4 @@ function parseContextWindowText(text: string): ContextWindowInput {
 }
 
 type ContextWindowInput =
-  | { valid: true; tokens: number | undefined }
-  | { valid: false };
+  { valid: true; tokens: number | undefined } | { valid: false };

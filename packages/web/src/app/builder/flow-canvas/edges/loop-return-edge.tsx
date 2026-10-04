@@ -47,8 +47,8 @@ export const ApLoopReturnLineCanvasEdge = ({
     flowCanvasConsts.ARC_LENGTH / 2
   }
    v${endLineLength} ${
-    data.drawArrowHeadAfterEnd ? flowCanvasConsts.ARROW_DOWN : ''
-  }
+     data.drawArrowHeadAfterEnd ? flowCanvasConsts.ARROW_DOWN : ''
+   }
    `;
   const path = toCanvasPath(layoutPath);
   const layoutButtonPosition = {

@@ -84,8 +84,8 @@ function StatBar({ label, value, detail }: StatBarProps) {
     value > 95
       ? 'bg-destructive'
       : value > 80
-      ? 'bg-warning'
-      : 'bg-emerald-500';
+        ? 'bg-warning'
+        : 'bg-emerald-500';
 
   return (
     <div className="flex items-center gap-2">

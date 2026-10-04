@@ -91,8 +91,8 @@ export default function TriggerHealthPage() {
               last14Days === 100
                 ? STATUS.SUCCESS
                 : last14Days > 0
-                ? STATUS.WARNING
-                : STATUS.FAULT,
+                  ? STATUS.WARNING
+                  : STATUS.FAULT,
           },
           last24Hours,
           last7Days,

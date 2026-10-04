@@ -123,8 +123,8 @@ function normalizeQadamName(name: string): string {
   const stripped = name.startsWith('piece-')
     ? name.slice('piece-'.length)
     : name.startsWith('qadam-')
-    ? name.slice('qadam-'.length)
-    : name;
+      ? name.slice('qadam-'.length)
+      : name;
   return `@aiqadam/qadam-${stripped.replace(/_/g, '-')}`;
 }
 
@@ -230,8 +230,7 @@ function extractPlanUpdatesFromMessage(
     if (getToolPartName(p) !== 'ap_update_plan') continue;
     if (p.state === 'input-streaming') continue;
     const input = p.input as
-      | { updates?: Array<{ stepIndex: number; status: string }> }
-      | undefined;
+      { updates?: Array<{ stepIndex: number; status: string }> } | undefined;
     if (!input?.updates) continue;
     for (const u of input.updates) {
       const existing = updates.findIndex((e) => e.stepIndex === u.stepIndex);

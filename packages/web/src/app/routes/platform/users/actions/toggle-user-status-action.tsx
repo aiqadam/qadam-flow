@@ -49,8 +49,8 @@ export const ToggleUserStatusAction = ({
           {isAdmin
             ? t('Admin cannot be deactivated')
             : isActive
-            ? t('Deactivate user')
-            : t('Activate user')}
+              ? t('Deactivate user')
+              : t('Activate user')}
         </TooltipContent>
       </Tooltip>
     </div>

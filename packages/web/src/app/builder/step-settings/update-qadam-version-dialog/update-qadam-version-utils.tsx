@@ -169,8 +169,8 @@ async function applyPieceVersionChange({
   const qadamName = step.settings.qadamName;
   const actionOrTriggerName =
     step.type === FlowTriggerType.PIECE
-      ? step.settings.triggerName ?? ''
-      : step.settings.actionName ?? '';
+      ? (step.settings.triggerName ?? '')
+      : (step.settings.actionName ?? '');
 
   const piece = await qadamsApi.get({
     name: qadamName,

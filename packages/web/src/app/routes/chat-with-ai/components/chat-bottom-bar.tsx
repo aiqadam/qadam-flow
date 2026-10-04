@@ -86,8 +86,7 @@ export function ChatBottomBar({
   // Plan approval from tool state
   if (pendingPlanPart) {
     const input = pendingPlanPart.input as
-      | { planSummary?: string; steps?: string[] }
-      | undefined;
+      { planSummary?: string; steps?: string[] } | undefined;
     const toolCallId = chatPartUtils.getToolCallId(pendingPlanPart);
     return (
       <PlanApprovalForm

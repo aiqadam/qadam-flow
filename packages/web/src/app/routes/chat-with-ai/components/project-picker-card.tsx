@@ -59,8 +59,8 @@ export function ProjectPickerCard({
     const displayName = resolvedProject
       ? getProjectName(resolvedProject)
       : projectId
-      ? suggestedProjects.find((p) => p.id === projectId)?.name ?? ''
-      : suggestedProjects[0]?.name ?? '';
+        ? (suggestedProjects.find((p) => p.id === projectId)?.name ?? '')
+        : (suggestedProjects[0]?.name ?? '');
     return (
       <motion.div
         className="rounded-xl border bg-background overflow-hidden my-2"

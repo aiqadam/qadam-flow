@@ -184,12 +184,15 @@ export function DataTable<
         ])
       : columnsWithSelect;
 
-  const columnVisibility = columnsInitial.reduce((acc, column) => {
-    if (column.enableHiding && 'accessorKey' in column) {
-      acc[column.accessorKey as string] = false;
-    }
-    return acc;
-  }, {} as Record<string, boolean>);
+  const columnVisibility = columnsInitial.reduce(
+    (acc, column) => {
+      if (column.enableHiding && 'accessorKey' in column) {
+        acc[column.accessorKey as string] = false;
+      }
+      return acc;
+    },
+    {} as Record<string, boolean>,
+  );
 
   const [searchParams, setSearchParams] = useSearchParams();
   const startingCursor = searchParams.get('cursor') || undefined;

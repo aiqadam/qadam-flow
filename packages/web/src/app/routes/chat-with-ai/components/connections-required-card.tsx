@@ -236,7 +236,7 @@ export function ConnectionsRequiredCard({
           reconnectConnection={
             isNewConnection
               ? null
-              : existingConns[activeConnection.piece] ?? null
+              : (existingConns[activeConnection.piece] ?? null)
           }
           isGlobalConnection={false}
         />
@@ -283,10 +283,10 @@ function ConnectionRow({
           {isConnected
             ? t('Ready to use')
             : isReconnect
-            ? t('Your {name} connection is expired', {
-                name: connection.displayName,
-              })
-            : t('Not connected')}
+              ? t('Your {name} connection is expired', {
+                  name: connection.displayName,
+                })
+              : t('Not connected')}
         </div>
       </div>
       {isConnected ? (

@@ -502,7 +502,7 @@ const MultiSelectItem = React.forwardRef<
 
     const disabled = Boolean(
       disabledProp ||
-        (!selected && maxCount && contextValue.length >= maxCount),
+      (!selected && maxCount && contextValue.length >= maxCount),
     );
 
     const handleClick = () => {

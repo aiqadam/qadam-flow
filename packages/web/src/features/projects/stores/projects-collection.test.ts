@@ -415,9 +415,8 @@ describe('projectCollection onUpdate — outgoing request fields', () => {
   });
 
   async function captureOnUpdate() {
-    const { queryCollectionOptions } = await import(
-      '@tanstack/query-db-collection'
-    );
+    const { queryCollectionOptions } =
+      await import('@tanstack/query-db-collection');
     await import('./project-collection');
     const options = vi.mocked(queryCollectionOptions).mock.calls[0][0];
     if (!options.onUpdate) {

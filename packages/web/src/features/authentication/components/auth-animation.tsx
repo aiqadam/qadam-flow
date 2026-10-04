@@ -271,8 +271,8 @@ function AgentCard({
   const title = isLarge
     ? 'Lead Qualifier'
     : activeIndex === 2
-    ? '2. Qualify Lead'
-    : 'Qualify Lead';
+      ? '2. Qualify Lead'
+      : 'Qualify Lead';
 
   return (
     <div

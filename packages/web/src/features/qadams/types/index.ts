@@ -43,8 +43,7 @@ export type QadamStepMetadataWithSuggestions = QadamStepMetadata &
   Pick<QadamMetadataModelSummary, 'suggestedActions' | 'suggestedTriggers'>;
 
 export type StepMetadataWithSuggestions =
-  | QadamStepMetadataWithSuggestions
-  | PrimitiveStepMetadata;
+  QadamStepMetadataWithSuggestions | PrimitiveStepMetadata;
 
 export type CategorizedStepMetadataWithSuggestions = {
   title: string;

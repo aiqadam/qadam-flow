@@ -124,7 +124,7 @@ export const AgentToolBlock = ({ block, index }: AgentToolBlockProps) => {
         }`}
       >
         <span className="text-sm font-semibold">
-          {isLoading ? 'Loading...' : metadata?.displayName ?? 'Unknown Tool'}
+          {isLoading ? 'Loading...' : (metadata?.displayName ?? 'Unknown Tool')}
           {!isSuccess && t(' (Failed)')}
         </span>
       </span>

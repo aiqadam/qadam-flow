@@ -107,9 +107,9 @@ export const FlowStepInputOutput = () => {
   });
   const parsedOutput = isSlicedOutput
     ? undefined
-    : selectedStepOutput?.errorMessage ??
+    : (selectedStepOutput?.errorMessage ??
       selectedStepOutput?.output ??
-      'No output';
+      'No output');
 
   const { data: fetchedAgentResult, isLoading: isAgentResultLoading } =
     useQuery({
@@ -188,8 +188,8 @@ export const FlowStepInputOutput = () => {
     selectedStepOutput.status === StepOutputStatus.FAILED
       ? 'failed'
       : selectedStepOutput.status === StepOutputStatus.RUNNING
-      ? 'testing'
-      : 'success';
+        ? 'testing'
+        : 'success';
 
   const stepKind: 'action' | 'trigger' =
     selectedStep.type === FlowTriggerType.PIECE ? 'trigger' : 'action';
@@ -197,8 +197,8 @@ export const FlowStepInputOutput = () => {
     selectedStep.type === FlowActionType.PIECE
       ? selectedStep.settings.actionName
       : selectedStep.type === FlowTriggerType.PIECE
-      ? selectedStep.settings.triggerName
-      : selectedStep.type;
+        ? selectedStep.settings.triggerName
+        : selectedStep.type;
   const stepInput =
     selectedStep.type === FlowActionType.PIECE ||
     selectedStep.type === FlowTriggerType.PIECE

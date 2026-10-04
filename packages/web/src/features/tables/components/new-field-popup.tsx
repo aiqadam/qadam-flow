@@ -43,10 +43,7 @@ type NewFieldFormData =
   | {
       name: string;
       type:
-        | FieldType.DATE
-        | FieldType.NUMBER
-        | FieldType.TEXT
-        | FieldType.BOOLEAN;
+        FieldType.DATE | FieldType.NUMBER | FieldType.TEXT | FieldType.BOOLEAN;
       data: null;
     };
 

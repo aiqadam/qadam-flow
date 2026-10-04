@@ -4,11 +4,7 @@ import { TriggerTestStrategy } from '@aiqadam/shared';
 import { qadamSelectorUtils } from '@/features/qadams';
 
 export type TestType =
-  | 'mcp-tool'
-  | 'chat-trigger'
-  | 'simulation'
-  | 'webhook'
-  | 'polling';
+  'mcp-tool' | 'chat-trigger' | 'simulation' | 'webhook' | 'polling';
 
 export const triggerEventUtils = {
   getTestType: ({
