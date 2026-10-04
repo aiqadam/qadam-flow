@@ -10,8 +10,8 @@ export async function getProtocolBackwardCompatibility(protocol: string | undefi
   return protocol;
 }
 
-export async function getClient<T extends Client | FTPClient>(auth: { protocol: string | undefined, host: string, port: number, allow_unauthorized_certificates: boolean | undefined, allow_anonymous_login: boolean | undefined, username: string, password: string | undefined, privateKey: string | undefined, algorithm: ServerHostKeyAlgorithm[] | string[] | undefined }): Promise<T> {
-  const { protocol, host, port, allow_unauthorized_certificates, allow_anonymous_login, username, password, privateKey, algorithm } = auth;
+export async function getClient<T extends Client | FTPClient>(auth: { protocol: string | undefined, host: string, port: number, allow_unauthorized_certificates: boolean | undefined, allow_anonymous_login: boolean | undefined, allow_separate_transfer_host: boolean | undefined, username: string, password: string | undefined, privateKey: string | undefined, algorithm: ServerHostKeyAlgorithm[] | string[] | undefined }): Promise<T> {
+  const { protocol, host, port, allow_unauthorized_certificates, allow_anonymous_login, allow_separate_transfer_host, username, password, privateKey, algorithm } = auth;
   const protocolBackwardCompatibility = await getProtocolBackwardCompatibility(protocol);
   if (protocolBackwardCompatibility === 'sftp') {
     const sftp = new Client();
@@ -86,7 +86,9 @@ export async function getClient<T extends Client | FTPClient>(auth: { protocol: 
 
     return sftp as T;
   } else {
-    const ftpClient = new FTPClient();
+    const ftpClient = new FTPClient(undefined, {
+      allowSeparateTransferHost: allow_separate_transfer_host ?? false,
+    });
     await ftpClient.access({
       host,
       port,
