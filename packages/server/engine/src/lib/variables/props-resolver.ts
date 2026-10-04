@@ -418,7 +418,7 @@ function parseSquareBracketConnectionPath(variableName: string): string | null {
 // other `{{...}}` expression in this file takes — including the `$t[...]` dynamic locale bracket —
 // so the engine has exactly one sandboxed-eval path, not two. Nothing outside this file calls this
 // directly.
-// eslint-disable-next-line @typescript-eslint/ban-types
+// eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
 async function evalInScope({ js, contextAsScope, functions, unresolvedReference, failOnUnreadablePath = false }: { js: string, contextAsScope: Record<string, unknown>, functions: Record<string, Function>, unresolvedReference?: { expression: string, stepNames: string[] }, failOnUnreadablePath?: boolean }): Promise<unknown> {
     const { data: result, error: resultError } = await utils.tryCatchAndThrowOnEngineError((async () => {
         const codeSandbox = await initCodeSandbox()

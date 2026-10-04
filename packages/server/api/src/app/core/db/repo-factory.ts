@@ -11,7 +11,7 @@ import { databaseConnection } from '../../database/database-connection'
  * Otherwise, returns the {@link Repository} for the default connection.
  */
 type RepoGetter<T extends ObjectLiteral = ObjectLiteral> = (
-    entityManager?: EntityManager
+    entityManager?: EntityManager,
 ) => Repository<T>
 
 const instances = new Map<string, RepoGetter>()

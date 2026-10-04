@@ -26,7 +26,7 @@ import { useMcpToolDialogStore } from '../stores/mcp-tools';
 
 import { AddMcpToolForm } from './add-mcp-tool-form';
 
-const McpToolFormSchema = z.object({
+export const McpToolFormSchema = z.object({
   toolName: z.string().min(1),
   serverUrl: z.string().url(),
   protocol: z.nativeEnum(McpProtocol),

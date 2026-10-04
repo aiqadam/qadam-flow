@@ -196,17 +196,19 @@ export const UpdateTemplateDialog = ({
                     type="file"
                     accept=".json"
                     onChange={(e) => {
-                      e.target.files &&
-                        e.target.files[0].text().then((text) => {
-                          const flowTemplate = templateUtils.extractFlow(text);
-                          if (flowTemplate) {
-                            field.onChange(flowTemplate);
-                          } else {
-                            form.setError('template', {
-                              message: t('Invalid JSON'),
-                            });
-                          }
-                        });
+                      if (!e.target.files) {
+                        return;
+                      }
+                      e.target.files[0].text().then((text) => {
+                        const flowTemplate = templateUtils.extractFlow(text);
+                        if (flowTemplate) {
+                          field.onChange(flowTemplate);
+                        } else {
+                          form.setError('template', {
+                            message: t('Invalid JSON'),
+                          });
+                        }
+                      });
                     }}
                     id="template"
                     placeholder={t('Template')}

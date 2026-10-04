@@ -17,12 +17,13 @@ type BasicAuthConnectionSettingsProps = {
   authProperty: BasicAuthProperty;
 };
 
+type BasicAuthFormValues = {
+  request: z.infer<typeof UpsertBasicAuthRequest>;
+};
+
 const BasicAuthConnectionSettings = React.memo(
   ({ authProperty }: BasicAuthConnectionSettingsProps) => {
-    const forSchema = z.object({
-      request: UpsertBasicAuthRequest,
-    });
-    const form = useFormContext<z.infer<typeof forSchema>>();
+    const form = useFormContext<BasicAuthFormValues>();
 
     return (
       <>

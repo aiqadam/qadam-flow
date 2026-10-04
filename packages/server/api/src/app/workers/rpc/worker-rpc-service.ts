@@ -225,14 +225,13 @@ export function createHandlers({ log, workerGroupId, workerId: connectedWorkerId
 
         async savePayloads(input) {
             const { flowId, projectId, payloads } = input
-            const savePayloads = payloads.map((payload) =>
+            for (const payload of payloads) {
                 rejectedPromiseHandler(triggerEventService(log).saveEvent({
                     flowId,
                     payload,
                     projectId,
-                }), log),
-            )
-            rejectedPromiseHandler(Promise.all(savePayloads), log)
+                }), log)
+            }
             if (payloads.length > 0) {
                 await triggerSourceService(log).disable({
                     flowId,

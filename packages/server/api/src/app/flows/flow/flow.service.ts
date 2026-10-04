@@ -832,7 +832,7 @@ export const getFolderIdFromRequest = async ({ projectId, folderId, folderName, 
 }
 
 const assertFlowIsNotNull: <T extends Flow>(
-    flow: T | null
+    flow: T | null,
 ) => asserts flow is T = <T>(flow: T | null) => {
     if (isNil(flow)) {
         throw new QadamFlowError({

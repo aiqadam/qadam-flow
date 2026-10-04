@@ -343,7 +343,7 @@ export const BranchDateCondition = buildBranchDateConditionValid(false)
 export type BranchDateCondition = z.infer<typeof BranchDateCondition>
 
 export const BranchSingleValueCondition =
-  buildBranchSingleValueConditionValid(false)
+    buildBranchSingleValueConditionValid(false)
 export type BranchSingleValueCondition = z.infer<
   typeof BranchSingleValueCondition
 >

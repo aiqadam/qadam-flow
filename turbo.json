@@ -91,23 +91,25 @@
       // hit and lints nothing while still reporting success. `../../` is not a
       // portable way to reach the repo root — it resolves to `packages/` for
       // `packages/server/*` and to `packages/qadams/` for the qadams — so the
-      // shared configs are addressed with `$TURBO_ROOT$` instead. The two
-      // `packages/server` configs sit in the shared chain of api, worker, engine,
-      // server-utils and shared; listing them here also re-lints the qadams,
-      // which is the cheaper trade against duplicating this list into five
-      // package-scoped overrides that would drift out of sync.
+      // shared configs are addressed with `$TURBO_ROOT$` instead. Every package's
+      // `eslint.config.mjs` is a thin wrapper over `tools/eslint/**`, which holds
+      // the real rules (SSRF selectors included) for api, worker, engine,
+      // server-utils, shared, web and the qadams, so that directory is a lint
+      // input for all of them. The qadams share one config at
+      // `packages/qadams/eslint.config.mjs`; listing it here also re-lints the
+      // other packages, which is the cheaper trade against duplicating this
+      // list into package-scoped overrides that would drift out of sync.
       "inputs": [
         "src/**",
         "test/**",
         "scenarios/**",
-        ".eslintrc.json",
+        "eslint.config.mjs",
         ".prettierignore",
         "tsconfig*.json",
-        "$TURBO_ROOT$/.eslintrc.json",
-        "$TURBO_ROOT$/.eslintrc.base.json",
+        "$TURBO_ROOT$/eslint.config.mjs",
         "$TURBO_ROOT$/.prettierrc",
-        "$TURBO_ROOT$/packages/server/.eslintrc.json",
-        "$TURBO_ROOT$/packages/server/api/.eslintrc.json"
+        "$TURBO_ROOT$/tools/eslint/**",
+        "$TURBO_ROOT$/packages/qadams/eslint.config.mjs"
       ],
       "outputs": []
     },

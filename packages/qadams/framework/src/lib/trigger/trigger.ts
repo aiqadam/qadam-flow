@@ -106,7 +106,6 @@ export class ITrigger<
   ) { }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type Trigger<
   QadamAuth extends QadamAuthProperty | QadamAuthProperty[] | undefined = any,
   TriggerProps extends InputPropertyMap = any,

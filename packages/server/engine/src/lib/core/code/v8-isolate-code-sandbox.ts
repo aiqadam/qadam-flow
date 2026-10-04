@@ -4,11 +4,11 @@ import { CodeSandbox } from '../../core/code/code-sandbox-common'
 
 const ONE_HUNDRED_TWENTY_EIGHT_MEGABYTES = 128
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 // Check this https://github.com/laverdet/isolated-vm/issues/258#issuecomment-2134341086
 let ivmCache: any
 const getIvm = () => {
     if (!ivmCache) {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
         ivmCache = require('isolated-vm')
     }
     return ivmCache as typeof import('isolated-vm')

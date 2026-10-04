@@ -153,9 +153,9 @@ const isTranslationLoadingEnabled = (): boolean => {
 const loadQadamFromFolder = async ({ folderPath, loadTranslations }: LoadQadamFromFolderParams): Promise<QadamMetadata | null> => {
     const indexPath = join(folderPath, 'src', 'index')
     const packageJsonPath = join(folderPath, 'package.json')
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const packageJson = require(packageJsonPath)
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const module = require(indexPath)
     const { name: qadamName, version: qadamVersion } = packageJson
     const piece = extractQadamFromModule<Qadam>({

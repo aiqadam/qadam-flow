@@ -25,7 +25,8 @@ const healthController: FastifyPluginAsyncZod = async (app) => {
             }
             await reply.status(StatusCodes.OK).send({ status: 'Healthy' })
         },
-    ),
+    )
+
     app.get('/system', GetSystemHealthChecks, async (request, reply) => {
         await reply.status(StatusCodes.OK).send(await healthStatusService(app.log).getSystemHealthChecks(request.principal.platform.id))
     })

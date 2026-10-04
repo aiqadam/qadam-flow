@@ -58,7 +58,7 @@ export const errorHandler = async (
             [ErrorCode.LDAP_ACCOUNT_COLLISION]: StatusCodes.CONFLICT,
         }
         const statusCode =
-      statusCodeMap[error.error.code] ?? StatusCodes.BAD_REQUEST
+            statusCodeMap[error.error.code] ?? StatusCodes.BAD_REQUEST
 
         await reply.status(statusCode).send({
             code: error.error.code,

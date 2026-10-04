@@ -16,7 +16,6 @@ export const DynamicProp = z.union([
   StaticMultiSelectDropdownProperty,
 ])
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type DynamicProp =
   | ShortTextProperty<boolean>
   | StaticDropdownProperty<any, boolean>

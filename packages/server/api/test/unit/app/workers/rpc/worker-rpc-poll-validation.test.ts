@@ -57,7 +57,6 @@ describe('workerRpc#poll healthcheck validation', () => {
     it('skips the registry update for a malformed payload but keeps polling', async () => {
         const handlers = createHandlers({ log, disconnected: new AbortController().signal })
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const result = await handlers.poll({ ...machineInfo, ip: 42, workerProps: { version: currentVersion() } } as any)
 
         expect(onConnection).not.toHaveBeenCalled()
@@ -70,7 +69,6 @@ describe('workerRpc#poll healthcheck validation', () => {
     it('withholds the job when the version cannot be read from a malformed payload', async () => {
         const handlers = createHandlers({ log, disconnected: new AbortController().signal })
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const result = await handlers.poll({ ...machineInfo, ip: 42, workerProps: { version: 42 } } as any)
 
         expect(result).toBeNull()
@@ -80,7 +78,6 @@ describe('workerRpc#poll healthcheck validation', () => {
     it('stores a well-formed payload against the group bound to the token', async () => {
         const handlers = createHandlers({ log, workerGroupId: 'group-a', disconnected: new AbortController().signal })
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await handlers.poll({ ...machineInfo, unexpectedField: 'dropped' } as any)
 
         expect(onConnection).toHaveBeenCalledWith(machineInfo, 'group-a')

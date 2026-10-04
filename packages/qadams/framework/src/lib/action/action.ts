@@ -72,7 +72,6 @@ export class IAction<QadamAuth extends QadamAuthProperty | QadamAuthProperty[] |
   ) { }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type Action<
   QadamAuth extends QadamAuthProperty | QadamAuthProperty[] | undefined = any,
   ActionProps extends InputPropertyMap = any,
