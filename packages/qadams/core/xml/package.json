@@ -18,6 +18,6 @@
   },
   "devDependencies": {
     "@types/json2xml": "0.1.4",
-    "vitest": "3.2.7"
+    "vitest": "4.1.11"
   }
 }
