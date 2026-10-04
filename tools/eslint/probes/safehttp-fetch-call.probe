@@ -1,0 +1,3 @@
+import { safeHttp } from '@aiqadam/server-utils'
+export const p15 = async (): Promise<unknown> => safeHttp.fetch('http://x')
+export const p15b = { fetch: safeHttp.fetch }

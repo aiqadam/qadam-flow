@@ -1,0 +1,2 @@
+declare const win: { fetch: (u: string) => Promise<unknown> }
+export const p03 = async (): Promise<unknown> => win.fetch('http://x')

@@ -1,0 +1,4 @@
+export const __zpCreate = axios.create()
+export const __zpFetch = async (): Promise<unknown> => fetch('http://x')
+export const __zpGlobal = async (): Promise<unknown> => globalThis.fetch('http://x')
+export const __zpObj = async (): Promise<unknown> => (globalThis as { win: { fetch: (u: string) => Promise<unknown> } }).win.fetch('http://x')

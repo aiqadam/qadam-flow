@@ -1,0 +1,1 @@
+export const p02 = async (): Promise<unknown> => globalThis.fetch('http://x')

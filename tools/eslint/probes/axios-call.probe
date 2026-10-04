@@ -1,0 +1,2 @@
+declare const axios: (u: string) => Promise<unknown>
+export const p05 = async (): Promise<unknown> => axios('http://x')

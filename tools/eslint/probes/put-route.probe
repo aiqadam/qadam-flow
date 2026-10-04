@@ -1,0 +1,6 @@
+declare const app: { put: (p: string, h: () => void) => void, patch: (p: string, h: () => void) => void, route: (o: unknown) => void }
+app.put('/x', () => undefined)
+app.patch('/y', () => undefined)
+app.route({ method: 'PUT', url: '/z' })
+app.route({ method: ['GET', 'PATCH'], url: '/z' })
+app.route({ method: ['GET', 'POST', 'put'], url: '/z' })

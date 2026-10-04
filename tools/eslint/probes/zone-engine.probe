@@ -1,0 +1,3 @@
+import axios from 'axios'
+export const e1 = async (): Promise<unknown> => fetch('http://x')
+export const e2 = axios.create()

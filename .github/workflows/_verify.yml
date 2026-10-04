@@ -383,6 +383,14 @@ jobs:
       - name: Lint all packages
         run: npm run lint-all
 
+      # A `no-restricted-syntax` selector that stops matching reports nothing, so a
+      # green lint run says nothing about the SSRF and PUT/PATCH guards. This lints
+      # one probe per bypass form (and each sanctioned exemption) and fails if any
+      # of them is no longer reported where it should be.
+      - name: Check the SSRF lint probes
+        timeout-minutes: 5
+        run: npm run check-safe-http-lint
+
       # All eight TypeScript packages declare a `typecheck` script as of #245.
       # Before that only `packages/web` did, so this step ran unfiltered and still
       # checked one package of eight — turbo reports success for a package that

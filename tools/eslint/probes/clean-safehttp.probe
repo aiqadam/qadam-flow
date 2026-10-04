@@ -1,0 +1,2 @@
+import { safeHttp } from '@aiqadam/server-utils'
+export const p14 = safeHttp.axios

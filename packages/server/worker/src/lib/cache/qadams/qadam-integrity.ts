@@ -481,7 +481,7 @@ const readVersionMetadata = async ({ name, version, deadline }: { name: string, 
     }
 }
 
-// Read off the error rather than narrowed with a type guard from axios: `packages/server/.eslintrc.json`
+// Read off the error rather than narrowed with a type guard from axios: `tools/eslint/server.mjs`
 // forbids importing axios in this package at all, and the response shape is the only thing needed.
 const isRateLimited = (error: unknown): boolean =>
     readProperty({ source: readProperty({ source: error, key: 'response' }), key: 'status' }) === HTTP_TOO_MANY_REQUESTS

@@ -45,6 +45,7 @@
     "check-pause-markers": "node tools/ci/check-pause-markers.mjs",
     "check-required-prop-defaults": "node tools/ci/check-required-prop-defaults.mjs",
     "check-agent-docs": "node tools/ci/check-agent-docs.mjs",
+    "check-safe-http-lint": "node tools/eslint/check-safe-http-probes.mjs",
     "bump-translated-qadams": "npx ts-node --project tools/tsconfig.tools.json tools/scripts/qadams/bump-translated-qadams.ts",
     "bump-all-qadams-patch-version": "npx ts-node --project tools/tsconfig.tools.json tools/scripts/qadams/bump-all-qadams-patch-version.ts"
   },
