@@ -31,6 +31,13 @@ export const sftpAuth = QadamAuth.CustomAuth({
       defaultValue: false,
       required: false,
     }),
+    allow_separate_transfer_host: Property.Checkbox({
+      displayName: 'Allow Separate Transfer Host',
+      description:
+        'Allow an FTP/FTPS server to advertise a different host for the data connection than the one you connected to (only applicable for FTP/FTPS). Some servers behind NAT or spread across multiple hosts require this. Leave it off unless your server needs it, because accepting a different host is less safe.',
+      defaultValue: false,
+      required: false,
+    }),
     host: Property.ShortText({
       displayName: 'Host',
       description: 'The host of the server',
