@@ -164,6 +164,58 @@ describe('Authentication API', () => {
             expect(meBody?.platformRole).toBe('ADMIN')
         })
 
+        // The onboarding claim rotates the identity's tokenVersion (platform.controller.ts passes
+        // invalidatePreviousTokens for ONBOARDING principals), which makes the onboarding token
+        // single-use: assertUserSession rejects a second use with SESSION_EXPIRED (mapped to 403).
+        // Nothing pinned this, so dropping the rotation or moving it off the just-used token would
+        // silently turn the onboarding token into a reusable one.
+        it('rejects a reused onboarding token with 403 SESSION_EXPIRED on a second POST /v1/platforms', async () => {
+            // arrange
+            const mockSignUpRequest = createMockSignUpRequest()
+            const signUpResponse = await app?.inject({
+                method: 'POST',
+                url: '/api/v1/authentication/sign-up',
+                body: mockSignUpRequest,
+            })
+            const onboardingToken = signUpResponse?.json()?.token
+
+            // act
+            const firstResponse = await app?.inject({
+                method: 'POST',
+                url: '/api/v1/platforms',
+                headers: {
+                    authorization: `Bearer ${onboardingToken}`,
+                },
+                body: { name: 'Acme' },
+            })
+
+            // assert
+            expect(firstResponse?.statusCode).toBe(StatusCodes.OK)
+
+            const secondResponse = await app?.inject({
+                method: 'POST',
+                url: '/api/v1/platforms',
+                headers: {
+                    authorization: `Bearer ${onboardingToken}`,
+                },
+                body: { name: 'Acme Again' },
+            })
+            expect(secondResponse?.statusCode).toBe(StatusCodes.FORBIDDEN)
+            expect(secondResponse?.json()?.code).toBe('SESSION_EXPIRED')
+
+            expect(await databaseConnection().getRepository('platform').count()).toBe(1)
+            expect(await databaseConnection().getRepository('user').count()).toBe(1)
+
+            const meResponse = await app?.inject({
+                method: 'GET',
+                url: '/api/v1/users/me',
+                headers: {
+                    authorization: `Bearer ${firstResponse?.json()?.token}`,
+                },
+            })
+            expect(meResponse?.statusCode).toBe(StatusCodes.OK)
+        })
+
         // createPlatformWithProject reuses the bootstrapped platformId:null row rather than
         // inserting a fresh one per call (see the test above), which means the read-and-promote is
         // no longer implicitly serialized by a unique-constraint violation on a second insert: two
