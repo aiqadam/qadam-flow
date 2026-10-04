@@ -12,7 +12,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 
 import { AddLocaleDialog } from '@/app/translations/add-locale-dialog';

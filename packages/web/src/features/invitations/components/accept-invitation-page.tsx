@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { t } from 'i18next';
 import { CheckCircle, XCircle } from 'lucide-react';
 import { useEffect } from 'react';
-import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import { Navigate, useNavigate, useSearchParams } from 'react-router';
 
 import { FullLogo } from '@/components/custom/full-logo';
 import { LoadingSpinner } from '@/components/custom/spinner';

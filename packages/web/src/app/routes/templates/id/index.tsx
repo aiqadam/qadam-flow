@@ -12,7 +12,7 @@ import { ReactFlowProvider } from '@xyflow/react';
 import { t } from 'i18next';
 import { ArrowLeft, ArrowRight, Link, ExternalLink } from 'lucide-react';
 import { useMemo, useState, useRef, useEffect } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 import { toast } from 'sonner';
 
 import { FlowCanvas } from '@/app/builder/flow-canvas';

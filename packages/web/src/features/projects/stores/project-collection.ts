@@ -19,7 +19,7 @@ import {
 } from '@tanstack/react-db';
 import { QueryClient, useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 
 import { useEmbedding } from '@/components/providers/embed-provider';
 import { api } from '@/lib/api';

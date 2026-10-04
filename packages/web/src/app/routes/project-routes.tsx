@@ -1,6 +1,6 @@
 import { Permission } from '@aiqadam/shared';
 import React, { Suspense } from 'react';
-import { Navigate, useLocation } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router';
 
 import { PageTitle } from '@/app/components/page-title';
 import { RouteLoadingBar } from '@/components/custom/route-loading-bar';

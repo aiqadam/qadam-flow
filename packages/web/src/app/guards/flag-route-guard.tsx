@@ -1,5 +1,5 @@
 import { ApFlagId } from '@aiqadam/shared';
-import { Navigate } from 'react-router-dom';
+import { Navigate } from 'react-router';
 
 import { flagsHooks } from '../../hooks/flags-hooks';
 

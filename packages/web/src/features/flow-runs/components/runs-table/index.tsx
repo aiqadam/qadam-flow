@@ -20,7 +20,7 @@ import {
   SearchIcon,
 } from 'lucide-react';
 import { useEffect, useMemo, useCallback, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 
 import {

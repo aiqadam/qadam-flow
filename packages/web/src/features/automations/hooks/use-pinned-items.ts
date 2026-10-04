@@ -1,6 +1,6 @@
 import { t } from 'i18next';
 import { useCallback, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import { toast } from 'sonner';
 
 import { authenticationSession } from '@/lib/authentication-session';

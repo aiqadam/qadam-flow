@@ -3,7 +3,7 @@ import { useMutation } from '@tanstack/react-query';
 import { HttpStatusCode } from 'axios';
 import { t } from 'i18next';
 import { useForm, SubmitHandler } from 'react-hook-form';
-import { Navigate } from 'react-router-dom';
+import { Navigate } from 'react-router';
 
 import { platformApi } from '@/api/platforms-api';
 import { Button } from '@/components/ui/button';

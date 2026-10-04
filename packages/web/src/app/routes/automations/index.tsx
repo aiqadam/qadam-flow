@@ -1,7 +1,7 @@
 import { Permission, UncategorizedFolderId } from '@aiqadam/shared';
 import { t } from 'i18next';
 import { useCallback } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router';
 
 import { recordAccess } from '@/app/components/global-search/access-history';
 import { useEmbedding } from '@/components/providers/embed-provider';
