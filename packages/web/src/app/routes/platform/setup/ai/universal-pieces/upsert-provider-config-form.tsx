@@ -72,9 +72,8 @@ export const UpsertProviderConfigForm = ({
   });
 
   const [showApiKeyInput, setShowApiKeyInput] = useState(!isEditMode);
-  const [showBedrockAuthInputs, setShowBedrockAuthInputs] = useState(
-    !isEditMode,
-  );
+  const [showBedrockAuthInputs, setShowBedrockAuthInputs] =
+    useState(!isEditMode);
 
   return (
     <div className="grid space-y-4">

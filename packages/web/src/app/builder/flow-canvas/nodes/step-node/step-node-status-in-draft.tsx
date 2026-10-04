@@ -23,12 +23,7 @@ import { flowCanvasUtils } from '../../utils/flow-canvas-utils';
 
 import { StepNodeBadgeContainer } from './step-node-badge-container';
 type DraftStepStatus =
-  | 'invalid'
-  | 'testing'
-  | 'failed'
-  | 'needs-test'
-  | 'tested'
-  | 'untested';
+  'invalid' | 'testing' | 'failed' | 'needs-test' | 'tested' | 'untested';
 
 const ApStepNodeStatusInDraft = ({ stepName }: { stepName: string }) => {
   const [

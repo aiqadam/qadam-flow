@@ -1,0 +1,2 @@
+import { httpClient } from '@aiqadam/qadams-common'
+export const p07 = httpClient

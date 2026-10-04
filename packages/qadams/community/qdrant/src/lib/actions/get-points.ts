@@ -30,7 +30,7 @@ export const getPoints = createAction({
       try {
         ids = JSON.parse(ids);
       } catch {
-        null;
+        // not a JSON-encoded list: use the value as given
       }
       return await client.retrieve(collectionName, {
         ids: ids instanceof Array ? ids : [ids],

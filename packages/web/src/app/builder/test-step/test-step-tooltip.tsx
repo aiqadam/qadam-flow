@@ -33,8 +33,8 @@ const TestButtonTooltip = ({
             {invalid
               ? t('Fill in the required fields first')
               : isLoadingDynamicProperties
-              ? t('Please wait until all inputs are loaded')
-              : t('Saving...')}
+                ? t('Please wait until all inputs are loaded')
+                : t('Saving...')}
           </TooltipContent>
         )}
       </Tooltip>

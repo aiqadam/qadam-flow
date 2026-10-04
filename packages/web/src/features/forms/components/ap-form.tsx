@@ -51,11 +51,14 @@ const putBackQuotesForInputNames = (
   value: Record<string, unknown>,
   inputs: FormInputWithName[],
 ) => {
-  return inputs.reduce((acc, input) => {
-    const key = createKeyForFormInput(input.displayName);
-    acc[key] = value[key];
-    return acc;
-  }, {} as Record<string, unknown>);
+  return inputs.reduce(
+    (acc, input) => {
+      const key = createKeyForFormInput(input.displayName);
+      acc[key] = value[key];
+      return acc;
+    },
+    {} as Record<string, unknown>,
+  );
 };
 
 const createPropertySchema = (input: FormInputWithName): ZodType => {

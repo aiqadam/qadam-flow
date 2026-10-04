@@ -265,7 +265,7 @@ export function useAutomationsMutations(deps: MutationDeps) {
       }
 
       if (tableIds.length > 0) {
-        const tables = tableIds.map((id) => ({ id } as Table));
+        const tables = tableIds.map((id) => ({ id }) as Table);
         Promise.all(tables.map((tbl) => tablesApi.export(tbl.id)))
           .then((exported) => {
             tablesUtils.exportTables(exported);

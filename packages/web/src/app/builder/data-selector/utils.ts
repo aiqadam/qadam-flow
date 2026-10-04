@@ -139,13 +139,16 @@ function convertArrayToZippedView(
 function buildJsonPath(propertyPath: PathSegment[]): string {
   const propertyPathWithoutStepName = propertyPath.slice(1);
   //need array indexes to not be quoted so we can add 1 to them when displaying the path in mention
-  return propertyPathWithoutStepName.reduce((acc, segment) => {
-    return `${acc}[${
-      typeof segment === 'string'
-        ? `'${pathHelpers.escapeMentionKey(String(segment))}'`
-        : segment
-    }]`;
-  }, pathHelpers.propertyPathStarter(String(propertyPath[0]))) as string;
+  return propertyPathWithoutStepName.reduce(
+    (acc, segment) => {
+      return `${acc}[${
+        typeof segment === 'string'
+          ? `'${pathHelpers.escapeMentionKey(String(segment))}'`
+          : segment
+      }]`;
+    },
+    pathHelpers.propertyPathStarter(String(propertyPath[0])),
+  ) as string;
 }
 
 function buildDataSelectorNode(

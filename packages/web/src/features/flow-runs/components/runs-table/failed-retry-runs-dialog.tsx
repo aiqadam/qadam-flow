@@ -70,7 +70,8 @@ export const FailedRetryRunsDialog = ({
                               failedJobRetentionDays: retentionDays,
                             },
                           )
-                        : run.error.errorMessage ?? t('Internal server error')}
+                        : (run.error.errorMessage ??
+                          t('Internal server error'))}
                     </p>
                   </div>
                   <Button

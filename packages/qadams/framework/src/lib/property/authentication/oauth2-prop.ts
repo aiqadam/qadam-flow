@@ -19,7 +19,6 @@ const OAuthProp = z.union([
   StaticDropdownProperty,
 ])
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type OAuthProp =
   | ShortTextProperty<boolean>
   | SecretTextProperty<boolean>

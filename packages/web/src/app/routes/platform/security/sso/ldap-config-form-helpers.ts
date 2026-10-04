@@ -30,8 +30,8 @@ function buildUpsertLdapConfigRequest({
     caCertificate: clearCaCertificate
       ? null
       : isCaCertificateBlank(values.caCertificate)
-      ? undefined
-      : values.caCertificate,
+        ? undefined
+        : values.caCertificate,
   };
 }
 

@@ -163,10 +163,10 @@ const buildFlowGraph: (params: {
     step.type === FlowActionType.LOOP_ON_ITEMS
       ? buildLoopChildGraph({ step, orientation })
       : step.type === FlowActionType.ROUTER
-      ? buildRouterChildGraph({ step, orientation })
-      : sharedFlowCanvasUtils.hasContinueOnFailureBranches(step)
-      ? buildContinueOnFailureBranchesGraph({ step, orientation })
-      : null;
+        ? buildRouterChildGraph({ step, orientation })
+        : sharedFlowCanvasUtils.hasContinueOnFailureBranches(step)
+          ? buildContinueOnFailureBranchesGraph({ step, orientation })
+          : null;
 
   const graphWithChild = childGraph ? mergeGraph(graph, childGraph) : graph;
   const nextStepGraph = buildFlowGraph({

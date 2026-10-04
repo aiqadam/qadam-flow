@@ -142,7 +142,7 @@ export function MultiQuestionForm({
     !!answers[currentStep] &&
     !q.options.includes(answers[currentStep]);
 
-  const choiceOptions = q.type === 'choice' ? q.options ?? [] : [];
+  const choiceOptions = q.type === 'choice' ? (q.options ?? []) : [];
   const selectedIndex = choiceOptions.findIndex(
     (o) => answers[currentStep] === o,
   );

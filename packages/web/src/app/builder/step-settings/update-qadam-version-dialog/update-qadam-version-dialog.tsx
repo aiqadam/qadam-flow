@@ -170,7 +170,9 @@ const AdvancedForm: React.FC<AdvancedFormProps> = ({
     return changeType !== VersionChangeType.MINOR_OR_MAJOR;
   });
 
-  const visibleVersions = showAllVersions ? qadamVersions ?? [] : patchVersions;
+  const visibleVersions = showAllVersions
+    ? (qadamVersions ?? [])
+    : patchVersions;
 
   const latestVersion = changeVersionUtils.getLatestVersion({
     currentVersion,
@@ -193,10 +195,10 @@ const AdvancedForm: React.FC<AdvancedFormProps> = ({
         isCurrent
           ? `(${t('Current')})`
           : isLatest
-          ? `(${t('Latest')})`
-          : isLatestPatch
-          ? `(${t('Latest patch')})`
-          : ''
+            ? `(${t('Latest')})`
+            : isLatestPatch
+              ? `(${t('Latest patch')})`
+              : ''
       }`,
     };
   });

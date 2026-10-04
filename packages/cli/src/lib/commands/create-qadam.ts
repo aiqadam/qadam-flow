@@ -119,20 +119,6 @@ const scaffoldQadam = async (
     JSON.stringify(tsconfigLib, null, 2)
   );
 
-  const eslintConfig = {
-    extends: ['../../../../.eslintrc.json'],
-    ignorePatterns: ['!**/*'],
-    overrides: [
-      { files: ['*.ts', '*.tsx', '*.js', '*.jsx'], rules: {} },
-      { files: ['*.ts', '*.tsx'], rules: {} },
-      { files: ['*.js', '*.jsx'], rules: {} },
-    ],
-  };
-  await writeFile(
-    path.join(baseDir, '.eslintrc.json'),
-    JSON.stringify(eslintConfig, null, 2)
-  );
-
   const qadamNameCamelCase = qadamName
     .split('-')
     .map((s, i) => {

@@ -201,7 +201,6 @@ test.describe('Inline subflow (#363)', () => {
     const inlineMs = Date.now() - inlineStartedAt;
     expect(inlineRun?.status, `inline chain (${HOP_COUNT}x) should succeed`).toBe('SUCCEEDED');
 
-    // eslint-disable-next-line no-console
     console.log(
       `\n[inline-subflow] ${HOP_COUNT}-hop chain — queue: ${queueMs}ms, inline: ${inlineMs}ms, ` +
         `delta: ${queueMs - inlineMs}ms (${(100 * (queueMs - inlineMs) / queueMs).toFixed(1)}% faster)\n` +

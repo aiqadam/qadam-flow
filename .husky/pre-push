@@ -1,5 +1,4 @@
 #!/usr/bin/env sh
-. "$(dirname -- "$0")/_/husky.sh"
 
 if [ -n "${SKIP_CHECK:-}" ]; then
   exit 0
@@ -49,8 +48,10 @@ case "$RUN_CHECKS" in
     # as part of the y/lint gate, and only `critical` findings can stop a push —
     # after an explicit confirmation, because false positives exist.
     echo "Running AI review (advisory)..."
-    node tools/scripts/review.mjs
-    review_status=$?
+    # Husky 9 runs hooks under `sh -e`: capture the status instead of letting a
+    # non-zero review exit abort the hook before the critical-findings prompt.
+    review_status=0
+    node tools/scripts/review.mjs || review_status=$?
     if [ "$review_status" -eq 2 ]; then
       # No TTY means no human to take responsibility for the override — fail
       # closed rather than hanging on /dev/tty or pushing silently.

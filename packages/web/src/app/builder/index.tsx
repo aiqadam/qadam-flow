@@ -208,8 +208,8 @@ const BuilderPage = () => {
             rightSidebar === RightSideBarType.NONE
               ? '0%'
               : prefersSplitLayout
-              ? '95%'
-              : '60%'
+                ? '95%'
+                : '60%'
           }
           className={cn('min-w-0 bg-background z-30', {
             [animateResizeClassName]: !isDraggingHandle,

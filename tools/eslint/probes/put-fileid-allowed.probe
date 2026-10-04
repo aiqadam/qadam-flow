@@ -1,0 +1,2 @@
+declare const app: { put: (p: string, h: () => void) => void }
+app.put('/:fileId', () => undefined)

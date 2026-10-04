@@ -27,10 +27,7 @@ export type ClientField = {
 } & (
   | {
       type:
-        | FieldType.DATE
-        | FieldType.NUMBER
-        | FieldType.TEXT
-        | FieldType.BOOLEAN;
+        FieldType.DATE | FieldType.NUMBER | FieldType.TEXT | FieldType.BOOLEAN;
     }
   | {
       type: FieldType.STATIC_DROPDOWN;

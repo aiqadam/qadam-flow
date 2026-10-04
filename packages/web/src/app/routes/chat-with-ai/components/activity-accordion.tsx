@@ -179,10 +179,10 @@ function ToolStepRow({
 
   const label =
     status === 'running'
-      ? activeTitle ?? activeFallback
+      ? (activeTitle ?? activeFallback)
       : status === 'completed'
-      ? doneTitle ?? doneFallback
-      : doneFallback;
+        ? (doneTitle ?? doneFallback)
+        : doneFallback;
 
   return (
     <div className="py-1">

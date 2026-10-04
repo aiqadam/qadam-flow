@@ -805,7 +805,7 @@ for (const key of Object.keys(parser.functions)) {
 // Never call `Expression.toJSFunction`: it compiles the expression with
 // `new Function()` and is the subject of an advisory the fork does not
 // address. Nothing here uses it; `no-restricted-properties` in this
-// package's `.eslintrc.json` keeps it that way, and a test stubs it to throw.
+// package's `eslint.config.mjs` keeps it that way, and a test stubs it to throw.
 //
 // Why NOT null the operator tables (`unaryOps`/`binaryOps`/`ternaryOps`):
 // their inherited `Object.prototype` is also an accidental parse-time barrier

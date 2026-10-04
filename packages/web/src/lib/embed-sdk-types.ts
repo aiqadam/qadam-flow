@@ -109,8 +109,7 @@ export interface QadamFlowVendorInit {
 }
 
 export type QadamFlowClientEvent =
-  | QadamFlowClientInit
-  | QadamFlowClientRouteChanged;
+  QadamFlowClientInit | QadamFlowClientRouteChanged;
 
 export const NEW_CONNECTION_QUERY_PARAMS = {
   name: 'qadamName',

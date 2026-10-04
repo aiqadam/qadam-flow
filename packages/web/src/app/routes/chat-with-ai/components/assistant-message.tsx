@@ -514,8 +514,7 @@ function InlinePlanCard({
     );
     if (toolOutput.state === 'success' && !toolOutput.data.success) return null;
     const input = planPart.input as
-      | { planSummary?: string; steps?: string[] }
-      | undefined;
+      { planSummary?: string; steps?: string[] } | undefined;
     const steps = input?.steps ?? [];
     if (steps.length === 0) return null;
     return { title: input?.planSummary ?? '', steps };
@@ -543,9 +542,10 @@ function InlinePlanCard({
     if (!localPlan) return [];
     if (messageUpdates.length > 0) return messageUpdates;
     if (planCompleted) {
-      return localPlan.steps.map(
-        (_stepText, i): PlanStepUpdate => ({ stepIndex: i, status: 'done' }),
-      );
+      return localPlan.steps.map((_stepText, i): PlanStepUpdate => ({
+        stepIndex: i,
+        status: 'done',
+      }));
     }
     return messageUpdates;
   }, [messageUpdates, localPlan, planCompleted]);

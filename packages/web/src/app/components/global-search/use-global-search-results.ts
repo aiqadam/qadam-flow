@@ -124,7 +124,7 @@ export function useGlobalSearchResults(query: string, open: boolean) {
       type: 'flow' as const,
       label: flow.version.displayName,
       href: authenticationSession.appendProjectRoutePrefix(`/flows/${flow.id}`),
-      folderName: flow.folderId ? folderMap.get(flow.folderId) ?? null : null,
+      folderName: flow.folderId ? (folderMap.get(flow.folderId) ?? null) : null,
       updated: flow.updated ? String(flow.updated) : null,
       status: flow.status,
       projectName: currentProjectName,
@@ -139,7 +139,9 @@ export function useGlobalSearchResults(query: string, open: boolean) {
       href: authenticationSession.appendProjectRoutePrefix(
         `/tables/${table.id}`,
       ),
-      folderName: table.folderId ? folderMap.get(table.folderId) ?? null : null,
+      folderName: table.folderId
+        ? (folderMap.get(table.folderId) ?? null)
+        : null,
       updated: table.updated ? String(table.updated) : null,
       projectName: currentProjectName,
     }),

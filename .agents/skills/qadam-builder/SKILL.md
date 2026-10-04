@@ -44,7 +44,6 @@ src/
     triggers/           # One file per trigger
     common/             # Shared helpers (optional)
 package.json
-.eslintrc.json
 tsconfig.json
 tsconfig.lib.json
 ```
@@ -72,19 +71,7 @@ tsconfig.lib.json
 
 Add third-party SDKs to `dependencies` with a pinned version (e.g. `"stripe": "18.2.1"`).
 
-**`.eslintrc.json`**
-
-```json
-{
-    "extends": ["../../../../.eslintrc.json"],
-    "ignorePatterns": ["!**/*"],
-    "overrides": [
-        { "files": ["*.ts", "*.tsx", "*.js", "*.jsx"], "rules": {} },
-        { "files": ["*.ts", "*.tsx"], "rules": {} },
-        { "files": ["*.js", "*.jsx"], "rules": {} }
-    ]
-}
-```
+There is no per-qadam ESLint config: every qadam is linted with `packages/qadams/eslint.config.mjs`, which ESLint finds by walking up from the qadam directory.
 
 **`tsconfig.json`**
 

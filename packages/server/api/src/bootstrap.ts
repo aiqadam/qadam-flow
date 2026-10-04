@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports */
+/* eslint-disable @typescript-eslint/no-require-imports */
 // Uses require() instead of import to prevent hoisting, ensuring dotenv
 // populates process.env before any module-level code reads it.
 // quiet: dotenv 17 otherwise prints a plain-text "injecting env -- tip: <vendor ad>" line at

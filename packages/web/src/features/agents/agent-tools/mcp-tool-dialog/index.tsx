@@ -11,7 +11,6 @@ import { Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
-import { z } from 'zod';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -26,25 +25,16 @@ import { useMcpToolDialogStore } from '../stores/mcp-tools';
 
 import { AddMcpToolForm } from './add-mcp-tool-form';
 
-const McpToolFormSchema = z.object({
-  toolName: z.string().min(1),
-  serverUrl: z.string().url(),
-  protocol: z.nativeEnum(McpProtocol),
-  authType: z.nativeEnum(McpAuthType),
-  accessToken: z.string().optional(),
-  apiKeyHeader: z.string().optional(),
-  apiKey: z.string().optional(),
-  headers: z
-    .array(
-      z.object({
-        key: z.string(),
-        value: z.string(),
-      }),
-    )
-    .optional(),
-});
-
-export type McpToolFormData = z.infer<typeof McpToolFormSchema>;
+export type McpToolFormData = {
+  toolName: string;
+  serverUrl: string;
+  protocol: McpProtocol;
+  authType: McpAuthType;
+  accessToken?: string;
+  apiKeyHeader?: string;
+  apiKey?: string;
+  headers?: { key: string; value: string }[];
+};
 
 type AgentToolsDialogProps = {
   tools: AgentTool[];

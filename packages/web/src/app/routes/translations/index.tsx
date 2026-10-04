@@ -152,8 +152,8 @@ function TranslationsPage() {
       a === project.defaultLocale
         ? -1
         : b === project.defaultLocale
-        ? 1
-        : a.localeCompare(b),
+          ? 1
+          : a.localeCompare(b),
     );
   }, [localesResponse, addedLocales, project.defaultLocale]);
   const savedLocales = localesResponse?.locales ?? [];

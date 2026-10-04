@@ -4,8 +4,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { colorsUtils } from '@/lib/color-utils';
 import { cn } from '@/lib/utils';
 
-interface ImageWithColorBackgroundProps
-  extends React.ImgHTMLAttributes<HTMLImageElement> {
+interface ImageWithColorBackgroundProps extends React.ImgHTMLAttributes<HTMLImageElement> {
   fallback?: React.ReactNode;
   border?: boolean;
   roundedCorner?: boolean;

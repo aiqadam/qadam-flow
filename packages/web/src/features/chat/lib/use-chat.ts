@@ -534,8 +534,8 @@ export function useAgentChat({
     sendStatus.type === 'error'
       ? sendStatus.message
       : streamError
-      ? streamError
-      : null;
+        ? streamError
+        : null;
 
   const wasCancelled = sendStatus.type === 'cancelled';
 

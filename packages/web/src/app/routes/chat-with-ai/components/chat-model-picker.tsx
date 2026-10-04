@@ -63,7 +63,7 @@ export function ChatModelPicker({
             {/* A pinned `modelName` that this allow-listed dropdown doesn't carry (e.g. picked
               before an allow-list change) is still the model the run actually uses — showing
               "Auto" there would claim no explicit choice was made. */}
-            {selectedModel ? selectedModel.name : modelName ?? t('Auto')}
+            {selectedModel ? selectedModel.name : (modelName ?? t('Auto'))}
           </span>
           <ChevronDown className="size-3 shrink-0 opacity-50" />
         </Button>

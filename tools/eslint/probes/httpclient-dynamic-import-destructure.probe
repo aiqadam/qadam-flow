@@ -1,0 +1,4 @@
+export const p11 = async (): Promise<unknown> => {
+    const { AxiosHttpClient } = await import('@aiqadam/qadams-common')
+    return AxiosHttpClient
+}

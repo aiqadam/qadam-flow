@@ -3,8 +3,10 @@ import { ArrowDown, ArrowUp, ArrowUpDown, LucideIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 
-interface DataTableColumnHeaderProps<TData, TValue>
-  extends React.HTMLAttributes<HTMLDivElement> {
+interface DataTableColumnHeaderProps<
+  TData,
+  TValue,
+> extends React.HTMLAttributes<HTMLDivElement> {
   column: Column<TData, TValue>;
   title: string;
   icon?: LucideIcon;
@@ -24,8 +26,8 @@ export function DataTableColumnHeader<TData, TValue>({
       sortDirection === 'desc'
         ? ArrowDown
         : sortDirection === 'asc'
-        ? ArrowUp
-        : ArrowUpDown;
+          ? ArrowUp
+          : ArrowUpDown;
 
     return (
       <Button

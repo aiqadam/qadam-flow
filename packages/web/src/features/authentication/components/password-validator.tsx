@@ -92,8 +92,8 @@ const PasswordRequirementsList = ({
                 rule.passed
                   ? 'bg-green-500'
                   : isError
-                  ? 'bg-red-500'
-                  : 'bg-muted-foreground/40',
+                    ? 'bg-red-500'
+                    : 'bg-muted-foreground/40',
               )}
             />
             <span className="text-foreground">{t(rule.label)}</span>

@@ -158,14 +158,14 @@ export const chatCompactionPlan = {
         const exchanges = uiMessages
             .slice(start, cut)
             .reduce<Array<{ endIndex: number, rendered: string }>>((acc, message, offset) => {
-            const index = start + offset
-            const rendered = renderMessage(message)
-            const last = acc.at(-1)
-            if (isNil(last) || chatContextUtils.isReplayableUserTurn(message)) {
-                return [...acc, { endIndex: index + 1, rendered }]
-            }
-            return [...acc.slice(0, -1), { endIndex: index + 1, rendered: joinRendered([last.rendered, rendered]) }]
-        }, [])
+                const index = start + offset
+                const rendered = renderMessage(message)
+                const last = acc.at(-1)
+                if (isNil(last) || chatContextUtils.isReplayableUserTurn(message)) {
+                    return [...acc, { endIndex: index + 1, rendered }]
+                }
+                return [...acc.slice(0, -1), { endIndex: index + 1, rendered: joinRendered([last.rendered, rendered]) }]
+            }, [])
             .map((exchange) => ({ ...exchange, rendered: clip({ text: exchange.rendered, max: maxInputChars }) }))
         return exchanges.reduce<SummarySlice[]>((slices, exchange) => {
             const last = slices.at(-1)

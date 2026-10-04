@@ -42,7 +42,6 @@ export const InputProperty = z.union([
   ColorProperty,
 ]);
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type InputProperty =
   | ShortTextProperty<boolean>
   | LongTextProperty<boolean>

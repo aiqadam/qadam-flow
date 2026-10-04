@@ -102,16 +102,16 @@ export const TestSampleDataViewer = React.memo(
     const status: 'success' | 'failed' | 'testing' | 'idle' = isTesting
       ? 'testing'
       : isFailed
-      ? 'failed'
-      : 'success';
+        ? 'failed'
+        : 'success';
 
     const outputData = errorMessage ?? sampleData;
     const activeData =
       activeTab === 'Input'
         ? sampleDataInput
         : activeTab === 'Logs'
-        ? consoleLogs
-        : outputData;
+          ? consoleLogs
+          : outputData;
 
     const showAgentView = isRunAgent(currentStep) && !errorMessage;
     const friendlyError =

@@ -75,7 +75,6 @@ type WorkerHandler = (data: unknown, principal: WorkerPrincipal, projectId: null
 
 async function handlerFor(event: WebsocketServerEvent, socket: Socket): Promise<WorkerHandler> {
     const fastify = { log, get: vi.fn() }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await workerMachineController(fastify as any, {} as any)
     const registration = addListener.mock.calls.find(call => call[0] === PrincipalType.WORKER && call[1] === event)
     if (!registration) {

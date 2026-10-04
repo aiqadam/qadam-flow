@@ -47,7 +47,7 @@ type RunScriptParams = {
     /**
      * A key-value map of functions that are available to the script during execution.
      */
-    // eslint-disable-next-line @typescript-eslint/ban-types
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
     functions: Record<string, Function>
 
 }

@@ -64,8 +64,8 @@ const calculateViewportDelta = (
           canvas.width +
           flowCanvasConsts.AP_NODE_SIZE.STEP.width * 2)
       : nodePosition.x < 0
-      ? -1 * nodePosition.x
-      : 0,
+        ? -1 * nodePosition.x
+        : 0,
   y:
     nodePosition.y > canvas.height
       ? nodePosition.y -

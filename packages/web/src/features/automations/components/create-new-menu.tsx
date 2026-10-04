@@ -183,7 +183,4 @@ type CreateNewMenuProps = {
 };
 
 export type CreateInFolderKind =
-  | 'flow'
-  | 'table'
-  | 'import-flow'
-  | 'import-table';
+  'flow' | 'table' | 'import-flow' | 'import-table';

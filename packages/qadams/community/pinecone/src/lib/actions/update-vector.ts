@@ -134,9 +134,11 @@ export const updateVector = createAction({
         updateRequest.metadata = metadataObj;
       }
 
-      namespace
-        ? await index.namespace(namespace).update(updateRequest)
-        : await index.update(updateRequest);
+      if (namespace) {
+        await index.namespace(namespace).update(updateRequest);
+      } else {
+        await index.update(updateRequest);
+      }
 
       return {
         success: true,

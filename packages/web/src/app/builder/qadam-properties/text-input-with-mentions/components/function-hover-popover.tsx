@@ -82,8 +82,8 @@ export function FunctionEditorTooltip({
       const openId = startEl
         ? startEl.getAttribute('data-function-start')
         : endEl
-        ? endEl.getAttribute('data-function-end')
-        : sepEl!.getAttribute('data-function-sep');
+          ? endEl.getAttribute('data-function-end')
+          : sepEl!.getAttribute('data-function-sep');
 
       if (!openId) return;
 
@@ -232,8 +232,8 @@ export function FunctionTooltipCard({
   const top = centered
     ? (anchorTop + anchorBottom) / 2
     : showAbove
-    ? anchorTop - TOOLTIP_GAP
-    : anchorBottom + TOOLTIP_GAP;
+      ? anchorTop - TOOLTIP_GAP
+      : anchorBottom + TOOLTIP_GAP;
 
   const badgeCenterX =
     anchorRight != null ? (anchorLeft + anchorRight) / 2 : anchorLeft;
@@ -261,8 +261,8 @@ export function FunctionTooltipCard({
         transform: centered
           ? 'translateY(-50%)'
           : showAbove
-          ? 'translateY(-100%)'
-          : undefined,
+            ? 'translateY(-100%)'
+            : undefined,
       }}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}

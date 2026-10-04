@@ -12,7 +12,7 @@ export const decodeEmbeddings = (embeddingsString: Buffer) => {
     try {
       embeddings = JSON.parse(embeddings as string);
     } catch {
-      null;
+      // not JSON: use the value as given
     }
   }
 
@@ -112,7 +112,7 @@ export const convertToFilter = (infosToGetPoint: {
         try {
           value = JSON.parse(value);
         } catch {
-          null;
+          // not JSON: use the value as given
         }
       }
 

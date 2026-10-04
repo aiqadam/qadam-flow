@@ -100,8 +100,7 @@ const TestTriggerSection = React.memo(
 
     const triggerName = currentStep.settings.triggerName;
     const triggerInput = currentStep.settings.input as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     const explanationContext: ErrorExplanationContext = {
       qadamName: currentStep.settings.qadamName,
       qadamVersion: currentStep.settings.qadamVersion,

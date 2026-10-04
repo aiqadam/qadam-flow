@@ -26,7 +26,8 @@ const chatBubbleVariant = cva('flex gap-2 w-full items-start relative group', {
 });
 
 interface ChatBubbleProps
-  extends React.HTMLAttributes<HTMLDivElement>,
+  extends
+    React.HTMLAttributes<HTMLDivElement>,
     VariantProps<typeof chatBubbleVariant> {}
 
 const ChatBubble = React.forwardRef<HTMLDivElement, ChatBubbleProps>(
@@ -93,7 +94,8 @@ const chatBubbleMessageVariants = cva('px-1', {
 });
 
 interface ChatBubbleMessageProps
-  extends React.HTMLAttributes<HTMLDivElement>,
+  extends
+    React.HTMLAttributes<HTMLDivElement>,
     VariantProps<typeof chatBubbleMessageVariants> {
   isLoading?: boolean;
 }

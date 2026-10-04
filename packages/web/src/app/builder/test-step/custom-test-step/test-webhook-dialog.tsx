@@ -84,8 +84,7 @@ type TestTriggerWebhookDialogProps = {
   testingMode: 'trigger';
 };
 type TestWebhookDialogProps =
-  | TestWaitForNextWebhookDialogProps
-  | TestTriggerWebhookDialogProps;
+  TestWaitForNextWebhookDialogProps | TestTriggerWebhookDialogProps;
 
 const TestTriggerWebhookDialog = ({
   open,

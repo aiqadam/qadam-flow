@@ -12,8 +12,7 @@ export interface SquareDashedBottomCodeIconHandle {
   stopAnimation: () => void;
 }
 
-interface SquareDashedBottomCodeIconProps
-  extends HTMLAttributes<HTMLDivElement> {
+interface SquareDashedBottomCodeIconProps extends HTMLAttributes<HTMLDivElement> {
   size?: number;
 }
 

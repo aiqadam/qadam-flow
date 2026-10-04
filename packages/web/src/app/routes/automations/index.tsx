@@ -176,7 +176,7 @@ const AutomationsPageContent = ({ projectId }: { projectId: string }) => {
           status?: 'ENABLED' | 'DISABLED';
         } | null;
         const folderName = item.folderId
-          ? folders.find((f) => f.id === item.folderId)?.displayName ?? null
+          ? (folders.find((f) => f.id === item.folderId)?.displayName ?? null)
           : null;
         recordAccess({
           id: `flow-${item.id}`,
@@ -197,7 +197,7 @@ const AutomationsPageContent = ({ projectId }: { projectId: string }) => {
           `/tables/${item.id}`,
         );
         const folderName = item.folderId
-          ? folders.find((f) => f.id === item.folderId)?.displayName ?? null
+          ? (folders.find((f) => f.id === item.folderId)?.displayName ?? null)
           : null;
         recordAccess({
           id: `table-${item.id}`,

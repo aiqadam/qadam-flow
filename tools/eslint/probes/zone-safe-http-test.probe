@@ -1,0 +1,5 @@
+export const __zpA = async (): Promise<unknown> => fetch('http://x')
+export const __zpB = async (): Promise<unknown> => globalThis.fetch('http://x')
+export const __zpC = async (): Promise<unknown> => safeHttp.fetch('http://x')
+export const __zpD = async (): Promise<unknown> => other.fetch('http://x')
+declare const other: { fetch: (u: string) => Promise<unknown> }

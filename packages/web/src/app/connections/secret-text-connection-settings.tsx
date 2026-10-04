@@ -16,13 +16,13 @@ type SecretTextConnectionSettingsProps = {
   authProperty: SecretTextProperty<boolean>;
 };
 
+type SecretTextFormValues = {
+  request: z.infer<typeof UpsertSecretTextRequest>;
+};
+
 const SecretTextConnectionSettings = React.memo(
   ({ authProperty }: SecretTextConnectionSettingsProps) => {
-    const formSchema = z.object({
-      request: UpsertSecretTextRequest,
-    });
-
-    const form = useFormContext<z.infer<typeof formSchema>>();
+    const form = useFormContext<SecretTextFormValues>();
 
     return (
       <FormField

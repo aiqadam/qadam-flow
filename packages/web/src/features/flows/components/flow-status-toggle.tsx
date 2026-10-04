@@ -62,8 +62,8 @@ const FlowStatusToggle = ({ flow }: FlowStatusToggleProps) => {
             ? isNil(flow.publishedVersionId)
               ? t('Please publish flow first')
               : isFlowPublished
-              ? t('Flow is on')
-              : t('Flow is off')
+                ? t('Flow is on')
+                : t('Flow is off')
             : t('Permission Needed')}
         </TooltipContent>
       </Tooltip>

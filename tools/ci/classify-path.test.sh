@@ -108,7 +108,9 @@ check_path code tsconfig.base.json
 check_path code .env.dev
 check_path code .env.tests
 check_path code .dockerignore
-check_path code .eslintrc.json
+check_path code eslint.config.mjs
+check_path code tools/eslint/base.mjs
+check_path code packages/qadams/eslint.config.mjs
 
 # --- the classifier's own source must force the full suite ---
 check_path code tools/ci/classify-path.sh

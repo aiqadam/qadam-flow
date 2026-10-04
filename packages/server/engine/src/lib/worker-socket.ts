@@ -54,7 +54,6 @@ export const workerSocket = {
         // can kill us, so if it's not there to talk to, we self-terminate.
         initialConnectWatchdog = setTimeout(() => {
             initialConnectWatchdog = undefined
-            // eslint-disable-next-line no-console
             console.error('[engine] Failed to connect to worker within 60s, exiting')
             process.exit(5)
         }, INITIAL_CONNECT_TIMEOUT_MS)
@@ -75,7 +74,6 @@ export const workerSocket = {
             if (reason === 'io client disconnect') {
                 return
             }
-            // eslint-disable-next-line no-console
             console.error(`[engine] Worker socket disconnected (${reason}), exiting`)
             process.exit(6)
         })
