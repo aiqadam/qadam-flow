@@ -35,13 +35,13 @@ describe('environmentMigrations QF_/AP_ prefix aliasing', () => {
         vi.resetModules()
         vi.restoreAllMocks()
         for (const key of ENV_KEYS_UNDER_TEST) {
-            Reflect.deleteProperty(process.env, key)
+            delete process.env[key]
         }
     })
 
     afterEach(() => {
         for (const key of ENV_KEYS_UNDER_TEST) {
-            Reflect.deleteProperty(process.env, key)
+            delete process.env[key]
         }
         Object.assign(process.env, originalEnv)
     })

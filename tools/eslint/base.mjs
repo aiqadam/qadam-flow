@@ -46,7 +46,6 @@ export const baseConfigs = {
     unusedVarsOptions,
     lodashPatterns: LODASH_PATTERNS,
     tsFiles: TS_FILES,
-    jsFiles: JS_FILES,
     scriptFiles: SCRIPT_FILES,
 }
 

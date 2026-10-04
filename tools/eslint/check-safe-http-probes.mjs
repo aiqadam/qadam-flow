@@ -5,6 +5,7 @@
 //
 //   node tools/eslint/check-safe-http-probes.mjs
 import { ESLint } from 'eslint'
+import { rmSync, writeFileSync } from 'node:fs'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
@@ -38,6 +39,15 @@ const CASES = [
     { probe: 'zone-safe-http-test', append: 'server/utils/test/safe-http-fetch.test.ts', expect: ['no-restricted-syntax@1', 'no-restricted-syntax@2', 'no-restricted-syntax@4'] },
 ]
 
+// A probe interrupted mid-run would leave bypass code appended to the SSRF wrapper itself, or a stray probe directory.
+let restoreInterrupted = () => {}
+for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.once(signal, () => {
+        restoreInterrupted()
+        process.exit(130)
+    })
+}
+
 const failures = []
 for (const probeCase of CASES) {
     const failure = await runCase(probeCase)
@@ -59,10 +69,16 @@ async function runCase({ probe, in: newFile, append, expect }) {
     const original = append ? await readFile(file, 'utf8') : null
     const lineOffset = original === null ? 0 : original.split('\n').length
     const packageDir = path.join(root, 'packages', relativePath.split('/').slice(0, relativePath.startsWith('server/') ? 2 : 1).join('/'))
+    restoreInterrupted = () => (original === null ? rmSync(path.dirname(file), { recursive: true, force: true }) : writeFileSync(file, original))
     try {
         await mkdir(path.dirname(file), { recursive: true })
         await writeFile(file, original === null ? source : `${original}\n${source}`)
         const [result] = await new ESLint({ cwd: packageDir }).lintFiles([file])
+        // A parse error carries no ruleId, so without this the cases that expect nothing would pass on a file that never parsed.
+        const fatal = result.messages.find((message) => message.fatal)
+        if (fatal) {
+            return `FAIL ${probe}: could not be linted: ${fatal.message}`
+        }
         const actual = result.messages
             .filter((message) => RESTRICTED.test(message.ruleId ?? ''))
             .map((message) => `${message.ruleId}@${message.line - lineOffset}`)
@@ -79,5 +95,6 @@ async function runCase({ probe, in: newFile, append, expect }) {
         else {
             await writeFile(file, original)
         }
+        restoreInterrupted = () => {}
     }
 }

@@ -117,7 +117,7 @@ describe('safeHttp provider timeout resolution', () => {
     const FIRST_BYTE = 'AP_HTTP_FIRST_BYTE_TIMEOUT_SECONDS'
 
     afterEach(() => {
-        Reflect.deleteProperty(process.env, FIRST_BYTE)
+        delete process.env[FIRST_BYTE]
     })
 
     it('falls back to the default when unset', () => {

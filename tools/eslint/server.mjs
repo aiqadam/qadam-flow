@@ -20,7 +20,11 @@ export const serverConfigs = {
             },
         },
     ),
-    /** Former `packages/server/api/.eslintrc.json`, minus the `test/**` relaxation, which only ever applied to api's own tests. */
+    /**
+     * Former `packages/server/api/.eslintrc.json`. Its `test/**` relaxation reached utils, engine, worker
+     * and shared as well, because `@eslint/eslintrc` resolved an inherited override against the package
+     * that extended it, so it lives here rather than in api's own config.
+     */
     api: ({ tsconfigRootDir }) => defineConfig(
         serverConfigs.server(),
         {
@@ -38,6 +42,13 @@ export const serverConfigs = {
             },
             plugins: { '@stylistic': stylistic },
             rules: apiRules,
+        },
+        {
+            files: ['test/**/*.ts'],
+            rules: {
+                '@typescript-eslint/no-explicit-any': 'off',
+                '@typescript-eslint/no-dynamic-delete': 'off',
+            },
         },
         {
             settings: {
@@ -90,17 +101,11 @@ export const serverConfigs = {
             },
         },
     ),
-    apiTestRelaxations: () => defineConfig({
-        files: ['test/**/*.ts'],
-        rules: {
-            '@typescript-eslint/no-explicit-any': 'off',
-            '@typescript-eslint/no-dynamic-delete': 'off',
-        },
-    }),
 }
 
 // The formatting rules typescript-eslint 8 dropped (brace-style, indent, quotes, ...) live on
-// as same-named rules in @stylistic with identical options, so the server code style is unchanged.
+// as same-named rules in @stylistic with identical options. They are near-identical, not identical:
+// indent and comma-dangle read a few multi-line constructs differently, and those sites were reflowed.
 const apiRules = {
     'import-x/no-unresolved': 'off',
     // v4 cannot see type-only exports (e.g. `MutexInterface` from async-mutex); tsc already checks this.
