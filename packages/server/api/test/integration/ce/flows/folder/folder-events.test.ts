@@ -1,6 +1,7 @@
 import { ApplicationEventName } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
+import type { Mock } from 'vitest'
 import * as applicationEventsModule from '../../../../../src/app/helper/application-events'
 import { actionsEmitted } from '../../../../helpers/application-events'
 import { db } from '../../../../helpers/db'
@@ -20,7 +21,7 @@ afterAll(async () => {
 })
 
 describe('Folder application events', () => {
-    let sendUserEventSpy: ReturnType<typeof vi.fn>
+    let sendUserEventSpy: Mock
 
     beforeEach(() => {
         sendUserEventSpy = vi.fn()

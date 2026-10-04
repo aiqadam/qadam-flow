@@ -1,7 +1,7 @@
 import { ConsumeJobRequest } from '@aiqadam/shared'
 import { Worker as BullMQWorker } from 'bullmq'
 import { FastifyBaseLogger } from 'fastify'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
 import { createQueueDispatcher, ERROR_RETRY_DELAY_MS, QueueDispatcher, WAITER_TIMEOUT_MS } from '../../../../../src/app/workers/job-queue/queue-dispatcher'
 
 const mockLog: FastifyBaseLogger = {
@@ -31,8 +31,8 @@ function createFakeJob(id: string): ConsumeJobRequest {
 
 describe('QueueDispatcher', () => {
     let dispatcher: QueueDispatcher
-    let dequeueMock: ReturnType<typeof vi.fn>
-    let onOrphanedJobMock: ReturnType<typeof vi.fn>
+    let dequeueMock: Mock
+    let onOrphanedJobMock: Mock
     let dequeueCallCount: number
     let pendingDequeues: Array<{
         resolve: (value: ConsumeJobRequest | null) => void

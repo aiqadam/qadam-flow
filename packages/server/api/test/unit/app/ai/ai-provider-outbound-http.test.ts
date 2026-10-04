@@ -39,7 +39,9 @@ const { bedrockClientConfigs, bedrockSend, nodeHttpHandlers } = vi.hoisted(() =>
 })
 
 vi.mock('@smithy/node-http-handler', () => ({
-    NodeHttpHandler: vi.fn((options: Record<string, unknown>) => {
+    // A class mock, not an arrow: vitest 4 constructs the mock when the SDK calls
+    // `new NodeHttpHandler(...)`, and an arrow function is not a constructor.
+    NodeHttpHandler: vi.fn(function NodeHttpHandlerMock(options: Record<string, unknown>) {
         const handler = { stubbedNodeHttpHandler: true }
         nodeHttpHandlers.push({ options, handler })
         return handler
@@ -47,12 +49,16 @@ vi.mock('@smithy/node-http-handler', () => ({
 }))
 
 vi.mock('@aws-sdk/client-bedrock', () => ({
-    BedrockClient: vi.fn((config: Record<string, unknown>) => {
+    BedrockClient: vi.fn(function BedrockClientMock(config: Record<string, unknown>) {
         bedrockClientConfigs.push(config)
         return { send: bedrockSend }
     }),
-    ListFoundationModelsCommand: vi.fn(() => ({ kind: 'foundation-models' })),
-    ListInferenceProfilesCommand: vi.fn(() => ({ kind: 'inference-profiles' })),
+    ListFoundationModelsCommand: vi.fn(function ListFoundationModelsCommandMock() {
+        return { kind: 'foundation-models' }
+    }),
+    ListInferenceProfilesCommand: vi.fn(function ListInferenceProfilesCommandMock() {
+        return { kind: 'inference-profiles' }
+    }),
     ModelModality: { TEXT: 'TEXT', IMAGE: 'IMAGE', EMBEDDING: 'EMBEDDING' },
 }))
 

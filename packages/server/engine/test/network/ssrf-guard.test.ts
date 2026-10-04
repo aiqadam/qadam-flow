@@ -25,7 +25,11 @@ function connectOnce(options: { host: string, port: number }): Promise<{ connect
 
 describe('ssrf-guard', () => {
     afterEach(() => {
+        // Uninstall before restoring mocks: the guard captures `dns.lookup` on install and
+        // reinstates it on uninstall, so restoring first would let uninstall reinstall a spy
+        // whose implementation vitest 4 no longer resets. Restoring last leaves the real lookup.
         ssrfGuard.uninstall()
+        vi.restoreAllMocks()
     })
 
     describe('isBlockedIp', () => {
@@ -113,10 +117,6 @@ describe('ssrf-guard', () => {
             { address: '8.8.8.8', family: 4 },
             { address: '1.1.1.1', family: 4 },
         ]
-
-        afterEach(() => {
-            vi.restoreAllMocks()
-        })
 
         it('promises api: blocks when caller omits { all: true } but one A record is private', async () => {
             vi.spyOn(dns.promises, 'lookup').mockResolvedValue(publicThenPrivate as unknown as dns.LookupAddress)

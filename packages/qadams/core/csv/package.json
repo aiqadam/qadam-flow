@@ -20,6 +20,6 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "vitest": "3.2.7"
+    "vitest": "4.1.11"
   }
 }
