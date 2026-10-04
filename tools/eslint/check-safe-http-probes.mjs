@@ -6,7 +6,7 @@
 //   node tools/eslint/check-safe-http-probes.mjs
 import { ESLint } from 'eslint'
 import { rmSync, writeFileSync } from 'node:fs'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 const root = path.resolve(import.meta.dirname, '../..')
@@ -39,21 +39,45 @@ const CASES = [
     { probe: 'zone-safe-http-test', append: 'server/utils/test/safe-http-fetch.test.ts', expect: ['no-restricted-syntax@1', 'no-restricted-syntax@2', 'no-restricted-syntax@4'] },
 ]
 
-// A probe interrupted mid-run would leave bypass code appended to the SSRF wrapper itself, or a stray probe directory.
-let restoreInterrupted = () => {}
+// Every probe file is written before the first lint call. typescript-estree resolves a tsconfig's
+// file list when it first builds the program and then caches it, so a file created afterwards is
+// "not found in any of the provided project(s)" — a timing coin-flip that a loaded CI runner loses.
+const prepared = []
+
+// Restoring is synchronous so it can also run from a signal handler: an interrupted run must not
+// leave bypass code appended to the SSRF wrapper itself, or a stray probe directory.
+function restoreAll() {
+    for (const { file, original } of prepared) {
+        if (original === null) {
+            rmSync(path.dirname(file), { recursive: true, force: true })
+        }
+        else {
+            writeFileSync(file, original)
+        }
+    }
+}
+
 for (const signal of ['SIGINT', 'SIGTERM']) {
     process.once(signal, () => {
-        restoreInterrupted()
+        restoreAll()
         process.exit(130)
     })
 }
 
 const failures = []
-for (const probeCase of CASES) {
-    const failure = await runCase(probeCase)
-    if (failure) {
-        failures.push(failure)
+try {
+    for (const probeCase of CASES) {
+        prepared.push(await prepare(probeCase))
     }
+    for (const entry of prepared) {
+        const failure = await lint(entry)
+        if (failure) {
+            failures.push(failure)
+        }
+    }
+}
+finally {
+    restoreAll()
 }
 
 if (failures.length > 0) {
@@ -62,39 +86,37 @@ if (failures.length > 0) {
 }
 console.log(`safe-http lint probes: all ${CASES.length} cases report what they should`)
 
-async function runCase({ probe, in: newFile, append, expect }) {
+async function prepare({ probe, in: newFile, append, expect }) {
     const source = await readFile(path.join(probeDir, `${probe}.probe`), 'utf8')
     const relativePath = newFile ?? append
     const file = path.join(root, 'packages', relativePath)
     const original = append ? await readFile(file, 'utf8') : null
-    const lineOffset = original === null ? 0 : original.split('\n').length
-    const packageDir = path.join(root, 'packages', relativePath.split('/').slice(0, relativePath.startsWith('server/') ? 2 : 1).join('/'))
-    restoreInterrupted = () => (original === null ? rmSync(path.dirname(file), { recursive: true, force: true }) : writeFileSync(file, original))
-    try {
-        await mkdir(path.dirname(file), { recursive: true })
-        await writeFile(file, original === null ? source : `${original}\n${source}`)
-        const [result] = await new ESLint({ cwd: packageDir }).lintFiles([file])
-        // A parse error carries no ruleId, so without this the cases that expect nothing would pass on a file that never parsed.
-        const fatal = result.messages.find((message) => message.fatal)
-        if (fatal) {
-            return `FAIL ${probe}: could not be linted: ${fatal.message}`
-        }
-        const actual = result.messages
-            .filter((message) => RESTRICTED.test(message.ruleId ?? ''))
-            .map((message) => `${message.ruleId}@${message.line - lineOffset}`)
-            .sort()
-        const wanted = [...expect].sort()
-        return JSON.stringify(actual) === JSON.stringify(wanted)
-            ? null
-            : `FAIL ${probe}: expected [${wanted.join(', ')}], got [${actual.join(', ')}]`
+    const entry = {
+        probe,
+        expect,
+        file,
+        original,
+        lineOffset: original === null ? 0 : original.split('\n').length,
+        packageDir: path.join(root, 'packages', relativePath.split('/').slice(0, relativePath.startsWith('server/') ? 2 : 1).join('/')),
     }
-    finally {
-        if (original === null) {
-            await rm(path.dirname(file), { recursive: true, force: true })
-        }
-        else {
-            await writeFile(file, original)
-        }
-        restoreInterrupted = () => {}
+    await mkdir(path.dirname(file), { recursive: true })
+    await writeFile(file, original === null ? source : `${original}\n${source}`)
+    return entry
+}
+
+async function lint({ probe, expect, file, lineOffset, packageDir }) {
+    const [result] = await new ESLint({ cwd: packageDir }).lintFiles([file])
+    // A parse error carries no ruleId, so without this the cases that expect nothing would pass on a file that never parsed.
+    const fatal = result.messages.find((message) => message.fatal)
+    if (fatal) {
+        return `FAIL ${probe}: could not be linted: ${fatal.message}`
     }
+    const actual = result.messages
+        .filter((message) => RESTRICTED.test(message.ruleId ?? ''))
+        .map((message) => `${message.ruleId}@${message.line - lineOffset}`)
+        .sort()
+    const wanted = [...expect].sort()
+    return JSON.stringify(actual) === JSON.stringify(wanted)
+        ? null
+        : `FAIL ${probe}: expected [${wanted.join(', ')}], got [${actual.join(', ')}]`
 }
