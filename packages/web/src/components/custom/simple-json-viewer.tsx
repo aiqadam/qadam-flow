@@ -1,7 +1,7 @@
+import ReactJson from '@microlink/react-json-view';
 import { t } from 'i18next';
 import { Copy, Check } from 'lucide-react';
 import React, { useState } from 'react';
-import ReactJson from 'react-json-view';
 import { toast } from 'sonner';
 
 import { useTheme } from '@/components/providers/theme-provider';
@@ -105,6 +105,8 @@ export const SimpleJsonViewer: React.FC<SimpleJsonViewerProps> = ({
               displayDataTypes={false}
               name={false}
               quotesOnKeys={false}
+              escapeStrings={false}
+              showComma={false}
               src={data}
               collapsed={false}
               displayObjectSize={false}
