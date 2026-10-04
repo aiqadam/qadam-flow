@@ -590,9 +590,8 @@ fi
 echo "== pre-push hook: y / n / lint paths keep their behaviour and never review =="
 
 hook_dir="$tmp/hook/.husky"
-mkdir -p "$hook_dir/_"
+mkdir -p "$hook_dir"
 cp "$hook" "$hook_dir/pre-push"
-: > "$hook_dir/_/husky.sh"
 
 hook_repo="$tmp/hook-repo"
 mkdir -p "$hook_repo"
@@ -626,11 +625,11 @@ export STUB_NPM_LOG="$tmp/stub-npm.log"
 export STUB_NPX_LOG="$tmp/stub-npx.log"
 
 # run_hook <answer> <stub-node-exit> — leaves $status and $out. The hook is run
-# with stdout on a pipe, which is what CI and IDEs do; the critical prompt must
-# then fail closed instead of hanging on /dev/tty.
+# under `sh -e`, as Husky 9 does, and with stdout on a pipe, which is what CI and
+# IDEs do; the critical prompt must then fail closed instead of hanging on /dev/tty.
 run_hook() {
   ( cd "$hook_repo" && \
-    PATH="$hook_bin:/usr/bin:/bin" RUN_CHECKS="$1" STUB_NODE_EXIT="$2" sh "$hook_dir/pre-push" ) \
+    PATH="$hook_bin:/usr/bin:/bin" RUN_CHECKS="$1" STUB_NODE_EXIT="$2" sh -e "$hook_dir/pre-push" ) \
     > "$tmp/hook.out" 2>&1 </dev/null
   status=$?
   out="$(cat "$tmp/hook.out")"
