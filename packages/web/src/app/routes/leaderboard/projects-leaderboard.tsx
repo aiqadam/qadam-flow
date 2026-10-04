@@ -1,11 +1,11 @@
 import { ColorName, PROJECT_COLOR_PALETTE } from '@aiqadam/shared';
-import { ColumnDef } from '@tanstack/react-table';
 import { t } from 'i18next';
 import { Rocket } from 'lucide-react';
 import { useMemo } from 'react';
 
 import { DataTable, RowDataWithActions } from '@/components/custom/data-table';
 import { DataTableColumnHeader } from '@/components/custom/data-table/data-table-column-header';
+import { ColumnDef } from '@/components/custom/data-table/table-features';
 import { Avatar } from '@/components/ui/avatar';
 import { formatUtils } from '@/lib/format-utils';
 

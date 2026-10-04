@@ -1,4 +1,4 @@
-import { Column } from '@tanstack/react-table';
+import { RowData } from '@tanstack/react-table';
 import * as React from 'react';
 import { DateRange } from 'react-day-picker';
 import { useSearchParams } from 'react-router';
@@ -11,6 +11,7 @@ import {
 import { DataTableInputCheckbox } from './data-table-checkbox-filter';
 import { DataTableInputPopover } from './data-table-input-popover';
 import { DataTableSelectPopover } from './data-table-select-popover';
+import { Column } from './table-features';
 
 import { CURSOR_QUERY_PARAM } from '.';
 
@@ -44,7 +45,7 @@ export type DataTableFilterProps = {
   | CheckboxjhFilterProps
 );
 
-export function DataTableFilter<TData, TValue>({
+export function DataTableFilter<TData extends RowData, TValue>({
   title,
   column,
   accessorKey,

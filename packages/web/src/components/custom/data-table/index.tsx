@@ -2,13 +2,10 @@
 
 import { apId, isNil, SeekPage } from '@aiqadam/shared';
 import {
-  ColumnDef as TanstackColumnDef,
   flexRender,
-  getCoreRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
+  RowData,
   SortingState,
-  useReactTable,
+  useTable,
 } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { t } from 'i18next';
@@ -41,6 +38,7 @@ import { DataTableColumnHeader } from './data-table-column-header';
 import { DataTableFilter, DataTableFilterProps } from './data-table-filter';
 import { DataTableSkeleton } from './data-table-skeleton';
 import { DataTableToolbar } from './data-table-toolbar';
+import { appTableFeatures, ColumnDef as AppColumnDef } from './table-features';
 
 export type DataWithId = {
   id?: string;
@@ -57,16 +55,12 @@ type DataTableAction<TData extends DataWithId> = (
   row: RowDataWithActions<TData>,
 ) => React.ReactNode;
 
-type ColumnDef<TData, TValue> = TanstackColumnDef<TData, TValue> & {
+type ColumnDef<TData extends RowData> = AppColumnDef<TData> & {
   notClickable?: boolean;
 };
 
-interface DataTableProps<
-  TData extends DataWithId,
-  TValue,
-  Keys extends string,
-> {
-  columns: ColumnDef<RowDataWithActions<TData>, TValue>[];
+interface DataTableProps<TData extends DataWithId, Keys extends string> {
+  columns: ColumnDef<RowDataWithActions<TData>>[];
   page: SeekPage<TData> | undefined;
   onRowClick?: (
     row: RowDataWithActions<TData>,
@@ -102,11 +96,7 @@ export type BulkAction<TData extends DataWithId> = {
   ) => React.ReactNode;
 };
 
-export function DataTable<
-  TData extends DataWithId,
-  TValue,
-  Keys extends string,
->({
+export function DataTable<TData extends DataWithId, Keys extends string>({
   columns: columnsInitial,
   page,
   onRowClick,
@@ -126,8 +116,8 @@ export function DataTable<
   clientPagination = false,
   getRowClassName,
   virtualizeRows = false,
-}: DataTableProps<TData, TValue, Keys>) {
-  const selectColumnDef: ColumnDef<RowDataWithActions<TData>, TValue> = {
+}: DataTableProps<TData, Keys>) {
+  const selectColumnDef: ColumnDef<RowDataWithActions<TData>> = {
     id: 'select',
     accessorKey: 'select',
     notClickable: true,
@@ -234,18 +224,15 @@ export function DataTable<
     setTableData(enrichPageData(page?.data ?? []));
   }, [page?.data]);
 
-  const table = useReactTable({
+  const table = useTable({
+    features: appTableFeatures,
     data: tableData,
     columns,
     manualPagination: virtualizeRows ? false : !clientPagination,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    ...((clientPagination || virtualizeRows) && {
-      getPaginationRowModel: getPaginationRowModel(),
-    }),
     getRowId: () => apId(),
     initialState: {
       pagination: {
+        pageIndex: 0,
         pageSize: virtualizeRows
           ? tableData.length || 1000
           : parseInt(startingLimit),
@@ -265,7 +252,7 @@ export function DataTable<
     });
   }, []);
 
-  const rowSelection = table.getState().rowSelection;
+  const rowSelection = table.state.rowSelection;
   const selectedRowOriginals = React.useMemo(
     () => table.getSelectedRowModel().rows.map((row) => row.original),
     [rowSelection],
@@ -287,7 +274,7 @@ export function DataTable<
         } else {
           newParams.delete('cursor');
         }
-        const pageSize = table.getState().pagination.pageSize;
+        const pageSize = table.state.pagination.pageSize;
         if (pageSize) {
           newParams.set('limit', `${pageSize}`);
         }
@@ -295,7 +282,7 @@ export function DataTable<
       },
       { replace: true },
     );
-  }, [currentCursor, table.getState().pagination.pageSize, hidePagination]);
+  }, [currentCursor, table.state.pagination.pageSize, hidePagination]);
 
   useEffect(() => {
     setTableData(
@@ -619,7 +606,7 @@ export function DataTable<
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground">{t('Rows per page')}</span>
             <Select
-              value={`${table.getState().pagination.pageSize}`}
+              value={`${table.state.pagination.pageSize}`}
               onValueChange={(value) => {
                 table.setPageSize(Number(value));
                 if (!clientPagination) {
@@ -628,9 +615,7 @@ export function DataTable<
               }}
             >
               <SelectTrigger className="h-8 w-[70px]">
-                <SelectValue
-                  placeholder={table.getState().pagination.pageSize}
-                />
+                <SelectValue placeholder={table.state.pagination.pageSize} />
               </SelectTrigger>
               <SelectContent side="top">
                 {[10, 30, 50].map((pageSize) => (
