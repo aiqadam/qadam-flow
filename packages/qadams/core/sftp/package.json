@@ -1,13 +1,13 @@
 {
   "name": "@aiqadam/qadam-sftp",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
   "dependencies": {
     "@aiqadam/qadams-common": "workspace:*",
     "@aiqadam/qadams-framework": "workspace:*",
     "@aiqadam/shared": "workspace:*",
-    "basic-ftp": "5.3.1",
+    "basic-ftp": "6.2.1",
     "dayjs": "1.11.9",
     "ssh2": "1.16.0",
     "ssh2-sftp-client": "9.1.0",
