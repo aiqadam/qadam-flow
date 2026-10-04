@@ -1,7 +1,7 @@
 import { ApFlagId, FlowActionType, TelemetryEventName } from '@aiqadam/shared';
 import { t } from 'i18next';
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 
 import { useTelemetry } from '@/components/providers/telemetry-provider';

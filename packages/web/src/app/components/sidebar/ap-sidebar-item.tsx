@@ -1,6 +1,6 @@
 import { LockKeyhole } from 'lucide-react';
 import React, { ComponentType, useEffect, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 
 import { Dot } from '@/components/custom/dot';
 import {

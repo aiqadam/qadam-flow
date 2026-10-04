@@ -1,7 +1,7 @@
 import { TeamProjectsLimit } from '@aiqadam/shared';
 import { t } from 'i18next';
 import { ComponentType, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 
 import { McpSvg } from '@/assets/img/custom/mcp';
 import { BotIcon } from '@/components/icons/bot';

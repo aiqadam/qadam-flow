@@ -2,7 +2,7 @@
 import * as React from 'react';
 import { act } from 'react';
 import { createRoot, Root } from 'react-dom/client';
-import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
+import { Link, MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { useCloseMobileSidebarOnNavigation } from '@/app/components/sidebar/use-close-mobile-sidebar-on-navigation';

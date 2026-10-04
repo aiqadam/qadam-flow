@@ -17,7 +17,7 @@ import {
   Unplug,
   User,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 
 import { DashboardPageHeader } from '@/app/components/dashboard-page-header';
 import { CopyTextTooltip } from '@/components/custom/clipboard/copy-text-tooltip';

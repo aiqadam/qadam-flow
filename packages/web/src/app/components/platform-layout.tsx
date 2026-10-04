@@ -1,5 +1,5 @@
 import React from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate } from 'react-router';
 
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar-shadcn';
 import { useIsPlatformAdmin } from '@/hooks/authorization-hooks';

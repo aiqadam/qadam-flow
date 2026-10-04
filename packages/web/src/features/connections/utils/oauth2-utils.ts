@@ -6,7 +6,7 @@ import {
   OAuth2GrantType,
   ThirdPartyAuthnProviderEnum,
 } from '@aiqadam/shared';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 
 import {
   FROM_QUERY_PARAM,

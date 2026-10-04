@@ -19,7 +19,7 @@ import {
 } from '@aiqadam/shared';
 import { QueryClient, useMutation, useQuery } from '@tanstack/react-query';
 import { t } from 'i18next';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 
 import { useApErrorDialogStore } from '@/components/custom/ap-error-dialog/ap-error-dialog-store';

@@ -17,7 +17,7 @@ import {
   X,
 } from 'lucide-react';
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 
 import { AnimatedIconButton } from '@/components/custom/animated-icon-button';
 import { PermissionNeededTooltip } from '@/components/custom/permission-needed-tooltip';

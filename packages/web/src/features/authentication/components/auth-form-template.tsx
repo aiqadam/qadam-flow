@@ -1,7 +1,7 @@
 import { ApFlagId, ThirdPartyAuthnProvidersToShowMap } from '@aiqadam/shared';
 import { t } from 'i18next';
 import React, { useEffect, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router';
 
 import { FullLogo } from '@/components/custom/full-logo';
 import { useTheme } from '@/components/providers/theme-provider';

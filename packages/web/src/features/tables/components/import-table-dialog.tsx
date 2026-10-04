@@ -5,7 +5,7 @@ import { Import } from 'lucide-react';
 import { parse } from 'papaparse';
 import { useState } from 'react';
 import { FieldErrors, useForm } from 'react-hook-form';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 
 import { CopyButton } from '@/components/custom/clipboard/copy-button';
 import { ApMarkdown } from '@/components/custom/markdown';

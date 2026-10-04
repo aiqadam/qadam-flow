@@ -1,7 +1,7 @@
 import { FlowRun, PopulatedFlow } from '@aiqadam/shared';
 import { useQuery } from '@tanstack/react-query';
 import { ReactFlowProvider } from '@xyflow/react';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 
 import { BuilderPage } from '@/app/builder';
 import { BuilderStateProvider } from '@/app/builder/state/builder-state-provider';

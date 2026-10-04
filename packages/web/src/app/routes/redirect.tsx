@@ -1,7 +1,7 @@
 import { ErrorCode, isNil } from '@aiqadam/shared';
 import { t } from 'i18next';
 import React, { useEffect, useRef } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 import { toast } from 'sonner';
 
 import { authenticationApi } from '@/api/authentication-api';
