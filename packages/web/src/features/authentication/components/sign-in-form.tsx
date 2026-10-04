@@ -12,7 +12,7 @@ import { t } from 'i18next';
 import { Eye, EyeOff } from 'lucide-react';
 import { useState } from 'react';
 import { SubmitHandler, useForm } from 'react-hook-form';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router';
 import { z } from 'zod';
 
 import { authenticationApi } from '@/api/authentication-api';

@@ -7,7 +7,7 @@ import {
   FolderOpenDot,
   RotateCcw,
 } from 'lucide-react';
-import { Navigate, useNavigate, useParams } from 'react-router-dom';
+import { Navigate, useNavigate, useParams } from 'react-router';
 
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';

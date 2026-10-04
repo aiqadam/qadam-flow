@@ -8,7 +8,7 @@ import {
 } from '@aiqadam/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 
 import { useEmbedding } from '@/components/providers/embed-provider';
 import { flowsApi } from '@/features/flows/api/flows-api';

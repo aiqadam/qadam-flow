@@ -1,6 +1,6 @@
 import { t } from 'i18next';
 import { Info } from 'lucide-react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 
 import { LIMIT_QUERY_PARAM } from '@/components/custom/data-table';
 import { Button } from '@/components/ui/button';

@@ -1,7 +1,7 @@
 import { t } from 'i18next';
 import { LucideIcon, SearchX } from 'lucide-react';
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 
 import { Button } from '@/components/ui/button';
 

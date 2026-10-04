@@ -1,4 +1,4 @@
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 
 import { useEmbedding } from '@/components/providers/embed-provider';
 import { redirectUtils } from '@/lib/redirect-utils';

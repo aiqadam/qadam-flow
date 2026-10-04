@@ -1,7 +1,7 @@
 import { ApFlagId, supportUrl } from '@aiqadam/shared';
 import { t } from 'i18next';
 import { BookOpen, CircleHelp, History } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 
 import {
   DropdownMenuItem,

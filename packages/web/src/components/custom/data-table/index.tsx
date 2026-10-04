@@ -14,7 +14,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { t } from 'i18next';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import React, { useRef, useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { useDeepCompareEffect } from 'react-use';
 
 import { Button } from '@/components/ui/button';

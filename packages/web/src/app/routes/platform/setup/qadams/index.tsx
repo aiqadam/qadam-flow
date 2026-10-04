@@ -4,7 +4,7 @@ import { ColumnDef } from '@tanstack/react-table';
 import { t } from 'i18next';
 import { CheckIcon, Package, Hash, GitBranch, Puzzle } from 'lucide-react';
 import { useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 
 import { DashboardPageHeader } from '@/app/components/dashboard-page-header';
 import { ComingSoonBadge } from '@/app/components/request-trial';

@@ -3,7 +3,7 @@ import dayjs from 'dayjs';
 import { t } from 'i18next';
 import { Calendar, Info, LineChart, List, RefreshCcw } from 'lucide-react';
 import { useContext } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { useEffectOnce } from 'react-use';
 import { toast } from 'sonner';
 

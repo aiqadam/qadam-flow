@@ -3,7 +3,7 @@ import {
   RouterProvider,
   createBrowserRouter,
   createMemoryRouter,
-} from 'react-router-dom';
+} from 'react-router';
 
 import { PageTitle } from '@/app/components/page-title';
 import { authRoutes } from '@/app/routes/auth-routes';

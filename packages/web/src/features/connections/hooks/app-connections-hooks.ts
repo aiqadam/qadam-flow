@@ -18,7 +18,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { t } from 'i18next';
 import { useMemo } from 'react';
 import { UseFormReturn } from 'react-hook-form';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import { toast } from 'sonner';
 
 import {

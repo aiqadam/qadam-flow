@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { useDebouncedCallback } from 'use-debounce';
 
 import { AutomationsFilters } from '../lib/types';

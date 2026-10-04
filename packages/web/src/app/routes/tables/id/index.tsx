@@ -3,7 +3,7 @@ import { nanoid } from 'nanoid';
 import { useRef, useEffect } from 'react';
 import DataGrid, { DataGridHandle } from 'react-data-grid';
 import 'react-data-grid/lib/styles.css';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 
 import { useTheme } from '@/components/providers/theme-provider';
 import {

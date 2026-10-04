@@ -1,7 +1,7 @@
 import { FlowVersionState, Permission } from '@aiqadam/shared';
 import { t } from 'i18next';
 import { EyeIcon, PencilIcon } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useLocation } from 'react-use';
 
 import { Button } from '@/components/ui/button';

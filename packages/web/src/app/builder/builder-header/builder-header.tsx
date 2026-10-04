@@ -10,11 +10,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { t } from 'i18next';
 import { ChevronDown, CircleHelp, HistoryIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import {
-  createSearchParams,
-  useNavigate,
-  useSearchParams,
-} from 'react-router-dom';
+import { createSearchParams, useNavigate, useSearchParams } from 'react-router';
 
 import { useBuilderStateContext } from '@/app/builder/builder-hooks';
 import { RightSideBarType } from '@/app/builder/types';

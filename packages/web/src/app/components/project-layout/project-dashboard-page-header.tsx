@@ -2,7 +2,7 @@ import { Permission, PlatformRole, ProjectType } from '@aiqadam/shared';
 import { t } from 'i18next';
 import { Lock } from 'lucide-react';
 import { useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 
 import { AnimatedIconButton } from '@/components/custom/animated-icon-button';
 import { PageHeader } from '@/components/custom/page-header';

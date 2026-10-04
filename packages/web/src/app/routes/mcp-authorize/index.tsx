@@ -4,7 +4,7 @@ import { t } from 'i18next';
 import { jwtDecode } from 'jwt-decode';
 import { CheckCircle, FolderKanban, Lock, Plug, Workflow } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { Navigate, useSearchParams } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router';
 import { useDebouncedCallback } from 'use-debounce';
 
 import { FullLogo } from '@/components/custom/full-logo';

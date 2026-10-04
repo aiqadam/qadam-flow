@@ -18,7 +18,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import React, { useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import { toast } from 'sonner';
 
 import { FlowLocaleSourceDialog } from '@/app/builder/flow-locale-source-dialog';

@@ -1,5 +1,5 @@
 import { TemplateType, isNil } from '@aiqadam/shared';
-import { Navigate, useParams, useLocation } from 'react-router-dom';
+import { Navigate, useParams, useLocation } from 'react-router';
 
 import { PageTitle } from '@/app/components/page-title';
 import { ProjectDashboardLayout } from '@/app/components/project-layout';
