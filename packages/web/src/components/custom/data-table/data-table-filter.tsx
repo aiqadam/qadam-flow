@@ -1,7 +1,7 @@
 import { Column } from '@tanstack/react-table';
 import * as React from 'react';
 import { DateRange } from 'react-day-picker';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 
 import {
   DateTimePickerWithRange,

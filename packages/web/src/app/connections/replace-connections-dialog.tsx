@@ -4,7 +4,7 @@ import { t } from 'i18next';
 import { GlobeIcon, WorkflowIcon } from 'lucide-react';
 import React, { useState, useMemo } from 'react';
 import { FieldErrors, useForm, useWatch } from 'react-hook-form';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 
 import { SearchableSelect } from '@/components/custom/searchable-select';

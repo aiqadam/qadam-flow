@@ -1,7 +1,7 @@
 import { StuckJob } from '@aiqadam/shared';
 import { t } from 'i18next';
 import { CircleCheck, TriangleAlert } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';

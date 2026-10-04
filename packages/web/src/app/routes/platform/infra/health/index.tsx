@@ -2,7 +2,7 @@ import dayjs from 'dayjs';
 import { t } from 'i18next';
 import { Activity, Calendar, HeartPulse, LineChart } from 'lucide-react';
 import React from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 
 import { DashboardPageHeader } from '@/app/components/dashboard-page-header';
 import {

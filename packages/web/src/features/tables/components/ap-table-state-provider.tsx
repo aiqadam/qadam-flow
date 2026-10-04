@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { t } from 'i18next';
 import { FileX } from 'lucide-react';
 import { createContext, useContext, useRef } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router';
 import { useStore } from 'zustand';
 
 import { RouteLoadingBar } from '@/components/custom/route-loading-bar';

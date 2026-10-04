@@ -1,7 +1,7 @@
 import { Permission } from '@aiqadam/shared';
 import { t } from 'i18next';
 import { useRef } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 
 import { BoxIcon } from '@/components/icons/box';
 import { ConnectIcon } from '@/components/icons/connect';

@@ -17,7 +17,7 @@ mandatory before you report the change complete — see [`.agents/rules/agent-de
 
 ## Tech Stack
 
-- **Framework**: React 19 with React Router v6
+- **Framework**: React 19 with React Router v7
 - **Build**: Vite
 - **UI Components**: Shadcn/Radix UI (`src/components/ui/`)
 - **State Management**: Zustand

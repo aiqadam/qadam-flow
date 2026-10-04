@@ -1,5 +1,5 @@
 import { isNil, USE_DRAFT_QUERY_PARAM_NAME } from '@aiqadam/shared';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import { useSearchParam } from 'react-use';
 
 import { LoadingScreen } from '@/components/custom/loading-screen';

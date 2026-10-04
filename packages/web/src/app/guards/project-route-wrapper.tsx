@@ -1,7 +1,7 @@
 import { isNil } from '@aiqadam/shared';
 import { t } from 'i18next';
 import React from 'react';
-import { Navigate, useParams, useSearchParams } from 'react-router-dom';
+import { Navigate, useParams, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 
 import { projectCollectionUtils } from '@/features/projects';
