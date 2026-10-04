@@ -6,6 +6,7 @@ import {
 } from '@aiqadam/shared'
 import { FastifyBaseLogger, FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
+import type { Mock } from 'vitest'
 import * as applicationEventsModule from '../../../../src/app/helper/application-events'
 import { qadamMetadataService } from '../../../../src/app/qadams/metadata/qadam-metadata-service'
 import { actionsEmitted } from '../../../helpers/application-events'
@@ -28,7 +29,7 @@ afterAll(async () => {
 })
 
 describe('App connection application events', () => {
-    let sendUserEventSpy: ReturnType<typeof vi.fn>
+    let sendUserEventSpy: Mock
 
     beforeEach(() => {
         sendUserEventSpy = vi.fn()

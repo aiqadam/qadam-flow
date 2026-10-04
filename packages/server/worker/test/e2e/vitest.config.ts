@@ -6,11 +6,8 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     pool: 'forks',
-    poolOptions: {
-      forks: {
-        singleFork: true,
-      },
-    },
+    maxWorkers: 1,
+    isolate: false,
     testTimeout: 60_000,
     hookTimeout: 60_000,
     include: [path.resolve(__dirname, '*.e2e.test.ts')],

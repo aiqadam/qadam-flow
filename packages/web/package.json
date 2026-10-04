@@ -130,7 +130,7 @@
     "vite": "6.4.3",
     "vite-plugin-checker": "0.7.2",
     "vite-tsconfig-paths": "5.1.4",
-    "vitest": "3.2.7"
+    "vitest": "4.1.11"
   },
   "scripts": {
     "build": "vite build",

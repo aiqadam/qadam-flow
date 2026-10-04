@@ -12,11 +12,7 @@ export default defineConfig({
     // Together these flags put the worker's heap limit near 536 MiB. The conversion worker
     // threads a test starts inherit them.
     pool: 'forks',
-    poolOptions: {
-      forks: {
-        execArgv: ['--max-old-space-size=512', '--max-semi-space-size=8'],
-      },
-    },
+    execArgv: ['--max-old-space-size=512', '--max-semi-space-size=8'],
     setupFiles: ['test/conversion-worker-setup.ts'],
   },
   resolve: {
