@@ -47,9 +47,10 @@ COPY tsconfig.base.json ./
 RUN --mount=type=cache,target=/root/.bun/install/cache \
     bun install --frozen-lockfile --ignore-scripts
 
-# Build one bundled qadam and its workspace deps, so sandbox-bundled-qadam.e2e.test.ts can load a
-# real qadam through the mounts create-sandbox-for-job adds for isolate modes (#375).
-RUN bun x turbo run build --filter=@aiqadam/qadam-webhook...
+# Build the engine bundle and one bundled qadam (with its workspace deps): the per-execution-mode
+# suite boots the real engine through createSandboxForJob, and sandbox-bundled-qadam.e2e.test.ts
+# loads a real qadam through the mounts create-sandbox-for-job adds for isolate modes (#375).
+RUN bun x turbo run build --filter=@aiqadam/engine --filter=@aiqadam/qadam-webhook...
 
 # isolate binary + config (checked into the repo under assets/; repo ships x86_64 and arm variants)
 RUN ARCH=$(uname -m) && \
