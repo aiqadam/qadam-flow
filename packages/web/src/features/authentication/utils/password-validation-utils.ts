@@ -1,4 +1,4 @@
-import { t } from 'i18next';
+import { t } from '@/i18n';
 
 const MIN_LENGTH = 8;
 const MAX_LENGTH = 64;

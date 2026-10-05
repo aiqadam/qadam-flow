@@ -4,7 +4,6 @@ import {
   singleValueConditions,
   RouterAction,
 } from '@aiqadam/shared';
-import { t } from 'i18next';
 import { Trash } from 'lucide-react';
 import { useFormContext } from 'react-hook-form';
 
@@ -13,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { FormField, FormItem, FormMessage } from '@/components/ui/form';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { t } from '@/i18n';
 
 import { InvalidStepIcon } from '../../../../components/custom/alert-icon';
 import {

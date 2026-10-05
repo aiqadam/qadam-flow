@@ -6,7 +6,6 @@ import {
   TableOperationType,
 } from '@aiqadam/shared';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { t } from 'i18next';
 import { PencilIcon, Plus, TrashIcon } from 'lucide-react';
 import { useState } from 'react';
 import { Resolver, useForm, UseFormReturn } from 'react-hook-form';
@@ -27,6 +26,7 @@ import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
 import { projectReleaseMutations } from '@/features/project-releases';
+import { t } from '@/i18n';
 import { authenticationSession } from '@/lib/authentication-session';
 
 import { OperationChange } from './operation-change';

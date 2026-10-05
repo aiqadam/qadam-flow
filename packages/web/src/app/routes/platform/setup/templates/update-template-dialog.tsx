@@ -5,7 +5,6 @@ import {
 } from '@aiqadam/shared';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation } from '@tanstack/react-query';
-import { t } from 'i18next';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -25,6 +24,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { templateUtils } from '@/features/flows';
 import { templatesApi } from '@/features/templates';
+import { t } from '@/i18n';
 import { api } from '@/lib/api';
 
 const UpdateFlowTemplateSchema = z.object({

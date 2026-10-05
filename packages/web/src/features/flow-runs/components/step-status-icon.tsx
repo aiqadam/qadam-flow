@@ -1,5 +1,4 @@
 import { StepOutputStatus } from '@aiqadam/shared';
-import { t } from 'i18next';
 import React from 'react';
 
 import { LoadingSpinner } from '@/components/custom/spinner';
@@ -9,6 +8,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { flowRunUtils } from '@/features/flow-runs/utils/flow-run-utils';
+import { t } from '@/i18n';
 import { cn } from '@/lib/utils';
 
 type StepStatusIconProps = {

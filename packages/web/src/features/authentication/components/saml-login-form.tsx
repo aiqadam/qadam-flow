@@ -1,6 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation } from '@tanstack/react-query';
-import { t } from 'i18next';
 import { ArrowLeft } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -15,6 +14,7 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { samlSsoApi } from '@/features/platform-admin';
+import { t } from '@/i18n';
 import { formatUtils } from '@/lib/format-utils';
 
 const FormValues = z.object({

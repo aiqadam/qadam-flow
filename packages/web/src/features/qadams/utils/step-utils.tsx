@@ -15,7 +15,8 @@ import {
   StepOutput,
   StepRunResponse,
 } from '@aiqadam/shared';
-import { t } from 'i18next';
+
+import { t } from '@/i18n';
 
 import { qadamsApi } from '../api/qadams-api';
 import {

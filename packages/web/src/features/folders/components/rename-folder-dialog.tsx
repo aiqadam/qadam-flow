@@ -2,7 +2,6 @@ import { FolderDto } from '@aiqadam/shared';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation } from '@tanstack/react-query';
 import { HttpStatusCode } from 'axios';
-import { t } from 'i18next';
 import { FormProvider, useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import { z } from 'zod';
@@ -19,6 +18,7 @@ import { FormField, FormItem, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { internalErrorToast } from '@/components/ui/sonner';
 import { foldersApi } from '@/features/folders/api/folders-api';
+import { t } from '@/i18n';
 import { api } from '@/lib/api';
 import { authenticationSession } from '@/lib/authentication-session';
 

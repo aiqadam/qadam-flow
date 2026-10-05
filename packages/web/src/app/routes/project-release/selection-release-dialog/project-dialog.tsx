@@ -1,7 +1,6 @@
 import { DiffReleaseRequest, ProjectReleaseType } from '@aiqadam/shared';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation } from '@tanstack/react-query';
-import { t } from 'i18next';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
@@ -20,6 +19,7 @@ import { FormField, FormItem, Form, FormMessage } from '@/components/ui/form';
 import { Label } from '@/components/ui/label';
 import { projectReleaseApi } from '@/features/project-releases';
 import { projectCollectionUtils } from '@/features/projects';
+import { t } from '@/i18n';
 
 import { CreateReleaseDialog } from '../create-release-dialog';
 
