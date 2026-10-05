@@ -1,5 +1,6 @@
 import { createContext, useContext, useRef } from 'react';
 import { useStore } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
 
 import { ChatStore, ChatStoreState, createChatStore } from './chat-store';
 
@@ -25,7 +26,7 @@ export function useChatStoreContext<T>(
     throw new Error(
       'useChatStoreContext must be used within ChatStoreProvider',
     );
-  return useStore(store, selector);
+  return useStore(store, useShallow(selector));
 }
 
 export function useChatStoreApi(): ChatStore {
