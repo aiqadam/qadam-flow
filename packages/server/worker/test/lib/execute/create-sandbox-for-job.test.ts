@@ -23,9 +23,13 @@ vi.mock('../../../src/lib/sandbox/sandbox', () => ({
     createSandbox: createSandboxMock,
 }))
 
-vi.mock('../../../src/lib/sandbox/isolate', () => ({
-    isolateProcess: isolateProcessMock,
-}))
+vi.mock('../../../src/lib/sandbox/isolate', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../../src/lib/sandbox/isolate')>()
+    return {
+        ...actual,
+        isolateProcess: isolateProcessMock,
+    }
+})
 
 vi.mock('../../../src/lib/sandbox/fork', () => ({
     simpleProcess: simpleProcessMock,

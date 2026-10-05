@@ -10,6 +10,7 @@ import { workerSettings } from '../../src/lib/config/worker-settings'
 import { createSandboxForJob } from '../../src/lib/execute/create-sandbox-for-job'
 import type { SandboxJobContext } from '../../src/lib/execute/sandbox-manager'
 import { getIsolateExecutableName } from '../../src/lib/sandbox/isolate'
+import { isolatePreflight } from '../../src/lib/sandbox/isolate-preflight'
 import { inProcessApiClient } from '../fixtures/in-process-api-client'
 import { requireIsolateBinary, requireLinuxPrivileged } from './helpers/privilege-guard'
 import { silentLogger } from './helpers/silent-logger'
@@ -25,6 +26,10 @@ import { silentLogger } from './helpers/silent-logger'
  * whose action loads the bundled `@aiqadam/qadam-webhook` qadam and returns a response. The run
  * status the engine reports over the worker socket is what is asserted, not a mock.
  *
+ * The two fork modes and the two isolate modes live in separate `describe`s with their own skip
+ * conditions: only the isolate cases need the `isolate` binary and root, so a host without it runs
+ * the fork cases instead of skipping the whole file (#709).
+ *
  * Runs inside the privileged `test:sandbox-e2e` harness, which builds the engine and the qadam into
  * the image (`test/e2e/Dockerfile`).
  */
@@ -38,106 +43,160 @@ const PLATFORM_ID = 'plat-per-mode'
 const RUN_ID = 'run-per-mode'
 const LOGS_FILE_ID = 'logs-per-mode'
 const FLOW_VERSION_ID = 'fv-per-mode'
+const FILE_UPLOAD_PATH_PREFIX = '/api/v1/files/'
 
-const skip = requireLinuxPrivileged() ?? requireIsolateBinary(ISOLATE_BINARY_PATH)
+// Only the isolate modes need the binary and root; UNSANDBOXED and SANDBOX_CODE_ONLY take the fork
+// path and must keep running on a host that merely lacks isolate.
+const isolateSkip = requireLinuxPrivileged() ?? requireIsolateBinary(ISOLATE_BINARY_PATH)
 
-// SANDBOX_PROCESS / SANDBOX_CODE_AND_PROCESS need isolate; UNSANDBOXED and SANDBOX_CODE_ONLY take the
-// fork path. All four are asserted so a mode that silently regresses to "not covered" fails here.
-const MODES = [
+const FORK_MODES = [
     ExecutionMode.UNSANDBOXED,
     ExecutionMode.SANDBOX_CODE_ONLY,
+] as const
+
+const ISOLATE_MODES = [
     ExecutionMode.SANDBOX_PROCESS,
     ExecutionMode.SANDBOX_CODE_AND_PROCESS,
 ] as const
 
-describe.skipIf(skip)('execution modes — the worker boots each mode and runs a basic flow', () => {
-    let fileApiServer: http.Server
-    let internalApiUrl: string
-    let builtQadamVersion: string
+// The file-API stub below answers only the engine's file uploads. Anything else is a route the
+// engine did not use to hit during `EXECUTE_FLOW`, and the constant-200 stub this replaced would
+// have answered it with a bogus `{ readUrl }` that nothing noticed. Record every request and fail
+// the suite if one outside the allowlist appears.
+const fileApiRequests: FileApiRequest[] = []
 
-    beforeAll(async () => {
-        if (!existsSync(ENGINE_BUNDLE_PATH)) {
-            throw new Error(
-                `precondition failed: ${ENGINE_BUNDLE_PATH} is not built. The sandbox e2e image builds ` +
-                '@aiqadam/engine; run the suite via `npm run test:sandbox-e2e`.',
-            )
-        }
-        if (!existsSync(WEBHOOK_QADAM_PACKAGE_JSON)) {
-            throw new Error(
-                `precondition failed: ${WEBHOOK_QADAM_PACKAGE_JSON} is not built. The sandbox e2e image builds ` +
-                '@aiqadam/qadam-webhook; run the suite via `npm run test:sandbox-e2e`.',
-            )
-        }
+let fileApiServer: http.Server
+let internalApiUrl: string
+let builtQadamVersion: string
 
-        // `createSandboxForJob` resolves the engine through `getEnginePath()` = cache/<version>/common/main.js,
-        // which the worker's engine installer normally populates from the built bundle. Seed the same
-        // cache the worker would, so the test runs the exact engine the worker ships.
-        await mkdir(getGlobalCacheCommonPath(), { recursive: true })
-        await mkdir(getGlobalCodeCachePath(), { recursive: true })
-        await cp(ENGINE_BUNDLE_PATH, path.join(getGlobalCacheCommonPath(), 'main.js'))
-        await cp(`${ENGINE_BUNDLE_PATH}.map`, path.join(getGlobalCacheCommonPath(), 'main.js.map'))
+beforeAll(async () => {
+    if (!existsSync(ENGINE_BUNDLE_PATH)) {
+        throw new Error(
+            `precondition failed: ${ENGINE_BUNDLE_PATH} is not built. The sandbox e2e image builds ` +
+            '@aiqadam/engine; run the suite via `npm run test:sandbox-e2e`.',
+        )
+    }
+    if (!existsSync(WEBHOOK_QADAM_PACKAGE_JSON)) {
+        throw new Error(
+            `precondition failed: ${WEBHOOK_QADAM_PACKAGE_JSON} is not built. The sandbox e2e image builds ` +
+            '@aiqadam/qadam-webhook; run the suite via `npm run test:sandbox-e2e`.',
+        )
+    }
 
-        builtQadamVersion = (JSON.parse(await readFile(WEBHOOK_QADAM_PACKAGE_JSON, 'utf8')) as { version: string }).version
+    // `createSandboxForJob` resolves the engine through `getEnginePath()` = cache/<version>/common/main.js,
+    // which the worker's engine installer normally populates from the built bundle. Seed the same
+    // cache the worker would, so the test runs the exact engine the worker ships.
+    await mkdir(getGlobalCacheCommonPath(), { recursive: true })
+    await mkdir(getGlobalCodeCachePath(), { recursive: true })
+    await cp(ENGINE_BUNDLE_PATH, path.join(getGlobalCacheCommonPath(), 'main.js'))
+    await cp(`${ENGINE_BUNDLE_PATH}.map`, path.join(getGlobalCacheCommonPath(), 'main.js.map'))
 
-        fileApiServer = http.createServer((_req, res) => {
-            res.writeHead(200, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ readUrl: 'http://127.0.0.1/read' }))
-        })
-        await new Promise<void>((resolve) => fileApiServer.listen(0, '127.0.0.1', () => resolve()))
-        const address = fileApiServer.address()
-        if (typeof address === 'string' || address === null) {
-            throw new Error('file API stub did not bind a TCP port')
-        }
-        internalApiUrl = `http://127.0.0.1:${address.port}/api/`
-    }, 60_000)
+    builtQadamVersion = (JSON.parse(await readFile(WEBHOOK_QADAM_PACKAGE_JSON, 'utf8')) as { version: string }).version
 
-    afterAll(async () => {
-        if (fileApiServer) {
-            await new Promise<void>((resolve, reject) => fileApiServer.close((err) => (err ? reject(err) : resolve())))
-        }
-    })
+    fileApiServer = http.createServer(handleFileApiRequest)
+    await new Promise<void>((resolve) => fileApiServer.listen(0, '127.0.0.1', () => resolve()))
+    const address = fileApiServer.address()
+    if (typeof address === 'string' || address === null) {
+        throw new Error('file API stub did not bind a TCP port')
+    }
+    internalApiUrl = `http://127.0.0.1:${address.port}/api/`
+}, 60_000)
 
-    it.each(MODES)('%s: boots the sandbox and completes a basic flow', async (mode) => {
-        workerSettings.set(workerSettingsFor(mode))
-        const log = silentLogger()
-        const runLogStatuses: FlowRunStatus[] = []
-        const apiClient = inProcessApiClient.create({
-            uploadRunLog: (input) => {
-                const status = (input as { status: FlowRunStatus }).status
-                runLogStatuses.push(status)
-                return { status, logsFileId: LOGS_FILE_ID }
-            },
-            updateRunProgress: () => undefined,
-            updateStepProgress: () => undefined,
-            sendFlowResponse: () => undefined,
-        })
-        const jobContext = makeJobContext()
-        const sandbox = createSandboxForJob({
-            log,
-            apiClient,
-            boxId: BOX_ID,
-            reusable: false,
-            proxyPort: null,
-            getCurrentJobContext: () => jobContext,
-        })
+afterAll(async () => {
+    if (fileApiServer) {
+        await new Promise<void>((resolve, reject) => fileApiServer.close((err) => (err ? reject(err) : resolve())))
+    }
+    // `workerSettings` is a module-level singleton and the e2e config runs every spec in one process
+    // (`isolate: false`), so a later spec that reads `getSettings()` would otherwise inherit the last
+    // mode's allow-list. Restore a neutral value instead of leaving the last case's settings behind.
+    workerSettings.set(workerSettingsFor(ExecutionMode.UNSANDBOXED))
+})
 
-        try {
-            await sandbox.start({ flowVersionId: FLOW_VERSION_ID, platformId: PLATFORM_ID, mounts: [] })
-
-            const result = await sandbox.execute(
-                EngineOperationType.EXECUTE_FLOW,
-                makeBeginOperation({ internalApiUrl, qadamVersion: builtQadamVersion }),
-                { timeoutInSeconds: 90 },
-            )
-
-            expect(result.status, `engine error: ${result.error ?? '(none)'}\nlogs:\n${result.logs ?? ''}`).toBe(EngineResponseStatus.OK)
-            expect(runLogStatuses).toContain(FlowRunStatus.SUCCEEDED)
-        }
-        finally {
-            await sandbox.shutdown()
-        }
+describe('execution modes — fork path', () => {
+    it.each(FORK_MODES)('%s: boots the sandbox and completes a basic flow', async (mode) => {
+        await runMode(mode)
     }, 120_000)
 })
+
+describe.skipIf(isolateSkip)('execution modes — isolate path', () => {
+    // The worker's boot preflight (#709), against the real `isolate` binary, is what turns an
+    // unprivileged isolate deployment into a loud startup failure. The unit suite mocks the spawn;
+    // this is the only place the actual probe command runs before merge.
+    it('passes the boot preflight against the real isolate binary', async () => {
+        await isolatePreflight.assertRunnable({ executionMode: ExecutionMode.SANDBOX_PROCESS, log: silentLogger() })
+    }, 30_000)
+
+    it.each(ISOLATE_MODES)('%s: boots the sandbox and completes a basic flow', async (mode) => {
+        await runMode(mode)
+    }, 120_000)
+})
+
+async function runMode(mode: ExecutionMode): Promise<void> {
+    fileApiRequests.length = 0
+    workerSettings.set(workerSettingsFor(mode))
+    const log = silentLogger()
+    const runLogStatuses: FlowRunStatus[] = []
+    const apiClient = inProcessApiClient.create({
+        uploadRunLog: (input) => {
+            const status = (input as { status: FlowRunStatus }).status
+            runLogStatuses.push(status)
+            return { status, logsFileId: LOGS_FILE_ID }
+        },
+        updateRunProgress: () => undefined,
+        updateStepProgress: () => undefined,
+        sendFlowResponse: () => undefined,
+    })
+    const jobContext = makeJobContext()
+    const sandbox = createSandboxForJob({
+        log,
+        apiClient,
+        boxId: BOX_ID,
+        reusable: false,
+        proxyPort: null,
+        getCurrentJobContext: () => jobContext,
+    })
+
+    try {
+        await sandbox.start({ flowVersionId: FLOW_VERSION_ID, platformId: PLATFORM_ID, mounts: [] })
+
+        const result = await sandbox.execute(
+            EngineOperationType.EXECUTE_FLOW,
+            makeBeginOperation({ internalApiUrl, qadamVersion: builtQadamVersion }),
+            { timeoutInSeconds: 90 },
+        )
+
+        expect(result.status, `engine error: ${result.error ?? '(none)'}\nlogs:\n${result.logs ?? ''}`).toBe(EngineResponseStatus.OK)
+        expect(runLogStatuses).toContain(FlowRunStatus.SUCCEEDED)
+
+        // Every engine HTTP call the run made must be a file upload. Asserted per mode so a regression
+        // names the mode that introduced an unexpected call.
+        const unexpected = fileApiRequests.filter((request) => !isExpectedFileApiRequest(request))
+        expect(unexpected, `unexpected internal API calls during ${mode}`).toEqual([])
+    }
+    finally {
+        await sandbox.shutdown()
+    }
+}
+
+function handleFileApiRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
+    // Drain the body even though the stub ignores it: an unconsumed request body would keep the
+    // connection busy and can stall the engine's upload.
+    req.resume()
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+    fileApiRequests.push({ method: req.method ?? 'GET', path: url.pathname })
+
+    if (isExpectedFileApiRequest({ method: req.method ?? 'GET', path: url.pathname })) {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ readUrl: 'http://127.0.0.1/read' }))
+        return
+    }
+    res.writeHead(404, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: 'unexpected internal API request' }))
+}
+
+function isExpectedFileApiRequest({ method, path: requestPath }: FileApiRequest): boolean {
+    return method === 'PUT' && requestPath.startsWith(FILE_UPLOAD_PATH_PREFIX)
+}
 
 function workerSettingsFor(mode: string): WorkerSettingsResponse {
     return {
@@ -254,4 +313,9 @@ function makeFlowVersion({ qadamVersion }: { qadamVersion: string }): FlowVersio
         notes: [],
         localeSource: null,
     }
+}
+
+type FileApiRequest = {
+    method: string
+    path: string
 }

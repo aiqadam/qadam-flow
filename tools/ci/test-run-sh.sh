@@ -809,6 +809,243 @@ guard_case refuse 'legacy cluster without pg_control, empty marker'
 rm "$tmp/guard-data/${marker}"
 guard_case refuse 'legacy cluster without pg_control, no marker'
 
+echo "== QADAM_FLOW_SANDBOXED opts the worker into the sandboxed override =="
+
+# Truthy spellings turn it on (case-insensitively); unset or anything else does not.
+for value in 1 yes true on YES True ON; do
+  if QADAM_FLOW_SANDBOXED=$value "$sut" -c '. "$1"; is_sandboxed_requested' _ "$runsh"; then
+    pass=$((pass + 1))
+  else
+    fail_case "is_sandboxed_requested('$value') must be true"
+  fi
+done
+for value in no '' false off 2 No; do
+  if QADAM_FLOW_SANDBOXED=$value "$sut" -c '. "$1"; is_sandboxed_requested' _ "$runsh"; then
+    fail_case "is_sandboxed_requested('$value') must be false"
+  else
+    pass=$((pass + 1))
+  fi
+done
+# The explicit-off spellings revoke rather than merely not-enable.
+for value in 0 no false off NO Off; do
+  if QADAM_FLOW_SANDBOXED=$value "$sut" -c '. "$1"; is_sandboxed_disabled' _ "$runsh"; then
+    pass=$((pass + 1))
+  else
+    fail_case "is_sandboxed_disabled('$value') must be true"
+  fi
+done
+for value in yes '' 1 YES; do
+  if QADAM_FLOW_SANDBOXED=$value "$sut" -c '. "$1"; is_sandboxed_disabled' _ "$runsh"; then
+    fail_case "is_sandboxed_disabled('$value') must be false"
+  else
+    pass=$((pass + 1))
+  fi
+done
+
+# The override URL must follow QADAM_FLOW_REF, or an install pinned to an older ref would mix the old
+# compose file with a new override.
+sandboxed_url="$(QADAM_FLOW_REF=v1.2.3 "$sut" -c '. "$1"; printf "%s" "$COMPOSE_URL"' _ "$runsh")"
+sandboxed_override_url="$(QADAM_FLOW_REF=v1.2.3 "$sut" -c '. "$1"; printf "%s" "$COMPOSE_SANDBOXED_URL"' _ "$runsh")"
+if [ "$sandboxed_url" = "https://raw.githubusercontent.com/aiqadam/qadam-flow/v1.2.3/docker-compose.yml" ] \
+  && [ "$sandboxed_override_url" = "https://raw.githubusercontent.com/aiqadam/qadam-flow/v1.2.3/docker-compose.sandboxed.yml" ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'the sandboxed override URL must use QADAM_FLOW_REF' "compose=$sandboxed_url override=$sandboxed_override_url"
+fi
+
+# configure_sandboxed_compose downloads the override beside docker-compose.yml and records
+# COMPOSE_FILE in .env. curl is stubbed on PATH so this stays a pure-shell test, like the rest of
+# this file.
+fakebin="$tmp/sandboxed-bin"
+mkdir -p "$fakebin"
+cat > "$fakebin/curl" <<'CURL'
+#!/bin/sh
+out=''
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) shift; out=$1 ;;
+  esac
+  shift
+done
+printf 'services:\n  worker:\n    cap_add:\n      - SYS_ADMIN\n' > "$out"
+CURL
+chmod +x "$fakebin/curl"
+
+compose_file_value="$("$sut" -c '. "$1"; printf "%s" "$COMPOSE_FILE_VALUE"' _ "$runsh")"
+
+sandboxed_work="$tmp/sandboxed"
+mkdir -p "$sandboxed_work"
+printf 'QADAM_FLOW_PORT=8080\nAP_FRONTEND_URL=http://localhost:8080\n' > "$sandboxed_work/.env"
+PATH="$fakebin:$PATH" QADAM_FLOW_SANDBOXED=yes "$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  configure_sandboxed_compose
+' _ "$runsh" "$sandboxed_work" >"$sandboxed_work/.stdout" 2>"$sandboxed_work/.stderr"
+if [ -f "$sandboxed_work/docker-compose.sandboxed.yml" ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'sandboxed: the override is fetched beside docker-compose.yml'
+fi
+if grep -qxF "COMPOSE_FILE=$compose_file_value" "$sandboxed_work/.env"; then
+  pass=$((pass + 1))
+else
+  fail_case "sandboxed: .env must select the override" "actual .env: $(cat "$sandboxed_work/.env")"
+fi
+if grep -qF 'CAP_SYS_ADMIN' "$sandboxed_work/.stderr"; then
+  pass=$((pass + 1))
+else
+  fail_case 'sandboxed: opting in must warn about the granted capability' "$(cat "$sandboxed_work/.stderr")"
+fi
+
+# Opting in over a different COMPOSE_FILE replaces it, and says so rather than dropping the
+# operator's value silently.
+replace_work="$tmp/sandboxed-replace"
+mkdir -p "$replace_work"
+printf 'QADAM_FLOW_PORT=8080\nCOMPOSE_FILE=docker-compose.yml:extra.yml\n' > "$replace_work/.env"
+PATH="$fakebin:$PATH" QADAM_FLOW_SANDBOXED=yes "$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  configure_sandboxed_compose
+' _ "$runsh" "$replace_work" >/dev/null 2>"$replace_work/.stderr"
+if grep -qF 'replacing the existing COMPOSE_FILE' "$replace_work/.stderr" && grep -qxF "COMPOSE_FILE=$compose_file_value" "$replace_work/.env"; then
+  pass=$((pass + 1))
+else
+  fail_case 'sandboxed: opting in over a different COMPOSE_FILE must warn and select the override' "$(cat "$replace_work/.env") / $(cat "$replace_work/.stderr")"
+fi
+
+# Unset leaves a fresh install alone: nothing fetched, no COMPOSE_FILE invented.
+plain_work="$tmp/sandboxed-plain"
+mkdir -p "$plain_work"
+printf 'QADAM_FLOW_PORT=8080\nAP_FRONTEND_URL=http://localhost:8080\n' > "$plain_work/.env"
+plain_digest="$(digest "$plain_work/.env")"
+PATH="$fakebin:$PATH" "$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  configure_sandboxed_compose
+' _ "$runsh" "$plain_work" >/dev/null 2>&1
+if [ ! -e "$plain_work/docker-compose.sandboxed.yml" ] && [ "$plain_digest" = "$(digest "$plain_work/.env")" ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'sandboxed: an unset flag must leave a fresh install untouched' "$(cat "$plain_work/.env")"
+fi
+
+# An upgrade that omits the flag keeps an earlier opt-in, and refreshes the override so it tracks
+# QADAM_FLOW_REF and is restored if it was deleted.
+keep_work="$tmp/sandboxed-keep"
+mkdir -p "$keep_work"
+printf 'QADAM_FLOW_PORT=8080\nCOMPOSE_FILE=%s\n' "$compose_file_value" > "$keep_work/.env"
+PATH="$fakebin:$PATH" "$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  configure_sandboxed_compose
+' _ "$runsh" "$keep_work" >/dev/null 2>&1
+if [ -f "$keep_work/docker-compose.sandboxed.yml" ] && grep -qxF "COMPOSE_FILE=$compose_file_value" "$keep_work/.env"; then
+  pass=$((pass + 1))
+else
+  fail_case 'sandboxed: an unset flag must keep and refresh an earlier opt-in' "$(cat "$keep_work/.env")"
+fi
+
+# An explicit `no` revokes the opt-in: COMPOSE_FILE is removed, and the rest of .env is untouched.
+revoke_work="$tmp/sandboxed-revoke"
+mkdir -p "$revoke_work"
+printf 'QADAM_FLOW_PORT=8080\nCOMPOSE_FILE=%s\nAP_TELEMETRY_ENABLED=false\n' "$compose_file_value" > "$revoke_work/.env"
+PATH="$fakebin:$PATH" QADAM_FLOW_SANDBOXED=no "$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  configure_sandboxed_compose
+' _ "$runsh" "$revoke_work" >/dev/null 2>&1
+if ! grep -q '^COMPOSE_FILE=' "$revoke_work/.env" && grep -qxF 'AP_TELEMETRY_ENABLED=false' "$revoke_work/.env"; then
+  pass=$((pass + 1))
+else
+  fail_case 'sandboxed: an explicit no must remove COMPOSE_FILE and leave the rest of .env intact' "$(cat "$revoke_work/.env")"
+fi
+
+# An inherited COMPOSE_FILE (from the environment, not .env) is cleared by an explicit `no`, so the
+# revoke holds for this run's own compose commands too.
+inherited_work="$tmp/sandboxed-inherited"
+mkdir -p "$inherited_work"
+printf 'QADAM_FLOW_PORT=8080\n' > "$inherited_work/.env"
+inherited_out="$(PATH="$fakebin:$PATH" QADAM_FLOW_SANDBOXED=no COMPOSE_FILE="$compose_file_value" "$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  configure_sandboxed_compose
+  printf "RESULT=%s\n" "${COMPOSE_FILE:-UNSET}"
+' _ "$runsh" "$inherited_work" 2>&1)"
+if printf '%s' "$inherited_out" | grep -q 'RESULT=UNSET'; then
+  pass=$((pass + 1))
+else
+  fail_case 'sandboxed: an explicit no must clear an inherited COMPOSE_FILE' "$inherited_out"
+fi
+
+# A failed override download aborts and must not select the override.
+failbin="$tmp/sandboxed-failbin"
+mkdir -p "$failbin"
+printf '#!/bin/sh\nexit 1\n' > "$failbin/curl"
+chmod +x "$failbin/curl"
+fail_work="$tmp/sandboxed-fail"
+mkdir -p "$fail_work"
+printf 'QADAM_FLOW_PORT=8080\n' > "$fail_work/.env"
+if PATH="$failbin:$PATH" QADAM_FLOW_SANDBOXED=yes "$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  configure_sandboxed_compose
+' _ "$runsh" "$fail_work" >/dev/null 2>&1; then
+  fail_case 'sandboxed: a failed override download must abort'
+else
+  pass=$((pass + 1))
+fi
+if grep -q '^COMPOSE_FILE=' "$fail_work/.env"; then
+  fail_case 'sandboxed: a failed download must not select the override' "$(cat "$fail_work/.env")"
+else
+  pass=$((pass + 1))
+fi
+
+# A hand-managed COMPOSE_FILE that merely includes the override is not run.sh's opt-in: leave it
+# alone and do not fetch on its behalf.
+custom_work="$tmp/sandboxed-custom"
+mkdir -p "$custom_work"
+custom_value="docker-compose.yml:docker-compose.sandboxed.yml:extra.yml"
+printf 'QADAM_FLOW_PORT=8080\nCOMPOSE_FILE=%s\n' "$custom_value" > "$custom_work/.env"
+custom_before="$(digest "$custom_work/.env")"
+PATH="$fakebin:$PATH" "$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  configure_sandboxed_compose
+' _ "$runsh" "$custom_work" >/dev/null 2>&1
+if [ ! -e "$custom_work/docker-compose.sandboxed.yml" ] && [ "$custom_before" = "$(digest "$custom_work/.env")" ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'sandboxed: a custom COMPOSE_FILE is left alone' "$(cat "$custom_work/.env")"
+fi
+
+# An explicit `no` on a hand-managed COMPOSE_FILE cannot remove it, so it warns rather than silently
+# leaving the capability in place.
+custom_revoke_work="$tmp/sandboxed-custom-revoke"
+mkdir -p "$custom_revoke_work"
+printf 'QADAM_FLOW_PORT=8080\nCOMPOSE_FILE=%s\n' "$custom_value" > "$custom_revoke_work/.env"
+PATH="$fakebin:$PATH" QADAM_FLOW_SANDBOXED=no "$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  configure_sandboxed_compose
+' _ "$runsh" "$custom_revoke_work" >/dev/null 2>"$custom_revoke_work/.stderr"
+if grep -qF 'still selects docker-compose.sandboxed.yml' "$custom_revoke_work/.stderr" \
+  && grep -qxF "COMPOSE_FILE=$custom_value" "$custom_revoke_work/.env"; then
+  pass=$((pass + 1))
+else
+  fail_case 'sandboxed: no on a hand-managed COMPOSE_FILE must warn and leave it' "$(cat "$custom_revoke_work/.env") / $(cat "$custom_revoke_work/.stderr")"
+fi
+
+# Structural: the override must be resolved after generate_env (it writes COMPOSE_FILE into .env) and
+# before the stack is pulled and started, or the override would not apply to this run.
+sandboxed_line="$(line_of configure_sandboxed_compose)"
+pull_line_sandboxed="$(line_of pull_images)"
+if [ -n "$sandboxed_line" ] && [ "$gen_line" -lt "$sandboxed_line" ] && [ "$sandboxed_line" -lt "$pull_line_sandboxed" ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'main(): generate_env < configure_sandboxed_compose < pull_images' \
+    "gen=$gen_line sandboxed=$sandboxed_line pull=$pull_line_sandboxed"
+fi
+
 echo
 echo "passed: ${pass}   failed: ${fail}"
 if [ "$fail" -ne 0 ]; then

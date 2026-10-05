@@ -169,7 +169,8 @@ echo "== the two workflows compute the SAME cache key =="
 # Compared verbatim rather than per-component, so any future divergence fails here.
 #
 # `sort -u` because a file may legitimately carry the key more than once — ci.yml has one
-# restore step per installing job (`integration-run`, `e2e`, `pack-smoke`). Collapsing duplicates keeps
+# restore step per installing job (`integration-run`, `e2e`, `pack-smoke`, `e2e-execution-modes`).
+# Collapsing duplicates keeps
 # that from reading as a mismatch, and does NOT weaken the check: two keys that differ
 # survive the dedup as two lines and still fail the comparison below.
 key_lines() {

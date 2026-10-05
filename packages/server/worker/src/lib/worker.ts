@@ -38,6 +38,7 @@ import { ActiveSandboxInfo, createSandboxManager, SandboxManager } from './execu
 import { JobContext, JobResult, JobResultKind } from './execute/types'
 import { leaseTracker } from './lease-tracker'
 import { ConnectionState, reconnectSafeApiClient } from './reconnect-safe-api-client'
+import { isolatePreflight } from './sandbox/isolate-preflight'
 
 
 const tracer = trace.getTracer('worker')
@@ -114,6 +115,12 @@ const leases = leaseTracker.create({
 /** The settings the current sandboxes were built with, so any later connect can tell they are out of date. */
 let sandboxSettings: WorkerSettingsResponse | null = null
 
+/** Which execution mode this process already preflighted, so a reconnect does not probe again. */
+let preflightState: { mode: string | null } | null = null
+
+/** The probe in flight, so two overlapping connects cannot run `isolate --box-id=0` at once. */
+let preflightInFlight: Promise<void> | null = null
+
 /**
  * Open while the socket is connected and this connection's settings are loaded. The poll loops wait
  * on it instead of exiting on a disconnect: they, their sandbox managers and any job they are
@@ -154,6 +161,8 @@ export const worker = {
         stopped = false
         closing = false
         stopController = new AbortController()
+        preflightState = null
+        preflightInFlight = null
         // The worker group is not sent in the handshake any more: the API reads it from the
         // verified token principal, so a value asserted here would be ignored. AP_WORKER_GROUP_ID
         // still gates the local sandbox-mode checks below, but it no longer selects a group (#207).
@@ -174,6 +183,13 @@ export const worker = {
             const generation = connectionGeneration
             logger.info('Connected to API server via Socket.IO')
             await fetchAndStoreSettings(socket!)
+            const { error: preflightError } = await tryCatch(assertIsolatePreflightIfNeeded)
+            if (preflightError) {
+                // A mode whose sandbox cannot be created fails every job it takes, so refuse to start
+                // instead of accepting jobs. Same kill-switch shape as the egress stack below.
+                logger.fatal({ err: preflightError }, 'Isolate execution mode preflight failed; aborting worker')
+                process.exit(1)
+            }
             if (!egressStack) {
                 const { data, error } = await tryCatch(() => startEgressStack({ log: logger, apiUrl }))
                 if (error) {
@@ -850,6 +866,42 @@ async function fetchAndStoreSettings(sock: Socket): Promise<void> {
             resolve()
         })
     })
+}
+
+/**
+ * #709: probes the isolate sandbox once per execution mode, before this worker accepts any job. The
+ * mode can come from `AP_EXECUTION_MODE` or from the API settings `fetchAndStoreSettings` just stored,
+ * so this reads the stored settings rather than the env. A capability cannot change without a
+ * container restart, so a reconnect that keeps the same mode does not re-probe.
+ */
+async function assertIsolatePreflightIfNeeded(): Promise<void> {
+    const { data: settings, error } = tryCatchSync(() => workerSettings.getSettings())
+    if (isNil(settings)) {
+        // `fetchAndStoreSettings` just ran but stored nothing (its machine-info build failed), so no
+        // poll loop could read the mode either. A connected socket never re-fetches settings, so the
+        // process exit is the only retry: without it the worker would stay connected with no settings
+        // and no way to run a job. Fail closed rather than accept jobs whose sandbox was unverified.
+        throw new Error('Worker settings are unavailable, so the execution-mode preflight cannot run', { cause: error })
+    }
+    if (preflightState !== null && preflightState.mode === settings.EXECUTION_MODE) {
+        return
+    }
+    if (!isNil(preflightInFlight)) {
+        await preflightInFlight
+        if (preflightState !== null && preflightState.mode === settings.EXECUTION_MODE) {
+            return
+        }
+    }
+    preflightInFlight = (async (): Promise<void> => {
+        try {
+            await isolatePreflight.assertRunnable({ executionMode: settings.EXECUTION_MODE, log: logger })
+            preflightState = { mode: settings.EXECUTION_MODE }
+        }
+        finally {
+            preflightInFlight = null
+        }
+    })()
+    await preflightInFlight
 }
 
 function getWorkerProps(): WorkerProps {

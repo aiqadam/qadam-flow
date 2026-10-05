@@ -9,8 +9,12 @@
 # need it, and CAP_SYS_ADMIN is a container-escape-grade capability that every self-hoster should
 # opt into explicitly. See docs/install/architecture/sandboxing.mdx for the trade-off.
 #
-# Apply it alongside the default file. Copying it to docker-compose.override.yml is the durable
-# choice: Compose merges that file automatically, including when run.sh brings the stack back up.
+# Apply it alongside the default file. `run.sh` can do it for you, once:
+#   curl -fsSL https://flow.aiqadam.org/run.sh | QADAM_FLOW_SANDBOXED=yes sh
+# That fetches this file and writes COMPOSE_FILE into .env, so the capabilities survive a later
+# plain `docker compose up` and a re-run of the installer without the flag. Or apply it by hand:
+# copying it to docker-compose.override.yml is the durable choice: Compose merges that file
+# automatically, including when run.sh brings the stack back up.
 #   cp docker-compose.sandboxed.yml docker-compose.override.yml
 # Or apply it for a single invocation with COMPOSE_FILE, set in .env so run.sh inherits it:
 #   COMPOSE_FILE=docker-compose.yml:docker-compose.sandboxed.yml
