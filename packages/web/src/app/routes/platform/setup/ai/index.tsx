@@ -16,6 +16,7 @@ import {
   aiProviderMutations,
 } from '@/features/platform-admin';
 import { platformHooks } from '@/hooks/platform-hooks';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { userHooks } from '@/hooks/user-hooks';
 
 import LockedFeatureGuard from '../../../../components/locked-feature-guard';
@@ -28,6 +29,9 @@ export default function AIProvidersPage() {
   const { data: currentUser } = userHooks.useCurrentUser();
   const { platform } = platformHooks.useCurrentPlatform();
   const allowWrite = platform.plan.aiProvidersEnabled;
+  // PlatformLayout pins the SidebarProvider open, so on desktop the toggle would target a state
+  // nothing renders from. Show it on mobile only, where the Sheet is the live sidebar (#716).
+  const isMobile = useIsMobile();
 
   const { mutateAsync: deleteProvider } =
     aiProviderMutations.useDeleteAiProvider({
@@ -56,6 +60,7 @@ export default function AIProvidersPage() {
     >
       <CenteredPage
         title={t('AI Providers')}
+        showSidebarToggle={isMobile}
         description={
           allowWrite
             ? t(
