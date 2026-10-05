@@ -42,12 +42,14 @@ import { cn } from '@/lib/utils';
 
 import { ApSidebarItem } from '../ap-sidebar-item';
 import { SidebarUser } from '../sidebar-user';
+import { useCloseMobileSidebarOnNavigation } from '../use-close-mobile-sidebar-on-navigation';
 
 export function PlatformSidebar() {
   const { platform } = platformHooks.useCurrentPlatform();
   const { checkAccess } = useAuthorization();
   const defaultRoute = determineDefaultRoute(checkAccess);
   const chevronRef = useRef<ChevronLeftIconHandle>(null);
+  useCloseMobileSidebarOnNavigation();
 
   const setupItems = [
     {
