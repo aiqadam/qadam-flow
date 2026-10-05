@@ -24,7 +24,7 @@ import { useAuthorization } from '@/hooks/authorization-hooks';
 import { cn } from '@/lib/utils';
 
 import { ScrollArea } from '../../../components/ui/scroll-area';
-import { BuilderState, useBuilderStateContext } from '../builder-hooks';
+import { useBuilderStateContext } from '../builder-hooks';
 
 import { DataSelectorNode } from './data-selector-node';
 import {
@@ -39,30 +39,6 @@ import { schemaTreeUtils } from './utils-schema';
 import { VariablesTab } from './variables-tab';
 
 type StepInfo = (FlowAction | FlowTrigger) & { dfsIndex: number };
-
-function getStepsAndData(state: BuilderState): {
-  steps: StepInfo[];
-  sampleData: Record<string, unknown>;
-  isFocusInsideListMapperModeInput: boolean;
-} {
-  const { selectedStep, flowVersion } = state;
-  if (!selectedStep || !flowVersion || !flowVersion.trigger) {
-    return {
-      steps: [],
-      sampleData: {},
-      isFocusInsideListMapperModeInput: false,
-    };
-  }
-  const pathToTargetStep = flowStructureUtil.findPathToStep(
-    flowVersion.trigger,
-    selectedStep,
-  );
-  return {
-    steps: pathToTargetStep,
-    sampleData: state.outputSampleData,
-    isFocusInsideListMapperModeInput: state.isFocusInsideListMapperModeInput,
-  };
-}
 
 function buildAdvancedStructure(
   steps: StepInfo[],
@@ -122,8 +98,29 @@ const DataSelector = ({ parentHeight, parentWidth }: DataSelectorProps) => {
   const { checkAccess } = useAuthorization();
   const canReadTranslations = checkAccess(Permission.READ_TRANSLATION);
 
-  const { steps, sampleData, isFocusInsideListMapperModeInput } =
-    useBuilderStateContext(getStepsAndData);
+  const selectedStepForData = useBuilderStateContext(
+    (state) => state.selectedStep,
+  );
+  const flowVersionForData = useBuilderStateContext(
+    (state) => state.flowVersion,
+  );
+  const sampleData = useBuilderStateContext((state) => state.outputSampleData);
+  const isFocusInsideListMapperModeInput = useBuilderStateContext(
+    (state) => state.isFocusInsideListMapperModeInput,
+  );
+  // `findPathToStep` clones every step it returns, so the array is a fresh reference on every
+  // call. Memoize on the stable inputs rather than selecting the derived array, which a shallow
+  // comparison cannot stabilize (zustand v5 compares snapshots with `Object.is`).
+  const steps = useMemo(
+    () =>
+      selectedStepForData && flowVersionForData?.trigger
+        ? flowStructureUtil.findPathToStep(
+            flowVersionForData.trigger,
+            selectedStepForData,
+          )
+        : [],
+    [selectedStepForData, flowVersionForData],
+  );
   const isTriggerSelected = useBuilderStateContext(
     (state) => state.selectedStep === 'trigger',
   );

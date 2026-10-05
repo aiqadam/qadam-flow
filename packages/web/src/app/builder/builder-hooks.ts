@@ -2,6 +2,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { createContext, useContext } from 'react';
 import { Socket } from 'socket.io-client';
 import { create, useStore } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
 
 import { CanvasState, createCanvasState } from './state/canvas-state';
 import { ChatState, createChatState } from './state/chat-state';
@@ -22,7 +23,7 @@ export function useBuilderStateContext<T>(
   const store = useContext(BuilderStateContext);
   if (!store)
     throw new Error('Missing BuilderStateContext.Provider in the tree');
-  return useStore(store, selector);
+  return useStore(store, useShallow(selector));
 }
 
 export type BuilderState = FlowState &

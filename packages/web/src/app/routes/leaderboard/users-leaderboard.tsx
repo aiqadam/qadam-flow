@@ -1,5 +1,4 @@
 import { BADGES, UserWithBadges } from '@aiqadam/shared';
-import { ColumnDef } from '@tanstack/react-table';
 import { t } from 'i18next';
 import { Trophy } from 'lucide-react';
 import { useMemo } from 'react';
@@ -7,6 +6,7 @@ import { useMemo } from 'react';
 import { ApAvatar } from '@/components/custom/ap-avatar';
 import { DataTable, RowDataWithActions } from '@/components/custom/data-table';
 import { DataTableColumnHeader } from '@/components/custom/data-table/data-table-column-header';
+import { ColumnDef } from '@/components/custom/data-table/table-features';
 import {
   Tooltip,
   TooltipContent,

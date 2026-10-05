@@ -131,10 +131,7 @@ export default defineConfig(({ command, mode }) => {
       outDir: '../../dist/packages/web',
       emptyOutDir: true,
       reportCompressedSize: true,
-      commonjsOptions: {
-        transformMixedEsModules: true,
-      },
-      rollupOptions: {
+      rolldownOptions: {
         onLog(level, log, handler) {
           if (
             log.cause &&

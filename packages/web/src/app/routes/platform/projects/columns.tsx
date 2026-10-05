@@ -4,7 +4,6 @@ import {
   ProjectWithLimits,
   ProjectType,
 } from '@aiqadam/shared';
-import { ColumnDef } from '@tanstack/react-table';
 import { t } from 'i18next';
 import {
   Lock,
@@ -19,6 +18,7 @@ import {
 
 import { RowDataWithActions } from '@/components/custom/data-table';
 import { DataTableColumnHeader } from '@/components/custom/data-table/data-table-column-header';
+import { ColumnDef } from '@/components/custom/data-table/table-features';
 import { FormattedDate } from '@/components/custom/formatted-date';
 
 type ProjectsTableColumnsProps = {

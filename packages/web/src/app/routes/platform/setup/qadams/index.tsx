@@ -1,6 +1,5 @@
 import { QadamMetadataModelSummary } from '@aiqadam/qadams-framework';
 import { QadamScope } from '@aiqadam/shared';
-import { ColumnDef } from '@tanstack/react-table';
 import { t } from 'i18next';
 import { CheckIcon, Package, Hash, GitBranch, Puzzle } from 'lucide-react';
 import { useMemo } from 'react';
@@ -12,6 +11,7 @@ import { ApplyTags } from '@/app/routes/platform/setup/qadams/apply-tags';
 import { PieceActions } from '@/app/routes/platform/setup/qadams/qadam-actions';
 import { DataTable, RowDataWithActions } from '@/components/custom/data-table';
 import { DataTableColumnHeader } from '@/components/custom/data-table/data-table-column-header';
+import { ColumnDef } from '@/components/custom/data-table/table-features';
 import { LockedAlert } from '@/components/custom/locked-alert';
 import { Badge } from '@/components/ui/badge';
 import { InstallQadamDialog, QadamIcon, qadamsHooks } from '@/features/qadams';
