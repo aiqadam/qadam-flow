@@ -3,7 +3,6 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { getHeapStatistics } from 'node:v8';
-import { CONVERSION_LIMITS, conversionWorker } from '../src/lib/common/conversion-worker';
 import { workbookToCsv } from '../src/lib/common/workbook-to-csv';
 import { excelTestKit } from './excel-test-kit';
 import { zipFixture, ZipFixtureEntry } from './zip-fixture';
@@ -16,12 +15,6 @@ const { convert, workbookLoader, workbookParts, zipBase64 } = excelTestKit;
 const BOUNDED_TEST = { timeout: 15_000 };
 // These fill a conversion worker's heap to its limit before it is stopped.
 const HEAP_FILLING_TEST = { timeout: 60_000 };
-// The action's 512 MB bound needs roughly 1.5M cell models and takes minutes on a contended
-// runner, which is the timeout #697 records. The supervisor stops a conversion on the heap it
-// holds, not on wall-clock, so the valued-cell case is checked at this lower limit instead — one
-// it crosses after a fraction of that work — while the action's own limit stays covered by the
-// other cases below.
-const VALUED_CELLS_HEAP_LIMIT_MB = 96;
 // The flags in vitest.config.ts put the limit near 536 MiB; without them it is several GB.
 const MAX_TEST_HEAP_BYTES = 600 * 1024 * 1024;
 const MEBIBYTE = 1024 * 1024;
@@ -96,6 +89,10 @@ describe('excelToCsvAction resource bounds', () => {
 
   // Sized at about twice what a conversion worker's heap holds, at the rates measured for each,
   // and built only when the test runs.
+  // The valued-cell case is deliberately absent: reaching the action's 512 MB bound with valued
+  // cells needs ~1.5M models, which cannot complete inside a load-independent timeout (#697). The
+  // abort is limit-agnostic and that path is covered by conversion-worker.test.ts at a lower heap
+  // limit, so the action's own bound stays covered by the four cases below.
   test.each([
     ['relationships', () => replacePart({ parts: zipFixture.minimalWorkbookParts({ sheetData: ONE_CELL }), part: { name: 'xl/_rels/workbook.xml.rels', data: relationshipsPart(3_000_000) } })],
     ['comments', () => worksheetParts({ sheetData: ONE_CELL, sheetExtra: `<!--${'a'.repeat(40 * MEBIBYTE)}-->` })],
@@ -103,18 +100,6 @@ describe('excelToCsvAction resource bounds', () => {
     ['processing instructions', () => worksheetParts({ sheetData: ONE_CELL, sheetExtra: `<?extra ${'a'.repeat(40 * MEBIBYTE)}?>` })],
   ])('stops a conversion whose %s need more memory than a conversion may use, and the caller keeps working', HEAP_FILLING_TEST, async (_label, buildParts) => {
     await expect(convert({ base64: zipBase64(buildParts()) })).rejects.toThrow(OVER_MEMORY_LIMIT);
-    await expectCallerStillConverts();
-  });
-
-  // The same valued-cell fixture as the case above, but at VALUED_CELLS_HEAP_LIMIT_MB: the action
-  // itself is what reaches its 512 MB bound in the four cases above, and the worker is what is
-  // stopped on heap bytes here, so the assertion does not depend on the runner's speed.
-  test('stops a conversion whose valued cells need more memory than a conversion may use, and the caller keeps working', HEAP_FILLING_TEST, async () => {
-    const outcome = conversionWorker.run({
-      request: { parts: workbookParts(zipBase64(valuedCellsParts())), sheetName: undefined, delimiter: ',' },
-      limits: { ...CONVERSION_LIMITS, heapLimitMb: VALUED_CELLS_HEAP_LIMIT_MB },
-    });
-    await expect(outcome).rejects.toThrow(`converting it needs more than the ${VALUED_CELLS_HEAP_LIMIT_MB} MB of memory a conversion may use`);
     await expectCallerStillConverts();
   });
 
@@ -217,10 +202,6 @@ function worksheetXml({ sheetData }: { sheetData: string }): string {
 
 function worksheetParts({ sheetData, sheetExtra }: { sheetData: string; sheetExtra?: string }): ZipFixtureEntry[] {
   return zipFixture.minimalWorkbookParts({ sheetData, sheetExtra });
-}
-
-function valuedCellsParts(): ZipFixtureEntry[] {
-  return worksheetParts({ sheetData: rows({ cell: '<c><v>1</v></c>', perRow: 1000, count: 400 }) });
 }
 
 function rows({ cell, perRow, count }: { cell: string; perRow: number; count: number }): string {
