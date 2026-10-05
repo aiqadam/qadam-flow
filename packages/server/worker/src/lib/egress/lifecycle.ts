@@ -2,12 +2,12 @@ import dnsSync from 'node:dns'
 import dns from 'node:dns/promises'
 import { readFile } from 'node:fs/promises'
 import net from 'node:net'
-import path from 'node:path'
 import { ErrorCode, NetworkMode, QadamFlowError, tryCatch, WorkerSettingsResponse } from '@aiqadam/shared'
 import { Logger } from 'pino'
 import { workerSettings } from '../config/worker-settings'
 import { isIsolateMode } from '../execute/create-sandbox-for-job'
 import { sandboxCapacity } from '../sandbox/capacity'
+import { sandboxEtc } from '../sandbox/sandbox-etc'
 import { iptablesLockdown, IptablesLockdown } from './iptables-lockdown'
 import { EgressProxy, startEgressProxy } from './proxy'
 
@@ -58,22 +58,25 @@ async function maybeApplyIptablesLockdown({ log, proxy, settings }: ApplyLockdow
         })
     }
     const hostNameservers = listDnsNameservers()
-    const { nameservers: sandboxNameservers, readError: sandboxResolvConfReadError } = await readSandboxResolvConfNameservers()
-    if (sandboxResolvConfReadError !== undefined) {
+    // The sandbox resolves through the container's own resolv.conf (sandbox-etc.ts), whose
+    // nameservers the host list above already carries. The baked asset is unioned in because it is
+    // what sandbox-etc falls back to when the container has no usable resolv.conf of its own.
+    const { nameservers: fallbackNameservers, readError: fallbackResolvConfReadError } = await readFallbackResolvConfNameservers()
+    if (fallbackResolvConfReadError !== undefined) {
         log.warn(
-            { sandboxResolvConf: SANDBOX_RESOLV_CONF_PATH, err: sandboxResolvConfReadError },
-            'Could not read sandbox resolv.conf — DNS allowlist will only include host nameservers, which may not match what the sandbox queries. This is the exact condition that caused the 2026-05-06 EAI_AGAIN outage.',
+            { fallbackResolvConf: sandboxEtc.fallbackResolvConfPath(), err: fallbackResolvConfReadError },
+            'Could not read the fallback sandbox resolv.conf — DNS allowlist will only include host nameservers. If the host also has no resolver, the sandbox is starved of DNS; this is the exact condition that caused the 2026-05-06 EAI_AGAIN outage.',
         )
     }
-    else if (sandboxNameservers.length === 0) {
+    else if (fallbackNameservers.length === 0) {
         log.warn(
-            { sandboxResolvConf: SANDBOX_RESOLV_CONF_PATH },
-            'Sandbox resolv.conf was readable but contained no nameserver lines — DNS allowlist will only include host nameservers.',
+            { fallbackResolvConf: sandboxEtc.fallbackResolvConfPath() },
+            'Fallback sandbox resolv.conf was readable but contained no nameserver lines — DNS allowlist will only include host nameservers.',
         )
     }
-    const nameservers = [...new Set([...hostNameservers, ...sandboxNameservers])]
+    const nameservers = [...new Set([...hostNameservers, ...fallbackNameservers])]
     if (nameservers.length === 0) {
-        const message = 'No DNS nameservers configured on the worker host or sandbox resolv.conf — refusing to apply kernel lockdown that would starve the sandbox of name resolution. ' +
+        const message = 'No DNS nameservers configured on the worker host or the fallback sandbox resolv.conf — refusing to apply kernel lockdown that would starve the sandbox of name resolution. ' +
             'Ensure /etc/resolv.conf has at least one valid nameserver, or inspect dns.getServers() output.'
         throw new QadamFlowError(
             { code: ErrorCode.ENGINE_OPERATION_FAILURE, params: { message } },
@@ -119,13 +122,13 @@ function listDnsNameservers(): string[] {
     return dnsSync.getServers().map(extractNameserverIp).filter((ip): ip is string => ip !== null)
 }
 
-async function listSandboxResolvConfNameservers(): Promise<string[]> {
-    const { nameservers } = await readSandboxResolvConfNameservers()
+async function listFallbackResolvConfNameservers(): Promise<string[]> {
+    const { nameservers } = await readFallbackResolvConfNameservers()
     return nameservers
 }
 
-async function readSandboxResolvConfNameservers(): Promise<{ nameservers: string[], readError?: Error }> {
-    const { data, error } = await tryCatch(() => readFile(SANDBOX_RESOLV_CONF_PATH, 'utf8'))
+async function readFallbackResolvConfNameservers(): Promise<{ nameservers: string[], readError?: Error }> {
+    const { data, error } = await tryCatch(() => readFile(sandboxEtc.fallbackResolvConfPath(), 'utf8'))
     if (error !== null) return { nameservers: [], readError: error }
     return { nameservers: parseResolvConfNameservers(data) }
 }
@@ -188,8 +191,7 @@ export type EgressStack = {
 }
 
 export const egressInternals = {
-    listSandboxResolvConfNameservers,
+    listDnsNameservers,
+    listFallbackResolvConfNameservers,
     parseResolvConfNameservers,
 }
-
-const SANDBOX_RESOLV_CONF_PATH = path.resolve(process.cwd(), 'packages/server/api/src/assets/etc/resolv.conf')

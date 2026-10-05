@@ -3,6 +3,7 @@ import { mkdir } from 'fs/promises'
 import path from 'path'
 import { arch } from 'process'
 import { execPromise } from '../utils/exec'
+import { sandboxEtc } from './sandbox-etc'
 import { CreateSandboxProcessParams, SandboxLogger, SandboxMount, SandboxProcessMaker } from './types'
 
 export function getIsolateExecutableName(nodeArch: NodeJS.Architecture = arch): string {
@@ -53,7 +54,6 @@ function assertSandboxEnv(env: Record<string, string>): void {
 }
 
 const isolateBinaryPath = path.resolve(process.cwd(), 'packages/server/api/src/assets', getIsolateExecutableName())
-const etcDir = path.resolve(process.cwd(), 'packages/server/api/src/assets/etc')
 
 export function isolateProcess(log: SandboxLogger, enginePath: string, _codeDirectory: string, boxId: number): SandboxProcessMaker {
     return {
@@ -75,6 +75,7 @@ export function isolateProcess(log: SandboxLogger, enginePath: string, _codeDire
             await execPromise(`${isolateBinaryPath} --box-id=${boxId} --cleanup`)
             await execPromise(`${isolateBinaryPath} --box-id=${boxId} --init`)
 
+            const etcDir = await sandboxEtc.ensure()
             const sandboxRootfs = `/var/local/lib/isolate/${boxId}/root`
             for (const mount of mounts) {
                 await mkdir(`${sandboxRootfs}${mount.sandboxPath}`, { recursive: true })

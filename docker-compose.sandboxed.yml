@@ -1,0 +1,24 @@
+# Opt-in overrides that let the bundled worker run an isolate-based execution mode:
+# AP_EXECUTION_MODE=SANDBOX_PROCESS or AP_EXECUTION_MODE=SANDBOX_CODE_AND_PROCESS.
+#
+# isolate (packages/server/worker/src/lib/sandbox/isolate.ts) creates fresh Linux namespaces, which
+# needs CAP_SYS_ADMIN and no seccomp/AppArmor confinement. With AP_NETWORK_MODE=STRICT the egress
+# iptables lockdown (packages/server/worker/src/lib/egress/iptables-lockdown.ts) additionally needs
+# CAP_NET_ADMIN to install the kernel rules, and the worker refuses to start without it. The default
+# docker-compose.yml grants none of this, deliberately: UNSANDBOXED and SANDBOX_CODE_ONLY do not
+# need it, and CAP_SYS_ADMIN is a container-escape-grade capability that every self-hoster should
+# opt into explicitly. See docs/install/architecture/sandboxing.mdx for the trade-off.
+#
+# Apply it alongside the default file. Copying it to docker-compose.override.yml is the durable
+# choice: Compose merges that file automatically, including when run.sh brings the stack back up.
+#   cp docker-compose.sandboxed.yml docker-compose.override.yml
+# Or apply it for a single invocation with COMPOSE_FILE, set in .env so run.sh inherits it:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.sandboxed.yml
+services:
+  worker:
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined

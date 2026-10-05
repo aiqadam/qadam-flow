@@ -43,8 +43,9 @@ describe.skipIf(PRIVILEGE_SKIP)('sandbox real third-party connectivity (SANDBOX_
             allowList: [],
         })
 
-        const sandboxNameservers = await egressInternals.listSandboxResolvConfNameservers()
-        const unionedAllowList = [...new Set(['1.1.1.1', '8.8.8.8', ...sandboxNameservers])]
+        const hostNameservers = egressInternals.listDnsNameservers()
+        const sandboxNameservers = await egressInternals.listFallbackResolvConfNameservers()
+        const unionedAllowList = [...new Set([...hostNameservers, '1.1.1.1', '8.8.8.8', ...sandboxNameservers])]
 
         lockdown = await iptablesLockdown.apply({
             log: silentLogger(),
@@ -212,6 +213,7 @@ async function runProbeInSandbox({ commonDir, plan, proxyPort, omitProxyUrl }: {
         NODE_PATH: '/usr/src/node_modules',
         AP_EXECUTION_MODE: 'SANDBOX_PROCESS',
         AP_SANDBOX_WS_PORT: '0',
+        AP_SANDBOX_WS_TOKEN: 'e2e-sandbox-token',
         AP_BASE_CODE_DIRECTORY: '/root/codes',
         SANDBOX_ID: 'e2e-real-3p',
         AP_NETWORK_MODE: 'STRICT',
@@ -297,7 +299,7 @@ const GROUP_E_HOSTS = [
 
 const MIN_GROUP_A_SUCCESSES = Math.ceil(GROUP_A_HOSTS.length * 0.8)
 
-const BUN_STORE = '/usr/src/app/node_modules/.bun'
+const BUN_STORE = path.resolve(process.cwd(), 'node_modules/.bun')
 
 async function mirrorUndiciInto(commonDir: string): Promise<void> {
     const undiciRoot = await locateUndiciRoot()

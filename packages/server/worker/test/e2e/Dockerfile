@@ -38,7 +38,7 @@ RUN npm install -g --no-fund --no-audit node-gyp
 
 WORKDIR /usr/src/app
 
-COPY .npmrc package.json bun.lock bunfig.toml ./
+COPY .npmrc package.json bun.lock bunfig.toml turbo.json ./
 COPY packages/ ./packages/
 COPY tools/ ./tools/
 COPY tsconfig.base.json ./
@@ -46,6 +46,10 @@ COPY tsconfig.base.json ./
 # Skip native build scripts — integration tests don't need better-sqlite3/isolated-vm native modules.
 RUN --mount=type=cache,target=/root/.bun/install/cache \
     bun install --frozen-lockfile --ignore-scripts
+
+# Build one bundled qadam and its workspace deps, so sandbox-bundled-qadam.e2e.test.ts can load a
+# real qadam through the mounts create-sandbox-for-job adds for isolate modes (#375).
+RUN bun x turbo run build --filter=@aiqadam/qadam-webhook...
 
 # isolate binary + config (checked into the repo under assets/; repo ships x86_64 and arm variants)
 RUN ARCH=$(uname -m) && \

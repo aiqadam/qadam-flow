@@ -91,6 +91,10 @@ Use this if you want the stack under version control, or you intend to modify `d
     `AP_ENVIRONMENT` is lowercase: `prod`, `dev`, or `test`. Any other value makes the server throw on startup.
     </Note>
 
+    <Tip>
+    `AP_EXECUTION_MODE=UNSANDBOXED` needs no extra container privileges. To run `SANDBOX_PROCESS` or `SANDBOX_CODE_AND_PROCESS` instead, apply the `docker-compose.sandboxed.yml` override — see [Sandboxing](../architecture/sandboxing#running-an-isolate-mode-with-docker-compose).
+    </Tip>
+
     The full list of settings lives in [Environment Variables](../configuration/environment-variables).
   </Step>
   <Step title="Start the stack">

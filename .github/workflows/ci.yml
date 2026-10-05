@@ -40,6 +40,7 @@ jobs:
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
       e2e_relevant: ${{ steps.e2e.outputs.e2e_relevant }}
+      sandbox_relevant: ${{ steps.sandbox.outputs.sandbox_relevant }}
       release_relevant: ${{ steps.release.outputs.release_relevant }}
     steps:
       - uses: actions/checkout@v5
@@ -163,6 +164,54 @@ jobs:
           echo "Diff touches none of packages/tests-e2e/, tools/ci/, or this workflow."
           emit false
 
+      # Same shape and the same fail-open reasoning as the E2E gate above. The sandbox e2e suite
+      # builds its own privileged image, so it is too expensive to run on every PR; this decides
+      # when it is worth the cost. A wrong `true` costs one needless run; a wrong `false` ships a
+      # change to the execution-isolation boundary with nothing exercising it — which is exactly
+      # the gap #375 records.
+      - name: Detect changes to the sandbox execution path
+        id: sandbox
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+
+          emit() {
+            echo "sandbox_relevant=$1" >> "$GITHUB_OUTPUT"
+            echo "::notice::sandbox_relevant=$1"
+            exit 0
+          }
+
+          if [ -z "${BASE_SHA:-}" ] || [ -z "${HEAD_SHA:-}" ]; then
+            echo "::warning::Missing base/head SHA; running the sandbox e2e job."
+            emit true
+          fi
+
+          if ! merge_base="$(git merge-base "$BASE_SHA" "$HEAD_SHA" 2>/dev/null)"; then
+            echo "::warning::Could not compute merge-base; running the sandbox e2e job."
+            emit true
+          fi
+
+          if ! changed="$(git diff --name-only --no-renames "$merge_base" "$HEAD_SHA" 2>/dev/null)"; then
+            echo "::warning::git diff failed; running the sandbox e2e job."
+            emit true
+          fi
+
+          # Whole trees, deliberately: the sandbox path spans the worker (isolate, egress,
+          # create-sandbox-for-job), the engine's loader and SSRF guard, the isolate/asset files the
+          # harness installs and reads, the shared framework and the bundled qadams the sandbox
+          # mounts and loads, the root build inputs the e2e image installs and builds with, and the
+          # harness itself.
+          if printf '%s\n' "$changed" \
+            | grep -qE '^(package\.json$|turbo\.json$|tsconfig\.base\.json$|bun\.lock$|bunfig\.toml$|packages/server/worker/|packages/server/engine/|packages/server/api/src/assets/|packages/shared/|packages/qadams/|scripts/run-sandbox-e2e\.sh$|\.github/workflows/ci\.yml$)'; then
+            emit true
+          fi
+
+          echo "Diff touches none of the sandbox execution paths."
+          emit false
+
       # Same shape and the same fail-open reasoning as the E2E gate above, for the same reason:
       # `pack-smoke` below exists because the real pack — turbo-building the three framework
       # packages, rewriting their `workspace:*` deps on the real tree, asserting the real
@@ -274,6 +323,34 @@ jobs:
             exit 1
           fi
           echo "Lint + unit tests passed. ✅"
+
+  # Runs the privileged sandbox/SSRF integration suite (packages/server/worker/test/e2e). It builds
+  # a dedicated image carrying the isolate binary and runs under --privileged, because the suite
+  # exercises real Linux namespaces, iptables and the engine's SSRF hooks — the only place those
+  # primitives are actually enforced rather than mocked. Until now the suite had no CI wiring at
+  # all, which is the execution-mode coverage gap #375 records.
+  #
+  # Not a required status check, for the same reason as `e2e` and `pack-smoke` below: a skipped
+  # job reports no conclusion, so requiring it would deadlock PRs that do not touch this path.
+  sandbox-e2e:
+    name: Sandbox e2e (privileged)
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.sandbox_relevant == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      # The e2e Dockerfile uses `RUN --mount=type=cache`, which needs BuildKit.
+      DOCKER_BUILDKIT: 1
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # This job runs PR code in a --privileged container; keep the GITHUB_TOKEN out of
+          # .git/config where that container could read it.
+          persist-credentials: false
+      - name: Build and run the sandbox e2e suite
+        run: npm run test:sandbox-e2e
 
   # Proves the RELEASE pack still works, on a normal PR rather than on a tag.
   #

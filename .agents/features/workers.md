@@ -152,6 +152,24 @@ move that off the first job:
   `sharedDepsAlreadyLoaded: true`. It never throws: a failure writes `[engineWarmup] failed {error, stack}`
   through the unpatched console's stderr, and only means the first job pays the cost itself.
 
+## Sandbox Filesystem (isolate modes, #375)
+`SANDBOX_PROCESS` / `SANDBOX_CODE_AND_PROCESS` run the engine inside isolate with cwd `/root`, so
+every path the engine resolves has to be mounted there by `create-sandbox-for-job.ts`:
+- `/root/common` — the shared cache's engine bundle (`main.js`) and any qadams installed into the
+  workspace.
+- `/root/packages/qadams`, `/root/packages/shared`, `/root/node_modules/.bun` — the bundled qadams
+  and their dependency closure. The qadam dists are plain `tsc` output that `require`s
+  `@aiqadam/qadams-framework`, `@aiqadam/qadams-common`, `@aiqadam/shared` and third-party packages
+  through the per-package symlink farms; the engine resolves the bundled root as
+  `path.resolve('packages/qadams')`, which from cwd `/root` is `/root/packages/qadams`. Without
+  these mounts every bundled qadam fails with `QadamNotFoundError`. Fork modes (`UNSANDBOXED`,
+  `SANDBOX_CODE_ONLY`) run with cwd at the repo root and mount none of them.
+- `/etc/resolv.conf` — `sandbox-etc.ts` materialises the container's own `/etc/resolv.conf` into
+  `os.tmpdir()/qadam-flow-sandbox-etc` and isolate mounts that directory as `/etc`. The baked asset
+  (`packages/server/api/src/assets/etc`, Google DNS) is only the fallback when the host file is
+  unreadable or has no nameserver. Docker's embedded resolver (127.0.0.11) is what resolves compose
+  service names like `app`, which the baked file cannot.
+
 ## Job Timing and Event-Loop Lines (#587)
 Three log lines answer "where did a slow job's time go" without OTEL. All of them are info or warn, so they reach journald on QA.
 
