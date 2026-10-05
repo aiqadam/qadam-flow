@@ -2,6 +2,7 @@ import { apId, isNil, LdapConfig, PlatformId, PlatformRole, PlatformRoleManagedB
 import { FastifyBaseLogger } from 'fastify'
 import { In } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
+import { websocketService } from '../../core/websockets.service'
 import { platformService } from '../../platform/platform.service'
 import { ProjectMemberEntity } from '../../project/project-member.entity'
 import { projectService } from '../../project/project-service'
@@ -141,6 +142,8 @@ async function applyProjectGrants({ platformId, userId, projectRoles, log }: App
     const projectIdsToRemove = [...existingManagedByProjectId.keys()]
     if (projectIdsToRemove.length > 0) {
         await projectMemberRepo().delete({ userId, platformId, projectId: In(projectIdsToRemove), managedBy: ProjectMemberManagedBy.LDAP })
+        // A revoked member must stop receiving project broadcasts now, not on their next event.
+        websocketService.evictUserFromProjects({ userId, projectIds: projectIdsToRemove })
     }
 }
 
