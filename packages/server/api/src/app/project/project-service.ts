@@ -8,6 +8,7 @@ import {
     isNil,
     localeUtil,
     Metadata,
+    Permission,
     Project,
     ProjectIcon,
     ProjectId,
@@ -20,6 +21,7 @@ import {
     spreadIfDefined,
     tryCatch,
     UserId,
+    UserStatus,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { Brackets, EntityManager, IsNull, Not, ObjectLiteral, SelectQueryBuilder } from 'typeorm'
@@ -315,6 +317,43 @@ export const projectService = (log: FastifyBaseLogger) => ({
             .getRawOne<ProjectRole>()
         return row ?? null
     },
+    // The single source of truth for "may this user touch this project", shared by the HTTP
+    // authorization middleware (`authorize.ts:assertAccessToProject`), the websocket join
+    // (`websockets.service.ts`), and `projectMemberService.getMyRole` so the three cannot drift.
+    // Order mirrors the HTTP check: same platform first, then platform privilege, then PERSONAL
+    // ownership, then TEAM membership. `kind: 'bypass'` is the privileged-user / PERSONAL-owner
+    // case, which skips the per-permission check over HTTP; `kind: 'member'` carries the role whose
+    // permissions must then be enforced.
+    async resolveUserProjectAccessOrThrow({ userId, projectId }: ResolveUserProjectAccessParams): Promise<UserProjectAccess> {
+        const user = await userService(log).getOneOrFail({ id: userId })
+        // Mirrors the HTTP session check (`assertUserSession`): a deactivated user must not act over
+        // the websocket either, even if their JWT is still valid.
+        if (isNil(user.platformId) || user.status === UserStatus.INACTIVE) {
+            throwNoProjectAccess()
+        }
+        const project = await this.getOne(projectId)
+        if (isNil(project) || project.platformId !== user.platformId) {
+            throwNoProjectAccess()
+        }
+        if (userService(log).isUserPrivileged(user)) {
+            return { kind: 'bypass' }
+        }
+        if (project.type === ProjectType.PERSONAL) {
+            if (project.ownerId === user.id) {
+                return { kind: 'bypass' }
+            }
+            throwNoProjectAccess()
+        }
+        const role = await this.getProjectRoleForUser({
+            userId: user.id,
+            projectId: project.id,
+            platformId: project.platformId,
+        })
+        if (isNil(role)) {
+            throwNoProjectAccess()
+        }
+        return { kind: 'member', role }
+    },
     // Revalidates alert receivers (and anything else keyed by email rather than userId) against
     // current membership in one round trip. `add()`'s per-receiver getProjectRoleForUser check is
     // right for a single grant, but MAX_ALERT_RECEIVERS receivers would mean 50 round trips here.
@@ -392,6 +431,25 @@ export async function applyProjectsAccessFilters<T extends ObjectLiteral>(
         )
     }))
 }
+export function throwNoProjectAccess(): never {
+    throw new QadamFlowError({
+        code: ErrorCode.AUTHORIZATION,
+        params: {
+            message: 'User does not have access to this project',
+        },
+    })
+}
+
+// The permission half of the shared access rule, so HTTP (`authorize.ts`) and the websocket
+// listeners evaluate a resolved `UserProjectAccess` the same way. `bypass` (privileged user or
+// PERSONAL owner) skips the check, exactly as HTTP does.
+export function canAccessProjectPermission({ access, permission }: CanAccessProjectPermissionParams): boolean {
+    if (access.kind === 'bypass') {
+        return true
+    }
+    return access.role.permissions.includes(permission)
+}
+
 async function callerCanAdministerProject(params: CallerCanAdministerProjectParams): Promise<boolean> {
     const { project, userId, platformId, isPrivileged } = params
     if (isPrivileged) {
@@ -692,6 +750,23 @@ type GetProjectRoleForUserParams = {
     userId: string
     projectId: string
     platformId: string
+}
+
+type ResolveUserProjectAccessParams = {
+    userId: UserId
+    projectId: ProjectId
+}
+
+// `bypass` means the caller is a privileged platform user or the PERSONAL-project owner, which
+// the HTTP authorization path lets through without a per-permission check. `member` carries the
+// project role whose permissions the caller (HTTP route or websocket listener) must enforce.
+export type UserProjectAccess =
+    | { kind: 'bypass' }
+    | { kind: 'member', role: ProjectRole }
+
+type CanAccessProjectPermissionParams = {
+    access: UserProjectAccess
+    permission: Permission
 }
 
 type FilterActiveMemberEmailsParams = {

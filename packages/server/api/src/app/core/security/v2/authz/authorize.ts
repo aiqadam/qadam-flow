@@ -1,7 +1,7 @@
-import { ErrorCode, isNil, PlatformRole, Principal, PrincipalType, ProjectType, QadamFlowError, UserIdentityProvider } from '@aiqadam/shared'
+import { ErrorCode, isNil, PlatformRole, Principal, PrincipalType, QadamFlowError, UserIdentityProvider } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { userIdentityService } from '../../../../authentication/user-identity/user-identity-service'
-import { projectService } from '../../../../project/project-service'
+import { canAccessProjectPermission, projectService, throwNoProjectAccess } from '../../../../project/project-service'
 import { userService } from '../../../../user/user-service'
 import { AuthorizationRouteSecurity, ProjectAuthorizationConfig } from '../../authorization/authorization'
 import { AuthorizationType, RouteKind } from '../../authorization/common'
@@ -111,7 +111,7 @@ async function assertAccessToProject(principal: Principal, projectSecurity: Proj
     }
 
     if (principal.type !== PrincipalType.USER && principal.type !== PrincipalType.SERVICE) {
-        throwNoAccess()
+        throwNoProjectAccess()
     }
 
     // SERVICE principals are api-key based and treated as platform-scoped admin.
@@ -120,62 +120,28 @@ async function assertAccessToProject(principal: Principal, projectSecurity: Proj
     if (principal.type === PrincipalType.SERVICE) {
         const serviceProject = await projectService(log).getOne(projectSecurity.projectId)
         if (isNil(serviceProject) || serviceProject.platformId !== principal.platform.id) {
-            throwNoAccess()
+            throwNoProjectAccess()
         }
         return
     }
 
-    const user = await userService(log).getOneOrFail({ id: principal.id })
-    if (isNil(user.platformId)) {
-        throwNoAccess()
-    }
-
-    const project = await projectService(log).getOne(projectSecurity.projectId)
-    if (isNil(project) || project.platformId !== user.platformId) {
-        throwNoAccess()
-    }
-
-    // Platform-privileged users (ADMIN/OPERATOR) bypass per-project checks.
-    if (userService(log).isUserPrivileged(user)) {
-        return
-    }
-
-    if (project.type === ProjectType.PERSONAL) {
-        if (project.ownerId === user.id) {
-            return
-        }
-        throwNoAccess()
-    }
-
-    const role = await projectService(log).getProjectRoleForUser({
-        userId: user.id,
-        projectId: project.id,
-        platformId: project.platformId,
+    // USER path — the same shared helper the websocket join uses, so the two cannot drift.
+    const access = await projectService(log).resolveUserProjectAccessOrThrow({
+        userId: principal.id,
+        projectId: projectSecurity.projectId,
     })
-    if (isNil(role)) {
-        throwNoAccess()
-    }
 
-    if (!isNil(projectSecurity.permission) && !role.permissions.includes(projectSecurity.permission)) {
+    if (!isNil(projectSecurity.permission) && !canAccessProjectPermission({ access, permission: projectSecurity.permission })) {
         throw new QadamFlowError({
             code: ErrorCode.PERMISSION_DENIED,
             params: {
-                userId: user.id,
-                projectId: project.id,
-                projectRole: role,
+                userId: principal.id,
+                projectId: projectSecurity.projectId,
+                projectRole: access.kind === 'member' ? access.role : null,
                 permission: projectSecurity.permission,
             },
         })
     }
-}
-
-function throwNoAccess(): never {
-    throw new QadamFlowError({
-        code: ErrorCode.AUTHORIZATION,
-        params: {
-            message: 'Principal does not have access to this project',
-        },
-    })
 }
 
 

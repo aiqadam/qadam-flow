@@ -2,6 +2,7 @@ import {
     ApId,
     assertNotNullOrUndefined,
     ListUsersRequestBody,
+    PlatformRole,
     PrincipalType,
     SeekPage,
     SERVICE_KEY_SECURITY_OPENAPI,
@@ -13,6 +14,8 @@ import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { StatusCodes } from 'http-status-codes'
 import { z } from 'zod'
 import { securityAccess } from '../../core/security/authorization/fastify-security'
+import { websocketService } from '../../core/websockets.service'
+import { projectService } from '../../project/project-service'
 import { userService } from '../user-service'
 
 export const platformUserController: FastifyPluginAsyncZod = async (app) => {
@@ -61,13 +64,25 @@ export const platformUserController: FastifyPluginAsyncZod = async (app) => {
         const platformId = req.principal.platform.id
         assertNotNullOrUndefined(platformId, 'platformId')
 
-        return userService(req.log).update({
+        const before = await userService(req.log).getOrThrow({ id: req.params.id })
+        const updated = await userService(req.log).update({
             id: req.params.id,
             platformId,
             platformRole: req.body.platformRole,
             status: req.body.status,
             externalId: req.body.externalId,
         })
+        // A role change that removes the privileged bypass, or a status change, can take away this
+        // user's access to project rooms they are not a member of — evict so broadcasts stop
+        // immediately. Compared before/after so a promotion or an unrelated save does not
+        // spuriously drop a still-authorized socket.
+        const wasPrivileged = before.platformRole === PlatformRole.ADMIN || before.platformRole === PlatformRole.OPERATOR
+        const isPrivileged = updated.platformRole === PlatformRole.ADMIN || updated.platformRole === PlatformRole.OPERATOR
+        if ((wasPrivileged && !isPrivileged) || before.status !== updated.status) {
+            const projectIds = await projectService(req.log).getProjectIdsByPlatform(platformId)
+            websocketService.evictUserFromProjects({ userId: req.params.id, projectIds })
+        }
+        return updated
     })
 
     app.delete('/:id', DeleteUserRequest, async (req, res) => {
@@ -78,6 +93,10 @@ export const platformUserController: FastifyPluginAsyncZod = async (app) => {
             id: req.params.id,
             platformId,
         })
+        // A removed user's sockets would otherwise keep receiving project broadcasts until their
+        // next event; drop them from every project room of this platform now.
+        const projectIds = await projectService(req.log).getProjectIdsByPlatform(platformId)
+        websocketService.evictUserFromProjects({ userId: req.params.id, projectIds })
 
         return res.status(StatusCodes.NO_CONTENT).send()
     })

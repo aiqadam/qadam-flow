@@ -73,14 +73,22 @@ function workerPrincipal(workerGroupId?: string): WorkerPrincipal {
 
 type WorkerHandler = (data: unknown, principal: WorkerPrincipal, projectId: null, callback?: (data: unknown) => void) => Promise<void>
 
+type ListenerRegistration = {
+    principalType: PrincipalType
+    event: WebsocketServerEvent
+    handler: (socket: Socket) => WorkerHandler
+}
+
 async function handlerFor(event: WebsocketServerEvent, socket: Socket): Promise<WorkerHandler> {
     const fastify = { log, get: vi.fn() }
     await workerMachineController(fastify as any, {} as any)
-    const registration = addListener.mock.calls.find(call => call[0] === PrincipalType.WORKER && call[1] === event)
+    const registration = addListener.mock.calls
+        .map(call => call[0] as ListenerRegistration)
+        .find(entry => entry.principalType === PrincipalType.WORKER && entry.event === event)
     if (!registration) {
         throw new Error(`No listener registered for ${event}`)
     }
-    return registration[2](socket)
+    return registration.handler(socket)
 }
 
 describe('worker group comes from the verified token, never the handshake', () => {

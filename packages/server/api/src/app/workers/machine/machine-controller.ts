@@ -11,23 +11,27 @@ import { machineService } from './machine-service'
 
 export const workerMachineController: FastifyPluginAsyncZod = async (app) => {
 
-    websocketService.addListener(PrincipalType.WORKER, WebsocketServerEvent.FETCH_WORKER_SETTINGS, (socket) => {
-        return async (request: unknown, principal, _projectId, callback?: (data: unknown) => void) => {
-            const workerGroupId = readWorkerGroupId(principal)
-            const information = parseHealthcheck(request, app.log)
-            // Fail closed on STORAGE, open on LIVENESS. A payload that does not parse never
-            // reaches the registry or the admin table — but it must not stop the worker booting:
-            // the ack below is awaited by `fetchAndStoreSettings` with no timeout, on a socket
-            // that stays connected, so withholding it wedges the worker permanently with nothing
-            // to reconnect and no log of its own. The fields are machine telemetry the worker
-            // does not choose (a `si.mem()` fallback yielding NaN is enough), so gating job
-            // execution on them would trade a monitoring gap for an outage.
-            const response = isNil(information)
-                ? await machineService(app.log).settingsOnly()
-                : await machineService(app.log).onConnection(information, workerGroupId)
-            callback?.(response)
-            createRpcServer<WorkerToApiContract>(socket, createHandlers({ log: app.log, workerGroupId, workerId: readHandshakeWorkerId(socket), disconnected: disconnectSignal(socket) }))
-        }
+    websocketService.addListener({
+        principalType: PrincipalType.WORKER,
+        event: WebsocketServerEvent.FETCH_WORKER_SETTINGS,
+        handler: (socket) => {
+            return async (request: unknown, principal, _projectId, callback?: (data: unknown) => void) => {
+                const workerGroupId = readWorkerGroupId(principal)
+                const information = parseHealthcheck(request, app.log)
+                // Fail closed on STORAGE, open on LIVENESS. A payload that does not parse never
+                // reaches the registry or the admin table — but it must not stop the worker booting:
+                // the ack below is awaited by `fetchAndStoreSettings` with no timeout, on a socket
+                // that stays connected, so withholding it wedges the worker permanently with nothing
+                // to reconnect and no log of its own. The fields are machine telemetry the worker
+                // does not choose (a `si.mem()` fallback yielding NaN is enough), so gating job
+                // execution on them would trade a monitoring gap for an outage.
+                const response = isNil(information)
+                    ? await machineService(app.log).settingsOnly()
+                    : await machineService(app.log).onConnection(information, workerGroupId)
+                callback?.(response)
+                createRpcServer<WorkerToApiContract>(socket, createHandlers({ log: app.log, workerGroupId, workerId: readHandshakeWorkerId(socket), disconnected: disconnectSignal(socket) }))
+            }
+        },
     })
 
     // A worker whose version does not match the app never completes a `poll`, and `poll` is the
@@ -35,22 +39,30 @@ export const workerMachineController: FastifyPluginAsyncZod = async (app) => {
     // stays reported (with its version) for as long as it is actually connected (#222). It
     // deliberately does not re-run `createRpcServer`: that would add a second `rpc` listener to
     // the same socket on every heartbeat, and both copies would answer each request.
-    websocketService.addListener(PrincipalType.WORKER, WebsocketServerEvent.WORKER_HEALTHCHECK, () => {
-        return async (request: unknown, principal) => {
-            const information = parseHealthcheck(request, app.log)
-            if (isNil(information)) {
-                return
+    websocketService.addListener({
+        principalType: PrincipalType.WORKER,
+        event: WebsocketServerEvent.WORKER_HEALTHCHECK,
+        handler: () => {
+            return async (request: unknown, principal) => {
+                const information = parseHealthcheck(request, app.log)
+                if (isNil(information)) {
+                    return
+                }
+                await machineService(app.log).onConnection(information, readWorkerGroupId(principal))
             }
-            await machineService(app.log).onConnection(information, readWorkerGroupId(principal))
-        }
+        },
     })
 
-    websocketService.addListener(PrincipalType.WORKER, WebsocketServerEvent.DISCONNECT, (socket) => {
-        return async (_request: unknown, _principal) => {
-            await machineService(app.log).onDisconnect({
-                workerId: socket.handshake.auth.workerId,
-            })
-        }
+    websocketService.addListener({
+        principalType: PrincipalType.WORKER,
+        event: WebsocketServerEvent.DISCONNECT,
+        handler: (socket) => {
+            return async (_request: unknown, _principal) => {
+                await machineService(app.log).onDisconnect({
+                    workerId: socket.handshake.auth.workerId,
+                })
+            }
+        },
     })
 
     app.get('/', ListWorkersParams, async (request) => {

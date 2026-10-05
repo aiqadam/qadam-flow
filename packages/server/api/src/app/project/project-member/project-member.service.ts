@@ -1,7 +1,6 @@
-import { DefaultProjectRole, ErrorCode, isNil, ProjectMemberWithUser, ProjectType, QadamFlowError } from '@aiqadam/shared'
+import { DefaultProjectRole, ErrorCode, ProjectMemberWithUser, QadamFlowError } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { repoFactory } from '../../core/db/repo-factory'
-import { userService } from '../../user/user-service'
 import { ProjectMemberEntity } from '../project-member.entity'
 import { projectService } from '../project-service'
 
@@ -26,30 +25,19 @@ export const projectMemberService = (log: FastifyBaseLogger) => ({
             .getRawMany<ProjectMemberWithUser>()
     },
 
-    // Mirrors the bypass order in `authorize.ts:assertAccessToProject` (privileged principal, then
-    // personal-project owner, then TEAM membership) so the role reported here matches what the
-    // server would actually enforce on a mutation — a stale answer here would recreate the exact
-    // UX gap this endpoint exists to close.
+    // Uses the same shared resolver as `authorize.ts:assertAccessToProject` and the websocket
+    // join, so the role reported here matches what the server would actually enforce on a
+    // mutation — a stale answer here would recreate the exact UX gap this endpoint exists to close.
     async getMyRole({ projectId, userId }: GetMyRoleParams): Promise<{ role: DefaultProjectRole }> {
-        const user = await userService(log).getOneOrFail({ id: userId })
-        if (userService(log).isUserPrivileged(user)) {
+        const access = await projectService(log).resolveUserProjectAccessOrThrow({ userId, projectId })
+        // A `bypass` is the privileged-user / PERSONAL-owner case; both act as project ADMIN.
+        if (access.kind === 'bypass') {
             return { role: DefaultProjectRole.ADMIN }
         }
-
-        const project = await projectService(log).getOneOrThrow(projectId)
-        if (project.type === ProjectType.PERSONAL && project.ownerId === userId) {
-            return { role: DefaultProjectRole.ADMIN }
-        }
-
-        const role = await projectService(log).getProjectRoleForUser({
-            userId,
-            projectId,
-            platformId: project.platformId,
-        })
-        if (isNil(role) || !isDefaultProjectRole(role.name)) {
+        if (!isDefaultProjectRole(access.role.name)) {
             // `securityAccess.project` already asserted the caller has access to this project, so
-            // reaching here means the membership row disappeared (or names a non-default role,
-            // which CE never creates) between that check and this query — not a normal 403.
+            // reaching here means the membership row names a non-default role (which CE never
+            // creates) — not a normal 403.
             throw new QadamFlowError({
                 code: ErrorCode.AUTHORIZATION,
                 params: {
@@ -57,7 +45,7 @@ export const projectMemberService = (log: FastifyBaseLogger) => ({
                 },
             })
         }
-        return { role: role.name }
+        return { role: access.role.name }
     },
 })
 
