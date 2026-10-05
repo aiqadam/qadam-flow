@@ -10,11 +10,8 @@ import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/
 const TEST_PREFIX = 'test-'
 const DEPRECATED_JOB_NAME = 'pieces-sync'
 
-// BullMQ types `upsertJobScheduler`'s scheduler id as the queue's job-*name* type, so the
-// strongly-named `systemJobsQueue` cannot express the legacy `<name>::<repeat-key>` ids these
-// tests have to plant, nor the job names `SystemJobName` no longer has (`pieces-sync`, an unknown
-// name) that the cleanup and worker tests add and look up. Both are plain strings at runtime; this
-// widened view says so.
+// BullMQ types a job's name with the queue's `NameType`. These tests plant legacy names (`pieces-sync`,
+// `test-unknown-job`) that `SystemJobName` no longer has; this widened view says they are plain strings.
 const legacySchedulerQueue = (): Queue<SystemJobData, unknown, string> => systemJobsQueue
 
 let app: FastifyInstance
@@ -122,6 +119,33 @@ describe('System Jobs', () => {
         const schedulers = await systemJobsQueue.getJobSchedulers()
         const matching = schedulers.filter(s => s.name === SystemJobName.FILE_CLEANUP_TRIGGER)
         expect(matching.length).toBeGreaterThanOrEqual(1)
+    })
+
+    // #666: `upsertJob` used to add a repeatable through `queue.add(..., { repeat, jobId })`, whose
+    // md5 key changed with the cron, so a changed schedule created a second repeatable and the old one
+    // kept firing. The Job Schedulers API is keyed by the scheduler id, so the second call replaces the
+    // first schedule in place.
+    it('should replace a repeated job schedule when its cron changes', async () => {
+        const name = SystemJobName.TRIAL_TRACKER
+        const jobId = 'test-cron-change-job'
+        const cronBefore = '0 1 * * *'
+        const cronAfter = '30 5 * * *'
+
+        await schedule.upsertJob({
+            job: { name, data: {}, jobId },
+            schedule: { type: 'repeated', cron: cronBefore },
+        })
+        await schedule.upsertJob({
+            job: { name, data: {}, jobId },
+            schedule: { type: 'repeated', cron: cronAfter },
+        })
+
+        const schedulers = (await systemJobsQueue.getJobSchedulers()).filter(s => s.name === name)
+        expect(schedulers).toHaveLength(1)
+        expect(schedulers[0].pattern).toBe(cronAfter)
+
+        const delayed = (await systemJobsQueue.getJobs(['delayed'])).filter(j => j.name === name)
+        expect(delayed).toHaveLength(1)
     })
 
     it('should return undefined for non-existent jobId', async () => {
@@ -338,6 +362,37 @@ describe('System Jobs', () => {
         expect(await client.zscore(systemJobsQueue.keys.repeat, legacyKey)).toBeNull()
         expect(await systemJobsQueue.getJob(delayedJobId)).toBeUndefined()
         expect(await systemJobsQueue.getJob(unrelatedJobId)).toBeDefined()
+    })
+
+    // #666: the same md5-keyed repeatables, but for a job name that still exists. Before the fix the
+    // boot sweep left these (the md5 key has no `::`), so a changed cron added a second repeatable
+    // beside the old one. The sweep now removes them, and `upsertJob` installs a single Job Scheduler.
+    it('should remove a legacy repeatable for a current job name and keep the upserted scheduler', async () => {
+        const name = SystemJobName.TRIAL_TRACKER
+        const legacyPattern = '0 7 * * *'
+        await systemJobsQueue.add(name, {}, {
+            repeat: { pattern: legacyPattern, tz: 'UTC' },
+            jobId: name,
+        })
+
+        const legacyBefore = (await systemJobsQueue.getJobSchedulers()).filter(s => s.name === name)
+        expect(legacyBefore).toHaveLength(1)
+        expect(legacyBefore[0].pattern).toBe(legacyPattern)
+
+        await schedule.init()
+
+        const jobId = 'test-legacy-current-name-job'
+        await schedule.upsertJob({
+            job: { name, data: {}, jobId },
+            schedule: { type: 'repeated', cron: '0 8 * * *' },
+        })
+
+        const after = (await systemJobsQueue.getJobSchedulers()).filter(s => s.name === name)
+        expect(after).toHaveLength(1)
+        expect(after[0].key).toBe(jobId)
+        expect(after[0].pattern).toBe('0 8 * * *')
+        const staleDelayed = (await systemJobsQueue.getJobs(['delayed'])).filter(j => j.repeatJobKey === legacyBefore[0].key)
+        expect(staleDelayed).toHaveLength(0)
     })
 })
 
