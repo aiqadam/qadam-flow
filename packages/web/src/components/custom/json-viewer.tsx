@@ -1,9 +1,9 @@
 import { isNil } from '@aiqadam/shared';
+import ReactJson from '@microlink/react-json-view';
 import { t } from 'i18next';
 import { Copy, Download, Eye, EyeOff } from 'lucide-react';
 import React, { useLayoutEffect, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
-import ReactJson from 'react-json-view';
 import { toast } from 'sonner';
 
 import { useTheme } from '@/components/providers/theme-provider';
@@ -240,6 +240,8 @@ const JsonViewer = React.memo(
                       displayDataTypes={false}
                       name={false}
                       quotesOnKeys={false}
+                      escapeStrings={false}
+                      showComma={false}
                       src={json}
                     />
                   </div>
