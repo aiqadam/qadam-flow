@@ -10,7 +10,6 @@ import {
   LoopRateLimitedPolicy,
   loopSettingsDefaults,
 } from '@aiqadam/shared';
-import { t } from 'i18next';
 import { Gauge, ListChecks } from 'lucide-react';
 import React, { useState } from 'react';
 import { useFormContext } from 'react-hook-form';
@@ -33,6 +32,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { t } from '@/i18n';
 import { cn, GAP_SIZE_FOR_STEP_SETTINGS } from '@/lib/utils';
 
 import { TextInputWithMentions } from '../qadam-properties/text-input-with-mentions';

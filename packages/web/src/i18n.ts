@@ -21,4 +21,7 @@ i18n
     nsSeparator: false,
     returnEmptyString: false,
   });
+// Exported so modules that call `t()` at module scope import the app's i18n
+// instance, which guarantees `init()` has run before their top-level code.
+export const t = i18n.t.bind(i18n);
 export default i18n;

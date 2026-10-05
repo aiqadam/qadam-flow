@@ -1,5 +1,6 @@
 import { AIProviderName } from '@aiqadam/shared';
-import { t } from 'i18next';
+
+import { t } from '@/i18n';
 
 export const SUPPORTED_AI_PROVIDERS: AiProviderInfo[] = [
   {

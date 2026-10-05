@@ -3,7 +3,6 @@ import {
   AppConnectionWithoutSensitiveData,
   Permission,
 } from '@aiqadam/shared';
-import { t } from 'i18next';
 import {
   CheckIcon,
   Trash,
@@ -51,6 +50,7 @@ import {
 import { QadamIconWithQadamName } from '@/features/qadams';
 import { useAuthorization } from '@/hooks/authorization-hooks';
 import { platformHooks } from '@/hooks/platform-hooks';
+import { t } from '@/i18n';
 import { formatUtils } from '@/lib/format-utils';
 
 const STATUS_QUERY_PARAM = 'status';

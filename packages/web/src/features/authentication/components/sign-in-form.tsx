@@ -8,7 +8,6 @@ import {
 } from '@aiqadam/shared';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation } from '@tanstack/react-query';
-import { t } from 'i18next';
 import { Eye, EyeOff } from 'lucide-react';
 import { useState } from 'react';
 import { SubmitHandler, useForm } from 'react-hook-form';
@@ -21,6 +20,7 @@ import { Form, FormField, FormItem, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { flagsHooks } from '@/hooks/flags-hooks';
+import { t } from '@/i18n';
 import { HttpError, api } from '@/lib/api';
 import { authenticationSession } from '@/lib/authentication-session';
 import { formatUtils } from '@/lib/format-utils';

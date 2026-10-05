@@ -1,7 +1,6 @@
 import { CreateOtpRequestBody, OtpType } from '@aiqadam/shared';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation } from '@tanstack/react-query';
-import { t } from 'i18next';
 import { useState } from 'react';
 import { SubmitHandler, useForm } from 'react-hook-form';
 import { Link } from 'react-router';
@@ -26,6 +25,7 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { CheckEmailNote } from '@/features/authentication/components/check-email-note';
+import { t } from '@/i18n';
 import { HttpError } from '@/lib/api';
 
 const FormSchema = z.object({

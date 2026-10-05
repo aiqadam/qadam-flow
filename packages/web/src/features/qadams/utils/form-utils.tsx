@@ -41,8 +41,9 @@ import {
   AUTHENTICATION_PROPERTY_NAME,
   OAuth2GrantType,
 } from '@aiqadam/shared';
-import { t } from 'i18next';
 import { z, ZodObject, ZodType } from 'zod';
+
+import { t } from '@/i18n';
 
 function buildInputSchemaForStep(
   type: FlowActionType | FlowTriggerType,
