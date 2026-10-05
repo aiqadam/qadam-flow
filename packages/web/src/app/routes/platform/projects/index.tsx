@@ -3,7 +3,6 @@ import {
   ProjectWithLimits,
   TeamProjectsLimit,
 } from '@aiqadam/shared';
-import { ColumnDef } from '@tanstack/react-table';
 import { t } from 'i18next';
 import { CheckIcon, Package, Pencil, Trash } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -17,6 +16,7 @@ import {
   RowDataWithActions,
   BulkAction,
 } from '@/components/custom/data-table';
+import { ColumnDef } from '@/components/custom/data-table/table-features';
 import { ConfirmationDeleteDialog } from '@/components/custom/delete-dialog';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';

@@ -14,6 +14,10 @@ import { MultiQuestion } from './chat-store-types';
 import { AnyToolPart, ChatUIMessage, chatPartUtils } from './chat-types';
 import { chatUtils } from './chat-utils';
 
+// A stable identity for a tool part whose input is not an object, so the selector's result stays
+// referentially stable and zustand v5's `Object.is` snapshot check does not loop.
+const EMPTY_TOOL_INPUT: Readonly<Record<string, unknown>> = Object.freeze({});
+
 // The answer starts a run, and the run reaches the UI over the socket like any other, so the happy
 // path is fire-and-forget. The failure path is not: the card is dismissed optimistically, and the
 // server can legitimately refuse — a gate already answered, or one the conversation has moved past
@@ -276,7 +280,7 @@ function selectPendingMcpApproval({
     toolCallId: chatPartUtils.getToolCallId(part),
     toolName,
     displayName: chatUtils.formatToolActionName({ part }),
-    toolInput: isObject(part.input) ? part.input : {},
+    toolInput: isObject(part.input) ? part.input : EMPTY_TOOL_INPUT,
   };
 }
 

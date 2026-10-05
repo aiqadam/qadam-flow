@@ -1,5 +1,4 @@
 import { FlowRun, FlowRunStatus, isNil, SeekPage } from '@aiqadam/shared';
-import { ColumnDef } from '@tanstack/react-table';
 import { t } from 'i18next';
 import {
   Archive,
@@ -16,6 +15,7 @@ import { Dispatch, SetStateAction } from 'react';
 
 import { RowDataWithActions } from '@/components/custom/data-table';
 import { DataTableColumnHeader } from '@/components/custom/data-table/data-table-column-header';
+import { ColumnDef } from '@/components/custom/data-table/table-features';
 import { TruncatedColumnTextValue } from '@/components/custom/data-table/truncated-column-text-value';
 import { FormattedDate } from '@/components/custom/formatted-date';
 import { StatusIconWithText } from '@/components/custom/status-icon-with-text';

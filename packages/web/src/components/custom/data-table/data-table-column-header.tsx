@@ -1,10 +1,12 @@
-import { Column } from '@tanstack/react-table';
+import { RowData } from '@tanstack/react-table';
 import { ArrowDown, ArrowUp, ArrowUpDown, LucideIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 
+import { Column } from './table-features';
+
 interface DataTableColumnHeaderProps<
-  TData,
+  TData extends RowData,
   TValue,
 > extends React.HTMLAttributes<HTMLDivElement> {
   column: Column<TData, TValue>;
@@ -13,7 +15,7 @@ interface DataTableColumnHeaderProps<
   sortable?: boolean;
 }
 
-export function DataTableColumnHeader<TData, TValue>({
+export function DataTableColumnHeader<TData extends RowData, TValue>({
   column,
   title,
   className,

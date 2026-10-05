@@ -5,6 +5,7 @@ import { FileX } from 'lucide-react';
 import { createContext, useContext, useRef } from 'react';
 import { Link, useParams } from 'react-router';
 import { useStore } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
 
 import { RouteLoadingBar } from '@/components/custom/route-loading-bar';
 import { buttonVariants } from '@/components/ui/button';
@@ -150,7 +151,7 @@ export function useTableState<T>(selector: (state: TableState) => T) {
   if (!tableStore) {
     throw new Error('Table context not found');
   }
-  return useStore(tableStore, selector);
+  return useStore(tableStore, useShallow(selector));
 }
 
 export function useOptionalTableStore() {
