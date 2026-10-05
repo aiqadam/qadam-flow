@@ -4,7 +4,6 @@ import {
   ProjectType,
   ProjectWithLimits,
 } from '@aiqadam/shared';
-import { ColumnDef } from '@tanstack/react-table';
 import { t } from 'i18next';
 import {
   AlertCircle,
@@ -24,6 +23,7 @@ import { useMemo } from 'react';
 import { ApAvatar } from '@/components/custom/ap-avatar';
 import { DataTable, RowDataWithActions } from '@/components/custom/data-table';
 import { DataTableColumnHeader } from '@/components/custom/data-table/data-table-column-header';
+import { ColumnDef } from '@/components/custom/data-table/table-features';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';

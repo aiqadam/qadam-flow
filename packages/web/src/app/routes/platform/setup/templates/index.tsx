@@ -1,6 +1,5 @@
 import { Template, TemplateType } from '@aiqadam/shared';
 import { useQuery } from '@tanstack/react-query';
-import { ColumnDef } from '@tanstack/react-table';
 import { t } from 'i18next';
 import { FileText, Pencil, Trash, Tag, Clock, Puzzle } from 'lucide-react';
 import { useState, useMemo } from 'react';
@@ -16,6 +15,7 @@ import {
   BulkAction,
 } from '@/components/custom/data-table';
 import { DataTableColumnHeader } from '@/components/custom/data-table/data-table-column-header';
+import { ColumnDef } from '@/components/custom/data-table/table-features';
 import { ConfirmationDeleteDialog } from '@/components/custom/delete-dialog';
 import { FormattedDate } from '@/components/custom/formatted-date';
 import { PlusIcon } from '@/components/icons/plus';

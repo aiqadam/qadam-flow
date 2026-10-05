@@ -1,5 +1,4 @@
 import { Permission, Translation } from '@aiqadam/shared';
-import { ColumnDef } from '@tanstack/react-table';
 import { t } from 'i18next';
 import {
   Download,
@@ -29,6 +28,7 @@ import {
 } from '@/components/custom/data-table';
 import { DataTableInputCheckbox } from '@/components/custom/data-table/data-table-checkbox-filter';
 import { DataTableColumnHeader } from '@/components/custom/data-table/data-table-column-header';
+import { ColumnDef } from '@/components/custom/data-table/table-features';
 import { ConfirmationDeleteDialog } from '@/components/custom/delete-dialog';
 import { PermissionNeededTooltip } from '@/components/custom/permission-needed-tooltip';
 import { TextWithTooltip } from '@/components/custom/text-with-tooltip';

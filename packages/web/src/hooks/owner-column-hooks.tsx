@@ -3,7 +3,6 @@ import {
   UserWithMetaInformation,
   validateIndexBound,
 } from '@aiqadam/shared';
-import { ColumnDef } from '@tanstack/react-table';
 import { t } from 'i18next';
 import { User } from 'lucide-react';
 
@@ -13,6 +12,7 @@ import {
   RowDataWithActions,
 } from '@/components/custom/data-table';
 import { DataTableColumnHeader } from '@/components/custom/data-table/data-table-column-header';
+import { ColumnDef } from '@/components/custom/data-table/table-features';
 import { useEmbedding } from '@/components/providers/embed-provider';
 
 import { ApAvatar } from '../components/custom/ap-avatar';
