@@ -72,23 +72,33 @@ export const systemJobsSchedule = (log: FastifyBaseLogger): SystemJobSchedule =>
 
     async upsertJob({ job, schedule, customConfig }): Promise<void> {
         log.info({ jobName: job.name }, '[systemJob#upsertJob] Upserting job')
-        const existingJob = await getJobByNameAndJobId(job.name, job.jobId)
 
-        const patternChanged = !isNil(existingJob) && schedule.type === 'repeated' ? schedule.cron !== existingJob.opts.repeat?.pattern : false
-
-        if (patternChanged && !isNil(existingJob) && !isNil(existingJob.opts.repeat) && !isNil(existingJob.name)) {
-            log.info({ jobName: job.name }, '[systemJob#upsertJob] Pattern changed, removing job from queue')
-            await systemJobsQueue.removeRepeatable(existingJob.name as SystemJobName, existingJob.opts.repeat)
+        if (schedule.type === 'repeated') {
+            // Keyed by the scheduler id, so a changed cron replaces the schedule in place instead of
+            // adding a second repeatable beside the first one (#666). `queue.add(..., { repeat })`
+            // produced an md5-keyed repeatable that `getJob(jobId)` could never find.
+            // BullMQ types the scheduler id with the queue's `NameType`, but a scheduler id (`job.jobId`)
+            // is a plain string; this local widened view avoids widening the queue itself and losing name
+            // checking at every other call site.
+            const schedulerQueue: Queue<SystemJobData, unknown, string> = systemJobsQueue
+            await schedulerQueue.upsertJobScheduler(job.jobId, { pattern: schedule.cron, tz: 'UTC' }, {
+                name: job.name,
+                data: job.data,
+                opts: customConfig,
+            })
+            return
         }
+
+        const existingJob = await getJobByNameAndJobId(job.name, job.jobId)
         if (!isNil(existingJob) && await existingJob.isFailed()) {
             log.info({ jobName: job.name }, '[systemJob#upsertJob] Retrying failed job')
             await existingJob.retry()
+            return
         }
-        if (isNil(existingJob) || patternChanged) {
+        if (isNil(existingJob)) {
             log.info({ jobName: job.name }, '[systemJob#upsertJob] Adding job to queue')
             const jobOptions = configureJobOptions({ schedule, jobId: job.jobId, customConfig })
             await systemJobsQueue.add(job.name, job.data, jobOptions)
-            return
         }
     },
 
@@ -116,7 +126,18 @@ async function removeDeprecatedJobs(): Promise<void> {
             return false
         }
         const name = getSchedulerJobName(f)
-        return deprecatedSystemJobs.isDeprecated(name) || (knownJobNames.includes(name) && f.key.includes('::'))
+        if (deprecatedSystemJobs.isDeprecated(name)) {
+            return true
+        }
+        // A repeatable created through `queue.add(name, data, { repeat, jobId })` is keyed by
+        // `md5("name:jobId::tz:pattern")` and its hash has no `ic` field, so `getJobSchedulers()` returns
+        // it without an `iterationCount`. A Job Schedulers API entry is keyed by its scheduler id and
+        // `addJobScheduler` writes `ic` at creation (bullmq 5.61), so it always carries one. Sweep the
+        // legacy repeatables for current names too, or replacing a cron leaves the old one firing beside
+        // the new schedule (#666). `::` still covers the even older colon-format members, which have no
+        // hash at all. The md5 key shape is required alongside the missing marker so a future BullMQ
+        // change to `ic` cannot make this sweep mistake a live scheduler for a legacy repeatable.
+        return knownJobNames.includes(name) && (f.key.includes('::') || (/^[0-9a-f]{32}$/.test(f.key) && isNil(f.iterationCount)))
     })
     // Filter on the name alone. `getJobSchedulers()` never sets `id`: it builds every entry from the
     // `repeat:<key>` hash, which holds no id, and ioredis returns `{}` rather than null for a missing
@@ -150,26 +171,10 @@ function getSchedulerJobName(scheduler: JobSchedulerJson): string {
     return scheduler.name ?? scheduler.key.split(':')[0]
 }
 
-const configureJobOptions = ({ schedule, jobId, customConfig }: { schedule: JobSchedule, jobId: string, customConfig?: JobsOptions }): JobsOptions => {
-    const config: JobsOptions = customConfig ?? {}
-
-    switch (schedule.type) {
-        case 'one-time': {
-            const now = apDayjs()
-            config.delay = schedule.date.diff(now, 'milliseconds')
-            break
-        }
-        case 'repeated': {
-            config.repeat = {
-                pattern: schedule.cron,
-                tz: 'UTC',
-            }
-            break
-        }
-    }
-
+const configureJobOptions = ({ schedule, jobId, customConfig }: { schedule: Extract<JobSchedule, { type: 'one-time' }>, jobId: string, customConfig?: JobsOptions }): JobsOptions => {
     return {
-        ...config,
+        ...customConfig,
+        delay: schedule.date.diff(apDayjs(), 'milliseconds'),
         jobId,
     }
 }
