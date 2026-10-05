@@ -43,6 +43,51 @@ describe('MarkdownInput markdown round trip', () => {
     expect(editor.getMarkdown()).toBe(markdown);
   });
 
+  // Markdown that agents and imported flows write: headings, code and links must
+  // survive a load/serialise round trip, or the note is silently rewritten (#668).
+  it.each([
+    ['heading', '# Title\n\nbody'],
+    ['inline code', 'use `npm ci`'],
+    ['link', '[docs](https://example.com)'],
+    ['fenced code block', '```\nconst x = 1\n```'],
+    ['blockquote', '> quote'],
+    ['horizontal rule', 'above\n\n---\n\nbelow'],
+  ])('round trips a %s note unchanged', async (_name, markdown) => {
+    const editor = await mountEditor({ initialValue: markdown });
+    expect(editor.getMarkdown()).toBe(markdown);
+    expect(editor.getText()).not.toBe('');
+  });
+
+  it('is not blank when a note opens with a heading (#668)', async () => {
+    const editor = await mountEditor({
+      initialValue: '# Heading\n\nSome text',
+    });
+    expect(editor.getText()).toContain('Heading');
+    expect(editor.getText()).toContain('Some text');
+    expect(editor.getMarkdown()).not.toBe('<br>');
+  });
+
+  // Valid markdown can no longer produce schema-invalid JSON, so the content error
+  // fallback is driven directly. If it ever fires, the stored markdown must be shown
+  // read-only rather than an empty editor that saves over the note (#668).
+  it('shows the raw markdown read-only instead of an editable empty doc on a content error', async () => {
+    const editor = await mountEditor({
+      initialValue: '# Heading\n\nSome text',
+    });
+    await act(async () => {
+      editor.commands.setContent(
+        { type: 'doc', content: [{ type: 'unsupportedNode' }] },
+        {
+          parseOptions: { preserveWhitespace: 'full' },
+          errorOnInvalidContent: true,
+        },
+      );
+    });
+    expect(container?.textContent).toContain('# Heading');
+    expect(container?.textContent).toContain('Some text');
+    expect(container?.querySelector('.ProseMirror')).toBeNull();
+  });
+
   it('keeps the <br> empty-line paragraphs as empty paragraphs', async () => {
     const editor = await mountEditor({
       initialValue: 'Para\n\n<br>\n\nAfter empty',

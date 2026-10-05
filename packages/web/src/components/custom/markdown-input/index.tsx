@@ -1,7 +1,13 @@
+import { Blockquote } from '@tiptap/extension-blockquote';
 import { Bold } from '@tiptap/extension-bold';
+import { Code } from '@tiptap/extension-code';
+import { CodeBlock } from '@tiptap/extension-code-block';
 import Document from '@tiptap/extension-document';
+import { Heading } from '@tiptap/extension-heading';
+import { HorizontalRule } from '@tiptap/extension-horizontal-rule';
 import { Image } from '@tiptap/extension-image';
 import { Italic } from '@tiptap/extension-italic';
+import { Link } from '@tiptap/extension-link';
 import { BulletList, ListItem, OrderedList } from '@tiptap/extension-list';
 import { Paragraph } from '@tiptap/extension-paragraph';
 import { Strike } from '@tiptap/extension-strike';
@@ -34,13 +40,26 @@ export const MarkdownInput = React.forwardRef<
     const [showTextCursor, setShowTextCursor] = useState(
       !onlyEditableOnDoubleClick && !disabled,
     );
+    const [hasContentError, setHasContentError] = useState(false);
     const editor = useEditor({
       extensions: [
         Document,
+        Heading,
+        Code,
+        CodeBlock,
+        Blockquote,
+        HorizontalRule,
         BulletList,
         OrderedList,
         Text,
         ListItem,
+        Link.configure({
+          // Notes are edited in place, so a click must place the cursor rather than navigate.
+          openOnClick: false,
+          // Documented intent only: the extension's built-in allow-list already rejects unsafe
+          // schemes (javascript:, data:); declared protocols are appended to it, not a narrowing.
+          protocols: ['http', 'https', 'mailto'],
+        }),
         Focus.configure({
           className: 'has-focus',
           mode: 'all',
@@ -79,7 +98,11 @@ export const MarkdownInput = React.forwardRef<
       ],
       content: initialValue,
       contentType: 'markdown',
+      enableContentCheck: true,
       editable: !disabled && !onlyEditableOnDoubleClick,
+      onContentError: () => {
+        setHasContentError(true);
+      },
       onUpdate: ({ editor }) => {
         onChange(editor.getMarkdown());
       },
@@ -107,6 +130,17 @@ export const MarkdownInput = React.forwardRef<
       },
     });
     useImperativeHandle(ref, () => editor, [editor]);
+    // tiptap replaces unparseable content with an empty doc it would then save over
+    // on the first keystroke; show the stored markdown read-only instead.
+    if (hasContentError) {
+      return (
+        <div className={cn('relative h-full nodrag nopan nowheel', className)}>
+          <div className="whitespace-pre-wrap break-words text-inherit">
+            {initialValue}
+          </div>
+        </div>
+      );
+    }
     const showPlaceholder =
       editor.getMarkdown().trim().replaceAll('<br>', '') === '' &&
       !disabled &&
