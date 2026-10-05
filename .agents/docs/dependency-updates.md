@@ -75,13 +75,30 @@ so it cannot drift from the author the way a hard-coded string would. Because th
 sets its own git author, do **not** set `gitAuthor` — `:gitSignOff` follows whatever the
 platform resolves.
 
+## Advisory OSV scan
+
+The ticket's OSV/audit gate now ships as an **advisory, non-blocking** CI job — `osv-scan`
+in `.github/workflows/ci.yml`. It scans the text `bun.lock` directly with
+`google/osv-scanner-action/osv-scanner-action` (pinned to `v2.6.0`); osv-scanner lists
+`bun.lock` under Javascript in
+<https://google.github.io/osv-scanner/supported-languages-and-lockfiles/>, so no manifest
+conversion is needed.
+
+- **Advisory by construction.** The job sets `continue-on-error: true` and is deliberately
+  not one of the four contexts the `main protect` ruleset requires. A scanner finding — or
+  the OSV.dev API being unreachable — is a backlog signal, not a merge blocker. Promoting it
+  to blocking is a separate decision: it would need the job made unconditional and fronted by
+  an always-reporting gate job, the way `verify` and `integration` are built, because a
+  skipped required context reports no conclusion under the repo's ruleset.
+- **It takes no part in the install path.** The scan is a pure lockfile read: no
+  `bun install`, no dependency cache restore/save, and no change to the `node_modules` cache
+  key documented in [`node-modules-cache.md`](./node-modules-cache.md). It cannot churn or
+  consume that cache.
+- The scanner action is pinned to an exact release rather than a moving major tag: unlike the
+  first-party actions the rest of CI uses, `google/osv-scanner-action` publishes no `v2` alias.
+
 ## Deferred (not in this change)
 
-- **OSV/audit CI gate** (ticket item). `osv-scanner` *does* read `bun.lock` — it is listed
-  under Javascript in <https://google.github.io/osv-scanner/supported-languages-and-lockfiles/> —
-  so the gate is feasible. It is deferred because a new blocking job needs a scanner binary
-  installed and network access in CI, and this config-only change should not bundle a gate
-  whose failure modes cannot be exercised here. A follow-up can add it advisory first.
 - **Enabling Dependabot / repository security alerts.** Renovate's `vulnerabilityAlerts`
   reads them when present; `osvVulnerabilityAlerts` downloads the OSV database and queries
   it offline meanwhile.
