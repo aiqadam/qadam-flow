@@ -1,3 +1,4 @@
+import path from 'path'
 import { ExecutionMode, FlowRunStatus, isNil, maxSocketHttpBufferSizeBytes, NetworkMode, ResolveInlineFlowResult, WorkerContract, WorkerToApiContract } from '@aiqadam/shared'
 import { Mutex } from 'async-mutex'
 import { nanoid } from 'nanoid'
@@ -64,6 +65,7 @@ export function createSandboxForJob(params: {
 
     const baseMounts: SandboxMount[] = [
         { hostPath: getGlobalCacheCommonPath(), sandboxPath: '/root/common' },
+        ...bundledQadamsMounts({ executionMode: settings.EXECUTION_MODE }),
     ]
 
 
@@ -88,6 +90,26 @@ export function createSandboxForJob(params: {
 // Takes the raw setting as well as the enum: `WorkerSettings.EXECUTION_MODE` is a plain string.
 export function isIsolateMode(mode: string): boolean {
     return mode === ExecutionMode.SANDBOX_PROCESS || mode === ExecutionMode.SANDBOX_CODE_AND_PROCESS
+}
+
+// isolate starts the engine with cwd=/root, so the engine's bundled-qadam root
+// (`path.resolve('packages/qadams')` — `defaultQadamsRoot()` in the engine) resolves to
+// /root/packages/qadams, which nothing mounted, so every bundled qadam failed to load with
+// QadamNotFoundError. The qadam dists are plain tsc output that require
+// @aiqadam/qadams-framework, @aiqadam/qadams-common, @aiqadam/shared and their third-party deps
+// through the symlink farms under each package and node_modules/.bun, so those trees have to be
+// visible at the same relative paths. Fork modes run with cwd at the repo root, so they need none
+// of this. Optional: a tree missing from a non-standard layout skips its mount and lets the
+// engine report QadamNotFoundError, rather than failing the sandbox on an isolate `--dir`.
+export function bundledQadamsMounts({ executionMode }: { executionMode: string }): SandboxMount[] {
+    if (!isIsolateMode(executionMode)) {
+        return []
+    }
+    return [
+        { hostPath: path.resolve('packages/qadams'), sandboxPath: '/root/packages/qadams', optional: true },
+        { hostPath: path.resolve('packages/shared'), sandboxPath: '/root/packages/shared', optional: true },
+        { hostPath: path.resolve('node_modules/.bun'), sandboxPath: '/root/node_modules/.bun', optional: true },
+    ]
 }
 
 // Keyed by the job's own context object, which `acquire()` replaces per job, so a lock lives only as

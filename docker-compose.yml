@@ -30,6 +30,11 @@ services:
     # then exits by itself at most 15s later; Docker's default of 10s would kill them mid-run (#585).
     # Keep this strictly above grace + 15s, and raise the two together.
     stop_grace_period: 90s
+    # SANDBOX_PROCESS / SANDBOX_CODE_AND_PROCESS need CAP_SYS_ADMIN (and CAP_NET_ADMIN when
+    # AP_NETWORK_MODE=STRICT) plus no seccomp/AppArmor confinement. This default grants none of it,
+    # because UNSANDBOXED and SANDBOX_CODE_ONLY do not need it. To run an isolate mode, add
+    # docker-compose.sandboxed.yml (#375):
+    #   cp docker-compose.sandboxed.yml docker-compose.override.yml
     volumes:
       - ./cache:/usr/src/app/cache
     networks:

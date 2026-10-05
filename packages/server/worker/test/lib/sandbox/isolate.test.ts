@@ -1,11 +1,11 @@
 import { EventEmitter } from 'node:events'
-import path from 'path'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-const { spawnMock, mkdirMock, execPromiseMock } = vi.hoisted(() => ({
+const { spawnMock, mkdirMock, execPromiseMock, sandboxEtcEnsureMock } = vi.hoisted(() => ({
     spawnMock: vi.fn(),
     mkdirMock: vi.fn(),
     execPromiseMock: vi.fn(),
+    sandboxEtcEnsureMock: vi.fn(),
 }))
 
 vi.mock('child_process', () => ({
@@ -18,6 +18,14 @@ vi.mock('fs/promises', () => ({
 
 vi.mock('../../../src/lib/utils/exec', () => ({
     execPromise: execPromiseMock,
+}))
+
+// The /etc mount is materialised from the container's own resolv.conf (sandbox-etc.ts); stub it
+// so this suite stays a unit test of the argv isolate receives.
+vi.mock('../../../src/lib/sandbox/sandbox-etc', () => ({
+    sandboxEtc: {
+        ensure: sandboxEtcEnsureMock,
+    },
 }))
 
 import { isolateProcess, getIsolateExecutableName } from '../../../src/lib/sandbox/isolate'
@@ -47,7 +55,7 @@ const BASE_ENV: Record<string, string> = {
     AP_SANDBOX_WS_TOKEN: 'test-token-aaaaaaaaaaaaaaaaaaaaaaaa',
 }
 
-const etcDir = path.resolve(process.cwd(), 'packages/server/api/src/assets/etc')
+const etcDir = '/tmp/sandbox-etc'
 
 async function callCreate({
     mounts = [],
@@ -77,9 +85,11 @@ describe('isolateProcess', () => {
         spawnMock.mockReset()
         mkdirMock.mockReset()
         execPromiseMock.mockReset()
+        sandboxEtcEnsureMock.mockReset()
         spawnMock.mockImplementation(() => createMockChild())
         mkdirMock.mockResolvedValue(undefined)
         execPromiseMock.mockResolvedValue({ stdout: '', stderr: '' })
+        sandboxEtcEnsureMock.mockResolvedValue(etcDir)
     })
 
     describe('pre-spawn', () => {
@@ -148,7 +158,7 @@ describe('isolateProcess', () => {
             }
         })
 
-        it('never drops the /etc mount (binds to the bundled etcDir)', async () => {
+        it('never drops the /etc mount (binds to the materialised sandbox etc dir)', async () => {
             await callCreate()
             const args: string[] = spawnMock.mock.calls[0][1]
             const etcMount = args.find((a) => a.startsWith('--dir=/etc/='))

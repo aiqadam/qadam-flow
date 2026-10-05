@@ -16,16 +16,20 @@ import { silentLogger } from './helpers/silent-logger'
  *   cause: FetchError ... getaddrinfo EAI_AGAIN api.openai.com
  *
  * Root cause:
- *   1. The sandbox /etc/resolv.conf shipped with Activepieces is hardcoded to
+ *   1. The sandbox /etc/resolv.conf used to be the baked asset, hardcoded to
  *      Google DNS (8.8.8.8, 8.8.4.4) — see packages/server/api/src/assets/etc/resolv.conf.
+ *      It now comes from the container's own /etc/resolv.conf (sandbox-etc.ts), which in
+ *      Docker is the embedded resolver at 127.0.0.11 — the only thing that resolves
+ *      compose service names like `app`.
  *   2. The kernel egress lockdown (lifecycle.ts -> iptables-lockdown.ts) builds
- *      its DNS allowlist from the *worker host's* dns.getServers() — typically
- *      127.0.0.53 (systemd-resolved) or a VPC resolver, NEVER 8.8.8.8.
+ *      its DNS allowlist from the *worker host's* dns.getServers(), which is 127.0.0.11
+ *      in Docker, and unions in the baked asset as a fallback.
  *   3. With AP_EXECUTION_MODE=SANDBOX_PROCESS + AP_NETWORK_MODE=STRICT, iptables
- *      REJECTs all egress except DNS to that host allowlist + the proxy/WS RPC ports.
+ *      REJECTs all egress except DNS to that allowlist + the proxy/WS RPC ports.
  *   4. So when a piece calls dns.lookup('api.openai.com') from inside the sandbox,
- *      the libc resolver sends UDP/53 to 8.8.8.8 -> kernel REJECTs ->
- *      glibc retries -> getaddrinfo returns EAI_AGAIN.
+ *      the libc resolver sends UDP/53 to whatever the sandbox's resolv.conf names. If
+ *      that nameserver is not in the allowlist, the kernel REJECTs it, glibc retries,
+ *      and getaddrinfo returns EAI_AGAIN.
  */
 
 const BOX_ID = 0
@@ -104,16 +108,19 @@ describe.skipIf(skip)('sandbox DNS — reproduces EAI_AGAIN under SANDBOX_PROCES
         expect(['EAI_AGAIN', 'ENOTFOUND']).toContain(lookup.code)
     }, 30_000)
 
-    it('fix: lifecycle unions sandbox resolv.conf nameservers into the iptables allowlist, so the sandbox can resolve', async () => {
-        // This test reproduces the production wiring: the host has its own DNS servers
-        // (here we simulate that with a fake IP) and the sandbox resolv.conf has its
-        // own (8.8.8.8 / 8.8.4.4). The fix in `lifecycle.ts` unions the two before
-        // applying iptables, so DNS packets the sandbox sends to 8.8.8.8 are allowed.
-        const sandboxNameservers = await egressInternals.listSandboxResolvConfNameservers()
+    it('fix: the iptables allowlist unions the host resolver the sandbox actually uses, so the sandbox can resolve', async () => {
+        // The sandbox resolves through the container's own /etc/resolv.conf (sandbox-etc.ts),
+        // which in Docker is the embedded resolver at 127.0.0.11. The lockdown's allowlist is
+        // built from the host's dns.getServers() (lifecycle.ts), so it already names that
+        // resolver; the baked asset stays unioned in as the fallback for a host with no
+        // resolv.conf of its own.
+        const hostNameservers = egressInternals.listDnsNameservers()
+        expect(hostNameservers.length).toBeGreaterThan(0)
+
+        const sandboxNameservers = await egressInternals.listFallbackResolvConfNameservers()
         expect(sandboxNameservers).toContain('8.8.8.8')
 
-        const fakeHostNameservers = ['10.123.123.123']
-        const unionedAllowList = [...new Set([...fakeHostNameservers, ...sandboxNameservers])]
+        const unionedAllowList = [...new Set([...hostNameservers, ...sandboxNameservers])]
 
         lockdown = await iptablesLockdown.apply({
             log: silentLogger(),
@@ -133,7 +140,7 @@ describe.skipIf(skip)('sandbox DNS — reproduces EAI_AGAIN under SANDBOX_PROCES
 
         const lookup = result.results[0]
         // We accept "OK" (best case) or any error that is NOT EAI_AGAIN. The point
-        // of the assertion is that the resolver can now reach 8.8.8.8 — DNS no
+        // of the assertion is that the resolver the sandbox uses is reachable — DNS no
         // longer fails with the production EAI_AGAIN signature.
         if (lookup.status === 'ERR') {
             expect(lookup.code).not.toBe('EAI_AGAIN')
@@ -159,8 +166,8 @@ describe('lifecycle resolv.conf parsing (unit)', () => {
         expect(ips).toEqual(['8.8.8.8', '8.8.4.4', '1.1.1.1'])
     })
 
-    it('reads the shipped sandbox resolv.conf and returns its nameservers', async () => {
-        const ips = await egressInternals.listSandboxResolvConfNameservers()
+    it('reads the shipped fallback resolv.conf and returns its nameservers', async () => {
+        const ips = await egressInternals.listFallbackResolvConfNameservers()
         expect(ips).toContain('8.8.8.8')
     })
 })
@@ -185,6 +192,7 @@ async function runProbeInSandbox({ commonDir, plan, proxyPort }: {
             NODE_PATH: '/usr/src/node_modules',
             AP_EXECUTION_MODE: 'SANDBOX_PROCESS',
             AP_SANDBOX_WS_PORT: '0',
+            AP_SANDBOX_WS_TOKEN: 'e2e-sandbox-token',
             AP_BASE_CODE_DIRECTORY: '/root/codes',
             SANDBOX_ID: 'e2e-dns-eai',
             AP_NETWORK_MODE: 'STRICT',

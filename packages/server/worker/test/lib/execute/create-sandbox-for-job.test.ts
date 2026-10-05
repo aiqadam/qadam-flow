@@ -1,4 +1,5 @@
 import { ApEnvironment, DEFAULT_MCP_DATA, ErrorCode, ExecutionMode, FlowRunStatus, NetworkMode, RunEnvironment, UpdateRunProgressRequest, WorkerContract } from '@aiqadam/shared'
+import path from 'path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { getSettingsMock, createSandboxMock, isolateProcessMock, simpleProcessMock, getGlobalCacheCommonPathMock, getGlobalCodeCachePathMock, getEnginePathMock, provisionFlowPiecesMock } = vi.hoisted(() => ({
@@ -104,8 +105,24 @@ describe('createSandboxForJob', () => {
     })
 
     describe('baseMounts', () => {
-        it('contains exactly /root/common → getGlobalCacheCommonPath()', () => {
+        it('mounts /root/common and the bundled qadam trees in isolate mode', () => {
             getSettingsMock.mockReturnValue(buildSettings())
+            createSandboxForJob({ log, apiClient, boxId: 1, reusable: false, proxyPort: null, getCurrentJobContext: () => null })
+
+            const options = createSandboxMock.mock.calls[0][2]
+            expect(options.baseMounts).toEqual([
+                { hostPath: '/tmp/cache/common', sandboxPath: '/root/common' },
+                { hostPath: path.resolve('packages/qadams'), sandboxPath: '/root/packages/qadams', optional: true },
+                { hostPath: path.resolve('packages/shared'), sandboxPath: '/root/packages/shared', optional: true },
+                { hostPath: path.resolve('node_modules/.bun'), sandboxPath: '/root/node_modules/.bun', optional: true },
+            ])
+        })
+
+        it.each([
+            [ExecutionMode.UNSANDBOXED],
+            [ExecutionMode.SANDBOX_CODE_ONLY],
+        ])('mounts only /root/common in fork mode %s, which resolves bundled qadams from cwd', (executionMode) => {
+            getSettingsMock.mockReturnValue(buildSettings({ EXECUTION_MODE: executionMode }))
             createSandboxForJob({ log, apiClient, boxId: 1, reusable: false, proxyPort: null, getCurrentJobContext: () => null })
 
             const options = createSandboxMock.mock.calls[0][2]

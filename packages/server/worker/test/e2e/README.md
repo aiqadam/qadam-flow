@@ -20,6 +20,10 @@ This builds a privileged container and runs the vitest suite inside it. See `Doc
 
 If the suite is invoked directly on a host that lacks the required primitives it will skip with a clear message — it does not silently pass.
 
+## Execution modes
+
+`execution-modes.e2e.test.ts` is the answer to #375's "at minimum one job per `AP_EXECUTION_MODE`". For every mode — `UNSANDBOXED`, `SANDBOX_CODE_ONLY`, `SANDBOX_PROCESS`, `SANDBOX_CODE_AND_PROCESS` — it drives `createSandboxForJob` (the worker's own factory, so the mode → process maker choice, mounts and env are the production ones), starts the sandbox and runs a `BEGIN` flow that resolves the bundled `@aiqadam/qadam-webhook` qadam and returns a response. It asserts the engine's own run status over the worker socket, not a mock. Remove the isolate-mode qadam mounts and the two isolate cases fail; the two fork cases keep passing — that is the regression this test exists to catch.
+
 ## Real third-party connectivity smoke
 
 `sandbox-real-third-party.e2e.test.ts` brings up the same SANDBOX_PROCESS + STRICT stack used in production and reaches out to a curated list of public APIs (~30 hosts: OpenAI, Anthropic, Stripe, GitHub, Notion, etc.). It asserts:
