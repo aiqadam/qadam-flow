@@ -175,11 +175,13 @@ export function StatusLineChart({ data, isLoading }: StatusLineChartProps) {
                 content={
                   <ChartTooltipContent
                     labelFormatter={(value) =>
-                      new Date(value).toLocaleDateString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric',
-                      })
+                      typeof value === 'string' || typeof value === 'number'
+                        ? new Date(value).toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric',
+                          })
+                        : value
                     }
                   />
                 }

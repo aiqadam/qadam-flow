@@ -137,11 +137,13 @@ export function AnalyticsAreaChart({
                     className="w-[150px]"
                     nameKey={dataKey}
                     labelFormatter={(value) =>
-                      new Date(value).toLocaleDateString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric',
-                      })
+                      typeof value === 'string' || typeof value === 'number'
+                        ? new Date(value).toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric',
+                          })
+                        : value
                     }
                     formatter={
                       tooltipFormatter
