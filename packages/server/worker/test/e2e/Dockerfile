@@ -43,9 +43,25 @@ COPY packages/ ./packages/
 COPY tools/ ./tools/
 COPY tsconfig.base.json ./
 
-# Skip native build scripts — integration tests don't need better-sqlite3/isolated-vm native modules.
+# Skip native build scripts for the workspace install — these integration tests do not need
+# better-sqlite3 and friends, and building them all costs minutes. isolated-vm is the exception:
+# the per-mode suite runs a CODE step (#712) and the engine executes it through isolated-vm in
+# the two V8 modes, so it is built explicitly right below.
 RUN --mount=type=cache,target=/root/.bun/install/cache \
     bun install --frozen-lockfile --ignore-scripts
+
+# isolated-vm is a native addon, and the workspace install above already ships its prebuilt binary,
+# so fork modes (cwd=/usr/src/app) resolve it without help. Isolate modes run with
+# NODE_PATH=/usr/src/node_modules and resolve the copy mounted into the box, which nothing else in
+# this image populates — install the same version there too (#712). Keep ISOLATED_VM_VERSION equal
+# to the engine's pin (the main Dockerfile checks the two against each other).
+ARG ISOLATED_VM_VERSION=7.0.0
+RUN --mount=type=cache,target=/root/.bun/install/cache \
+    cd /usr/src && bun install isolated-vm@${ISOLATED_VM_VERSION}
+
+# Fail the build if ISOLATED_VM_VERSION drifted from the manifests, exactly as the main Dockerfile
+# does (#641). Without this the e2e suite would keep exercising an old addon after a real bump.
+RUN node -e 'const v=require("/usr/src/node_modules/isolated-vm/package.json").version;const r=require("./package.json").dependencies["isolated-vm"];const e=require("./packages/server/engine/package.json").dependencies["isolated-vm"];if(v!==r||v!==e){console.error("isolated-vm mismatch: sandbox="+v+" root="+r+" engine="+e);process.exit(1)}'
 
 # Build the engine bundle and one bundled qadam (with its workspace deps): the per-execution-mode
 # suite boots the real engine through createSandboxForJob, and sandbox-bundled-qadam.e2e.test.ts
