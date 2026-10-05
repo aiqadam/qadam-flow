@@ -46,18 +46,28 @@ The engine runs inside [ioi/isolate](https://github.com/ioi/isolate), which crea
 
 ### Running an isolate mode with Docker Compose
 
-The bundled `docker-compose.yml` grants the worker no extra capabilities, because `UNSANDBOXED` and `SANDBOX_CODE_ONLY` do not need them. To run an isolate mode, set it in `.env` and apply the opt-in override that adds `CAP_SYS_ADMIN` (and `CAP_NET_ADMIN` when `AP_NETWORK_MODE=STRICT`, which the egress lockdown needs) and lifts the seccomp/AppArmor confinement:
+The bundled `docker-compose.yml` grants the worker no extra capabilities, because `UNSANDBOXED` and `SANDBOX_CODE_ONLY` do not need them. To run an isolate mode, set it in `.env` and select the opt-in override that adds `CAP_SYS_ADMIN` (and `CAP_NET_ADMIN` when `AP_NETWORK_MODE=STRICT`, which the egress lockdown needs) and lifts the seccomp/AppArmor confinement:
 
 ```dotenv
 AP_EXECUTION_MODE=SANDBOX_PROCESS
 ```
+
+The installer fetches `docker-compose.sandboxed.yml` and selects it for you when you opt in once with `QADAM_FLOW_SANDBOXED=yes`:
+
+```bash
+curl -fsSL https://flow.aiqadam.org/run.sh | QADAM_FLOW_SANDBOXED=yes sh
+```
+
+It writes `COMPOSE_FILE=docker-compose.yml:docker-compose.sandboxed.yml` into `.env`, so the capabilities survive a later plain `docker compose up -d` and an upgrade that re-runs `run.sh` without the flag. To revoke the opt-in, run the installer once with `QADAM_FLOW_SANDBOXED=no`, which removes that line again; leaving the variable unset keeps an existing choice. If you applied the override by hand as `docker-compose.override.yml` instead, `no` does not touch it — delete that file yourself.
+
+If you manage the compose files by hand instead, copy the override into place — Compose merges `docker-compose.override.yml` automatically, so a later `run.sh` upgrade keeps it:
 
 ```bash
 cp docker-compose.sandboxed.yml docker-compose.override.yml
 docker compose up -d
 ```
 
-Compose merges `docker-compose.override.yml` automatically, so a later `run.sh` upgrade keeps the capabilities. If you installed by downloading only `docker-compose.yml`, fetch the override beside it first:
+If you installed by downloading only `docker-compose.yml`, fetch the override beside it first:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/aiqadam/qadam-flow/main/docker-compose.sandboxed.yml -o docker-compose.sandboxed.yml
@@ -66,6 +76,8 @@ curl -fsSL https://raw.githubusercontent.com/aiqadam/qadam-flow/main/docker-comp
 <Warning>
 This gives the worker `CAP_SYS_ADMIN` and `CAP_NET_ADMIN`, container-escape-grade capabilities. A kernel or runtime escape from a privileged worker reaches the host and everything else on it, as in the Kubernetes example above. Run it on a dedicated node, or prefer `SANDBOX_CODE_ONLY`.
 </Warning>
+
+The worker probes the isolate sandbox once at startup. If the capabilities are missing — for example, an isolate mode was set without the override — it refuses to start with an actionable message instead of failing every job mid-run.
 
 ## Network Isolation
 

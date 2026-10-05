@@ -19,6 +19,11 @@
 #   QADAM_FLOW_PORT  — host port the app is published on (default: 8080)
 #   QADAM_FLOW_IMAGE — docker image (default: ghcr.io/aiqadam/qadam-flow:latest)
 #   QADAM_FLOW_REF   — git ref for the compose file (default: main)
+#   QADAM_FLOW_SANDBOXED — `yes` lets the worker run an isolate execution mode
+#                          (SANDBOX_PROCESS / SANDBOX_CODE_AND_PROCESS): fetches
+#                          docker-compose.sandboxed.yml and selects it via COMPOSE_FILE in .env.
+#                          This grants the worker CAP_SYS_ADMIN — opt in deliberately. `no` removes
+#                          that selection again; unset leaves it as it was.
 #
 # Targets: macOS (Docker Desktop), Linux (dockerd), Windows via WSL2.
 # Native Windows PowerShell is not supported — use WSL2.
@@ -60,6 +65,10 @@ fi
 QADAM_FLOW_PORT=${QADAM_FLOW_PORT:-$DEFAULT_PORT}
 
 COMPOSE_URL="https://raw.githubusercontent.com/aiqadam/qadam-flow/${QADAM_FLOW_REF}/docker-compose.yml"
+COMPOSE_SANDBOXED_URL="https://raw.githubusercontent.com/aiqadam/qadam-flow/${QADAM_FLOW_REF}/docker-compose.sandboxed.yml"
+# What COMPOSE_FILE selects when QADAM_FLOW_SANDBOXED is on. Written into .env as well as exported, so
+# a later plain `docker compose up` (and a `run.sh` upgrade that omits the flag) keeps the override.
+COMPOSE_FILE_VALUE='docker-compose.yml:docker-compose.sandboxed.yml'
 
 # PostgreSQL major upgrade (#611). The volume keys and the marker file name must match the postgres
 # service in docker-compose.yml. PG_ROLLBACK_REF is the last commit whose compose file runs
@@ -163,6 +172,78 @@ fetch_compose() {
   mv docker-compose.yml.new docker-compose.yml
 }
 
+# `QADAM_FLOW_SANDBOXED` is a tri-state, not a plain on/off, so an opt-in for a
+# container-escape-grade capability can always be revoked (#709):
+#   unset/empty  leave the install as it is (so an upgrade keeps an earlier opt-in)
+#   yes/1/true/on   fetch docker-compose.sandboxed.yml and select it via COMPOSE_FILE
+#   no/0/false/off  remove COMPOSE_FILE, dropping the capability
+# Matching is case-insensitive: env vars are routinely supplied uppercased.
+sandboxed_lowercase() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+is_sandboxed_requested() {
+  case "$(sandboxed_lowercase "${QADAM_FLOW_SANDBOXED:-}")" in
+    1|yes|true|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_sandboxed_disabled() {
+  case "$(sandboxed_lowercase "${QADAM_FLOW_SANDBOXED:-}")" in
+    0|no|false|off) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+sandboxed_compose_selected_in_env() {
+  [ -f .env ] || return 1
+  [ "$(env_value COMPOSE_FILE)" = "$COMPOSE_FILE_VALUE" ]
+}
+
+fetch_sandboxed_override() {
+  log "downloading docker-compose.sandboxed.yml from $COMPOSE_SANDBOXED_URL"
+  if ! curl -fsSL "$COMPOSE_SANDBOXED_URL" -o docker-compose.sandboxed.yml.new; then
+    die "failed to download $COMPOSE_SANDBOXED_URL — check your network and that the repo is public"
+  fi
+  mv docker-compose.sandboxed.yml.new docker-compose.sandboxed.yml
+}
+
+# Resolves the sandboxed override for this run. Writing COMPOSE_FILE to .env (and exporting it) lets
+# the capabilities survive a later plain `docker compose up` and a `run.sh` upgrade that omits the
+# flag; an explicit `no` removes the line again. When the selection is kept across an upgrade the
+# override is re-fetched, so it stays in step with QADAM_FLOW_REF and is present if it was deleted.
+configure_sandboxed_compose() {
+  if is_sandboxed_disabled; then
+    # Clear an inherited COMPOSE_FILE too, so an explicit `no` revokes for this run even when the
+    # selection came from the environment rather than .env.
+    unset COMPOSE_FILE
+    if sandboxed_compose_selected_in_env; then
+      remove_env_value COMPOSE_FILE
+      log "sandboxed execution mode disabled — removed COMPOSE_FILE from .env"
+    elif printf '%s' "$(env_value COMPOSE_FILE)" | grep -q 'docker-compose.sandboxed.yml'; then
+      warn "COMPOSE_FILE in .env still selects docker-compose.sandboxed.yml; leaving it as it was not run.sh's own selection. Remove that entry by hand to fully revoke the capability."
+    fi
+    return 0
+  fi
+  if is_sandboxed_requested; then
+    existing_compose_file="${COMPOSE_FILE:-$(env_value COMPOSE_FILE)}"
+    if [ -n "$existing_compose_file" ] && [ "$existing_compose_file" != "$COMPOSE_FILE_VALUE" ]; then
+      warn "replacing the existing COMPOSE_FILE (${existing_compose_file}) with ${COMPOSE_FILE_VALUE}; add docker-compose.sandboxed.yml to your own list instead if you meant to keep it"
+    fi
+    fetch_sandboxed_override
+    set_env_value COMPOSE_FILE "$COMPOSE_FILE_VALUE"
+    export COMPOSE_FILE="$COMPOSE_FILE_VALUE"
+    warn "this grants the worker CAP_SYS_ADMIN (and CAP_NET_ADMIN under AP_NETWORK_MODE=STRICT), a container-escape-grade capability. Run isolate modes on a dedicated node only; see https://flow.aiqadam.org/docs/install/architecture/sandboxing"
+    return 0
+  fi
+  if sandboxed_compose_selected_in_env; then
+    fetch_sandboxed_override
+    export COMPOSE_FILE="$COMPOSE_FILE_VALUE"
+    log "sandboxed execution mode is enabled from .env — keeping it (set QADAM_FLOW_SANDBOXED=no to revoke)"
+  fi
+}
+
 # Older compose files hardcode '8080:80'. Publishing a custom port depends on the downloaded file
 # interpolating QADAM_FLOW_PORT, so fail loudly instead of booting a stack on the wrong port.
 check_compose_port() {
@@ -193,6 +274,15 @@ set_env_value() {
       printf '\n' >> .env
     fi
     printf '%s=%s\n' "$1" "$2" >> .env
+  fi
+}
+
+# Drops every assignment of a key. Used to revoke the sandboxed override's COMPOSE_FILE (#709).
+# Same mode-preserving temp file as set_env_value.
+remove_env_value() {
+  [ -f .env ] || return 0
+  if grep -q "^$1=" .env; then
+    cp -p .env .env.tmp && sed "/^$1=/d" .env > .env.tmp && mv .env.tmp .env
   fi
 }
 
@@ -743,6 +833,9 @@ main() {
   # value adopted from an existing .env — a value no earlier check has seen.
   validate_port "QADAM_FLOW_PORT in $(pwd)/.env"
   check_compose_port
+  # After generate_env has produced .env, and before pull_images/up so every compose command in this
+  # run already selects the override.
+  configure_sandboxed_compose
   pull_images
   # Between the pull and the start: it needs the new postgres image, and PostgreSQL 18 must not be
   # started before its data has been restored.

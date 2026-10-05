@@ -55,10 +55,15 @@ Set these before piping to `sh`, for example `QADAM_FLOW_DIR=/opt/qadam-flow`:
 | `QADAM_FLOW_IMAGE` | `ghcr.io/aiqadam/qadam-flow:latest` | Image used by the app and worker services.                         |
 | `QADAM_FLOW_REF`   | `main`                              | Git ref the `docker-compose.yml` is downloaded from.                |
 | `QADAM_FLOW_PORT`  | `8080`                              | Host port the app is published on, and the port used for `AP_FRONTEND_URL` and the health check. |
+| `QADAM_FLOW_SANDBOXED` | unset (tri-state)               | `yes` runs an isolate execution mode: fetches `docker-compose.sandboxed.yml` and selects it via `COMPOSE_FILE`. `no` removes that selection; unset leaves the install as it is. |
 
 <Note>
 `QADAM_FLOW_PORT` is written into the generated `.env`, and `docker-compose.yml` interpolates it into the app's port mapping (`${QADAM_FLOW_PORT:-8080}:80`). Re-running the installer against an existing install adopts the port already recorded in that `.env` unless you set `QADAM_FLOW_PORT` again, in which case the `.env` is updated in place.
 </Note>
+
+<Warning>
+`QADAM_FLOW_SANDBOXED=yes` grants the worker `CAP_SYS_ADMIN` (and `CAP_NET_ADMIN` under `AP_NETWORK_MODE=STRICT`) — container-escape-grade capabilities. Only needed for `SANDBOX_PROCESS` and `SANDBOX_CODE_AND_PROCESS`; see [Sandboxing](/install/architecture/sandboxing). It writes `COMPOSE_FILE` into `.env`, so the mode survives later upgrades until you re-run with `QADAM_FLOW_SANDBOXED=no` to remove that line; unset keeps an existing choice.
+</Warning>
 
 <Warning>
 **Upgrading from an install that changed the port by hand.** Earlier versions ignored `QADAM_FLOW_PORT`, so the only way to move the port was to edit the `8080:80` mapping in `qadam-flow/docker-compose.yml` — and the installer overwrites that file on every run, silently putting you back on 8080. Move the port into `.env` instead: re-run with `QADAM_FLOW_PORT=<your port>`, which records it in `.env` and repoints `AP_FRONTEND_URL`. The installer warns if it spots an `AP_FRONTEND_URL` pointing at a port the stack will not publish.

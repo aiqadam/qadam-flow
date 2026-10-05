@@ -170,6 +170,17 @@ every path the engine resolves has to be mounted there by `create-sandbox-for-jo
   unreadable or has no nameserver. Docker's embedded resolver (127.0.0.11) is what resolves compose
   service names like `app`, which the baked file cannot.
 
+## Isolate Boot Preflight (#709)
+An isolate mode in an unprivileged container used to fail per job, mid-run, with `Cannot run proxy,
+clone failed: Operation not permitted`. `sandbox/isolate-preflight.ts` probes once, before the worker
+accepts any job: on the first connect that reports an isolate `EXECUTION_MODE`, the worker runs
+`isolate --box-id=<probe> --cleanup/--init/--run -- /bin/true/--cleanup` (box 0 is reserved for the
+probe; jobs use 1..`AP_WORKER_CONCURRENCY`). A failure is fatal at boot — the same kill-switch shape
+as the egress stack — with a message pointing at `docker-compose.sandboxed.yml`. The probe is per
+mode, so a reconnect with the same mode does not re-run it; `UNSANDBOXED`/`SANDBOX_CODE_ONLY` skip it
+entirely. The bundled image must create `/var/local/lib/isolate` (isolate's `box_root`), which only
+the sandbox-e2e harness did before #709.
+
 ## Job Timing and Event-Loop Lines (#587)
 Three log lines answer "where did a slow job's time go" without OTEL. All of them are info or warn, so they reach journald on QA.
 

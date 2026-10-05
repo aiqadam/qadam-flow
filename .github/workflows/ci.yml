@@ -203,9 +203,10 @@ jobs:
           # create-sandbox-for-job), the engine's loader and SSRF guard, the isolate/asset files the
           # harness installs and reads, the shared framework and the bundled qadams the sandbox
           # mounts and loads, the root build inputs the e2e image installs and builds with, and the
-          # harness itself.
+          # harness itself. `run.sh` and the compose files are included because `e2e-execution-modes`
+          # reads them from the checkout to boot the stack per mode.
           if printf '%s\n' "$changed" \
-            | grep -qE '^(package\.json$|turbo\.json$|tsconfig\.base\.json$|bun\.lock$|bunfig\.toml$|packages/server/worker/|packages/server/engine/|packages/server/api/src/assets/|packages/shared/|packages/qadams/|scripts/run-sandbox-e2e\.sh$|\.github/workflows/ci\.yml$)'; then
+            | grep -qE '^(package\.json$|turbo\.json$|tsconfig\.base\.json$|bun\.lock$|bunfig\.toml$|run\.sh$|docker-compose(\.[a-z]+)?\.yml$|packages/server/worker/|packages/server/engine/|packages/server/api/src/assets/|packages/shared/|packages/qadams/|scripts/run-sandbox-e2e\.sh$|\.github/workflows/ci\.yml$)'; then
             emit true
           fi
 
@@ -1320,6 +1321,178 @@ jobs:
       # always() rather than failure() on purpose — a job cancelled by the 30-minute timeout or by
       # the concurrency group is precisely the case where the server log is the only evidence, and
       # failure() does not cover a cancellation.
+      - name: Dump docker compose logs
+        if: always()
+        run: docker compose logs --no-color --tail=2000
+
+  # #709: the full API <-> worker <-> engine path under every AP_EXECUTION_MODE. The engine-level
+  # `execution-modes.e2e.test.ts` (in the `sandbox-e2e` job) covers the mode -> process maker choice,
+  # the mounts and the engine boot in-process; this boots the *bundled* `docker-compose.yml` — the
+  # stack a self-hoster actually runs, including the sandboxed override for the isolate modes — and
+  # drives one published flow end to end through the API and the webhook, with the real worker
+  # dequeueing and reporting the run. Neither the file API nor the worker RPC is stubbed here.
+  #
+  # Not a required status check, for the same reason as `e2e`/`sandbox-e2e` above: a skipped job
+  # reports no conclusion, and requiring one that is path-gated would deadlock unrelated PRs.
+  #
+  # Image resolution mirrors `e2e`: on a push to main the matrix tests the image that push built
+  # (`sha-<short>`); on a pull request it tests the last published `:main`, so a green PR run proves
+  # the job works but does NOT exercise the PR's own worker code. The `:main` caveat is deliberate and
+  # documented here for the same reason it is on `e2e`.
+  e2e-execution-modes:
+    name: E2E execution mode ${{ matrix.mode }}
+    needs: [changes, image, image_publish]
+    if: >-
+      always()
+      && needs.image.result == 'success'
+      && (needs.image_publish.result == 'success' || needs.image_publish.result == 'skipped')
+      && (github.event_name != 'pull_request'
+          || needs.changes.outputs.e2e_relevant == 'true'
+          || needs.changes.outputs.sandbox_relevant == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      # GHCR pull for the image the matrix boots. Public package, but the login removes any
+      # dependency on it staying public.
+      packages: read
+    strategy:
+      # One mode failing must not hide whether the others pass — that is the whole point of the
+      # matrix.
+      fail-fast: false
+      matrix:
+        include:
+          # Fork modes: the default unprivileged stack.
+          - mode: UNSANDBOXED
+            sandboxed: 'no'
+          - mode: SANDBOX_CODE_ONLY
+            sandboxed: 'no'
+          # Isolate modes: need CAP_SYS_ADMIN, so the sandboxed override is selected.
+          - mode: SANDBOX_PROCESS
+            sandboxed: 'yes'
+          - mode: SANDBOX_CODE_AND_PROCESS
+            sandboxed: 'yes'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # This job sources PR-controlled `run.sh` and boots a worker with CAP_SYS_ADMIN, so keep
+          # the token out of .git/config where that code could read it — same reason as
+          # `sandbox-e2e` above.
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        id: node
+        with:
+          node-version: 24
+
+      - uses: oven-sh/setup-bun@v2
+        id: bun
+        with:
+          bun-version: 1.3.14
+
+      # Restore-only and byte-identical to `e2e`/`_verify.yml` — tools/ci/install-deps.test.sh
+      # asserts the key and paths match across all three.
+      - name: Restore built node_modules
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'refresh-cache') }}
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            packages/*/*/node_modules
+            packages/*/*/*/node_modules
+          key: node-modules-${{ vars.NODE_MODULES_CACHE_EPOCH || 'v1' }}-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-bun${{ steps.bun.outputs.bun-version }}-${{ hashFiles('bun.lock', 'bunfig.toml', 'package.json', '.npmrc', 'tools/ci/install-deps.sh') }}
+
+      - name: Install dependencies
+        run: tools/ci/install-deps.sh
+
+      - name: Install the Chromium browser
+        working-directory: packages/tests-e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Login to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Same tag shape as `e2e`, and it must stay in step with docker/metadata-action's
+      # `type=sha,format=short,prefix=sha-` in the `image` job.
+      - name: Resolve the image to test
+        id: target
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = push ]; then
+            tag="sha-$(printf '%s' "$COMMIT_SHA" | cut -c1-7)"
+          else
+            tag=main
+          fi
+          echo "image=ghcr.io/aiqadam/qadam-flow:${tag}" >> "$GITHUB_OUTPUT"
+          echo "Testing ghcr.io/aiqadam/qadam-flow:${tag}"
+
+      # Boots the bundled compose file through run.sh's own helpers (the same .env generator every
+      # real install uses), pins AP_EXECUTION_MODE from the matrix, and selects the sandboxed
+      # override for the isolate legs. COMPOSE_FILE is also exported to $GITHUB_ENV so the later
+      # `docker compose logs` step sees the same project.
+      - name: Boot the stack under the matrix execution mode
+        env:
+          QADAM_FLOW_IMAGE: ${{ steps.target.outputs.image }}
+          NO_COLOR: '1'
+          QADAM_FLOW_SOURCE_ONLY: '1'
+          AP_EXECUTION_MODE: ${{ matrix.mode }}
+          QADAM_FLOW_SANDBOXED: ${{ matrix.sandboxed }}
+        run: |
+          set -euo pipefail
+          . ./run.sh
+          generate_env
+          set_env_value AP_EXECUTION_MODE "$AP_EXECUTION_MODE"
+          # Use the checkout's own docker-compose.sandboxed.yml rather than run.sh's download, which
+          # would fetch main's: this job must exercise the PR's override. The downloader itself is
+          # covered by tools/ci/test-run-sh.sh.
+          if is_sandboxed_requested; then
+            set_env_value COMPOSE_FILE "$COMPOSE_FILE_VALUE"
+            export COMPOSE_FILE="$COMPOSE_FILE_VALUE"
+            echo "COMPOSE_FILE=$COMPOSE_FILE_VALUE" >> "$GITHUB_ENV"
+          fi
+          docker compose up -d
+
+      - name: Wait for the API to answer
+        run: tools/ci/wait-for-api.sh http://localhost:8080/api/v1/flags 300
+
+      # The published-and-run flow: webhook trigger -> return response, the same spec the `e2e` job
+      # runs. It succeeds only if a worker dequeued the job, executed it in the matrix's mode and
+      # reported SUCCEEDED — i.e. the whole path this job exists to cover.
+      - name: Run the golden path
+        working-directory: packages/tests-e2e
+        env:
+          AP_FRONTEND_URL: http://localhost:8080
+          AP_API_URL: http://localhost:8080
+        run: npx playwright test scenarios/ce/flows/standalone-golden-path.spec.ts --workers=1 --timeout=180000 --reporter=list,github
+
+      # A typo or a fallback would still let the flow succeed (the engine falls back to a fork for an
+      # unknown mode), so assert the worker actually loaded the mode from the matrix rather than
+      # trusting the run result alone. `case` rather than `printf … | grep -q`: under `pipefail` the
+      # early `grep -q` exit sends SIGPIPE to `printf` and fails the step on a run that matched.
+      - name: Assert the worker reported the requested execution mode
+        env:
+          EXPECTED_MODE: ${{ matrix.mode }}
+        run: |
+          set -euo pipefail
+          logs="$(docker compose logs --no-color worker 2>/dev/null || true)"
+          case "$logs" in
+            *"\"executionMode\":\"${EXPECTED_MODE}\""*) ;;
+            *)
+              echo "::error::the worker never reported executionMode=${EXPECTED_MODE}"
+              printf '%s\n' "$logs" | tail -50
+              exit 1
+              ;;
+          esac
+
       - name: Dump docker compose logs
         if: always()
         run: docker compose logs --no-color --tail=2000

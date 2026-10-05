@@ -7,12 +7,16 @@ import { getEnginePath, getGlobalCacheCommonPath, getGlobalCodeCachePath } from 
 import { workerSettings } from '../config/worker-settings'
 import { sandboxCapacity } from '../sandbox/capacity'
 import { simpleProcess } from '../sandbox/fork'
-import { isolateProcess } from '../sandbox/isolate'
+import { isIsolateMode, isolateProcess } from '../sandbox/isolate'
 import { createSandbox } from '../sandbox/sandbox'
 import { Sandbox, SandboxMount } from '../sandbox/types'
 import { EngineRunScope, engineRunScope } from './engine-run-scope'
 import { SandboxJobContext } from './sandbox-manager'
 import { provisionFlowPieces } from './utils/flow-helpers'
+
+// Re-exported so the callers that already import it from here (sandbox-manager, egress/lifecycle)
+// keep working; `sandbox/isolate` is now the single definition.
+export { isIsolateMode }
 
 export function createSandboxForJob(params: {
     log: Logger
@@ -85,11 +89,6 @@ export function createSandboxForJob(params: {
         processMaker,
         workerHandlers,
     )
-}
-
-// Takes the raw setting as well as the enum: `WorkerSettings.EXECUTION_MODE` is a plain string.
-export function isIsolateMode(mode: string): boolean {
-    return mode === ExecutionMode.SANDBOX_PROCESS || mode === ExecutionMode.SANDBOX_CODE_AND_PROCESS
 }
 
 // isolate starts the engine with cwd=/root, so the engine's bundled-qadam root

@@ -2,6 +2,7 @@ import { spawn } from 'child_process'
 import { mkdir } from 'fs/promises'
 import path from 'path'
 import { arch } from 'process'
+import { ExecutionMode } from '@aiqadam/shared'
 import { execPromise } from '../utils/exec'
 import { sandboxEtc } from './sandbox-etc'
 import { CreateSandboxProcessParams, SandboxLogger, SandboxMount, SandboxProcessMaker } from './types'
@@ -13,6 +14,19 @@ export function getIsolateExecutableName(nodeArch: NodeJS.Architecture = arch): 
         arm64: 'isolate-arm',
     }
     return executableNameMap[nodeArch] ?? defaultName
+}
+
+// The isolate execution modes run the engine inside the `isolate` binary; the two fork modes do not.
+// Kept here (not in create-sandbox-for-job) so the boot-time preflight and the process-maker choice
+// share one definition.
+export function isIsolateMode(mode: string): boolean {
+    return mode === ExecutionMode.SANDBOX_PROCESS || mode === ExecutionMode.SANDBOX_CODE_AND_PROCESS
+}
+
+// The image ships the binary under `packages/` and the worker's cwd is the repo root, so this is the
+// same path `isolateProcess` spawns. Exported for the boot-time preflight in `isolate-preflight.ts`.
+export function getIsolateBinaryPath(nodeArch: NodeJS.Architecture = arch): string {
+    return path.resolve(process.cwd(), 'packages/server/api/src/assets', getIsolateExecutableName(nodeArch))
 }
 
 function assertMountInsideRoot(mount: SandboxMount): void {
@@ -53,7 +67,7 @@ function assertSandboxEnv(env: Record<string, string>): void {
     }
 }
 
-const isolateBinaryPath = path.resolve(process.cwd(), 'packages/server/api/src/assets', getIsolateExecutableName())
+const isolateBinaryPath = getIsolateBinaryPath()
 
 export function isolateProcess(log: SandboxLogger, enginePath: string, _codeDirectory: string, boxId: number): SandboxProcessMaker {
     return {

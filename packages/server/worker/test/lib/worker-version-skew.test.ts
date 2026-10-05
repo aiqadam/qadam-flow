@@ -37,6 +37,15 @@ vi.mock('../../src/lib/config/logger', () => ({
     },
 }))
 
+// These fixtures run an isolate mode past the connect handler, which now probes the local `isolate`
+// binary before accepting jobs (#709). The probe is covered by isolate-preflight.test.ts and the
+// sandbox e2e suite; here it is stubbed so the unit under test is the version gate, not the sandbox.
+vi.mock('../../src/lib/sandbox/isolate-preflight', () => ({
+    isolatePreflight: {
+        assertRunnable: vi.fn().mockResolvedValue(undefined),
+    },
+}))
+
 const { prewarmMock } = vi.hoisted(() => ({ prewarmMock: vi.fn() }))
 
 vi.mock('../../src/lib/execute/sandbox-manager', async (importOriginal) => {
