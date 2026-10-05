@@ -17,7 +17,12 @@ export const ApSidebarToggle = () => {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Button variant="ghost" size="icon" onClick={toggleSidebar}>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={toggleSidebar}
+          data-testid="sidebar-toggle"
+        >
           {isOpen ? (
             <PanelLeftCloseIcon size={16} />
           ) : (
