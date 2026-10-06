@@ -20,9 +20,21 @@
   },
   "packageRules": [
     {
-      "description": "Qadam packages are published on npm and carry a manual version contract (AGENTS.md, 'Published-package version bumps'). Never let the bot bump a dependency inside one.",
+      "description": "Qadam packages are published on npm and carry a manual version contract (AGENTS.md, 'Published-package version bumps'). Routine dependency updates inside one are left to humans. Security/OSV alerts do not honour this file-scoped disable, so the two rules below add the version bump that makes such a fix publishable.",
       "matchFileNames": ["packages/qadams/**"],
       "enabled": false
+    },
+    {
+      "description": "A vulnerability fix that moves a qadam's dependency across a major can change its behaviour, which on 0.x is the minor slot (AGENTS.md, 'Published-package version bumps'). Bump the qadam itself so the fix republishes.",
+      "matchFileNames": ["packages/qadams/**"],
+      "matchUpdateTypes": ["major"],
+      "bumpVersion": "minor"
+    },
+    {
+      "description": "A non-major vulnerability fix inside a qadam is a patch to the qadam, and the bump is what makes the fix publishable at all.",
+      "matchFileNames": ["packages/qadams/**"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "bumpVersion": "patch"
     },
     {
       "description": "Internal @aiqadam/* packages are versioned by hand and pinned exactly by every published qadam. Do not propose updates for them.",
