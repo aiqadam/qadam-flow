@@ -22,6 +22,7 @@ import {
   ldapConfigQueries,
 } from '@/features/platform-admin';
 import { platformHooks } from '@/hooks/platform-hooks';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { apiErrorUtils } from '@/lib/api-error-utils';
 import { authenticationSession } from '@/lib/authentication-session';
 
@@ -36,6 +37,9 @@ const SoonBadge = () => (
 
 const SSOPage = () => {
   const { platform } = platformHooks.useCurrentPlatform();
+  // PlatformLayout pins the SidebarProvider open, so on desktop the toggle would target a state
+  // nothing renders from. Show it on mobile only, where the Sheet is the live sidebar (#716).
+  const isMobile = useIsMobile();
   const {
     data: ldapConfig,
     isLoading: isLdapConfigLoading,
@@ -68,6 +72,7 @@ const SSOPage = () => {
     <CenteredPage
       title={t('Single Sign On')}
       description={t('Manage single sign on providers')}
+      showSidebarToggle={isMobile}
     >
       <div className="flex flex-col gap-4">
         <Item variant="outline">

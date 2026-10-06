@@ -8,6 +8,7 @@ import { CollapsibleJson } from '@/components/custom/collapsible-json';
 import { LoadingSpinner } from '@/components/custom/spinner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { flagsHooks } from '@/hooks/flags-hooks';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 import { platformMcpHooks } from './platform-mcp-hooks';
 
@@ -17,6 +18,9 @@ export default function PlatformMcpPage() {
   const { mutate: updateTools, isPending: isToolsUpdating } =
     platformMcpHooks.useUpdatePlatformMcpTools();
   const { data: publicUrl } = flagsHooks.useFlag<string>(ApFlagId.PUBLIC_URL);
+  // PlatformLayout pins the SidebarProvider open, so on desktop the toggle would target a state
+  // nothing renders from. Show it on mobile only, where the Sheet is the live sidebar (#716).
+  const isMobile = useIsMobile();
 
   if (isLoading) {
     return (
@@ -25,6 +29,7 @@ export default function PlatformMcpPage() {
         description={t(
           'Configure the platform-wide MCP server used by the AI Chat assistant and external MCP clients.',
         )}
+        showSidebarToggle={isMobile}
       >
         <div className="flex items-center justify-center py-20">
           <LoadingSpinner />
@@ -49,6 +54,7 @@ export default function PlatformMcpPage() {
       description={t(
         'Configure the platform-wide MCP server used by the AI Chat assistant and external MCP clients.',
       )}
+      showSidebarToggle={isMobile}
     >
       <div className="space-y-6">
         {mcpServer && (

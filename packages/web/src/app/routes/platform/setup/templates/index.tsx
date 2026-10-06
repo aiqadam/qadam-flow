@@ -29,12 +29,16 @@ import {
 import { QadamIconList } from '@/features/qadams';
 import { templatesApi, templatesMutations } from '@/features/templates';
 import { platformHooks } from '@/hooks/platform-hooks';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 import { CreateTemplateDialog } from './create-template-dialog';
 import { UpdateTemplateDialog } from './update-template-dialog';
 
 const PlatformTemplatesPage = () => {
   const { platform } = platformHooks.useCurrentPlatform();
+  // PlatformLayout pins the SidebarProvider open, so on desktop the toggle would target a state
+  // nothing renders from. Show it on mobile only, where the Sheet is the live sidebar (#716).
+  const isMobile = useIsMobile();
 
   const [searchParams] = useSearchParams();
   const { data, isLoading, refetch } = useQuery({
@@ -213,6 +217,7 @@ const PlatformTemplatesPage = () => {
       lockDescription={t(
         'Convert the most common automations into reusable templates 1 click away from your users',
       )}
+      showSidebarToggle={isMobile}
     >
       <div className="flex flex-col w-full">
         <DashboardPageHeader
