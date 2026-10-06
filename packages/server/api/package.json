@@ -125,7 +125,7 @@
     "@aiqadam/qadam-slack": "workspace:*",
     "@aiqadam/qadam-telegram-bot": "workspace:*",
     "@faker-js/faker": "10.6.0",
-    "@types/bcrypt": "5.0.0",
+    "@types/bcrypt": "5.0.2",
     "@types/content-disposition": "0.5.9",
     "@types/deep-equal": "1.0.1",
     "@types/eslint-scope": "3.7.7",
