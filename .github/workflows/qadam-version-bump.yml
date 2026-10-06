@@ -1,0 +1,88 @@
+name: Qadam version bumps
+
+# Renovate cannot bump a qadam's own `version` when one of its dependencies moves: `bumpVersion`
+# is supported only by the `npm` manager, and this repo's `bun.lock` makes the `bun` manager
+# supersede `npm`, so the rule is a silent no-op; `bumpVersions` (plural) matches its
+# `filePatterns` against the whole repository file list, so it cannot scope to the one changed
+# file (see tools/ci/check-qadam-version-bumps.mjs's header for the full reasoning).
+#
+# So the bot's own PRs get the bump from here. A human PR does not get a silent commit on its
+# branch — it gets the required "Check qadam version bumps" step in _verify.yml instead.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'packages/qadams/**/package.json'
+
+# Read-only by default; the push below relies on the PAT in `QADAM_BUMP_TOKEN`, not on this token.
+permissions:
+  contents: read
+
+# One run per branch: two overlapping runs would both commit, and the second push is rejected as
+# a non-fast-forward.
+concurrency:
+  group: qadam-version-bump-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  bump:
+    name: Bump qadam versions
+    # Renovate's own branches only. `github.head_ref` is the branch, not a SHA.
+    if: startsWith(github.head_ref, 'renovate/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # A PAT, never `GITHUB_TOKEN`: a push made with the repository's own token does NOT trigger
+      # the CI workflow (GitHub suppresses runs it caused, to stop recursion), so the bump commit
+      # would land with no required checks on it and the PR would be permanently unmergeable.
+      # The guard below turns a missing secret into a loud failure instead of that silent dead end.
+      - name: Require a push token
+        env:
+          TOKEN: ${{ secrets.QADAM_BUMP_TOKEN }}
+        run: |
+          set -uo pipefail
+          if [ -z "$TOKEN" ]; then
+            echo "::error::QADAM_BUMP_TOKEN is not set. Add a fine-grained PAT (Contents: Read and write on this repo) as a repository secret. A push with GITHUB_TOKEN would not re-trigger CI, leaving the bump commit without the required checks."
+            exit 1
+          fi
+
+      # No `token:` and `persist-credentials: false`: a public repo fetches fine with the default
+      # read token, and the PAT must not sit in `.git/config` while a later step might run code
+      # from the branch. The push below supplies it one-shot instead.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.head_ref }}
+          # fetch-depth: 0 is load-bearing: the checker diffs PR_BASE_SHA...PR_HEAD_SHA, so both
+          # ends must be reachable locally.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Bump qadam versions for dependency changes
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # Run the TRUSTED copy from the base branch, never the branch's own: this step writes
+          # the tree the next step pushes with the PAT, so PR-controlled code must not execute here.
+          # `-e` matters: a failed `git show` would otherwise leave an empty file, and node exits 0
+          # on an empty module — a silent no-op that looks like "nothing to bump".
+          git show "${PR_BASE_SHA}:tools/ci/check-qadam-version-bumps.mjs" > /tmp/check-qadam-version-bumps.mjs
+          node /tmp/check-qadam-version-bumps.mjs --fix
+
+      - name: Commit and push
+        env:
+          TOKEN: ${{ secrets.QADAM_BUMP_TOKEN }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -uo pipefail
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "Nothing to bump."
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -s -am 'chore(deps): bump qadam versions for dependency changes'
+          # One-shot credential, this step only. The ref goes through an env var and is quoted, so
+          # a branch name cannot inject shell syntax.
+          git push "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${HEAD_REF}"
