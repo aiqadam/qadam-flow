@@ -5,9 +5,12 @@ import { createRoot, Root } from 'react-dom/client';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import { CenteredPage } from '@/app/components/centered-page';
 import { DashboardPageHeader } from '@/app/components/dashboard-page-header';
+import { LockedFeatureGuard } from '@/app/components/locked-feature-guard';
 import { PlatformSidebar } from '@/app/components/sidebar/platform';
 import { SidebarProvider } from '@/components/ui/sidebar-shadcn';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 // i18next is not initialised in this harness, so the real `t` answers ''.
 vi.mock('i18next', async (importOriginal) => ({
@@ -107,6 +110,30 @@ describe('platform layout on mobile', () => {
     expect(mobileSheet()).toBeNull();
     expect(desktopState()).toBe('expanded');
   });
+
+  // #716: four platform pages render CenteredPage instead of DashboardPageHeader, so without a
+  // toggle the mobile Sheet could not be reopened on them (AI Providers is the exact #714 symptom).
+  it('shows the sidebar toggle on a CenteredPage platform page', async () => {
+    await mount('setup/ai');
+    expect(mobileSheet()).toBeNull();
+
+    await act(async () => {
+      toggleButton()?.click();
+    });
+    expect(mobileSheet()).not.toBeNull();
+  });
+
+  // #716: plan-locked platform pages render LockedFeatureGuard instead of the page header, so the
+  // toggle has to live on that lock screen too — Branding/Templates are reachable from the Sheet.
+  it('shows the sidebar toggle on a locked platform page', async () => {
+    await mount('setup/branding');
+    expect(mobileSheet()).toBeNull();
+
+    await act(async () => {
+      toggleButton()?.click();
+    });
+    expect(mobileSheet()).not.toBeNull();
+  });
 });
 
 async function mount(page: string, width = 390): Promise<void> {
@@ -127,6 +154,14 @@ async function mount(page: string, width = 390): Promise<void> {
             path="/platform/connections"
             element={<PlatformHarness page="connections" />}
           />
+          <Route
+            path="/platform/setup/ai"
+            element={<CenteredHarness page="setup/ai" />}
+          />
+          <Route
+            path="/platform/setup/branding"
+            element={<LockedHarness page="setup/branding" />}
+          />
         </Routes>
       </MemoryRouter>,
     );
@@ -141,6 +176,41 @@ function PlatformHarness({ page }: { page: string }) {
       <PlatformSidebar />
       <DashboardPageHeader title={page} />
       <p>{page} page</p>
+    </SidebarProvider>
+  );
+}
+
+// Mirrors the CenteredPage platform pages, which gate the toggle on isMobile themselves (#716).
+function CenteredHarness({ page }: { page: string }) {
+  const isMobile = useIsMobile();
+  return (
+    <SidebarProvider open={true}>
+      <PlatformSidebar />
+      <CenteredPage
+        title={page}
+        description={page}
+        showSidebarToggle={isMobile}
+      >
+        <p>{page} page</p>
+      </CenteredPage>
+    </SidebarProvider>
+  );
+}
+
+// Mirrors a plan-locked platform page, which renders the toggle on the LockedFeatureGuard (#716).
+function LockedHarness({ page }: { page: string }) {
+  const isMobile = useIsMobile();
+  return (
+    <SidebarProvider open={true}>
+      <PlatformSidebar />
+      <LockedFeatureGuard
+        locked={true}
+        lockTitle={page}
+        lockDescription={page}
+        showSidebarToggle={isMobile}
+      >
+        <p>{page} page</p>
+      </LockedFeatureGuard>
     </SidebarProvider>
   );
 }
