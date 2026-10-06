@@ -1114,7 +1114,7 @@
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
         "@aiqadam/shared": "workspace:*",
-        "csv-parse": "5.6.0",
+        "csv-parse": "7.0.2",
         "dayjs": "1.11.9",
         "gaxios": "6.7.1",
         "googleapis": "129.0.0",
@@ -2642,7 +2642,7 @@
         "@aiqadam/qadams-framework": "workspace:*",
         "@aiqadam/shared": "workspace:*",
         "@cj-tech-master/excelts": "10.2.0",
-        "csv-parse": "5.6.0",
+        "csv-parse": "7.0.2",
         "csv-stringify": "6.5.2",
         "numfmt": "3.2.6",
         "safe-flat": "2.1.0",
@@ -3076,7 +3076,7 @@
         "cloudflare": "5.2.0",
         "content-disposition": "0.5.4",
         "cron-parser": "4.9.0",
-        "csv-parse": "5.6.0",
+        "csv-parse": "7.0.2",
         "dayjs": "1.11.9",
         "deep-equal": "2.2.2",
         "dotenv": "17.2.3",
@@ -6194,7 +6194,7 @@
 
     "csstype": ["csstype@3.2.3", "", {}, "sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ=="],
 
-    "csv-parse": ["csv-parse@5.6.0", "", {}, "sha512-l3nz3euub2QMg5ouu5U09Ew9Wf6/wQ8I++ch1loQ0ljmzhmfZYrH9fflS22i/PQEvsPvxCwxgz5q7UB8K1JO4Q=="],
+    "csv-parse": ["csv-parse@7.0.2", "", {}, "sha512-uKZghv9UmPkMVLYy//KZ9HFAIJsl7wkhoEdIL0+rhuSY9pZQlhaeGEDPIe+/w7eh81MOql8Q/9+inAGWG6ZHYA=="],
 
     "csv-stringify": ["csv-stringify@6.5.2", "", {}, "sha512-RFPahj0sXcmUyjrObAK+DOWtMvMIFV328n4qZJhgX3x2RqkQgOTU2mCUmiFR0CzM6AzChlRSUErjiJeEt8BaQA=="],
 
