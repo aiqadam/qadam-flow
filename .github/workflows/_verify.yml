@@ -366,6 +366,22 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: npm run check-required-prop-defaults
 
+      # A dependency change inside a published qadam must carry a bump of that qadam's own
+      # `version`, or `packagePrePublishChecks` skips the republish and the change (often a
+      # security fix) never reaches a consumer. Renovate cannot do that bump itself here — see
+      # tools/ci/check-qadam-version-bumps.mjs's header — so `qadam-version-bump.yml` applies it on
+      # Renovate's branches; this is the required floor for every other PR. Same
+      # PR_BASE_SHA/PR_HEAD_SHA shape as the two gates immediately above.
+      - name: Test the qadam version-bumps checker
+        run: tools/ci/test-qadam-version-bumps.sh
+
+      - name: Check qadam version bumps
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: npm run check-qadam-version-bumps
+
       # _pack-framework-packages.yml's `pack-framework-packages` job trusts a custom
       # workspace:* rewrite instead of bun's own (see that job's header for why). Needs
       # ts-node and the transform's own runtime deps (axios, via package-pre-publish-checks.ts) from
