@@ -10,10 +10,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ProjectMembersTab } from '@/features/invitations/components/project-members-tab';
 import { projectCollectionUtils } from '@/features/projects';
 import { ApProjectDisplay } from '@/features/projects/components/ap-project-display';
 import { useAuthorization } from '@/hooks/authorization-hooks';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { userHooks } from '@/hooks/user-hooks';
 import { cn } from '@/lib/utils';
 
@@ -49,6 +51,7 @@ export function ProjectSettingsDialog({
   const previousOpenRef = useRef(open);
 
   const platformRole = userHooks.getCurrentUserPlatformRole();
+  const isMobile = useIsMobile();
 
   const form = useForm<FormValues>({
     defaultValues: {
@@ -186,39 +189,86 @@ export function ProjectSettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-5xl w-full max-h-[95vh] rounded-sm flex flex-col p-0">
-        <div className="flex h-[700px]">
-          <div className="w-[238px]">
-            <nav className="bg-sidebar space-y-1 bg-muted rounded-sm rounded-r-none h-full flex flex-col rounded-l-md">
-              <ApProjectDisplay
-                title={form.watch('projectName') ?? project.displayName}
-                icon={form.watch('icon') ?? project.icon}
-                containerClassName="px-3 my-4"
-                titleClassName="text-sm font-medium"
-                maxLengthToNotShowTooltip={18}
-                projectType={project.type}
-              />
-              <div className="flex flex-col px-2 gap-1">
-                {tabs.map((tab) => (
-                  <div
-                    key={tab.id}
-                    data-testid={`project-settings-tab-${tab.id}`}
-                    className={cn(
-                      'flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm font-medium transition-all cursor-pointer hover:bg-sidebar-accent',
-                      {
-                        'bg-sidebar-accent': activeTab === tab.id,
-                      },
-                    )}
-                    onClick={() => setActiveTab(tab.id)}
-                  >
-                    {tab.icon}
-                    {tab.label}
-                  </div>
-                ))}
-              </div>
-            </nav>
-          </div>
-          <div className="flex-1 min-w-0 flex flex-col">
+      <DialogContent
+        className={cn(
+          'max-w-5xl w-full max-h-[95vh] rounded-sm flex flex-col p-0',
+          isMobile && 'h-[95dvh]',
+        )}
+      >
+        <div
+          className={cn(
+            'flex',
+            isMobile ? 'flex-col h-full min-h-0' : 'h-[700px]',
+          )}
+        >
+          {isMobile ? (
+            <div
+              data-testid="project-settings-mobile-nav"
+              className="border-b bg-muted pr-10"
+            >
+              <Tabs
+                value={activeTab}
+                onValueChange={(value) => {
+                  const tab = tabs.find((candidate) => candidate.id === value);
+                  if (tab) setActiveTab(tab.id);
+                }}
+              >
+                <TabsList className="flex h-auto w-full justify-start gap-1 rounded-none bg-transparent p-2 overflow-x-auto">
+                  {tabs.map((tab) => (
+                    <TabsTrigger
+                      key={tab.id}
+                      value={tab.id}
+                      data-testid={`project-settings-tab-${tab.id}`}
+                      className="shrink-0 gap-2 rounded-sm px-3 py-1.5 data-[state=active]:bg-sidebar-accent data-[state=active]:shadow-none"
+                    >
+                      {tab.icon}
+                      {tab.label}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
+            </div>
+          ) : (
+            <div
+              data-testid="project-settings-desktop-nav"
+              className="w-[238px]"
+            >
+              <nav className="bg-sidebar space-y-1 bg-muted rounded-sm rounded-r-none h-full flex flex-col rounded-l-md">
+                <ApProjectDisplay
+                  title={form.watch('projectName') ?? project.displayName}
+                  icon={form.watch('icon') ?? project.icon}
+                  containerClassName="px-3 my-4"
+                  titleClassName="text-sm font-medium"
+                  maxLengthToNotShowTooltip={18}
+                  projectType={project.type}
+                />
+                <div className="flex flex-col px-2 gap-1">
+                  {tabs.map((tab) => (
+                    <div
+                      key={tab.id}
+                      data-testid={`project-settings-tab-${tab.id}`}
+                      className={cn(
+                        'flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm font-medium transition-all cursor-pointer hover:bg-sidebar-accent',
+                        {
+                          'bg-sidebar-accent': activeTab === tab.id,
+                        },
+                      )}
+                      onClick={() => setActiveTab(tab.id)}
+                    >
+                      {tab.icon}
+                      {tab.label}
+                    </div>
+                  ))}
+                </div>
+              </nav>
+            </div>
+          )}
+          <div
+            className={cn(
+              'flex-1 min-w-0 flex flex-col',
+              isMobile && 'min-h-0',
+            )}
+          >
             <div className="flex-1 min-h-0 overflow-hidden">
               <ScrollArea className="h-full">
                 {activeTab === 'general' && (
@@ -230,7 +280,12 @@ export function ProjectSettingsDialog({
                     showBackground={true}
                   />
                 )}
-                <div className="flex flex-col gap-3 px-10 pt-4">
+                <div
+                  className={cn(
+                    'flex flex-col gap-3 pt-4',
+                    isMobile ? 'px-4' : 'px-10',
+                  )}
+                >
                   {renderTabHeader()}
                   {renderTabContent()}
                 </div>

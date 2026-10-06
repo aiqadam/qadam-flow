@@ -133,7 +133,7 @@ export function ProjectMembersTab({ projectId }: ProjectMembersTabProps) {
             onSubmit={form.handleSubmit(handleSubmit)}
             className="flex flex-col gap-3"
           >
-            <div className="flex flex-row gap-2 items-end">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
               <FormField
                 name="email"
                 render={({ field }) => (
