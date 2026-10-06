@@ -496,6 +496,44 @@ jobs:
 
           echo "Packed ${actual} framework package(s), marked unpublishable. ✅"
 
+  # Advisory OSV scan of the text `bun.lock`. osv-scanner lists `bun.lock` under JavaScript
+  # (<https://google.github.io/osv-scanner/supported-languages-and-lockfiles/>), so the lockfile
+  # is read directly — this job runs no install and neither reads nor writes the dependency cache.
+  #
+  # WHY ADVISORY, AND WHY A SWALLOWED FAILURE IS ACCEPTABLE HERE. The scan reports every known
+  # advisory across the whole resolved tree, most of which predate any given PR, and it depends
+  # on the OSV.dev API being reachable. A red result is therefore a backlog signal, not a verdict
+  # on this PR, so `continue-on-error` stops it blocking. It is deliberately NOT one of the four
+  # contexts the `main protect` ruleset requires ("Lint + Unit Tests", "CE Integration Tests",
+  # "DCO Sign-off", "Validate Conventional Commits format"). If it should ever become required it
+  # first has to be made blocking and fronted by an always-reporting gate job, the way `verify`
+  # and `integration` are built — a skipped required context reports no conclusion and wedges
+  # every PR under strict_required_status_checks_policy.
+  #
+  # It scans one file and installs nothing, so it does not touch the node_modules cache or its
+  # key; see .agents/docs/node-modules-cache.md.
+  osv-scan:
+    name: OSV dependency scan (advisory)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The composite action rather than `osv-scanner-reusable.yml`: a job that calls a reusable
+    # workflow cannot carry `continue-on-error`, which is what makes this advisory. Pinned to the
+    # current release because the action publishes no moving `v2` tag; its own action.yml warns
+    # its behaviour may change in a minor/patch, and pinning the exact version makes that moot.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The scanner runs in a third-party container; keep the token out of .git/config where
+          # it could read it, as `sandbox-e2e` and `pack-smoke` do.
+          persist-credentials: false
+      - name: Run osv-scanner against bun.lock
+        uses: google/osv-scanner-action/osv-scanner-action@v2.6.0
+        with:
+          scan-args: |-
+            --lockfile=bun.lock
+
   # The heavy suite. NOT a required status check — the `integration` gate job
   # below carries the required "CE Integration Tests" context and always reports.
   integration-run:

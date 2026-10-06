@@ -1,0 +1,87 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":gitSignOff"],
+  "semanticCommits": "enabled",
+  "semanticCommitType": "chore",
+  "semanticCommitScope": "deps",
+  "minimumReleaseAge": "3 days",
+  "labels": ["chore"],
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 4,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on monday"]
+  },
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"],
+    "automerge": false
+  },
+  "packageRules": [
+    {
+      "description": "Qadam packages are published on npm and carry a manual version contract (AGENTS.md, 'Published-package version bumps'). Never let the bot bump a dependency inside one.",
+      "matchFileNames": ["packages/qadams/**"],
+      "enabled": false
+    },
+    {
+      "description": "Internal @aiqadam/* packages are versioned by hand and pinned exactly by every published qadam. Do not propose updates for them.",
+      "matchPackageNames": ["@aiqadam/*"],
+      "enabled": false
+    },
+    {
+      "description": "Minor updates are batched into one PR per run, opened on Mondays. Family rules below override the group name so a family is still never split.",
+      "matchUpdateTypes": ["minor"],
+      "groupName": "minor-updates",
+      "schedule": ["before 6am on monday"]
+    },
+    {
+      "description": "Patch updates automerge once the required CI checks are green.",
+      "matchUpdateTypes": ["patch", "pin", "digest"],
+      "automerge": true,
+      "platformAutomerge": true
+    },
+    {
+      "description": "Families that must move together.",
+      "matchPackageNames": ["@ai-sdk/*", "ai"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "ai-sdk"
+    },
+    {
+      "matchPackageNames": ["@opentelemetry/*"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "opentelemetry"
+    },
+    {
+      "matchPackageNames": ["@aws-sdk/*"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "aws-sdk"
+    },
+    {
+      "matchPackageNames": ["@tiptap/*"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "tiptap"
+    },
+    {
+      "matchPackageNames": ["@fastify/*", "fastify"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "fastify"
+    },
+    {
+      "matchPackageNames": ["@typescript-eslint/*"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "typescript-eslint"
+    },
+    {
+      "matchPackageNames": ["@radix-ui/*"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "radix-ui"
+    },
+    {
+      "description": "Majors open individually and are labelled tech-debt for triage.",
+      "matchUpdateTypes": ["major"],
+      "addLabels": ["tech-debt"],
+      "automerge": false
+    }
+  ]
+}

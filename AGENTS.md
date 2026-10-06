@@ -57,7 +57,7 @@ under `.agents/` only. `npm run check-agent-docs` fails on either.
 | `.agents/rules/*.md` | 2–90 lines each | Every session — all of them, always | Non-negotiable invariants and process gates (full index below) |
 | `.agents/skills/*/SKILL.md` | 12–1100 lines each | **Before the first line of code**, whenever the task matches a skill's trigger | 13 step-by-step workflows. Trigger registry: [`skill-usage.md`](.agents/rules/skill-usage.md) |
 | `.agents/agents/*.md` | 25–80 lines each | **Before you report a code change complete** | 5 subagent charters. Delegation matrix: [`agent-delegation.md`](.agents/rules/agent-delegation.md) |
-| `.agents/docs/*.md` | deep dives | On trigger (see [Verification](#verification)) | Verification pitfalls, CI node_modules cache |
+| `.agents/docs/*.md` | deep dives | On trigger (see [Verification](#verification)) | Verification pitfalls, CI node_modules cache, dependency updates |
 
 ### Every rule, and what it stops you doing
 
@@ -274,3 +274,4 @@ the repo already paid for.
 - [Database Migrations Playbook](.agents/skills/db-migration/SKILL.md)
 - [Verification Pitfalls](.agents/docs/verification-pitfalls.md)
 - [CI node_modules Cache](.agents/docs/node-modules-cache.md)
+- [Dependency Updates (Renovate)](.agents/docs/dependency-updates.md) — tool choice, grouping policy, qadam exclusion
