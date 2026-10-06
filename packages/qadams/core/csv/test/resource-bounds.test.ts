@@ -89,8 +89,11 @@ describe('excelToCsvAction resource bounds', () => {
 
   // Sized at about twice what a conversion worker's heap holds, at the rates measured for each,
   // and built only when the test runs.
+  // The valued-cell case is deliberately absent: reaching the action's 512 MB bound with valued
+  // cells needs ~1.5M models, which cannot complete inside a load-independent timeout (#697). The
+  // abort is limit-agnostic and that path is covered by conversion-worker.test.ts at a lower heap
+  // limit, so the action's own bound stays covered by the four cases below.
   test.each([
-    ['valued cells', () => worksheetParts({ sheetData: rows({ cell: '<c><v>1</v></c>', perRow: 1000, count: 3000 }) })],
     ['relationships', () => replacePart({ parts: zipFixture.minimalWorkbookParts({ sheetData: ONE_CELL }), part: { name: 'xl/_rels/workbook.xml.rels', data: relationshipsPart(3_000_000) } })],
     ['comments', () => worksheetParts({ sheetData: ONE_CELL, sheetExtra: `<!--${'a'.repeat(40 * MEBIBYTE)}-->` })],
     ['CDATA sections', () => worksheetParts({ sheetData: ONE_CELL, sheetExtra: `<extra><![CDATA[${'a'.repeat(40 * MEBIBYTE)}]]></extra>` })],
