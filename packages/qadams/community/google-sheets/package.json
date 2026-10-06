@@ -7,7 +7,7 @@
     "@aiqadam/qadams-common": "workspace:*",
     "@aiqadam/qadams-framework": "workspace:*",
     "@aiqadam/shared": "workspace:*",
-    "csv-parse": "5.6.0",
+    "csv-parse": "7.0.2",
     "dayjs": "1.11.9",
     "gaxios": "6.7.1",
     "googleapis": "129.0.0",
