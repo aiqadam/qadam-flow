@@ -5,6 +5,10 @@
   "semanticCommitType": "chore",
   "semanticCommitScope": "deps",
   "minimumReleaseAge": "3 days",
+  "gitIgnoredAuthors": [
+    "41898282+github-actions[bot]@users.noreply.github.com",
+    "admin@rustamov.me"
+  ],
   "labels": ["chore"],
   "prConcurrentLimit": 5,
   "prHourlyLimit": 4,
