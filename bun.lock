@@ -2771,7 +2771,7 @@
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
         "@aiqadam/shared": "workspace:*",
-        "exifreader": "4.20.0",
+        "exifreader": "4.41.1",
         "jimp": "0.22.12",
         "mime-types": "2.1.35",
         "tslib": "2.6.2",
@@ -6500,7 +6500,7 @@
 
     "exif-parser": ["exif-parser@0.1.12", "", {}, "sha512-c2bQfLNbMzLPmzQuOr8fy0csy84WmwnER81W88DzTp9CYNPJ6yzOj2EZAh9pywYpqHnshVLHQJ8WzldAyfY+Iw=="],
 
-    "exifreader": ["exifreader@4.20.0", "", { "optionalDependencies": { "@xmldom/xmldom": "^0.8.10" } }, "sha512-C28BhOHe5svd0Jj/5DGSIXD3PnPp46gfvHN4OkRfvHYZHkcJMhxeUxlwsgJ6Yl62zlZRtmfN+9suZFg0fv4hgg=="],
+    "exifreader": ["exifreader@4.41.1", "", { "optionalDependencies": { "@xmldom/xmldom": "^0.9.10" }, "bin": { "exifreader": "bin/cli.js" } }, "sha512-cHEtwlt6OmqEnWO906/ZURHym4gzRJ2VNQObeSEqhoBRk9oPFoHyPsrermUZ4JHE4T4o46mLbcJfF3r9PPVXdg=="],
 
     "expand-template": ["expand-template@2.0.3", "", {}, "sha512-XYfuKMvj4O35f/pOXLObndIRvyQ+/+6AhODh+OKWj9S9498pHHn/IMszH+gt0fBCRWMNfk1ZSp5x3AifmnI2vg=="],
 
