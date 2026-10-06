@@ -128,7 +128,12 @@ describe('jsonToCsvAction', () => {
 });
 
 
-describe('excelToCsvAction', () => {
+// Every test here starts a conversion worker, loaded from TypeScript through tsx, and the tests
+// that use the action pay that cost per conversion. On a contended CI runner one conversion has
+// been measured at 2.7-4.0s (#697), so the 5s default leaves little room, and the one test that
+// converts twice in sequence ("quotes fields...") crossed it. The timeout is per suite because
+// every conversion test shares the cost, not only the one that failed first.
+describe('excelToCsvAction', { timeout: 15_000 }, () => {
   test('converts first sheet to CSV with comma delimiter', async () => {
     const base64 = await makeXlsxBase64({ Sheet1: [['name', 'age'], ['Alice', 30], ['Bob', 25]] });
     const result = await convert({ base64 });
