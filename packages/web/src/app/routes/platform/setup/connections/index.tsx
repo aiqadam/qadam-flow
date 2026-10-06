@@ -50,6 +50,7 @@ import {
 import { QadamIconWithQadamName } from '@/features/qadams';
 import { useAuthorization } from '@/hooks/authorization-hooks';
 import { platformHooks } from '@/hooks/platform-hooks';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { t } from '@/i18n';
 import { formatUtils } from '@/lib/format-utils';
 
@@ -83,6 +84,9 @@ const GlobalConnectionsTable = () => {
   const { checkAccess } = useAuthorization();
   const location = useLocation();
   const { platform } = platformHooks.useCurrentPlatform();
+  // PlatformLayout pins the SidebarProvider open, so on desktop the toggle would target a state
+  // nothing renders from. Show it on mobile only, where the Sheet is the live sidebar (#716).
+  const isMobile = useIsMobile();
 
   const columns: ColumnDef<
     RowDataWithActions<AppConnectionWithoutSensitiveData>,
@@ -313,6 +317,7 @@ const GlobalConnectionsTable = () => {
         lockDescription={t(
           'Manage platform-wide connections to external systems.',
         )}
+        showSidebarToggle={isMobile}
       >
         <DashboardPageHeader
           description={t(
