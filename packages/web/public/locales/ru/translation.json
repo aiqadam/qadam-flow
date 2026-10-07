@@ -2243,5 +2243,19 @@
   "Only the platform owner can change this setting.": "Изменить этот параметр может только владелец платформы.",
   "Enabling this lets the directory administrator take over any local account that matches a directory email address. Only enable this if you trust the directory administrator. The platform owner and platform admins are never linked this way.": "Включение этой опции позволяет администратору каталога получить доступ к любой локальной учётной записи, чей email совпадает с адресом в каталоге. Включайте это, только если вы доверяете администратору каталога. Владелец платформы и администраторы платформы никогда не связываются таким образом.",
   "Link existing accounts by email is on, so only the platform owner can change this configuration. Ask the owner to make changes, or to turn linking off first.": "Опция «Связывать существующие учётные записи по email» включена, поэтому изменить эту конфигурацию может только владелец платформы. Попросите владельца внести изменения или сначала отключить связывание.",
-  "Must not be writable by directory users themselves (e.g. a self-writable mail in OpenLDAP) — otherwise a user could take over another account by changing their own email to match it.": "Не должен быть доступен для записи самим пользователям каталога (например, самостоятельно изменяемый mail в OpenLDAP) — иначе пользователь сможет завладеть чужой учётной записью, изменив свой email на совпадающий."
+  "Must not be writable by directory users themselves (e.g. a self-writable mail in OpenLDAP) — otherwise a user could take over another account by changing their own email to match it.": "Не должен быть доступен для записи самим пользователям каталога (например, самостоятельно изменяемый mail в OpenLDAP) — иначе пользователь сможет завладеть чужой учётной записью, изменив свой email на совпадающий.",
+  "Added to the project": "Добавлен в проект",
+  "Invitation sent": "Приглашение отправлено",
+  "Select member": "Выбрать участника",
+  "Search by email": "Поиск по email",
+  "Role updated": "Роль обновлена",
+  "Member removed": "Участник удалён",
+  "Failed to update role": "Не удалось обновить роль",
+  "Failed to remove member": "Не удалось удалить участника",
+  "Remove member": "Удалить участника",
+  "Remove {email} from this project?": "Удалить {email} из этого проекта?",
+  "You cannot change your own membership": "Вы не можете изменить своё участие",
+  "The project owner cannot be changed here": "Владельца проекта нельзя изменить здесь",
+  "This member is managed by your directory": "Этот участник управляется вашей директорией",
+  "The last admin cannot be removed or demoted": "Последнего администратора нельзя удалить или понизить"
 }

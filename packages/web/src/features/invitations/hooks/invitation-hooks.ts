@@ -7,6 +7,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { invitationApi } from '../api/invitation-api';
 
+import { projectMemberKeys } from './project-member-hooks';
+
 type UseListParams = {
   projectId?: string | null;
   type: InvitationType;
@@ -35,12 +37,16 @@ export const invitationMutations = {
     });
   },
 
-  useDelete: () => {
+  useDelete: (projectId: string) => {
     const queryClient = useQueryClient();
     return useMutation({
       mutationFn: (id: string) => invitationApi.del(id),
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: ['invitations'] });
+        // Revoking a pending invitation makes that person a candidate again.
+        queryClient.invalidateQueries({
+          queryKey: projectMemberKeys.candidates(projectId),
+        });
       },
     });
   },

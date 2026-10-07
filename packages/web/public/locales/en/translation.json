@@ -2243,5 +2243,19 @@
   "Only the platform owner can change this setting.": "Only the platform owner can change this setting.",
   "Enabling this lets the directory administrator take over any local account that matches a directory email address. Only enable this if you trust the directory administrator. The platform owner and platform admins are never linked this way.": "Enabling this lets the directory administrator take over any local account that matches a directory email address. Only enable this if you trust the directory administrator. The platform owner and platform admins are never linked this way.",
   "Link existing accounts by email is on, so only the platform owner can change this configuration. Ask the owner to make changes, or to turn linking off first.": "Link existing accounts by email is on, so only the platform owner can change this configuration. Ask the owner to make changes, or to turn linking off first.",
-  "Must not be writable by directory users themselves (e.g. a self-writable mail in OpenLDAP) — otherwise a user could take over another account by changing their own email to match it.": "Must not be writable by directory users themselves (e.g. a self-writable mail in OpenLDAP) — otherwise a user could take over another account by changing their own email to match it."
+  "Must not be writable by directory users themselves (e.g. a self-writable mail in OpenLDAP) — otherwise a user could take over another account by changing their own email to match it.": "Must not be writable by directory users themselves (e.g. a self-writable mail in OpenLDAP) — otherwise a user could take over another account by changing their own email to match it.",
+  "Added to the project": "Added to the project",
+  "Invitation sent": "Invitation sent",
+  "Select member": "Select member",
+  "Search by email": "Search by email",
+  "Role updated": "Role updated",
+  "Member removed": "Member removed",
+  "Failed to update role": "Failed to update role",
+  "Failed to remove member": "Failed to remove member",
+  "Remove member": "Remove member",
+  "Remove {email} from this project?": "Remove {email} from this project?",
+  "You cannot change your own membership": "You cannot change your own membership",
+  "The project owner cannot be changed here": "The project owner cannot be changed here",
+  "This member is managed by your directory": "This member is managed by your directory",
+  "The last admin cannot be removed or demoted": "The last admin cannot be removed or demoted"
 }

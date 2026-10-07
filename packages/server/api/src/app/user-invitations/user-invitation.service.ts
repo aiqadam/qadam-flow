@@ -228,6 +228,13 @@ export const userInvitationsService = (log: FastifyBaseLogger) => ({
             .getMany()
         return invitations.length > 0
     },
+    // Exposed so the create path can decide whether an already-registered user's invitation will
+    // actually be provisioned before marking it ACCEPTED — a directory-minted identity with no
+    // federated row on this platform is refused by `provisionUserInvitation`, so auto-accepting it
+    // would report "added" with no membership and no link.
+    async isEligibleForProvisioning({ identity, platformId }: IsEligibleForProvisioningParams): Promise<boolean> {
+        return isEligibleForInvitationProvisioning({ identity, platformId, log })
+    },
     async getByEmailAndPlatformIdOrThrow({
         email,
         platformId,
@@ -367,6 +374,8 @@ type IsEligibleForInvitationProvisioningParams = {
     platformId: string
     log: FastifyBaseLogger
 }
+
+type IsEligibleForProvisioningParams = Omit<IsEligibleForInvitationProvisioningParams, 'log'>
 
 type PlatformAndIdParams = {
     id: string

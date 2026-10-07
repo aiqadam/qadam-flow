@@ -136,7 +136,7 @@ test.describe('v2.0.0 release acceptance — features with no UI coverage', () =
 
     const dialog = await openTeamTab(ownerPage);
     await dialog.locator('#invite-email').fill(viewerEmail);
-    await dialog.getByRole('combobox').click();
+    await dialog.getByTestId('invite-role-select').click();
     await ownerPage.getByRole('option', { name: 'Viewer' }).click();
     const invitePromise = ownerPage.waitForResponse(
       (r) => r.url().includes('/api/v1/user-invitations') && r.request().method() === 'POST',
