@@ -127,7 +127,7 @@
     "@faker-js/faker": "10.6.0",
     "@types/bcrypt": "5.0.2",
     "@types/content-disposition": "0.5.9",
-    "@types/deep-equal": "1.0.1",
+    "@types/deep-equal": "1.0.4",
     "@types/eslint-scope": "3.7.7",
     "@types/jsonwebtoken": "9.0.10",
     "@types/mime-types": "2.1.1",
