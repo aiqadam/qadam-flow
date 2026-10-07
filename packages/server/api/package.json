@@ -53,7 +53,7 @@
     "@opentelemetry/semantic-conventions": "1.37.0",
     "@segment/analytics-next": "1.84.3",
     "@segment/analytics-node": "2.2.0",
-    "@sentry/node": "7.120.0",
+    "@sentry/node": "7.120.4",
     "@smithy/node-http-handler": "4.12.1",
     "@socket.io/redis-adapter": "8.3.0",
     "acorn": "8.16.0",
