@@ -58,7 +58,7 @@
     "dotenv": "17.2.3",
     "eslint-plugin-unused-imports": "4.4.1",
     "http-status-codes": "2.2.0",
-    "isolated-vm": "7.0.0",
+    "isolated-vm": "7.0.1",
     "jsonwebtoken": "9.0.1",
     "pino-opentelemetry-transport": "4.0.2",
     "rollup": "4.59.0",
