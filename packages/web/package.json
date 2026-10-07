@@ -52,7 +52,7 @@
     "@tiptap/react": "3.31.3",
     "@tiptap/starter-kit": "3.31.3",
     "@tiptap/suggestion": "3.31.3",
-    "@uiw/codemirror-theme-github": "4.25.7",
+    "@uiw/codemirror-theme-github": "4.25.12",
     "@uiw/react-codemirror": "4.25.7",
     "@xyflow/react": "12.3.5",
     "ai": "7.0.127",
