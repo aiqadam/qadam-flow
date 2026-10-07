@@ -125,7 +125,7 @@
     "@tailwindcss/vite": "4.3.3",
     "@types/canvas-confetti": "^1.9.0",
     "@types/deep-equal": "1.0.4",
-    "@types/pako": "2.0.3",
+    "@types/pako": "2.0.4",
     "@types/papaparse": "5.3.8",
     "@types/qs": "6.9.7",
     "@types/react": "19",
