@@ -3144,7 +3144,7 @@
         "@types/smtp-server": "3.5.13",
         "@types/tinycolor2": "1.4.5",
         "form-data": "4.0.6",
-        "smtp-server": "3.19.15",
+        "smtp-server": "3.19.17",
         "socket.io-client": "4.8.4",
         "vitest": "4.1.11",
         "webpack-ignore-dynamic-require": "1.0.0",
@@ -8072,7 +8072,7 @@
 
     "smart-buffer": ["smart-buffer@4.2.0", "", {}, "sha512-94hK0Hh8rPqQl2xXc3HsaBoOXKV20MToPkcXvwbISWLEs+64sBq5kFgn2kJDHb1Pry9yrP0dxrCI9RRci7RXKg=="],
 
-    "smtp-server": ["smtp-server@3.19.15", "", { "dependencies": { "ipv6-normalize": "1.0.1", "nodemailer": "10.0.12", "punycode.js": "2.3.1" } }, "sha512-Hykfp8TLkNtJv9daFF96JIG2ilVyuFHKE9Gg4l6vIbCu6LQioXlTRocQUJ5qPhZqYEpt/cG8QHdBv4KNT5WUbQ=="],
+    "smtp-server": ["smtp-server@3.19.17", "", { "dependencies": { "ipv6-normalize": "1.0.1", "nodemailer": "10.0.14", "punycode.js": "2.3.1" } }, "sha512-/9RwyNTcR8osMQWOvC8NV8l57ddPyYXvuG+wa1Ua4cD/I41z7zCMsGtXLa9vxlrggjRrfejr50X0WS/9NuVWqQ=="],
 
     "snowflake-sdk": ["snowflake-sdk@3.4.0", "", { "dependencies": { "@aws-crypto/sha256-js": "^5.2.0", "@aws-sdk/client-s3": "^3.1051.0", "@aws-sdk/client-sts": "^3.1051.0", "@aws-sdk/credential-provider-node": "^3.972.43", "@aws-sdk/ec2-metadata-service": "^3.1051.0", "@azure/identity": "^4.10.1", "@azure/storage-blob": "12.26.x", "@smithy/node-http-handler": "^4.4.9", "@smithy/protocol-http": "^5.3.8", "@smithy/signature-v4": "^5.3.8", "@techteamer/ocsp": "1.0.1", "asn1.js": "^5.0.0", "asn1.js-rfc2560": "^5.0.0", "asn1.js-rfc5280": "^3.0.0", "axios": "^1.15.1", "big-integer": "^1.6.43", "bignumber.js": "^9.1.2", "expand-tilde": "^2.0.2", "fast-xml-parser": "^5.4.1", "fastest-levenshtein": "^1.0.16", "generic-pool": "^3.8.2", "google-auth-library": "^10.1.0", "https-proxy-agent": "^7.0.2", "jsonwebtoken": "^9.0.3", "mime-types": "^2.1.29", "moment": "^2.29.4", "moment-timezone": "^0.5.15", "oauth4webapi": "^3.0.1", "open": "^7.3.1", "simple-lru-cache": "^0.0.2", "toml": "^5.0.0", "winston": "^3.1.0" } }, "sha512-hUTlJH0nXBs3RBBLmkYUt2n9K3k6DanwbfCgvR7kOpMXuodMDrkCM++tJMo0uEq2kIrKJ7S3wJ3F2v/IRPBDUQ=="],
 
@@ -10319,6 +10319,8 @@
     "simple-swizzle/is-arrayish": ["is-arrayish@0.3.4", "", {}, "sha512-m6UrgzFVUYawGBh1dUsWR5M2Clqic9RVXC/9f8ceNlv2IcO9j9J/z8UoCLPqtsPBFNzEpfR3xftohbfqDx8EQA=="],
 
     "slackify-markdown/remark-gfm": ["remark-gfm@1.0.0", "", { "dependencies": { "mdast-util-gfm": "^0.1.0", "micromark-extension-gfm": "^0.3.0" } }, "sha512-KfexHJCiqvrdBZVbQ6RopMZGwaXz6wFJEfByIuEwGf0arvITHjiKKZ1dpXujjH9KZdm1//XJQwgfnJ3lmXaDPA=="],
+
+    "smtp-server/nodemailer": ["nodemailer@10.0.14", "", {}, "sha512-eJoLFKg55fesSlzUekmfOv/SBXh4KUYT8oiQc2RLP0tfG0rbNMJBK7wgHJwXTJwqyKlSJMz9UzDZ4v+aHEvo8g=="],
 
     "snowflake-sdk/@azure/storage-blob": ["@azure/storage-blob@12.26.0", "", { "dependencies": { "@azure/abort-controller": "^2.1.2", "@azure/core-auth": "^1.4.0", "@azure/core-client": "^1.6.2", "@azure/core-http-compat": "^2.0.0", "@azure/core-lro": "^2.2.0", "@azure/core-paging": "^1.1.1", "@azure/core-rest-pipeline": "^1.10.1", "@azure/core-tracing": "^1.1.2", "@azure/core-util": "^1.6.1", "@azure/core-xml": "^1.4.3", "@azure/logger": "^1.0.0", "events": "^3.0.0", "tslib": "^2.2.0" } }, "sha512-SriLPKezypIsiZ+TtlFfE46uuBIap2HeaQVS78e1P7rz5OSbq0rsd52WE1mC5f7vAeLiXqv7I7oRhL3WFZEw3Q=="],
 
