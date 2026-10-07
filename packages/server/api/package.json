@@ -65,7 +65,7 @@
     "cloudflare": "5.2.0",
     "content-disposition": "0.5.4",
     "cron-parser": "4.9.0",
-    "csv-parse": "7.0.2",
+    "csv-parse": "7.0.3",
     "dayjs": "1.11.9",
     "deep-equal": "2.2.2",
     "dotenv": "17.2.3",
