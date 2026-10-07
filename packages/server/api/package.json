@@ -75,7 +75,7 @@
     "fastify-favicon": "5.0.0",
     "fastify-plugin": "5.0.1",
     "fastify-raw-body": "5.0.0",
-    "fastify-socket": "5.1.2",
+    "fastify-socket": "5.1.4",
     "fastify-type-provider-zod": "6.1.0",
     "firebase-scrypt": "2.2.0",
     "fuse.js": "7.0.0",

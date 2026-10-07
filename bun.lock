@@ -3081,7 +3081,7 @@
         "fastify-favicon": "5.0.0",
         "fastify-plugin": "5.0.1",
         "fastify-raw-body": "5.0.0",
-        "fastify-socket": "5.1.2",
+        "fastify-socket": "5.1.4",
         "fastify-type-provider-zod": "6.1.0",
         "firebase-scrypt": "2.2.0",
         "fuse.js": "7.0.0",
@@ -3257,7 +3257,7 @@
     },
     "packages/shared": {
       "name": "@aiqadam/shared",
-      "version": "0.155.0",
+      "version": "0.156.0",
       "dependencies": {
         "dayjs": "1.11.23",
         "deepmerge-ts": "8.0.2",
@@ -6520,7 +6520,7 @@
 
     "fastify-raw-body": ["fastify-raw-body@5.0.0", "", { "dependencies": { "fastify-plugin": "^5.0.0", "raw-body": "^3.0.0", "secure-json-parse": "^2.4.0" } }, "sha512-2qfoaQ3BQDhZ1gtbkKZd6n0kKxJISJGM6u/skD9ljdWItAscjXrtZ1lnjr7PavmXX9j4EyCPmBDiIsLn07d5vA=="],
 
-    "fastify-socket": ["fastify-socket@5.1.2", "", { "dependencies": { "fastify-plugin": "^5.0.1", "tslib": "^2.8.1" }, "peerDependencies": { "fastify": ">=4", "socket.io": ">=4" } }, "sha512-eJf6Qu49rSLdEvOR2CtSh6XVLJMh+JaPqWcOqJmMKLlBYRzpToTfaTqkZaE95pa7/kRZWOibq8XJMn3NNwf3eg=="],
+    "fastify-socket": ["fastify-socket@5.1.4", "", { "dependencies": { "fastify-plugin": "^5.0.1", "tslib": "^2.8.1" }, "peerDependencies": { "fastify": ">=4", "socket.io": ">=4" } }, "sha512-eUZVCXvROrQeaj/d4/Fjee5icV0uoa795xOiKX9k85mSStNFyF5ahTfb1sHkLjirgdgjLJTSRbLFwMARJxTA8w=="],
 
     "fastify-type-provider-zod": ["fastify-type-provider-zod@6.1.0", "", { "dependencies": { "@fastify/error": "^4.2.0" }, "peerDependencies": { "@fastify/swagger": ">=9.5.1", "fastify": "^5.5.0", "openapi-types": "^12.1.3", "zod": ">=4.1.5" } }, "sha512-Sl19VZFSX4W/+AFl3hkL5YgWk3eDXZ4XYOdrq94HunK+o7GQBCAqgk7+3gPXoWkF0bNxOiIgfnFGJJ3i9a2BtQ=="],
 
@@ -9659,6 +9659,8 @@
     "fastify/semver": ["semver@7.7.4", "", { "bin": { "semver": "bin/semver.js" } }, "sha512-vFKC2IEtQnVhpT78h1Yp8wzwrf8CM+MzKMHGJZfBtzhZNycRFnXsHk6E5TxIkkMsgNS7mdX3AGB7x2QM2di4lA=="],
 
     "fastify-raw-body/secure-json-parse": ["secure-json-parse@2.7.0", "", {}, "sha512-6aU+Rwsezw7VR8/nyvKTx8QpWH9FrcYiXXlqC4z5d5XQBDRqtbfsRjnwGyqbi3gddNtWHuEk9OANUotL26qKUw=="],
+
+    "fastify-socket/fastify-plugin": ["fastify-plugin@5.1.0", "", {}, "sha512-FAIDA8eovSt5qcDgcBvDuX/v0Cjz0ohGhENZ/wpc3y+oZCY2afZ9Baqql3g/lC+OHRnciQol4ww7tuthOb9idw=="],
 
     "fastify-socket/tslib": ["tslib@2.8.1", "", {}, "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w=="],
 
