@@ -1,7 +1,7 @@
 import { anthropic, createAnthropic } from '@ai-sdk/anthropic'
 import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock'
 import { createOpenAI, openai } from '@ai-sdk/openai'
-import { createGoogleGenerativeAI, google } from '@ai-sdk/google'
+import { createGoogle, google } from '@ai-sdk/google'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { createAzure } from '@ai-sdk/azure'
 import { createOpenRouter } from '@openrouter/ai-sdk-provider'
@@ -135,7 +135,7 @@ export async function createAIModel({
         }
         case AIProviderName.GOOGLE: {
             const { apiKey } = auth as BaseAIProviderAuthConfig
-            const provider = createGoogleGenerativeAI({ apiKey })
+            const provider = createGoogle({ apiKey })
 
             return provider(modelId)
         }
@@ -191,7 +191,7 @@ export async function createAIModel({
                 }
                 case 'google-vertex-ai': {
                     if(vertexProject && vertexRegion && publisher) {
-                        const provider = createGoogleGenerativeAI({
+                        const provider = createGoogle({
                             apiKey,
                             baseURL: `https://gateway.ai.cloudflare.com/v1/${accountId}/${gatewayId}/google-vertex-ai/v1/projects/${vertexProject}/locations/${vertexRegion}/publishers/${publisher}/`,
                             headers,
@@ -346,8 +346,8 @@ export async function createEmbeddingModel({
             return { model: p.embeddingModel(embeddingModelId), embeddingModelId, providerOptions: OPENAI_EMBEDDING_PROVIDER_OPTIONS }
         }
         case AIProviderName.GOOGLE: {
-            const p = createGoogleGenerativeAI({ apiKey })
-            return { model: p.textEmbeddingModel(embeddingModelId), embeddingModelId, providerOptions: {} }
+            const p = createGoogle({ apiKey })
+            return { model: p.embeddingModel(embeddingModelId), embeddingModelId, providerOptions: {} }
         }
         case AIProviderName.AZURE: {
             const { resourceName, apiVersion } = config as AzureProviderConfig

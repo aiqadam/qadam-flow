@@ -1,4 +1,4 @@
-import { createGoogleGenerativeAI } from '@ai-sdk/google'
+import { createGoogle } from '@ai-sdk/google'
 import { safeHttp } from '@aiqadam/server-utils'
 import { AIProviderModel, AIProviderModelType, CloudflareGatewayProviderAuthConfig, CloudflareGatewayProviderConfig, isNil, splitCloudflareGatewayModelId, spreadIfDefined } from '@aiqadam/shared'
 import { generateText } from 'ai'
@@ -21,7 +21,7 @@ export const cloudflareGatewayProvider: AIProviderStrategy<CloudflareGatewayProv
                     if (isNil(publisher)) {
                         throw new Error('Google Vertex ai publisher is required for Google Vertex AI models')
                     }
-                    const providerConstructor = createGoogleGenerativeAI({
+                    const providerConstructor = createGoogle({
                         apiKey: authConfig.apiKey,
                         baseURL: `https://gateway.ai.cloudflare.com/v1/${config.accountId}/${config.gatewayId}/google-vertex-ai/v1/projects/${config.vertexProject}/locations/${config.vertexRegion}/publishers/${publisher}/`,
                         headers: {

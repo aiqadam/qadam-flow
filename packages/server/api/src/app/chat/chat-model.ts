@@ -1,4 +1,4 @@
-import { SharedV3ProviderOptions } from '@ai-sdk/provider'
+import { SharedV4ProviderOptions } from '@ai-sdk/provider'
 import { chatAiUtils } from '@aiqadam/server-utils'
 import {
     AIProviderConfig,
@@ -153,5 +153,5 @@ export type ResolvedChatModel = {
     // Kept apart from `model` on purpose: the compaction summariser uses the same model and must
     // never reason, so the options travel only to the one call that is allowed them (#566). Null
     // when the row has not opted in.
-    reasoningProviderOptions: SharedV3ProviderOptions | null
+    reasoningProviderOptions: SharedV4ProviderOptions | null
 }

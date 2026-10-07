@@ -6,6 +6,13 @@
  * files are the golden bytes. A row without the setting and a row with `enabled: false` must both
  * still produce them exactly, or turning the feature off is not the same as never having had it.
  *
+ * Re-recorded for AI SDK 7 (#625): the major changed two wire shapes on the "off" path, neither of
+ * which this change's code introduces. An OpenAI-compatible system message is now sent with
+ * text-part array content rather than a bare string (`instructions` serialization), and Google tool
+ * parameters move from `parameters` to the fuller `parametersJsonSchema`. Anthropic and Bedrock are
+ * byte-for-byte unchanged, which is what shows these two are provider serialization and not a
+ * prompt or tool-set edit.
+ *
  * The provider SDKs are the real ones. Only the transport is replaced: every provider call goes
  * through `safeHttp.fetch` (`chatAiUtils.createChatModel` hands it to each factory), so spying on
  * it sees exactly the method, URL, headers and body the SDK built. Two inputs are held fixed so the
@@ -77,17 +84,20 @@ beforeEach(async () => {
     replies = []
     modelsCache.clear()
     vi.spyOn(chatTools, 'build').mockResolvedValue({
-        ap_list_flows: dynamicTool({
-            description: 'List the flows in the project.',
-            inputSchema: z.object({ limit: z.number().optional() }),
-            execute: async () => ({ flows: [] }),
-        }),
-        ap_delete_flow: dynamicTool({
-            description: 'Delete a flow.',
-            inputSchema: z.object({ flowId: z.string() }),
-            needsApproval: true,
-            execute: async () => ({ deleted: true }),
-        }),
+        tools: {
+            ap_list_flows: dynamicTool({
+                description: 'List the flows in the project.',
+                inputSchema: z.object({ limit: z.number().optional() }),
+                execute: async () => ({ flows: [] }),
+            }),
+            ap_delete_flow: dynamicTool({
+                description: 'Delete a flow.',
+                inputSchema: z.object({ flowId: z.string() }),
+                execute: async () => ({ deleted: true }),
+            }),
+        },
+        // #264: approval is configured on the `streamText` call in AI SDK 7, not on the tool.
+        toolApproval: { ap_delete_flow: 'user-approval' },
     })
     vi.spyOn(safeHttp, 'fetch').mockImplementation(async (input, init) => {
         captured.push({

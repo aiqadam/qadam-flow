@@ -77,9 +77,9 @@ export const chatToolGating = {
      * Gating is per tool call, never per conversation: the AI SDK mints one `approvalId` per
      * `tool-approval-request`, so approving one call cannot carry over to the next.
      *
-     * Read synchronously — the SDK awaits this inside the transform that pumps provider chunks
-     * (`ai/dist/index.mjs:6263`), so any I/O here stalls the stream and eats into the first-token
-     * timeout tuned in #266.
+     * Pure and synchronous: the caller turns this into the `streamText` `toolApproval` map before
+     * the stream starts (`chat-tools.ts`), so it runs on the pre-flight path, never between provider
+     * chunks.
      *
      * The three tools #264 describes as conditional on the flow sending data outward are gated
      * unconditionally. No outbound signal exists anywhere in the codebase, and the only safe way to

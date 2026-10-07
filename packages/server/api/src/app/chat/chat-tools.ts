@@ -8,7 +8,7 @@ import { chatToolGating } from './chat-tool-gating'
 import { chatToolInput } from './chat-tool-input'
 
 export const chatTools = {
-    async build({ mcp, userId, log }: BuildParams): Promise<ToolSet> {
+    async build({ mcp, userId, log }: BuildParams): Promise<BuiltChatTools> {
         const permissionChecker = await resolvePermissionChecker({ userId, projectId: mcp.projectId, log })
         const disabledToolSet = new Set(mcp.disabledTools ?? [])
         // Same rule as mcp-server-builder.ts:172 — a locked tool stays available even when it is
@@ -20,8 +20,19 @@ export const chatTools = {
         const entries = enabledTools.map((tool) => [tool.title, toAiSdkTool({ tool, permissionChecker })])
 
         return {
-            ...Object.fromEntries(entries),
-            [THINKING_STATUS_TOOL_NAME]: thinkingStatusTool,
+            tools: {
+                ...Object.fromEntries(entries),
+                [THINKING_STATUS_TOOL_NAME]: thinkingStatusTool,
+            },
+            // #264. The gate lives on the `streamText` call in AI SDK 7, not on the tool. Every
+            // `qadamFlowTools` tool is gated unless `chatToolGating` names it ungated (see the audit
+            // there for why annotations cannot be the source of truth, and why an explicit list is
+            // preferred). `ap_update_thinking_status` is deliberately absent — it is a chat-only
+            // no-op, not a project tool. Computed here, before the stream starts, so no I/O sits in
+            // the transform that pumps provider chunks.
+            toolApproval: Object.fromEntries(enabledTools
+                .filter((tool) => chatToolGating.requiresApproval(tool.title))
+                .map((tool) => [tool.title, 'user-approval' as const])),
         }
     },
 }
@@ -55,13 +66,6 @@ function toAiSdkTool({ tool, permissionChecker }: { tool: McpToolDefinition, per
         // advertises that shape unchanged and only relaxes how the model's reply is read — see
         // `chat-tool-input.ts`. The MCP contract for every other caller is untouched.
         inputSchema: chatToolInput.lenient(tool.inputSchema),
-        // #264. Deliberately keyed on an explicit list rather than on `tool.annotations`, which are
-        // not forwarded here at all: `destructiveHint` is `false` on tools that publish or enable a
-        // flow, so a gate derived from it would fail open. See `chat-tool-gating.ts` for the audit.
-        // Read synchronously — the SDK awaits this inside the transform that pumps provider chunks
-        // (`ai/dist/index.mjs:6263`), so any I/O here stalls the stream and eats into the
-        // first-token timeout tuned in #266.
-        needsApproval: chatToolGating.requiresApproval(tool.title),
         execute: async (input) => execute(toRecord(input)),
     })
 }
@@ -77,4 +81,9 @@ type BuildParams = {
     mcp: ProjectScopedMcpServer
     userId: string
     log: FastifyBaseLogger
+}
+
+type BuiltChatTools = {
+    tools: ToolSet
+    toolApproval: Record<string, 'user-approval'>
 }

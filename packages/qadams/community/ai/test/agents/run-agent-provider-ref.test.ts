@@ -22,10 +22,10 @@ vi.mock('../../src/lib/actions/agents/tools', () => ({
 
 vi.mock('ai', () => ({
   streamText: vi.fn(() => ({
-    fullStream: (async function* () { /* the model is stubbed; no chunks to replay */ })(),
+    stream: (async function* () { /* the model is stubbed; no chunks to replay */ })(),
     text: Promise.resolve(''),
   })),
-  stepCountIs: vi.fn(),
+  isStepCount: vi.fn(() => true),
   hasToolCall: vi.fn(),
 }))
 

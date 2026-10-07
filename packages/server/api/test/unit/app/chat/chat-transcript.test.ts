@@ -109,10 +109,10 @@ describe('chatTranscript.toModelMessages', () => {
 
 // A gated call is persisted as an approval request rather than as a tool call (`chat-ai-utils.ts`),
 // so replay has to rebuild the call from it. Two SDK preconditions decide the shape, both verified
-// in `ai@6.0.170`'s bundle: `collectToolApprovals` looks up the request's `toolCallId` among the
+// in `ai@7.0.127`'s bundle: `collectToolApprovals` looks up the request's `toolCallId` among the
 // `tool-call` parts of earlier assistant messages and throws `ToolCallNotFoundForApprovalError`
-// when it is absent (`index.mjs:2741-2745`), and it does nothing at all unless the *last* message
-// is the `role: 'tool'` one carrying the responses (`:2687-2696`).
+// when it is absent (`index.js:2682`), and it does nothing at all unless the *last* message
+// is the `role: 'tool'` one carrying the responses (`index.js:2657-2661`).
 describe('chatTranscript.toModelMessages — an approval gate', () => {
     const APPROVAL_ID = 'approval_1'
 
@@ -151,7 +151,7 @@ describe('chatTranscript.toModelMessages — an approval gate', () => {
     })
 
     // An assistant `tool-call` with no answer of any kind makes `convertToLanguageModelPrompt`
-    // throw `MissingToolResultsError` on the next user turn (`index.mjs:1379-1391`), which would
+    // throw `MissingToolResultsError` on the next user turn (`index.js:1374-1378`), which would
     // kill every later run in the conversation. Until the gate is answered, the honest answer is
     // that the call did not run.
     it('answers a still-pending gate, so a later turn is not rejected outright', () => {
@@ -173,7 +173,7 @@ describe('chatTranscript.toModelMessages — an approval gate', () => {
 
     // The mirror of the case above: once the user has answered, a `tool-result` for the gated call
     // must NOT be replayed, because `collectToolApprovals` skips any approval whose tool call
-    // already has a result (`index.mjs:2739`) — the tool would then never run.
+    // already has a result (`index.js:2680`) — the tool would then never run.
     it('replays an answered gate as the approval response alone, so the SDK executes the tool', () => {
         // `resumingGate` is required for this shape: it is what suppresses the outcome tool-result
         // that every other run must send. Without it the SDK would see a settled call and skip it.
@@ -229,7 +229,7 @@ describe('chatTranscript.toModelMessages — an approval gate', () => {
     })
 
     // `collectToolApprovals` throws `InvalidToolApprovalError` for a response whose request it cannot
-    // find (`index.mjs:2735`), and that kills the run before its first token. The coupling in
+    // find (`index.js:2678`), and that kills the run before its first token. The coupling in
     // `chatApprovals.answer` means an orphan cannot occur today — request and response share a
     // message, so the window cannot keep one and drop the other — and this is what keeps the transcript
     // safe if that coupling is ever broken.

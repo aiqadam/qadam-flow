@@ -9,10 +9,7 @@ import {
 import {
   GeneratedFile,
   generateText,
-  GenerateTextResult,
-  ImagePart,
   LanguageModel,
-  ToolSet,
 } from 'ai';
 import { generateImage } from 'ai';
 import mime from 'mime-types';
@@ -306,7 +303,7 @@ const generateImageUsingGenerateText = async ({
   prompt: string;
   inputImages: ApFile[];
 }): Promise<GeneratedFile> => {
-  const imageFiles = inputImages.map<ImagePart>((file) => {
+  const imageFiles = inputImages.map((file) => {
     const detected = file.extension ? mime.lookup(file.extension) : false;
     const fileType =
       detected && ALLOWED_IMAGE_MIME_TYPES.has(detected)
@@ -314,8 +311,9 @@ const generateImageUsingGenerateText = async ({
         : 'image/jpeg';
 
     return {
-      type: 'image',
-      image: `data:${fileType};base64,${file.base64}`,
+      type: 'file' as const,
+      data: `data:${fileType};base64,${file.base64}`,
+      mediaType: fileType,
     };
   });
 
@@ -325,6 +323,9 @@ const generateImageUsingGenerateText = async ({
       google: { responseModalities: ['TEXT', 'IMAGE'] },
       openrouter: { modalities: ['image', 'text'] },
     },
+    // AI SDK 7 excludes response bodies from step results by default; the Google/OpenRouter
+    // candidate check below reads `finishReason` off the raw body.
+    include: { responseBody: true },
     messages: [
       {
         role: 'user',
@@ -357,13 +358,13 @@ const ALLOWED_IMAGE_MIME_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 const assertImageGenerationSuccess = (
-  result: GenerateTextResult<ToolSet, never>
+  result: { finalStep: { response: { body?: unknown } }, files: GeneratedFile[] }
 ): void => {
   const responseBody =
-    result.response.body &&
-      typeof result.response.body === 'object' &&
-      'candidates' in result.response.body
-      ? result.response.body
+    result.finalStep.response.body &&
+      typeof result.finalStep.response.body === 'object' &&
+      'candidates' in result.finalStep.response.body
+      ? result.finalStep.response.body
       : { candidates: [] };
 
   const responseCandidates = Array.isArray(responseBody?.candidates)

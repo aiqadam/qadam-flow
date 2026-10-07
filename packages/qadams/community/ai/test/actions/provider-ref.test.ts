@@ -16,9 +16,9 @@ vi.mock('ai', async (importOriginal) => {
   const original = await importOriginal<Record<string, unknown>>()
   return {
     ...original,
-    generateText: vi.fn(async () => ({ text: 'billing', sources: [], files: [], response: { body: {} } })),
+    generateText: vi.fn(async () => ({ text: 'billing', sources: [], files: [], finalStep: { response: { body: {} } } })),
     generateImage: vi.fn(async () => ({ image: { base64: 'AAAA', uint8Array: new Uint8Array([0]) } })),
-    stepCountIs: vi.fn(),
+    isStepCount: vi.fn(),
   }
 })
 
@@ -167,5 +167,49 @@ describe.each(actions)('$label validity for a step stored before providerId exis
 
   it('accepts a stored input that carries one', () => {
     expect(providerIdSchema().safeParse(ROW_ID).success).toBe(true)
+  })
+})
+
+// Google/OpenRouter/Cloudflare image generation goes through `generateText`, and
+// `assertImageGenerationSuccess` reads the provider's own `finishReason` off the raw response body —
+// which AI SDK 7 only retains when `include: { responseBody: true }` is set (`generate-image.ts`).
+// If that flag were dropped, `responseCandidates` would collapse to `[]` and a non-STOP finish would
+// pass silently, leaving only the weaker `files.length` check. These pin both halves.
+describe('generate-image surfaces the provider\'s own finish reason', () => {
+  const googleProps = { prompt: 'a cat', provider: AIProviderName.GOOGLE, model: 'gemini-2.5-flash' }
+
+  async function stubGenerateText(value: unknown): Promise<void> {
+    const { generateText } = await import('ai')
+    vi.mocked(generateText).mockResolvedValueOnce(value as Awaited<ReturnType<typeof generateText>>)
+  }
+
+  it('throws when the response body carries a non-STOP candidate', async () => {
+    await stubGenerateText({
+      files: [{ base64: 'AAAA', uint8Array: new Uint8Array([0]) }],
+      finalStep: { response: { body: { candidates: [{ finishReason: 'SAFETY' }] } } },
+    })
+
+    await expect(asAction(generateImageAction).run(contextFor(googleProps)))
+      .rejects.toThrow('Image generation failed Reason')
+
+    // The body only exists because of this flag; without it the guard above would never fire.
+    const { generateText } = await import('ai')
+    expect(generateText).toHaveBeenCalledWith(expect.objectContaining({ include: { responseBody: true } }))
+  })
+
+  it('hands the generated file to the file store when the candidate finished with STOP', async () => {
+    const file = { base64: 'AAAA', uint8Array: new Uint8Array([0]) }
+    await stubGenerateText({
+      files: [file],
+      finalStep: { response: { body: { candidates: [{ finishReason: 'STOP' }] } } },
+    })
+    const context = contextFor(googleProps)
+
+    await asAction(generateImageAction).run(context)
+
+    expect(context.files.write).toHaveBeenCalledWith({
+      data: Buffer.from('AAAA', 'base64'),
+      fileName: 'image.png',
+    })
   })
 })

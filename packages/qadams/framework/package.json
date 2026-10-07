@@ -1,6 +1,6 @@
 {
   "name": "@aiqadam/qadams-framework",
-  "version": "0.34.1",
+  "version": "0.35.0",
   "description": "SDK for building Qadam Flow qadams — actions, triggers, properties and auth.",
   "license": "MIT",
   "repository": {
@@ -19,7 +19,7 @@
   "dependencies": {
     "@aiqadam/shared": "workspace:*",
     "zod": "4.3.6",
-    "ai": "6.0.170",
+    "ai": "7.0.127",
     "semver": "7.6.0",
     "tslib": "2.6.2"
   },
