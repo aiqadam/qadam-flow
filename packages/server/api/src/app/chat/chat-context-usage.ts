@@ -151,8 +151,7 @@ type MeasureParams = {
     // The summary sent ahead of the transcript, if one was (#567).
     summary: string | null
     tools: ToolSet
-    // Everything the last step was sent, plus the reply it produced: the run's input transcript
-    // followed by `response.messages`.
+    // The run's input transcript followed by the accumulated `responseMessages` of every step.
     history: ModelMessage[]
     lastStepUsage: LanguageModelUsage
     transcriptStartIndex: number

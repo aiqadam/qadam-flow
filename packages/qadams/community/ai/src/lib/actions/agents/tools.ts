@@ -6,7 +6,7 @@ import { AgentKnowledgeBaseTool, AgentMcpTool, AgentOutputField, AgentTaskStatus
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { ActionContext } from "@aiqadam/qadams-framework";
 import { ProviderOptions } from "@ai-sdk/provider-utils";
-import { experimental_createMCPClient as createMCPClient, MCPClient, MCPTransport } from '@ai-sdk/mcp';
+import { createMCPClient, MCPClient, MCPTransport } from '@ai-sdk/mcp';
 import { AuthenticationType, httpClient, HttpMethod } from "@aiqadam/qadams-common";
 
 function createTransportConfig(

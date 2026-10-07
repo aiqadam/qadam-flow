@@ -2,7 +2,7 @@ import {
   createAction,
   Property,
 } from '@aiqadam/qadams-framework';
-import { ModelMessage, generateText, stepCountIs } from 'ai';
+import { ModelMessage, generateText, isStepCount } from 'ai';
 import { AIProviderName, getEffectiveProviderAndModel, spreadIfDefined } from '@aiqadam/shared';
 import { aiProps } from '../../common/props';
 import { createAIModel } from '../../common/ai-sdk';
@@ -94,7 +94,7 @@ export const askAI = createAction({
     }
 
     const stopWhen = webSearchTools
-      ? stepCountIs(webSearchOptions?.maxUses ?? 5)
+      ? isStepCount(webSearchOptions?.maxUses ?? 5)
       : undefined;
 
     const response = await generateText({

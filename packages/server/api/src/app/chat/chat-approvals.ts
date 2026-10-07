@@ -127,7 +127,7 @@ function assertAnswerable({ uiMessages, approvalId, expectedToolCallId }: Assert
     }
     // A gate can only be resumed while its message is still the newest one, because
     // `collectToolApprovals` reads approvals off the *last* message alone
-    // (`ai/dist/index.mjs:2690`). Two gated calls in one step reach this: approving the first appends
+    // (`ai/dist/index.js:2657`). Two gated calls in one step reach this: approving the first appends
     // the resume run's reply as a new assistant message, so the gate message is no longer last and
     // approving the second would return 200, stream a normal-looking reply, and execute nothing.
     // Refusing is the honest answer — the user is told the action can no longer be taken instead of

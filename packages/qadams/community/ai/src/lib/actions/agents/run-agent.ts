@@ -21,7 +21,7 @@ import {
   spreadIfDefined,
   getEffectiveProviderAndModel,
 } from '@aiqadam/shared';
-import { hasToolCall, stepCountIs, streamText } from 'ai';
+import { hasToolCall, isStepCount, streamText } from 'ai';
 import { agentOutputBuilder } from './agent-output-builder';
 import { createAIModel, createEmbeddingModel } from '../../common/ai-sdk';
 import { inspect } from 'util';
@@ -215,17 +215,17 @@ export const runAgent = createAction({
       const prompts = agentUtils.getPrompts(prompt, { hasKnowledgeBaseTools });
       const stream = streamText({
         model: model,
-        system: prompts.system,
+        instructions: prompts.system,
         prompt: prompts.prompt,
         tools: allTools,
-        stopWhen: [stepCountIs(maxSteps), hasToolCall(TASK_COMPLETION_TOOL_NAME)],
+        stopWhen: [isStepCount(maxSteps), hasToolCall(TASK_COMPLETION_TOOL_NAME)],
         providerOptions,
-        onFinish: async () => {
+        onEnd: async () => {
           await Promise.all(mcpClients.map(async (client) => client.close()));
         },
       });
 
-      for await (const chunk of stream.fullStream) {
+      for await (const chunk of stream.stream) {
         try {
           switch (chunk.type) {
             case 'text-delta': {

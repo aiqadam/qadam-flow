@@ -1,10 +1,10 @@
 import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock'
 import { createAnthropic } from '@ai-sdk/anthropic'
 import { createAzure } from '@ai-sdk/azure'
-import { createGoogleGenerativeAI } from '@ai-sdk/google'
+import { createGoogle } from '@ai-sdk/google'
 import { createOpenAI } from '@ai-sdk/openai'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
-import { JSONObject, SharedV3ProviderOptions } from '@ai-sdk/provider'
+import { JSONObject, SharedV4ProviderOptions } from '@ai-sdk/provider'
 import {
     AIProviderName,
     AzureProviderConfig,
@@ -59,7 +59,7 @@ function createChatModel({ provider, auth, config, modelId }: {
         }
         case AIProviderName.GOOGLE: {
             const { apiKey } = auth as BaseAIProviderAuthConfig
-            return createGoogleGenerativeAI({ apiKey, fetch: safeHttp.fetch })(modelId)
+            return createGoogle({ apiKey, fetch: safeHttp.fetch })(modelId)
         }
         case AIProviderName.AZURE: {
             const { apiKey } = auth as BaseAIProviderAuthConfig
@@ -148,7 +148,7 @@ function unusableProviderConfig(message: string): QadamFlowError {
  * Only for the chat's own `streamText`. The compaction summariser's `generateText` must never get
  * these: it is a background job and has to stay cheap.
  */
-function buildProviderOptions({ provider, modelId, reasoning }: BuildProviderOptionsParams): SharedV3ProviderOptions | null {
+function buildProviderOptions({ provider, modelId, reasoning }: BuildProviderOptionsParams): SharedV4ProviderOptions | null {
     const parsed = ChatReasoningConfig.safeParse(reasoning)
     if (!parsed.success || !parsed.data.enabled || !CHAT_REASONING_PROVIDERS.includes(provider)) {
         return null

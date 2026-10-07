@@ -20,7 +20,7 @@ function captureFactory(key: string) {
 
 vi.mock('@ai-sdk/openai', () => ({ createOpenAI: captureFactory('openai') }))
 vi.mock('@ai-sdk/anthropic', () => ({ createAnthropic: captureFactory('anthropic') }))
-vi.mock('@ai-sdk/google', () => ({ createGoogleGenerativeAI: captureFactory('google') }))
+vi.mock('@ai-sdk/google', () => ({ createGoogle: captureFactory('google') }))
 vi.mock('@ai-sdk/azure', () => ({ createAzure: captureFactory('azure') }))
 vi.mock('@ai-sdk/amazon-bedrock', () => ({ createAmazonBedrock: captureFactory('bedrock') }))
 vi.mock('@ai-sdk/openai-compatible', () => ({ createOpenAICompatible: captureFactory('openai-compatible') }))

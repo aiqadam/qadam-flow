@@ -233,8 +233,9 @@ export const extractStructuredData = createAction({
 
 				if (fileType && fileType.startsWith('image') && file.base64) {
 					contentParts.push({
-						type: 'image',
-						image: `data:${fileType};base64,${file.base64}`,
+						type: 'file',
+						data: `data:${fileType};base64,${file.base64}`,
+						mediaType: fileType,
 					});
 				} else if (fileType && fileType.startsWith('application/pdf') && file.base64) {
 					contentParts.push({

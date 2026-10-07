@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises'
-import { SharedV3ProviderOptions } from '@ai-sdk/provider'
+import { SharedV4ProviderOptions } from '@ai-sdk/provider'
 import { chatAiUtils, ContentPartLike } from '@aiqadam/server-utils'
 import {
     AnswerChatToolApprovalRequest,
@@ -24,7 +24,7 @@ import {
     tryCatch,
     WebsocketClientEvent,
 } from '@aiqadam/shared'
-import { ModelMessage, NoOutputGeneratedError, stepCountIs, StepResult, streamText, SystemModelMessage, TextPart, ToolSet, UserContent } from 'ai'
+import { isStepCount, ModelMessage, NoOutputGeneratedError, StepResult, streamText, SystemModelMessage, TextPart, ToolSet, toUIMessageStream, UserContent } from 'ai'
 import { FastifyBaseLogger } from 'fastify'
 import { websocketService } from '../core/websockets.service'
 import { rejectedPromiseHandler } from '../helper/promise-handler'
@@ -55,7 +55,7 @@ export const chatAgentService = (log: FastifyBaseLogger) => ({
 
         const mcp = await mcpServerService(log).getByProjectId(projectId)
         const projectScopedMcp: ProjectScopedMcpServer = { ...mcp, projectId }
-        const tools = await chatTools.build({ mcp: projectScopedMcp, userId, log })
+        const { tools, toolApproval } = await chatTools.build({ mcp: projectScopedMcp, userId, log })
         const systemPrompt = await buildSystemPrompt({ projectId, platformId, userId, log })
 
         const runId = request.runId ?? apId()
@@ -93,6 +93,7 @@ export const chatAgentService = (log: FastifyBaseLogger) => ({
             // user turn is still the row's last message — the run that appends the reply is this one.
             rebuildTranscript: (fresh) => buildRunTranscript({ conversation: fresh, uiMessages: (fresh.uiMessages ?? []).slice(0, -1), request, resumingGate: false }),
             tools,
+            toolApproval,
             providerOptions: resolvedModel.reasoningProviderOptions,
             log,
         }), log)
@@ -110,8 +111,8 @@ export const chatAgentService = (log: FastifyBaseLogger) => ({
      * the gate id is a path segment *under* the conversation, so there is no way to reach this
      * without naming a conversation the caller can already open.
      *
-     * The tool is not executed here. `collectToolApprovals` executes it inside the resumed
-     * `streamText` call (`ai/dist/index.mjs:7013`); doing it here as well would run it twice.
+     * The tool is not executed here. The SDK's `resolveToolApproval` executes it inside the resumed
+     * `streamText` call (`ai/dist/index.js:4128`); doing it here as well would run it twice.
      */
     async approve({ id, platformId, userId, approvalId, request }: ApproveParams): Promise<StartChatRunResponse> {
         const conversation = await chatConversationService.getOneOrThrow({ id, platformId, userId })
@@ -128,7 +129,7 @@ export const chatAgentService = (log: FastifyBaseLogger) => ({
 
         const mcp = await mcpServerService(log).getByProjectId(projectId)
         const projectScopedMcp: ProjectScopedMcpServer = { ...mcp, projectId }
-        const tools = await chatTools.build({ mcp: projectScopedMcp, userId, log })
+        const { tools, toolApproval } = await chatTools.build({ mcp: projectScopedMcp, userId, log })
         const systemPrompt = await buildSystemPrompt({ projectId, platformId, userId, log })
 
         const runId = apId()
@@ -159,15 +160,16 @@ export const chatAgentService = (log: FastifyBaseLogger) => ({
             systemPrompt,
             // No user turn is appended, so the transcript ends on the tool message carrying the
             // response — the only arrangement in which `collectToolApprovals` reads it at all
-            // (`ai/dist/index.mjs:2690`: it returns empty unless the last message is a tool message).
+            // (`ai/dist/index.js:2657`: it returns empty unless the last message is a tool message).
             // `resumingGate` is set ONLY here: this is the one run that must leave the settled gate
             // without a tool result, because a result would make `collectToolApprovals` skip the
-            // call (`:2737`) and the approved tool would silently never execute. Every other run —
+            // call (`ai/dist/index.js:2680`) and the approved tool would silently never execute. Every other run —
             // `start` included, which is where an auto-denied gate is replayed — must answer it, or
             // the provider rejects an assistant `tool-call` that nothing responds to.
             transcript: buildRunTranscript({ conversation, uiMessages, request: null, resumingGate: true }),
             rebuildTranscript: (fresh) => buildRunTranscript({ conversation: fresh, uiMessages: fresh.uiMessages ?? [], request: null, resumingGate: true }),
             tools,
+            toolApproval,
             // Never asked to reason, even on a row that opted in (#566). A resumed run continues the
             // turn the gate interrupted, and the transcript replays that turn's `tool_use` without
             // the thinking block it began with — reasoning is never persisted with a signature. In
@@ -261,12 +263,12 @@ async function runAttempt(params: RunAttemptParams): Promise<void> {
     let replyStartedAt: number | null = null
     // Once a tool has run, a retry would run it again — the overflow safety net must not.
     let toolExecuted = false
-    // The SDK's `tool-approval-request` UI chunk carries `{ type, approvalId, toolCallId }` and
-    // nothing else (`ai/dist/index.mjs:5136-5140`), but the card is useless without the tool and its
-    // arguments. The gated call's `tool-input-available` chunk is enqueued *before* the approval
-    // check (`:6226` then `:6264`), so by the time the request arrives its input has already gone
-    // past — correlated by `toolCallId` here rather than re-read from the database, which the row
-    // does not yet contain.
+    // The SDK's `tool-approval-request` UI chunk carries only `{ type, approvalId, toolCallId }` plus
+    // optional approval metadata (`ai/dist/index.js:7259`, `toUIMessageChunk`) — no tool name or
+    // input. The gated call's `tool-input-available` chunk is emitted *before* the approval check
+    // (`ai/dist/index.js:6833`), so by the time the request arrives its input has already gone past —
+    // correlated by `toolCallId` here rather than re-read from the database, which the row does not
+    // yet contain.
     const gatedCallInputs = new Map<string, { toolName: string, input: Record<string, unknown> }>()
     // `streamText` does not throw a provider failure: it hands it to `onError` and carries on, and
     // when the very first step never produced anything, `result.steps` then rejects with a
@@ -280,15 +282,18 @@ async function runAttempt(params: RunAttemptParams): Promise<void> {
     const { error } = await tryCatch(async () => {
         const result = streamText({
             model: resolvedModel.model,
-            // The summary goes through `system` rather than `messages`: the SDK `console.warn`s on
-            // every call that carries a system message in `messages`, past the logger.
-            system: isNil(transcript.summaryMessage) ? cachedSystemPrompt : [toSystemMessage(cachedSystemPrompt), transcript.summaryMessage],
+            // The summary goes through `instructions` rather than `messages`: the SDK rejects a
+            // system message in `messages` by default, and it warns on the deprecated `system`
+            // fallback.
+            instructions: isNil(transcript.summaryMessage) ? cachedSystemPrompt : [toSystemMessage(cachedSystemPrompt), transcript.summaryMessage],
             messages,
             tools,
             // Spread rather than passed as `undefined` so a run that does not reason builds the
             // same call it built before the setting existed (#566).
             ...spreadIfDefined('providerOptions', params.providerOptions ?? undefined),
-            stopWhen: stepCountIs(MAX_AGENT_STEPS),
+            // #264: which tools the model may not run on its own word is decided in `chatTools`.
+            toolApproval: params.toolApproval,
+            stopWhen: isStepCount(MAX_AGENT_STEPS),
             abortSignal: abortController.signal,
             onError: ({ error: streamError }) => {
                 providerError ??= streamError
@@ -296,12 +301,12 @@ async function runAttempt(params: RunAttemptParams): Promise<void> {
             // Proof of life for `isAbandoned`. Without it a long run looks identical to one whose
             // process died, and the staleness window would have to be longer than the longest
             // possible run to be safe — which would make it useless.
-            onStepFinish: () => {
+            onStepEnd: () => {
                 rejectedPromiseHandler(chatConversationService.touchRun({ id, platformId, userId, runId }), log)
             },
         })
 
-        for await (const chunk of result.toUIMessageStream()) {
+        for await (const chunk of asAsyncIterable(toUIMessageStream({ stream: result.stream, tools }))) {
             // The SDK fills an `error` chunk through `getErrorMessage`: the provider's raw message,
             // or a non-Error rejection's whole `JSON.stringify`. The client learns about a failed
             // run from the classified ERROR event below and its reducer ignores this chunk, so it
@@ -328,14 +333,17 @@ async function runAttempt(params: RunAttemptParams): Promise<void> {
 
         const thinkingDurationMs = chatThinkingDuration.measure({ startedAt, replyStartedAt, endedAt: performance.now() })
         const steps = await result.steps
-        const response = await result.response
-        const contextUsage = await measureContextUsage({ resolvedModel, systemPrompt, transcript, tools, responseMessages: response.messages, steps, conversationId: id, runId, log })
+        // `result.responseMessages` is the accumulated history of every step; `finalStep.response.messages`
+        // and the deprecated `result.response` only carry the last step's, which would drop the tool
+        // calls a multi-step turn made.
+        const responseMessages = await result.responseMessages
+        const contextUsage = await measureContextUsage({ resolvedModel, systemPrompt, transcript, tools, responseMessages, steps, conversationId: id, runId, log })
         await chatConversationService.finishRun({
             id,
             platformId,
             userId,
             runId,
-            messages: [...messages, ...response.messages],
+            messages: [...messages, ...responseMessages],
             assistantMessage: {
                 role: PersistedChatRole.ASSISTANT,
                 parts: chatAiUtils.buildStepParts({ content: toContentParts(steps) }),
@@ -471,6 +479,31 @@ function collectStreamedText({ chunk, into }: { chunk: unknown, into: string[] }
     }
     if (chunk.type === 'text-delta' && typeof chunk.delta === 'string') {
         into.push(chunk.delta)
+    }
+}
+
+// The standalone `toUIMessageStream` is typed as returning a plain `ReadableStream`, whose DOM lib
+// type has no `Symbol.asyncIterator` — the deprecated `streamText` result method it replaces returned
+// an `AsyncIterableStream`, which did. Iterating the reader keeps the loop below typed, and its
+// `finally` cancels the upstream stream when the body throws instead of leaving the paid provider
+// call running on after the run has failed.
+async function* asAsyncIterable<T>(stream: ReadableStream<T>): AsyncGenerator<T, void, undefined> {
+    const reader = stream.getReader()
+    try {
+        while (true) {
+            const { done, value } = await reader.read()
+            if (done) {
+                return
+            }
+            yield value
+        }
+    }
+    finally {
+        // Cancel so an early exit (a thrown chunk handler) tears the upstream provider stream down
+        // instead of leaving it running to completion after the run has already failed. A no-op once
+        // the stream closed normally.
+        await reader.cancel().catch(() => undefined)
+        reader.releaseLock()
     }
 }
 
@@ -740,8 +773,11 @@ type RunLoopParams = {
     transcript: RunTranscript
     rebuildTranscript: (fresh: ChatConversation) => RunTranscript
     tools: ToolSet
+    // #264: the tools whose execution the user must approve, keyed by tool name. Empty when every
+    // tool is safe to run on the model's own word.
+    toolApproval: Record<string, 'user-approval'>
     // Reasoning is asked for through these alone; null when the run must not reason.
-    providerOptions: SharedV3ProviderOptions | null
+    providerOptions: SharedV4ProviderOptions | null
     log: FastifyBaseLogger
 }
 

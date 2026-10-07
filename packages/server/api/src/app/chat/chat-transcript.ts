@@ -129,9 +129,10 @@ function toAssistantModelMessages({ parts, knownApprovalIds, isResumedGateTurn }
             //    model's next move should be to wait, not to retry or apologise.
             // 2. Gate answered, and this run is NOT resuming it → say how it ended. The SDK's
             //    `convertToLanguageModelPrompt` exempts an approval-carrying call from its own
-            //    `MissingToolResultsError` (`ai/dist/index.mjs:1319-1331`), which is what made this
+            //    `MissingToolResultsError` (`ai/dist/index.js:1374-1378`), which is what made this
             //    look safe — but the exemption only stops the SDK throwing. It then strips the
-            //    approval parts (`:1441`, `:1497`) and drops the emptied tool message (`:1393`), so
+            //    approval parts (`ai/dist/index.js:1432`) and drops the emptied tool message
+            //    (`ai/dist/index.js:1379`), so
             //    the provider receives an assistant `tool-call` with nothing responding to it.
             //    OpenAI answers 400 "must be followed by tool messages responding to each
             //    tool_call_id"; Anthropic answers "tool_use ids were found without tool_result
@@ -169,7 +170,7 @@ function toAssistantModelMessages({ parts, knownApprovalIds, isResumedGateTurn }
         if (part.type === PersistedChatPartType.TOOL_APPROVAL_RESPONSE) {
             // An orphan response is fatal, not cosmetic: `collectToolApprovals` throws
             // `InvalidToolApprovalError` for a response whose request it cannot find among the
-            // replayed messages (`ai/dist/index.mjs:2735`), and that kills every later run in the
+            // replayed messages (`ai/dist/index.js:2678`), and that kills every later run in the
             // conversation before its first token. Today the coupling above makes an orphan
             // impossible — the two parts share a message, so the window cannot keep one and drop
             // the other — and this check is what keeps that true if the coupling ever breaks.

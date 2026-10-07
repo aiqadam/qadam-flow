@@ -5,10 +5,10 @@
     "baseUrl": ".",
     "paths": {
       "ai-gateway-provider/providers/anthropic": [
-        "./node_modules/ai-gateway-provider/dist/providers/anthropic.d.ts"
+        "./node_modules/ai-gateway-provider/dist/providers/anthropic.d.cts"
       ],
       "ai-gateway-provider/providers/google": [
-        "./node_modules/ai-gateway-provider/dist/providers/google.d.ts"
+        "./node_modules/ai-gateway-provider/dist/providers/google.d.cts"
       ]
     },
     "outDir": "./dist",

@@ -15,7 +15,7 @@ import { z, ZodRawShape } from 'zod'
  *
  * `jsonSchema()` from the AI SDK is what makes that split possible: it takes the advertised
  * schema and the validator as two independent arguments. `parseToolCall`
- * (`ai/dist/index.mjs`, `doParseToolCall`) feeds the model's arguments through
+ * (`ai/dist/index.js`, `doParseToolCall`) feeds the model's arguments through
  * `schema.validate` and passes `parseResult.value` on as the tool input, so coercing inside
  * `validate` is what the tool actually executes with.
  */

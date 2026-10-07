@@ -260,7 +260,7 @@ async function summarize({ instructions, previousSummary, rendered, resolvedMode
     const timeout = AbortSignal.timeout(SUMMARY_TIMEOUT_MS)
     const { text } = await generateText({
         model: resolvedModel.model,
-        system: instructions,
+        instructions,
         prompt: renderForSummary({ previousSummary, rendered }),
         maxOutputTokens: MAX_SUMMARY_OUTPUT_TOKENS,
         abortSignal: isNil(abortSignal) ? timeout : AbortSignal.any([abortSignal, timeout]),
