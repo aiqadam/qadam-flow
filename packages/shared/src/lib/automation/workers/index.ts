@@ -135,14 +135,12 @@ export const WorkerSettingsResponse = z.object({
     // catalogue resolves for real. See the comment on `needsInstalling` in `qadam-installer.ts`
     // for what flips, and #482 for what must land before it may be turned on anywhere.
     OFFICIAL_QADAMS_INSTALL_ENABLED: z.boolean(),
-    SENTRY_DSN: z.string().optional(),
     LOKI_PASSWORD: z.string().optional(),
     LOKI_URL: z.string().optional(),
     LOKI_USERNAME: z.string().optional(),
     BETTERSTACK_HOST: z.string().optional(),
     BETTERSTACK_TOKEN: z.string().optional(),
     OTEL_ENABLED: z.boolean(),
-    HYPERDX_TOKEN: z.string().optional(),
     FILE_STORAGE_LOCATION: z.string(),
     S3_USE_SIGNED_URLS: z.string(),
     EVENT_DESTINATION_TIMEOUT_SECONDS: z.number(),

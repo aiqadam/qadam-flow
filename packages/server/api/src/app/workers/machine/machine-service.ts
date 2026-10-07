@@ -45,7 +45,6 @@ async function buildSettingsResponse(_log: FastifyBaseLogger): Promise<WorkerSet
         // `OTEL_ENABLED` line below — `booleanValidator` restricts the underlying value to
         // `'true'`/`'false'`, so the two forms are behaviourally identical here.
         OFFICIAL_QADAMS_INSTALL_ENABLED: system.get(AppSystemProp.OFFICIAL_QADAMS_INSTALL_ENABLED) === 'true',
-        SENTRY_DSN: system.get(AppSystemProp.SENTRY_DSN),
         LOKI_PASSWORD: system.get(AppSystemProp.LOKI_PASSWORD),
         LOKI_URL: system.get(AppSystemProp.LOKI_URL),
         LOKI_USERNAME: system.get(AppSystemProp.LOKI_USERNAME),

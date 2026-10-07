@@ -66,7 +66,7 @@ if (system.getBoolean(AppSystemProp.OTEL_ENABLED) ?? false) {
 
     const sdk = new NodeSDK({
         spanProcessors: [new FilteringSpanProcessor(new BatchSpanProcessor(traceExporter))],
-        metricReader,
+        metricReaders: [metricReader],
         resource,
         instrumentations: [
             getNodeAutoInstrumentations({
@@ -75,7 +75,6 @@ if (system.getBoolean(AppSystemProp.OTEL_ENABLED) ?? false) {
                 '@opentelemetry/instrumentation-net': { enabled: false },
             }),
             new FastifyOtelInstrumentation({
-                servername: getServiceName(),
                 registerOnInitialization: true,
             }),
         ],

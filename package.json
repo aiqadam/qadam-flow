@@ -60,7 +60,7 @@
     "http-status-codes": "2.2.0",
     "isolated-vm": "7.0.0",
     "jsonwebtoken": "9.0.1",
-    "pino-opentelemetry-transport": "3.0.0",
+    "pino-opentelemetry-transport": "4.0.2",
     "rollup": "4.59.0",
     "semver": "7.6.0",
     "sqlite3": "6.0.1",
@@ -128,6 +128,7 @@
     "basic-ftp": "6.2.2",
     "rollup": "npm:@rollup/wasm-node",
     "@xmldom/xmldom": "0.8.15",
-    "vite": "8.3.2"
+    "vite": "8.3.2",
+    "@opentelemetry/api": "1.9.1"
   }
 }

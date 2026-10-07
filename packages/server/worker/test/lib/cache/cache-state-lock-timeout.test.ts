@@ -37,7 +37,11 @@ afterEach(async () => {
     folders.length = 0
 })
 
-describe('cacheState when the cross-container lock times out (#586)', () => {
+// The first test's dynamic import of `cache-state` loads the real @aiqadam/server-utils graph in
+// through the `importOriginal` mock — module load, not I/O, so its cost is charged to the test. On
+// CI that load runs ~4 s (4333 ms on main) and tips past vitest's 5000 ms default when the runner is
+// loaded. A generous explicit timeout keeps the suite off the line. See #760.
+describe('cacheState when the cross-container lock times out (#586)', { timeout: 15_000 }, () => {
     it('installs without the lock instead of failing the job, and saves the result', async () => {
         const { cacheState } = await import('../../../src/lib/cache/cache-state')
         const folder = join(tmpdir(), `cache-state-timeout-${randomUUID()}`)
