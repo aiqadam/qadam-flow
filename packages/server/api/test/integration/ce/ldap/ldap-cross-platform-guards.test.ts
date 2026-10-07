@@ -1,4 +1,6 @@
-import { apId, ErrorCode, FederatedIdentityProvider, InvitationStatus, InvitationType, PlatformRole, QadamFlowError, tryCatch, UserIdentityProvider, UserStatus } from '@aiqadam/shared'
+import { apId, DefaultProjectRole, ErrorCode, FederatedIdentityProvider, InvitationStatus, InvitationType, PlatformRole, ProjectWithLimits, QadamFlowError, tryCatch, UserIdentity, UserIdentityProvider, UserInvitationWithLink, UserStatus } from '@aiqadam/shared'
+import { FastifyInstance } from 'fastify'
+import { StatusCodes } from 'http-status-codes'
 import pino from 'pino'
 import { authenticationService } from '../../../../src/app/authentication/authentication.service'
 import { userFederatedIdentityService } from '../../../../src/app/authentication/federated-identity/user-federated-identity-service'
@@ -6,21 +8,23 @@ import { userIdentityService } from '../../../../src/app/authentication/user-ide
 import { databaseConnection } from '../../../../src/app/database/database-connection'
 import { userService } from '../../../../src/app/user/user-service'
 import { userInvitationsService } from '../../../../src/app/user-invitations/user-invitation.service'
-import { createMockProjectRole, mockAndSaveBasicSetup } from '../../../helpers/mocks'
+import { createMockProjectRole, mockAndSaveBasicSetup, mockBasicUser } from '../../../helpers/mocks'
+import { createServiceContext, createTestContext } from '../../../helpers/test-context'
 import { cleanDatabase, setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
 // app-sec (round 2): reverse-direction identity squatting. An LDAP identity's standing access to a
 // platform must always be provable by a `user_federated_identity` row on *that* platform — proof
 // it actually signed in through that platform's own directory — never merely by the existence of a
 // `user` row, which an invitation or a platform switch can otherwise create/reach with no directory
-// involvement at all. These tests exercise the two guards directly against real Postgres, without
-// going through the LDAP wire protocol (irrelevant to what is under test here) — no HTTP layer is
-// needed either, so `setupTestEnvironment`'s returned `FastifyInstance` is never used, only its
-// side effect of bootstrapping the DB connection.
+// involvement at all. These tests exercise the guards directly against real Postgres, without going
+// through the LDAP wire protocol (irrelevant to what is under test here); the invitation-eligibility
+// test at the end goes through the HTTP create path, so `setupTestEnvironment`'s app is captured for it.
 const log = pino({ level: 'silent' })
 
+let app: FastifyInstance | null = null
+
 beforeAll(async () => {
-    await setupTestEnvironment()
+    app = await setupTestEnvironment()
 })
 
 afterAll(async () => {
@@ -199,4 +203,101 @@ describe('Reverse-direction LDAP identity squatting guards', () => {
 
         expect(response.id).toBe(userId)
     })
+
+    // The create path must not report a false "added": a user row alone used to be enough for
+    // `shouldAutoAcceptInvitation`, but provisioning then refuses the directory-minted identity, so
+    // the invitation was marked ACCEPTED with no membership and no link. It must fall back to
+    // PENDING + link instead (see `isEligibleForProvisioning`).
+    it('creating a project invitation for an LDAP identity with no federated row stays PENDING with a link', async () => {
+        const ctx = await createTestContext(app!)
+        const teamProject = await createTeamProject(ctx)
+        const identity = await createIneligibleDirectoryIdentity(ctx.platform.id)
+
+        const inviteRes = await ctx.post('/v1/user-invitations', {
+            email: identity.email,
+            type: InvitationType.PROJECT,
+            projectId: teamProject.id,
+            projectRole: DefaultProjectRole.EDITOR,
+        })
+        expect(inviteRes.statusCode).toBe(StatusCodes.CREATED)
+        const invitation = inviteRes.json<UserInvitationWithLink>()
+        expect(invitation.status).toBe(InvitationStatus.PENDING)
+        expect(invitation.link).toBeTruthy()
+
+        const persisted = await databaseConnection().getRepository('user_invitation').findOneBy({
+            email: identity.email,
+            platformId: ctx.platform.id,
+            projectId: teamProject.id,
+        })
+        expect(persisted?.status).toBe(InvitationStatus.PENDING)
+    })
+
+    // A SERVICE (API-key) caller is a platform admin and still auto-accepts normally, but it must not
+    // be a second door to the same false ACCEPTED for a directory identity this platform cannot
+    // provision.
+    it('a SERVICE caller also falls back to PENDING for an ineligible directory identity', async () => {
+        const ctx = await createTestContext(app!)
+        const serviceCtx = await createServiceContext(app!, ctx)
+        const teamProject = await createTeamProject(ctx)
+        const identity = await createIneligibleDirectoryIdentity(ctx.platform.id)
+
+        const inviteRes = await serviceCtx.post('/v1/user-invitations', {
+            email: identity.email,
+            type: InvitationType.PROJECT,
+            projectId: teamProject.id,
+            projectRole: DefaultProjectRole.EDITOR,
+        })
+        expect(inviteRes.statusCode).toBe(StatusCodes.CREATED)
+        const invitation = inviteRes.json<UserInvitationWithLink>()
+        expect(invitation.status).toBe(InvitationStatus.PENDING)
+        expect(invitation.link).toBeTruthy()
+    })
+
+    // Positive control for the SERVICE path above: narrowing the guard must not turn every
+    // SERVICE-created invitation into a pending one.
+    it('a SERVICE caller still auto-accepts a project invitation for an eligible user', async () => {
+        const ctx = await createTestContext(app!)
+        const serviceCtx = await createServiceContext(app!, ctx)
+        const teamProject = await createTeamProject(ctx)
+        const { mockUserIdentity } = await mockBasicUser({
+            user: { platformId: ctx.platform.id, platformRole: PlatformRole.MEMBER },
+        })
+
+        const inviteRes = await serviceCtx.post('/v1/user-invitations', {
+            email: mockUserIdentity.email,
+            type: InvitationType.PROJECT,
+            projectId: teamProject.id,
+            projectRole: DefaultProjectRole.EDITOR,
+        })
+        expect(inviteRes.statusCode).toBe(StatusCodes.CREATED)
+        expect(inviteRes.json<UserInvitationWithLink>().status).toBe(InvitationStatus.ACCEPTED)
+    })
 })
+
+async function createTeamProject(ctx: Awaited<ReturnType<typeof createTestContext>>): Promise<ProjectWithLimits> {
+    const res = await ctx.post('/v1/projects', {
+        displayName: 'Invitation eligibility',
+        externalId: null,
+        metadata: null,
+        maxConcurrentJobs: null,
+    })
+    expect(res.statusCode).toBe(StatusCodes.CREATED)
+    return res.json<ProjectWithLimits>()
+}
+
+// An LDAP identity with a `user` row on the platform but no `user_federated_identity` row there —
+// the state `isEligibleForInvitationProvisioning` refuses.
+async function createIneligibleDirectoryIdentity(platformId: string): Promise<UserIdentity> {
+    const identity = await userIdentityService(log).create({
+        email: `directory-no-row-${apId()}@example.com`,
+        firstName: 'No',
+        lastName: 'Row',
+        password: apId(),
+        provider: UserIdentityProvider.LDAP,
+        verified: true,
+        trackEvents: false,
+        newsLetter: false,
+    })
+    await userService(log).getOrCreateWithProject({ identity, platformId })
+    return identity
+}

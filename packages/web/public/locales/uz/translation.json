@@ -2243,5 +2243,19 @@
   "Only the platform owner can change this setting.": "Bu sozlamani faqat platforma egasi o'zgartira oladi.",
   "Enabling this lets the directory administrator take over any local account that matches a directory email address. Only enable this if you trust the directory administrator. The platform owner and platform admins are never linked this way.": "Buni yoqish katalog administratoriga katalogdagi email manziliga mos keladigan istalgan lokal hisobni egallash imkonini beradi. Buni faqat katalog administratoriga ishonsangiz yoqing. Platforma egasi va platforma administratorlari bu tarzda hech qachon bog'lanmaydi.",
   "Link existing accounts by email is on, so only the platform owner can change this configuration. Ask the owner to make changes, or to turn linking off first.": "Mavjud hisoblarni email orqali bog'lash yoqilgan, shuning uchun bu konfiguratsiyani faqat platforma egasi o'zgartira oladi. O'zgartirish uchun egaga murojaat qiling yoki avval bog'lashni o'chiring.",
-  "Must not be writable by directory users themselves (e.g. a self-writable mail in OpenLDAP) — otherwise a user could take over another account by changing their own email to match it.": "Katalog foydalanuvchilarining o'zi tomonidan yozilishi mumkin bo'lmasligi kerak (masalan, OpenLDAP-da o'z-o'zini yozadigan mail) — aks holda foydalanuvchi o'z emailini mos keladigan qilib o'zgartirib, boshqa hisobni egallab olishi mumkin."
+  "Must not be writable by directory users themselves (e.g. a self-writable mail in OpenLDAP) — otherwise a user could take over another account by changing their own email to match it.": "Katalog foydalanuvchilarining o'zi tomonidan yozilishi mumkin bo'lmasligi kerak (masalan, OpenLDAP-da o'z-o'zini yozadigan mail) — aks holda foydalanuvchi o'z emailini mos keladigan qilib o'zgartirib, boshqa hisobni egallab olishi mumkin.",
+  "Added to the project": "Loyihaga qo'shildi",
+  "Invitation sent": "Taklifnoma yuborildi",
+  "Select member": "A'zoni tanlash",
+  "Search by email": "Email bo'yicha qidirish",
+  "Role updated": "Rol yangilandi",
+  "Member removed": "A'zo o'chirildi",
+  "Failed to update role": "Rolni yangilab bo'lmadi",
+  "Failed to remove member": "A'zoni o'chirib bo'lmadi",
+  "Remove member": "A'zoni o'chirish",
+  "Remove {email} from this project?": "{email}ni ushbu loyihadan o'chirilsinmi?",
+  "You cannot change your own membership": "O'z a'zoligingizni o'zgartira olmaysiz",
+  "The project owner cannot be changed here": "Loyiha egasini bu yerda o'zgartirib bo'lmaydi",
+  "This member is managed by your directory": "Bu a'zo sizning katalogingiz tomonidan boshqariladi",
+  "The last admin cannot be removed or demoted": "Oxirgi administratorni o'chirish yoki pasaytirish mumkin emas"
 }

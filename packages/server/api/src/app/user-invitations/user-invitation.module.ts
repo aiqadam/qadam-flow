@@ -49,7 +49,7 @@ const invitationController: FastifyPluginAsyncZod = async (app) => {
             await assertPrincipalIsPlatformAdmin(request, request.principal)
         }
         const platformId = request.principal.platform.id
-        const status = await shouldAutoAcceptInvitation(request.principal, request.body, platformId, request.log) ? InvitationStatus.ACCEPTED : InvitationStatus.PENDING
+        const status = await shouldAutoAcceptInvitation({ principal: request.principal, request: request.body, platformId, log: request.log }) ? InvitationStatus.ACCEPTED : InvitationStatus.PENDING
 
         const projectRoleId = type === InvitationType.PROJECT && request.body.projectRole
             ? (await projectRoleRepo().findOneByOrFail({ name: request.body.projectRole, platformId })).id
@@ -163,20 +163,35 @@ async function assertPrincipalIsPlatformAdmin(request: FastifyRequest, principal
     }
 }
 
-async function shouldAutoAcceptInvitation(principal: Principal, request: SendUserInvitationRequest, platformId: string, log: FastifyBaseLogger): Promise<boolean> {
-    if (principal.type === PrincipalType.SERVICE) {
-        return true
-    }
+async function shouldAutoAcceptInvitation({ principal, request, platformId, log }: ShouldAutoAcceptInvitationParams): Promise<boolean> {
+    const isService = principal.type === PrincipalType.SERVICE
 
-    if (request.type === InvitationType.PLATFORM) {
+    if (!isService && request.type === InvitationType.PLATFORM) {
         return false
     }
 
     const identity = await userIdentityService(log).getIdentityByEmail(request.email)
     if (isNil(identity)) {
+        // No registered identity yet: only a SERVICE caller auto-accepts (the user registers later);
+        // a USER invite to an unregistered email stays PENDING with a link.
+        return isService
+    }
+
+    // An existing identity is not enough: `provisionUserInvitation` refuses a directory-minted
+    // identity with no federated row on this platform, so auto-accepting it would leave an ACCEPTED
+    // invitation with no membership and no link. This holds for SERVICE callers too, or an API key
+    // would re-introduce the same false ACCEPTED through the other door.
+    const isEligible = await userInvitationsService(log).isEligibleForProvisioning({ identity, platformId })
+    if (!isEligible) {
         return false
     }
 
+    if (isService) {
+        return true
+    }
+
+    // A USER invite to a PROJECT for an already-registered user on this platform is added outright;
+    // anyone else gets a PENDING link.
     const user = await userService(log).getOneByIdentityAndPlatform({
         identityId: identity.id,
         platformId,
@@ -295,4 +310,11 @@ const UpsertUserInvitationRequestParams = {
             [StatusCodes.CREATED]: UserInvitationWithLink,
         },
     },
+}
+
+type ShouldAutoAcceptInvitationParams = {
+    principal: Principal
+    request: SendUserInvitationRequest
+    platformId: string
+    log: FastifyBaseLogger
 }

@@ -36,15 +36,43 @@ export const ProjectMemberWithUser = z.object({
     firstName: z.string(),
     lastName: z.string(),
     projectRole: z.string(),
+    managedBy: z.enum(ProjectMemberManagedBy),
 })
 
 export type ProjectMemberWithUser = z.infer<typeof ProjectMemberWithUser>
+
+// A platform user who is not yet in the project and can be added to it directly. Deliberately
+// narrower than `UserWithMetaInformation`: the members tab only needs enough to render a picker,
+// and the platform-scoped user list endpoint is admin-only, so a project ADMIN cannot read it.
+export const ProjectMemberCandidate = z.object({
+    userId: ApId,
+    email: z.string(),
+    firstName: z.string(),
+    lastName: z.string(),
+})
+
+export type ProjectMemberCandidate = z.infer<typeof ProjectMemberCandidate>
+
+export const UpdateProjectMemberRequestBody = z.object({
+    projectRole: z.enum(DefaultProjectRole),
+})
+
+export type UpdateProjectMemberRequestBody = z.infer<typeof UpdateProjectMemberRequestBody>
 
 export const ListProjectMembersParams = z.object({
     projectId: ApId,
 })
 
 export type ListProjectMembersParams = z.infer<typeof ListProjectMembersParams>
+
+export const ListProjectMemberCandidatesParams = z.object({
+    projectId: ApId,
+    // Optional server-side filter over email/first/last name. The picker searches as the user
+    // types so a platform larger than the result cap is still fully reachable.
+    search: z.string().optional(),
+})
+
+export type ListProjectMemberCandidatesParams = z.infer<typeof ListProjectMemberCandidatesParams>
 
 export const GetProjectMemberRoleParams = z.object({
     projectId: ApId,

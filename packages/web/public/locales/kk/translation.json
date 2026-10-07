@@ -2243,5 +2243,19 @@
   "Only the platform owner can change this setting.": "Бұл параметрді тек платформа иесі өзгерте алады.",
   "Enabling this lets the directory administrator take over any local account that matches a directory email address. Only enable this if you trust the directory administrator. The platform owner and platform admins are never linked this way.": "Мұны қосу каталог әкімшісіне каталогтағы email мекенжайына сәйкес келетін кез келген жергілікті есептік жазбаны иеленуге мүмкіндік береді. Мұны тек каталог әкімшісіне сенсеңіз ғана қосыңыз. Платформа иесі мен платформа әкімшілері бұлай ешқашан байланыстырылмайды.",
   "Link existing accounts by email is on, so only the platform owner can change this configuration. Ask the owner to make changes, or to turn linking off first.": "Есептік жазбаларды email арқылы байланыстыру қосулы, сондықтан бұл конфигурацияны тек платформа иесі өзгерте алады. Өзгерту үшін иесіне хабарласыңыз немесе алдымен байланыстыруды өшіріңіз.",
-  "Must not be writable by directory users themselves (e.g. a self-writable mail in OpenLDAP) — otherwise a user could take over another account by changing their own email to match it.": "Каталог пайдаланушыларының өздері жаза алмауы керек (мысалы, OpenLDAP-тағы өзін-өзі жазатын mail) — әйтпесе пайдаланушы өз email-ін сәйкес келетіндей етіп өзгертіп, басқа есептік жазбаны иеленіп алуы мүмкін."
+  "Must not be writable by directory users themselves (e.g. a self-writable mail in OpenLDAP) — otherwise a user could take over another account by changing their own email to match it.": "Каталог пайдаланушыларының өздері жаза алмауы керек (мысалы, OpenLDAP-тағы өзін-өзі жазатын mail) — әйтпесе пайдаланушы өз email-ін сәйкес келетіндей етіп өзгертіп, басқа есептік жазбаны иеленіп алуы мүмкін.",
+  "Added to the project": "Жобаға қосылды",
+  "Invitation sent": "Шақыру жіберілді",
+  "Select member": "Мүшені таңдау",
+  "Search by email": "Email бойынша іздеу",
+  "Role updated": "Рөл жаңартылды",
+  "Member removed": "Мүше жойылды",
+  "Failed to update role": "Рөлді жаңарту мүмкін болмады",
+  "Failed to remove member": "Мүшені жою мүмкін болмады",
+  "Remove member": "Мүшені жою",
+  "Remove {email} from this project?": "{email} осы жобадан жойылсын ба?",
+  "You cannot change your own membership": "Өз мүшелігіңізді өзгерте алмайсыз",
+  "The project owner cannot be changed here": "Жоба иесін мұнда өзгерту мүмкін емес",
+  "This member is managed by your directory": "Бұл мүше каталогыңызбен басқарылады",
+  "The last admin cannot be removed or demoted": "Соңғы әкімшіні жою немесе төмендету мүмкін емес"
 }

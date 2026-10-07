@@ -91,7 +91,9 @@ export async function inviteMemberViaTeamTab(
   email: string,
 ): Promise<string> {
   await dialog.locator('#invite-email').fill(email);
-  await dialog.getByRole('combobox').click();
+  // Target the invite form's own role select by test id: member rows now also render a
+  // `role="combobox"` each, so a bare `getByRole('combobox')` is a strict-mode violation.
+  await dialog.getByTestId('invite-role-select').click();
   await page.getByRole('option', { name: 'Editor' }).click();
   const invitePromise = page.waitForResponse(
     (r) => r.url().includes('/api/v1/user-invitations') && r.request().method() === 'POST',
