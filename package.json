@@ -125,7 +125,7 @@
     "packages/qadams/custom/*"
   ],
   "resolutions": {
-    "basic-ftp": "6.2.1",
+    "basic-ftp": "6.2.2",
     "rollup": "npm:@rollup/wasm-node",
     "@xmldom/xmldom": "0.8.15",
     "vite": "8.3.2"
