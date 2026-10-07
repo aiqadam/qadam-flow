@@ -13,7 +13,7 @@
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
   "dependencies": {
-    "dayjs": "1.11.9",
+    "dayjs": "1.11.23",
     "deepmerge-ts": "8.0.2",
     "expr-eval-fork": "3.0.3",
     "ipaddr.js": "2.3.0",
