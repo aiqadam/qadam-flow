@@ -14,7 +14,6 @@ import { websocketService } from './core/websockets.service'
 import { healthModule } from './health/health.module'
 import { embedSecurity } from './helper/embed-security'
 import { errorHandler } from './helper/error-handler'
-import { exceptionHandler } from './helper/exception-handler'
 import { networkUtils } from './helper/network-utils'
 import { rejectedPromiseHandler } from './helper/promise-handler'
 import { requestValidator } from './helper/request-validator'
@@ -143,9 +142,6 @@ async function setupBaseApp(): Promise<FastifyInstance> {
             (part as any).value = apFile
         },
     })
-    exceptionHandler.initializeSentry(system.get(AppSystemProp.SENTRY_DSN))
-
-
     await app.register(fastifyRawBody, {
         field: 'rawBody',
         global: false,

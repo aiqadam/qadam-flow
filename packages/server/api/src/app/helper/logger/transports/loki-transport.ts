@@ -23,8 +23,7 @@ export const lokiTransport: TransportProvider = {
                         target: 'pino-loki',
                         level,
                         options: {
-                            batching: true,
-                            interval: 5,
+                            batching: { interval: 5 },
                             host: lokiUrl,
                             basicAuth:
                                 lokiUsername && lokiPassword
