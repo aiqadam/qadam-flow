@@ -48,11 +48,16 @@ Exposes a Qadam Flow project as a Model Context Protocol (MCP) server so that AI
   shared `qadamPinUtil` (`packages/server/api/src/app/qadams/metadata/qadam-pin-util.ts`). Since
   #505 a step that opts out of the run log carries `logInput: false` / `logOutput: false` in
   `structuredContent.steps[]` and a `[LOG OFF: input, output]` label in the text; the default
-  (logged) case adds nothing, so a reviewer can audit redaction without running the flow.
+  (logged) case adds nothing, so a reviewer can audit redaction without running the flow. Since
+  #803, a step whose pinned qadam needs a framework context version this release has retired is
+  labelled `⚠️ FRAMEWORK VERSION NO LONGER SUPPORTED: update this step` and carries
+  `frameworkVersionSupported: false` (ADR-0002; see [framework-census.md](./framework-census.md)).
 - `ap_read_step_code` — read full source code of a CODE step, plus its `logInput`/`logOutput`
-- `ap_validate_flow`, `ap_validate_step_config` — validation helpers. `ap_validate_flow` reports six
+- `ap_validate_flow`, `ap_validate_step_config` — validation helpers. `ap_validate_flow` reports
   issue categories: `step_validity`, `qadam_version` (a pinned qadam version this installation
-  cannot resolve, #432), `template_reference`, `empty_branch`, and — since #391 — `subflow_payload`
+  cannot resolve, #432), `framework_version` (a pinned qadam built against a framework context
+  version this release no longer runs, #803), `template_reference`, `empty_branch`, and — since
+  #391 — `subflow_payload`
   (a `callFlow` step calling a child with no arguments) and `inline_pause` (an
   `executionMode: "inline"` step whose callee can pause, found by walking the call graph and
   reading each action's `pauses` marker off its pinned metadata — #426; see

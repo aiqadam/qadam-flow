@@ -1,6 +1,6 @@
 # Domain Glossary — Qadam Flow
 
-> Last updated: 2026-09-29
+> Last updated: 2026-10-09
 
 ## Automation Core
 
@@ -122,3 +122,14 @@
 | MCP Server | A per-project Model Context Protocol endpoint that exposes Qadam Flow tools to AI clients (Claude Desktop, Cursor, etc.). | — | MCP, Agent |
 | Template | A reusable flow blueprint (official, custom, or shared) that can be imported to create new flows with pre-configured steps. | recipe, preset, starter | Flow |
 | User Invitation | A JWT-linked invitation to join a platform or project, auto-accepted for existing users on project invites. | invite | User, ProjectMember |
+
+## Versioning & Framework Support
+
+| Term | Definition (one sentence) | Aliases to avoid | Related terms |
+|---|---|---|---|
+| Context version | What a qadam reports through `getContextInfo()`: `'1'` or `'2'` (a `ContextVersion`), `'none'` (predates `getContextInfo`), or unknown. | context info, contract version | Framework major, Framework census |
+| Framework census | The instance-local, offline list of steps whose pinned qadam needs a framework context version this release no longer runs (ADR-0002, #803). | doctor report, retirement scan | Context version, Retired context version, Framework support table |
+| Framework major | A major version of `@aiqadam/qadams-framework`; since 1.0.0 a new engine ↔ qadam context version is one (ADR-0002). | SDK major | Context version, Framework support table |
+| Framework support table | The repository file (`packages/qadams/framework/src/lib/context/framework-support-table.json`) recording, per framework major, its context versions and release dates; gate 8 enforces it. | support matrix | Framework major, Retired context version |
+| Retired context version | A context version the support table lists that this release's engine no longer runs, so its shims are gone. | dropped version, removed shim | Context version, Framework census |
+| Support window | The promise that a framework major stays supported while it is the current or previous one and for at least 12 months after its successor was released. | deprecation window | Framework support table |
