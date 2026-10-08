@@ -12,7 +12,8 @@ immutability of accepted ADRs is checked only in review (ocr does not apply rule
   reason it lost, is a finding — that section is what stops the debate from restarting.
 - Editing the body of an `accepted` ADR is a finding. Only `status`, `superseded-by` and broken
   links may change; a changed decision is a new ADR with `supersedes`, and the old one flips to
-  `superseded` in the PR that accepts the new one.
+  `superseded` in the PR that accepts the new one. Reopening a `rejected` or `deprecated` ADR names
+  it in `supersedes` but leaves its status as it was.
 - Setting `accepted` or `rejected` without a maintainer decision recorded in `deciders` (and in
   the PR or issue thread) is a finding, whoever authored the diff.
 - The index table in `adr/README.md` must list every ADR file with its current status.

@@ -419,6 +419,9 @@ const checkAdrs = ({ root }) => {
     if (status === 'superseded' && supersededBy.get(number).length === 0) {
       problems.push(`${relative}: status is "superseded" but "superseded-by" names no ADR.`)
     }
+    if (supersededBy.get(number).length > 1) {
+      problems.push(`${relative}: "superseded-by" names ${supersededBy.get(number).length} ADRs — one decision replaces it; that one may replace several.`)
+    }
     if (status !== 'superseded' && supersededBy.get(number).length > 0) {
       problems.push(`${relative}: "superseded-by" is set but the status is "${status}".`)
     }
@@ -502,10 +505,14 @@ const checkSupersession = ({ files, statuses, supersedes, supersededBy }) => {
       else if (!statuses.has(predecessor) || ADR_UNDECIDED_STATUSES.has(status) || ADR_REOPENABLE_STATUSES.has(statuses.get(predecessor))) {
         continue
       }
+      else if (statuses.get(predecessor) === 'proposed') {
+        problems.push(`${relative}: supersedes ADR ${predecessor}, which is still proposed — reject it, or drop it from "supersedes".`)
+      }
       else if (statuses.get(predecessor) !== 'superseded') {
         problems.push(`${relative}: supersedes ADR ${predecessor}, which is still ${statuses.get(predecessor)} — flip it to superseded in the PR that accepts this one.`)
       }
-      else if (!supersededBy.get(predecessor).includes(number)) {
+      // An empty `superseded-by` already carries its own finding on the predecessor.
+      else if (supersededBy.get(predecessor).length > 0 && !supersededBy.get(predecessor).includes(number)) {
         problems.push(`${relative}: supersedes ADR ${predecessor}, whose "superseded-by" names ${supersededBy.get(predecessor).join(', ')} instead.`)
       }
     }
@@ -518,9 +525,14 @@ const checkSupersession = ({ files, statuses, supersedes, supersededBy }) => {
   return problems
 }
 
+// `superseded-by` holds at most one ADR (a longer list is its own finding), so following the first
+// entry is following the chain. A self-reference is reported on its own, not as a cycle.
 const isInSupersessionCycle = ({ start, supersededBy }) => {
   const seen = new Set()
   let current = supersededBy.get(start)?.[0]
+  if (current === start) {
+    return false
+  }
   while (current !== undefined && !seen.has(current)) {
     if (current === start) {
       return true

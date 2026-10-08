@@ -713,6 +713,56 @@ expect_status 1 "an index with no table is a finding"
 expect_contains 'no table found under a heading containing "Index"' "says the index is missing"
 expect_not_contains 'shows status' "a table under another heading is not read as the index"
 
+echo "== reopening a deprecated ADR passes without flipping it =="
+new_root
+write_adr 0001-demo.md deprecated '[binalirustamov]'
+write_adr 0002-demo.md accepted '[binalirustamov]' null '"0001"'
+list_adr 0001 deprecated
+list_adr 0002 accepted
+run_check
+expect_status 0 "the deprecated record stays as it was"
+
+echo "== a predecessor with an invalid status gets only its own finding =="
+new_root
+write_adr 0001-demo.md acepted '[binalirustamov]'
+write_adr 0002-demo.md accepted '[binalirustamov]' null '"0001"'
+list_adr 0001 acepted
+list_adr 0002 accepted
+run_check
+expect_status 1 "the typo is the finding"
+expect_contains 'status "acepted" is not one of' "names the typo"
+expect_not_contains 'which is still' "no second, garbled finding about the same ADR"
+
+echo "== an accepted ADR superseding a proposed one fails =="
+new_root
+write_adr 0001-demo.md proposed
+write_adr 0002-demo.md accepted '[binalirustamov]' null '"0001"'
+list_adr 0001 proposed
+list_adr 0002 accepted
+run_check
+expect_status 1 "a proposal never in force is rejected, not superseded"
+expect_contains 'which is still proposed — reject it' "says what to do instead"
+
+echo "== superseded-by naming two ADRs fails =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '["0002", "0003"]'
+write_adr 0002-demo.md accepted '[binalirustamov]' null '"0001"'
+write_adr 0003-demo.md accepted '[binalirustamov]' null '"0001"'
+list_adr 0001 superseded
+list_adr 0002 accepted
+list_adr 0003 accepted
+run_check
+expect_status 1 "one decision replaces another"
+expect_contains '"superseded-by" names 2 ADRs' "says how many"
+
+echo "== a self superseded-by is reported once =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0001"'
+list_adr 0001 superseded
+run_check
+expect_status 1 "a decision cannot replace itself"
+expect_not_contains 'leads back to this ADR' "the self-reference finding is enough"
+
 echo "== a misnamed file under adr/ fails =="
 new_root
 echo 'notes' > "$root/adr/notes.md"
