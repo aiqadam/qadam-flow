@@ -40,9 +40,12 @@ jobs:
       # fetch-depth: 0 is load-bearing for the "Check new migration metadata"
       # step below (#445): it diffs PR_BASE_SHA...PR_HEAD_SHA, both of which
       # must be reachable locally, and a depth-1 checkout would only have HEAD.
+      # Tags, spelled out like release.yml's breaking-change-gate does: check-changesets' platform
+      # realignment rule (#798) reads the newest vX.Y.Z tag, and without tags it fails closed.
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          fetch-tags: true
 
       # These run before any install, deliberately: they are pure shell, so they
       # still report if the install step later flakes. This workflow is only ever

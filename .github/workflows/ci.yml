@@ -886,8 +886,9 @@ jobs:
   # `<next>-main.<n>`, where <next> is what the release PR would make of the root package.json given
   # the pending `@aiqadam/platform` changesets, and <n> is `github.run_number` — monotonic across
   # runs of this workflow, stable across re-runs of one, and the counter ADR-0004 reuses for package
-  # snapshots. The rules, and why there is no pending-platform case that reports the root itself,
-  # are in tools/ci/compute-main-version.mjs; tools/ci/test-main-version.sh pins them in `verify`.
+  # snapshots. The rules — including why a build with no pending platform changeset reports the
+  # next patch rather than the root itself — are in tools/ci/compute-main-version.mjs;
+  # tools/ci/test-main-version.sh pins them in `verify`.
   #
   # One job rather than a step in `image`, so both matrix legs and `image_publish` read the same
   # string instead of computing it three times. Computed on every event, including PRs: a PR's
