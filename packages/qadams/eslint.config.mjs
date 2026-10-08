@@ -160,13 +160,16 @@ export default defineConfig(
     },
     {
         // What no import rule sees: require() and other calls taking the specifier (vi.mock,
-        // require.resolve), dynamic import(), and `typeof import(...)` types.
+        // require.resolve), dynamic import(), and `typeof import(...)` types. The calls and import()
+        // also accept a template literal with no substitutions, which carries no `value`.
         files: baseConfigs.scriptFiles,
         ignores: SHARED_BAN_IGNORES,
         rules: {
             'no-restricted-syntax': ['error',
                 { selector: `CallExpression[arguments.0.value=${SHARED_SPECIFIER}]`, message: SHARED_IMPORT_MESSAGE },
+                { selector: `CallExpression[arguments.0.type='TemplateLiteral'][arguments.0.expressions.length=0][arguments.0.quasis.0.value.cooked=${SHARED_SPECIFIER}]`, message: SHARED_IMPORT_MESSAGE },
                 { selector: `ImportExpression[source.value=${SHARED_SPECIFIER}]`, message: SHARED_IMPORT_MESSAGE },
+                { selector: `ImportExpression[source.type='TemplateLiteral'][source.expressions.length=0][source.quasis.0.value.cooked=${SHARED_SPECIFIER}]`, message: SHARED_IMPORT_MESSAGE },
                 { selector: `TSImportType[argument.literal.value=${SHARED_SPECIFIER}]`, message: SHARED_IMPORT_MESSAGE },
             ],
         },

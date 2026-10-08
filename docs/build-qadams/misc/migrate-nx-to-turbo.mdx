@@ -49,12 +49,14 @@ npx ts-node tools/scripts/migrate-custom-qadam-to-turbo.ts packages/qadams/custo
 
 For each qadam, the script:
 
-1. **Updates `package.json`** — adds `build` and `lint` scripts, sets `main` and `types` entry points, ensures `@aiqadam/qadams-framework`, `@aiqadam/shared`, and `tslib` are listed as dependencies
+1. **Updates `package.json`** — adds `build` and `lint` scripts, sets `main` and `types` entry points, ensures `@aiqadam/qadams-framework` and `tslib` are listed as dependencies
 2. **Updates `tsconfig.lib.json`** — sets `outDir` to `./dist`, adds `rootDir`, `baseUrl`, `paths`, and `declaration` settings
 3. **Creates `tsconfig.json`** if missing — extends the root `tsconfig.base.json`
 4. **Deletes `project.json`** — removes Nx configuration
 
 ## Verify the Migration
+
+Qadams may no longer import `@aiqadam/shared`, and lint fails if one does. Before building, change every `from '@aiqadam/shared'` import to `from '@aiqadam/qadams-framework'`, which re-exports the symbols qadams use, and remove `@aiqadam/shared` from the qadam's `package.json` if it is still listed.
 
 After migrating, build your qadam to verify everything works:
 

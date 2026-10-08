@@ -10,7 +10,8 @@ the language rules OCR already merges from its system layer.
 - **No deprecated APIs.** If a used method or export carries a `@deprecated`
   JSDoc tag, it must be replaced with the recommended one.
 - **Error handling.** Prefer `tryCatch` / `tryCatchSync` from `@aiqadam/shared`
-  (Go-style `{ data, error }`) over `try`/`catch` in server code.
+  (in qadams: from `@aiqadam/qadams-framework`) (Go-style `{ data, error }`)
+  over `try`/`catch` in server code.
 - **Named parameters.** Every function with more than one parameter takes a
   single destructured object. Positional arguments are a finding.
 - **Immutable data flow.** A function must return new collections instead of
