@@ -17,6 +17,7 @@ The qadams feature manages the metadata catalog of automation integrations (call
 - `packages/web/src/features/qadams/hooks/pieces-hooks.ts` — React Query hooks for piece listing, piece model, piece options
 - `packages/web/src/features/qadams/hooks/use-piece-output-schema.ts` — reads `outputSchema` for a given step (PIECE action or trigger) off the cached piece model; shares the existing `['piece', name, version]` React Query cache so no extra network call is made
 - `packages/web/src/features/qadams/components/` — `PieceIcon`, `PieceIconList`, `PieceSelectorSearch`, `InstallPieceDialog`
+- `tools/scripts/qadams/bundle/` — builds a qadam version as the ADR-0003 artifact (#804): one esbuild bundle with `@aiqadam/*` and `zod` external and declared as `peerDependencies`, `src/i18n`, and a `metadata.json` written from loading the artifact; `qadam-artifact-config.json` holds the reviewed per-qadam exceptions (node_modules for native addons and packages that read their own files, `__dirname`-started entry points). Build-only today: nothing publishes or loads this format yet (#805 store, #779 resolution). Header of `qadam-artifact.mjs` documents the layout; `tools/ci/test-qadam-artifacts.sh` pins it
 - `packages/qadams/framework/src/lib/output-schema.ts` — `OutputSchema` / `OutputSchemaField` / `FieldFormat` plain TypeScript types (embedded into the piece metadata via `z.custom`)
 
 ## Domain Terms

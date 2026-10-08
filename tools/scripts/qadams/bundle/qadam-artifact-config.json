@@ -1,0 +1,68 @@
+{
+  "$comment": "Per-qadam exceptions to the ADR-0003 bundle (#804). Every entry carries its reason. `nodeModules`: packages left out of the bundle and shipped, with their dependency closure, in the artifact's node_modules (kind `bundle-with-node-modules`, ADR-0003's native-module exception). `optionalNative`: a detected native addon the package loads inside try/catch and works without, so the qadam stays a plain bundle. `extraEntryPoints`: source files the qadam starts by path from `__dirname` (a worker thread or forked child); each is bundled to `src/<basename>.js`, next to the bundle, where `__dirname` points.",
+  "qadams": {
+    "@aiqadam/qadam-azure-openai": {
+      "nodeModules": {
+        "tiktoken": "reads tiktoken_bg.wasm from its own directory when the module loads"
+      }
+    },
+    "@aiqadam/qadam-clarifai": {
+      "nodeModules": {
+        "clarifai-nodejs-grpc": "loads its .proto files from its own directory when the module loads"
+      }
+    },
+    "@aiqadam/qadam-couchbase": {
+      "nodeModules": {
+        "couchbase": "native addon (couchbase-<platform> prebuilt binding)"
+      }
+    },
+    "@aiqadam/qadam-csv": {
+      "extraEntryPoints": {
+        "src/lib/common/excel-to-csv-worker.ts": "conversion-worker.ts starts it with `new Worker(path.join(__dirname, 'excel-to-csv-worker.js'))`"
+      }
+    },
+    "@aiqadam/qadam-duckdb": {
+      "nodeModules": {
+        "@duckdb/node-api": "@duckdb/node-bindings requires a per-platform package's duckdb.node addon (@duckdb/node-bindings-<os>-<cpu>)"
+      }
+    },
+    "@aiqadam/qadam-metabase": {
+      "nodeModules": {
+        "playwright": "playwright-core reads its injected scripts and browser registry from its own directory at run time and requires chromium-bidi, which it does not declare"
+      }
+    },
+    "@aiqadam/qadam-openai": {
+      "nodeModules": {
+        "tiktoken": "reads tiktoken_bg.wasm from its own directory when the module loads"
+      }
+    },
+    "@aiqadam/qadam-oracle-database": {
+      "nodeModules": {
+        "oracledb": "thick mode loads oracledb's compiled addon from its own build/Release directory"
+      },
+      "extraEntryPoints": {
+        "src/lib/common/oracle-runner.ts": "runner-pool.ts forks `path.join(__dirname, 'oracle-runner.js')` (upstream lost this file in its bundle: activepieces#14967 / #15957)"
+      }
+    },
+    "@aiqadam/qadam-postgres": {
+      "nodeModules": {
+        "pg-format": "requires `__dirname + '/reserved.js'` when the module loads"
+      }
+    },
+    "@aiqadam/qadam-sftp": {
+      "optionalNative": {
+        "ssh2": "ssh2 requires its sshcrypto addon inside try/catch and falls back to Node's crypto; cpu-features likewise"
+      }
+    },
+    "@aiqadam/qadam-snowflake": {
+      "optionalNative": {
+        "snowflake-sdk": "its minicore addon is loaded through eval('require') inside try/catch, written for bundlers; without it the driver reports 'Binary is missing from the bundle' in telemetry and works"
+      }
+    },
+    "@aiqadam/qadam-text-helper": {
+      "nodeModules": {
+        "jsdom": "resolves its xhr-sync-worker.js by path (require.resolve) when the module loads"
+      }
+    }
+  }
+}
