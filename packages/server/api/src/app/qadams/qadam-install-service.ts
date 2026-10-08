@@ -81,6 +81,12 @@ export const qadamInstallService = (log: FastifyBaseLogger) => ({
             })
         }
     },
+    // Has the worker install the package and load it, exactly as an install does, and returns the
+    // engine's answer as is. The context version backfill (#802) needs to tell a qadam that failed
+    // to load (a response) from a worker that never answered (a throw).
+    async submitExtractQadamMetadata(request: ExecuteExtractQadamMetadata): Promise<EngineResponse<QadamMetadata>> {
+        return submitExtractJob({ request, log })
+    },
 })
 
 
@@ -113,17 +119,20 @@ async function saveQadamPackage(platformId: string | undefined, params: AddQadam
 }
 
 const extractQadamInformation = async (request: ExecuteExtractQadamMetadata, log: FastifyBaseLogger): Promise<QadamMetadata> => {
-    const engineResponse = await userInteractionWatcher.submitAndWaitForResponse<EngineResponse<QadamMetadata>>({
+    const engineResponse = await submitExtractJob({ request, log })
+    if (engineResponse.status !== EngineResponseStatus.OK) {
+        throw new Error(engineResponse.error)
+    }
+    return engineResponse.response
+}
+
+const submitExtractJob = async ({ request, log }: { request: ExecuteExtractQadamMetadata, log: FastifyBaseLogger }): Promise<EngineResponse<QadamMetadata>> => {
+    return userInteractionWatcher.submitAndWaitForResponse<EngineResponse<QadamMetadata>>({
         jobType: WorkerJobType.EXECUTE_EXTRACT_PIECE_INFORMATION,
         platformId: request.platformId,
         qadam: request,
         projectId: undefined,
     }, log)
-
-    if (engineResponse.status !== EngineResponseStatus.OK) {
-        throw new Error(engineResponse.error)
-    }
-    return engineResponse.response
 }
 
 const saveArchive = async (

@@ -53,6 +53,9 @@ The qadams feature manages the metadata catalog of automation integrations (call
 | maximumSupportedRelease | string | semver |
 | projectUsage | number | usage counter |
 | i18n | json (nullable) | translation map |
+| contextVersion | string (nullable) | context version the qadam reports through `getContextInfo()` (ADR-0002, #802), for the census (#803). `1` / `2` = that `ContextVersion`; `NONE` = loaded, reports no version (predates `getContextInfo`, oldest shim); `UNRECOGNISED` = loaded, reported something no shim here matches; NULL = not measured yet, or the qadam could not be loaded. The census counts **every value except `2`** as still needing the old contract. Mapping: `qadams/metadata/qadam-context-version.ts`. Written by `create` from the extracted metadata (install never writes NULL) |
+| contextVersionAttempts | number (default 0) | failed backfill loads of this row |
+| contextVersionLastAttemptAt | timestamptz (nullable) | when the backfill last failed to load this row |
 
 Unique index on `(name, version, platformId)`.
 
@@ -82,6 +85,20 @@ Unique index on `(name, version, platformId)`.
 
 ### `pieceInstallService`
 - `installPiece(platformId, params)` — saves archive file if needed, dispatches `EXECUTE_METADATA` engine job to extract piece metadata from the package, then stores via `pieceMetadataService.create` (always as `CUSTOM` — there is no service that persists an `OFFICIAL` row; see `qadamCache`/`loadBundledQadams` below)
+
+### `qadamContextVersionBackfill` (`qadams/qadam-context-version-backfill.ts`)
+Fills `contextVersion` for CUSTOM rows that predate the column (#802). It is a system job
+(`qadam-context-version-backfill`, hourly at :17) and not part of the migration, because a version is
+only known by loading the qadam on a worker. It reads every platform's rows, as a system job may (the
+precedent is `ldapReconcileService.reconcileAllPlatforms`), and loads and writes each row under its
+own `platformId`. It is bounded:
+- **Workers.** With no worker online it dispatches nothing. When a worker does not answer (the
+  watcher's safety timeout), the run stops at that row.
+- **Rows per run.** At most `MAX_ROWS_PER_RUN` (10) rows per run; the next run continues.
+- **No re-measuring.** A row that loaded (`1` / `2` / `NONE` / `UNRECOGNISED`) is never loaded again.
+- **Failed loads.** A failed load (including a missing archive, an official-scope name that is never
+  handed to a worker, and a worker that did not answer) counts an attempt. It is retried 6 h and then
+  12 h later, and after `MAX_ATTEMPTS` (3) the row stays NULL for good.
 
 ## Bundled Qadam Metadata Manifest (#598)
 `loadBundledQadams()` used to `require()` every bundled qadam's `dist` on the first call

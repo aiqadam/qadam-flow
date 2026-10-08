@@ -54,6 +54,7 @@ import { communityQadamsModule } from './qadams/community-qadam-module'
 import { startDevQadamWatcher } from './qadams/dev-qadam-watcher'
 import { qadamModule } from './qadams/metadata/qadam-metadata-controller'
 import { qadamMetadataService } from './qadams/metadata/qadam-metadata-service'
+import { qadamContextVersionBackfill } from './qadams/qadam-context-version-backfill'
 import { tagsModule } from './qadams/tags/tags-module'
 import { storeEntryModule } from './store-entry/store-entry.module'
 import { tablesModule } from './tables/tables.module'
@@ -223,6 +224,7 @@ export const setupApp = async (app: FastifyInstance): Promise<FastifyInstance> =
     await validateEnvPropsOnStartup(app.log)
 
     await app.register(communityQadamsModule)
+    await qadamContextVersionBackfill(app.log).schedule()
 
     const isCanaryApp = system.getBoolean(AppSystemProp.IS_CANARY_APP) ?? false
     if (isCanaryApp) {
