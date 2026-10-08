@@ -2,7 +2,7 @@
 //
 // ADR-0001 gate 6: qadams do not import `@aiqadam/shared`. Qadams build against the SDK only
 // (`@aiqadam/qadams-framework`, `@aiqadam/qadams-common`); `shared` is the server/web DTO library,
-// becomes private (#799), and its qadam-facing symbols are re-exported by the framework (#786).
+// private since #799, and its qadam-facing symbols are re-exported by the framework (#786).
 //
 // #786 also adds an ESLint ban for the same thing, which `npm run lint-all` enforces. This scan
 // is the backstop the lint rule cannot be: an `// eslint-disable-next-line` (or a file-level
@@ -21,7 +21,8 @@
 // purpose: 15 core qadams lint only `src/**/*.ts`, so the ESLint ban never reaches their `test/`,
 // and a test importing `shared` keeps `shared` in the qadam's devDependency graph. A string that
 // merely names the package (a vitest `alias` key, a comment) is not an import and is not flagged.
-// `packages/qadams/{framework,common}` ARE the SDK and may use `shared` until #799 bundles it.
+// `packages/qadams/{framework,common}` ARE the SDK and may use `shared` (the framework bundles it
+// into its published tarball).
 //
 // A full-tree scan, not a diff: once #786 has moved the imports, the tree is clean and must stay
 // clean. Zero qadam files scanned is UNKNOWN (exit 2), never a pass — the scan target moved.

@@ -18,7 +18,10 @@
 #   - a caret/tilde range on a REAL (non-workspace:) dependency is refused even when workspace:*
 #     entries are present beside it — assertNoSemverRanges has to tolerate workspace:* to be
 #     usable on a SOURCE manifest at all (every one of these three always has some), but must
-#     not let that tolerance swallow an actual range.
+#     not let that tolerance swallow an actual range;
+#   - a private workspace package (`@aiqadam/shared`, #799) is published only inside the package
+#     configured to bundle it, with its imports rewritten and its used dependencies carried over —
+#     and any other manifest or emitted file that still reaches one is refused.
 #
 # Needs the repo's own pinned ts-node (10.9.1) present in node_modules/.bin, so — like the
 # migration-metadata and required-prop-defaults suites next to it — this sits after install in
@@ -83,8 +86,8 @@ new_workspace_fixture() {
 }
 
 run_harness() {
-  # $1 = mode, $2 = arg
-  out="$(cd "$root" && "$ts_node_bin" --project "$ts_project" "$harness" "$1" "$2" 2>&1)"
+  # $1 = mode, $2 = arg, $3 = optional extra arg (stage: the bundled-private-dependencies map as JSON)
+  out="$(cd "$root" && "$ts_node_bin" --project "$ts_project" "$harness" "$@" 2>&1)"
   status=$?
 }
 
@@ -100,6 +103,13 @@ expect_contains() {
   case "$out" in
     *"$1"*) ok ;;
     *) bad "expected output to contain '$1' — $2\n$out" ;;
+  esac
+}
+
+expect_not_contains() {
+  case "$out" in
+    *"$1"*) bad "expected output NOT to contain '$1' — $2\n$out" ;;
+    *) ok ;;
   esac
 }
 
@@ -207,6 +217,99 @@ write_json "$root/source-package.json" '{
 run_harness assert-no-semver-ranges "$root/source-package.json"
 expect_status 1 "a caret range on a real dependency is still refused even with workspace:* present"
 expect_contains "some-lib" "the error names the offending dependency, not the tolerated workspace:* one"
+
+echo "== a private workspace package is bundled into the package configured to carry it, and nothing else may reach one (#799) =="
+
+# pkg-a plays @aiqadam/shared (private, built), pkg-b plays qadams-framework (its dist already
+# through prepareQadamDistForPublish, so pkg-a is an exact version). The comment line in pkg-a's
+# build is the shape of records.dto.js that once read as a dependency named "it was already there".
+new_bundling_fixture() {
+  new_workspace_fixture
+  write_json "$root/pkg-a/package.json" '{
+  "name": "pkg-a", "version": "9.9.9", "private": true,
+  "main": "./dist/src/index.js", "types": "./dist/src/index.d.ts",
+  "dependencies": { "some-lib": "1.0.0", "tslib": "2.6.2", "unused-lib": "3.0.0" }
+}'
+  mkdir -p "$root/pkg-a/dist/src/lib"
+  printf '%s\n' '"use strict";' 'const some = require("some-lib");' 'const tslib = require("tslib");' '// tells "I created it" from "it was already there"' 'exports.A = require("./lib/a").A;' > "$root/pkg-a/dist/src/index.js"
+  printf '%s\n' "import { z } from 'some-lib';" "export { A } from './lib/a';" 'export type B = z.Thing;' > "$root/pkg-a/dist/src/index.d.ts"
+  printf '%s\n' '"use strict";' 'exports.A = "a";' > "$root/pkg-a/dist/src/lib/a.js"
+  printf '%s\n' 'export declare const A = "a";' > "$root/pkg-a/dist/src/lib/a.d.ts"
+  write_json "$root/pkg-b/package.json" '{ "name": "pkg-b", "version": "1.0.0", "dependencies": { "pkg-a": "workspace:*" } }'
+  write_json "$root/pkg-b/dist/package.json" '{ "name": "pkg-b", "version": "1.0.0", "dependencies": { "pkg-a": "9.9.9", "other-lib": "1.2.3" } }'
+  mkdir -p "$root/pkg-b/dist/src/lib"
+  printf '%s\n' '"use strict";' 'const pkg_a_1 = require("pkg-a");' 'exports.A = pkg_a_1.A;' > "$root/pkg-b/dist/src/index.js"
+  printf '%s\n' "export { A } from 'pkg-a';" 'export type B = import("pkg-a").B;' > "$root/pkg-b/dist/src/lib/types.d.ts"
+}
+
+staged_dir() { printf '%s\n' "$out" | sed -n 's/^STAGED //p'; }
+
+expect_file_contains() {
+  # $1 = file, $2 = needle, $3 = description
+  if grep -qF -- "$2" "$1" 2>/dev/null; then ok; else bad "$3 — '$2' not in $1"; fi
+}
+
+new_bundling_fixture
+run_harness stage "$root/pkg-b/dist" '{"pkg-b":["pkg-a"]}'
+expect_status 0 "a configured private dependency is bundled"
+staged="$(staged_dir)"
+if [ -n "$staged" ] && [ "$staged" != "$root/pkg-b/dist" ]; then ok; else bad "expected a staging directory distinct from dist, got '$staged'"; fi
+if [ -z "$(json_field "$staged/package.json" "dependencies.pkg-a")" ]; then ok; else bad "the staged manifest still depends on the private pkg-a"; fi
+if [ "$(json_field "$staged/package.json" "dependencies.some-lib")" = "1.0.0" ]; then ok; else bad "the bundled code's own dependency some-lib@1.0.0 was not carried over"; fi
+if [ "$(json_field "$staged/package.json" "dependencies.other-lib")" = "1.2.3" ]; then ok; else bad "pkg-b's own dependency was lost"; fi
+if [ -z "$(json_field "$staged/package.json" "dependencies.unused-lib")" ]; then ok; else bad "a dependency the bundled code never imports was carried over"; fi
+expect_file_contains "$staged/vendor/pkg-a/index.js" 'require("some-lib")' "the vendored build is the private package's own build output"
+expect_file_contains "$staged/src/index.js" 'require("../vendor/pkg-a/index.js")' "a require of the private package points at the vendored copy"
+expect_file_contains "$staged/src/lib/types.d.ts" "from '../../vendor/pkg-a/index.js'" "a declaration import of the private package points at the vendored copy"
+expect_file_contains "$staged/src/lib/types.d.ts" 'import("../../vendor/pkg-a/index.js")' "an import() type of the private package points at the vendored copy"
+expect_file_contains "$root/pkg-b/dist/src/index.js" 'require("pkg-a")' "the workspace dist is never rewritten — the API and engine keep loading the workspace copy"
+
+new_bundling_fixture
+run_harness stage "$root/pkg-b/dist"
+expect_status 1 "a package not configured to bundle a private dependency is refused"
+expect_contains "dependencies.pkg-a" "the error names the private dependency"
+expect_contains "src/index.js imports pkg-a" "the error names the file that imports it"
+
+new_bundling_fixture
+write_json "$root/pkg-b/dist/package.json" '{ "name": "pkg-b", "version": "1.0.0", "dependencies": { "other-lib": "1.2.3" } }'
+rm "$root/pkg-b/dist/src/index.js"
+run_harness stage "$root/pkg-b/dist"
+expect_status 1 "a private package reached only through declaration emit is refused"
+expect_contains "src/lib/types.d.ts imports pkg-a" "the error names the declaration file"
+
+new_bundling_fixture
+write_json "$root/pkg-b/dist/package.json" '{ "name": "pkg-b", "version": "1.0.0", "dependencies": { "other-lib": "1.2.3" } }'
+rm "$root/pkg-b/dist/src/lib/types.d.ts"
+printf '%s\n' '"use strict";' 'const channel = "pkg-a";' 'const apiPath = "pkg-a/v2";' > "$root/pkg-b/dist/src/index.js"
+run_harness stage "$root/pkg-b/dist"
+expect_status 0 "a quoted string that merely equals a private package's name is not an import"
+expect_not_contains "imports pkg-a" "the string literal is not reported as a dependency"
+
+new_bundling_fixture
+printf '%s\n' 'require("ghost-lib");' >> "$root/pkg-a/dist/src/lib/a.js"
+run_harness stage "$root/pkg-b/dist" '{"pkg-b":["pkg-a"]}'
+expect_status 1 "bundled code that needs a dependency its package does not declare is refused"
+expect_contains "ghost-lib" "the error names the undeclared dependency"
+
+new_bundling_fixture
+printf '%s\n' 'const deep = require("pkg-a/lib/a");' >> "$root/pkg-b/dist/src/index.js"
+run_harness stage "$root/pkg-b/dist" '{"pkg-b":["pkg-a"]}'
+expect_status 1 "a subpath import of the private package is refused rather than left pointing at it"
+expect_contains "subpath" "the error names the reason"
+
+new_bundling_fixture
+write_json "$root/pkg-b/dist/package.json" '{ "name": "pkg-b", "version": "1.0.0", "dependencies": { "pkg-a": "9.9.9", "some-lib": "2.0.0" } }'
+run_harness stage "$root/pkg-b/dist" '{"pkg-b":["pkg-a"]}'
+expect_status 1 "two versions of one dependency between the package and its bundled code are refused"
+expect_contains "some-lib" "the error names the conflicting dependency"
+
+new_bundling_fixture
+write_json "$root/pkg-b/dist/package.json" '{ "name": "pkg-b", "version": "1.0.0", "dependencies": { "other-lib": "1.2.3" }, "devDependencies": { "pkg-a": "9.9.9", "vitest": "4.1.11" } }'
+rm "$root/pkg-b/dist/src/index.js" "$root/pkg-b/dist/src/lib/types.d.ts"
+run_harness stage "$root/pkg-b/dist"
+expect_status 0 "a devDependency on a private package does not block the publish"
+if [ -z "$(json_field "$root/pkg-b/dist/package.json" "devDependencies.pkg-a")" ]; then ok; else bad "the published manifest still names the private package as a devDependency"; fi
+if [ "$(json_field "$root/pkg-b/dist/package.json" "devDependencies.vitest")" = "4.1.11" ]; then ok; else bad "other devDependencies were dropped"; fi
 
 # The refusal guard on --skip-registry-check. Driven through the real CLI entry point rather than
 # the harness, because the mistake it exists to stop is a human adding the flag to an invocation

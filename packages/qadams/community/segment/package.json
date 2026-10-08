@@ -10,7 +10,6 @@
   "dependencies": {
     "@aiqadam/qadams-common": "workspace:*",
     "@aiqadam/qadams-framework": "workspace:*",
-    "@aiqadam/shared": "workspace:*",
     "@segment/analytics-node": "2.2.0",
     "tslib": "2.6.2"
   }

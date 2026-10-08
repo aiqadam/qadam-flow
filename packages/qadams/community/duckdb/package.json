@@ -7,7 +7,6 @@
   "dependencies": {
     "@aiqadam/qadams-common": "workspace:*",
     "@aiqadam/qadams-framework": "workspace:*",
-    "@aiqadam/shared": "workspace:*",
     "@duckdb/node-api": "1.4.3-r.2",
     "tslib": "2.8.1"
   },

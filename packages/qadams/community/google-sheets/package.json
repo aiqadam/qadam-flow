@@ -6,7 +6,6 @@
   "dependencies": {
     "@aiqadam/qadams-common": "workspace:*",
     "@aiqadam/qadams-framework": "workspace:*",
-    "@aiqadam/shared": "workspace:*",
     "csv-parse": "7.0.2",
     "dayjs": "1.11.9",
     "gaxios": "6.7.1",

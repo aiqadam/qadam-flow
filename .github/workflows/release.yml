@@ -159,6 +159,10 @@ jobs:
   # qadam depends on through the bun workspace protocol. #476 (step 1b, publishing the 238
   # qadams themselves) is blocked on this landing first and is NOT wired here.
   #
+  # Since #799 (ADR-0001) `@aiqadam/shared` is private and no longer packed or published:
+  # `qadams-framework`'s tarball carries the part of it it uses (code and `.d.ts`), see
+  # tools/scripts/utils/stage-package-for-publish.ts. The packages here are framework and common.
+  #
   # Packing lives in _pack-framework-packages.yml, not here, because a `v*` tag is no
   # longer the only way to reach them (#496): that tag IS the engine release — it moves the
   # Docker `:latest` every `run.sh` install resolves to and cuts a GitHub Release — and
@@ -243,8 +247,8 @@ jobs:
     # design (see its own header), and `on: push: tags` runs whatever release.yml says at the
     # tagged commit regardless of who pushed the tag. Anyone with `contents: write` — a
     # collaborator, a leaked PAT, a compromised Action — could otherwise push a tag at a
-    # commit that never touched `main` and publish `@aiqadam/shared`, the transitive root of
-    # every qadam, to public npm at `latest` with no human in the loop. The dispatch path
+    # commit that never touched `main` and publish `@aiqadam/qadams-framework`, the root of
+    # every qadam's dependency graph, to public npm at `latest` with no human in the loop. The dispatch path
     # replaces "can push a tag" with "can start a workflow_dispatch run", the same set of
     # credentials, and clears two of the three gates, which makes the human load-bearing
     # rather than a formality.

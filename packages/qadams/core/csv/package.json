@@ -6,7 +6,6 @@
   "dependencies": {
     "@aiqadam/qadams-common": "workspace:*",
     "@aiqadam/qadams-framework": "workspace:*",
-    "@aiqadam/shared": "workspace:*",
     "@cj-tech-master/excelts": "10.2.0",
     "csv-parse": "7.0.2",
     "csv-stringify": "6.5.2",

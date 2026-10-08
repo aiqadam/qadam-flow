@@ -7,7 +7,6 @@
   "dependencies": {
     "@aiqadam/qadams-common": "workspace:*",
     "@aiqadam/qadams-framework": "workspace:*",
-    "@aiqadam/shared": "workspace:*",
     "@azure/identity": "4.13.0",
     "@azure/storage-blob": "12.29.1",
     "tslib": "2.8.1"

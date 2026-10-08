@@ -43,8 +43,9 @@ a removed or renamed export, a changed signature or a narrowed type is major; a 
 version is major and, from `1.0.0`, needs a support-table row and keeps the previous major's engine
 shim (ADR-0002, landed in #801/#814); a new export is minor; a fix is patch.
 
-**`@aiqadam/shared`** — until #799 makes it private it is still published and pinned exactly by
-every published qadam, so judge it like the SDK.
+**`@aiqadam/shared`** — private and no longer published since #799, so it has no consumer outside
+the repo: a patch changeset is enough, and the framework change that carries the new code to qadams
+declares its own level.
 
 Then place the level on the package's line. On `0.x`: major → **minor**, everything else →
 **patch**, except a new export, which stays minor. From `1.0.0`: as is. Unsure between two levels?

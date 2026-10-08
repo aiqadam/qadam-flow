@@ -6,7 +6,6 @@
   "dependencies": {
     "@aiqadam/qadams-common": "workspace:*",
     "@aiqadam/qadams-framework": "workspace:*",
-    "@aiqadam/shared": "workspace:*",
     "basic-ftp": "6.2.1",
     "dayjs": "1.11.9",
     "ssh2": "1.16.0",

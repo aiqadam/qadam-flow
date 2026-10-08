@@ -3,8 +3,10 @@ import { execFileSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
+import { cwd } from 'node:process'
 import { readPackageJson } from './files'
 import { packagePrePublishChecks } from './package-pre-publish-checks'
+import { stagePackageForPublish } from './stage-package-for-publish'
 import { prepareQadamDistForPublish } from '../../../packages/cli/src/lib/utils/prepare-qadam-utils'
 import { isExactVersion } from '../../../packages/cli/src/lib/utils/workspace-utils'
 
@@ -203,6 +205,13 @@ export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag, pack
     `# ${json.name}\n\n${json.description ?? ''}\n\nPart of the [Qadam Flow](https://github.com/aiqadam/qadam-flow) monorepo. See the repository for documentation. Licensed under MIT.\n`,
   )
 
+  // `qadams-framework` is packed from a staged copy carrying the private `@aiqadam/shared` it uses
+  // (ADR-0001, #799); every other package is packed from `outputPath`. Either way this refuses a
+  // package whose manifest or emitted code still reaches a private workspace package.
+  const publishRoot = stagePackageForPublish({ outputPath, workspaceRoot: cwd() })
+  assertNoUnresolvedWorkspaceDeps(`${publishRoot}/package.json`)
+  assertNoSemverRanges(`${publishRoot}/package.json`)
+
   // Pack and dry run are the same operation with a different destination: stage `dist`, run
   // every check above, produce the tarball, stop short of the registry. They share this branch
   // deliberately — the `pack-framework-packages` job hands its tarball to a separate
@@ -226,7 +235,7 @@ export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag, pack
     // stdout piped so it can be parsed; stderr inherited so npm's own diagnostics still reach
     // the log rather than being swallowed into a variable nobody prints.
     const packOutput = execFileSync('npm', ['pack', '--json', '--pack-destination', destination], {
-      cwd: outputPath,
+      cwd: publishRoot,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'inherit'],
     })
@@ -262,7 +271,7 @@ export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag, pack
   // release build — `npm audit signatures` has nothing to check. execFileSync (argv array, no
   // shell) rather than execSync template-string interpolation: a step holding an org publish
   // token should not build a shell command out of an env-var-sourced value, even a validated one.
-  execFileSync('npm', ['publish', '--access', 'public', '--tag', resolvedNpmDistTag, '--provenance'], { cwd: outputPath, stdio: 'inherit' })
+  execFileSync('npm', ['publish', '--access', 'public', '--tag', resolvedNpmDistTag, '--provenance'], { cwd: publishRoot, stdio: 'inherit' })
 
   console.info(`[publishProject] success, path=${path}, version=${version}, npmDistTag=${resolvedNpmDistTag}`)
   return { status: 'published', version }

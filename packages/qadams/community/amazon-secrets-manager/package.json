@@ -7,7 +7,6 @@
   "dependencies": {
     "@aiqadam/qadams-common": "workspace:*",
     "@aiqadam/qadams-framework": "workspace:*",
-    "@aiqadam/shared": "workspace:*",
     "@aws-sdk/client-secrets-manager": "3.1143.0",
     "tslib": "2.8.1"
   },

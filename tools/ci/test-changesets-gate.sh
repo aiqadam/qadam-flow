@@ -148,6 +148,11 @@ changeset "$d" deps $'---\n"@aiqadam/qadam-tables": patch\n---\n\nUpdate dayjs.'
 commit_all "$d"
 expect 0 'a dependency change with a changeset -> PASS' "$d" 'OK'
 
+d="$(new_repo shared-removal-only)"
+write "$d/packages/qadams/core/tables/package.json" '{ "name": "@aiqadam/qadam-tables", "version": "0.5.1", "dependencies": { "dayjs": "1.11.0" } }'
+commit_all "$d"
+expect 0 'removing the private @aiqadam/shared alone needs no changeset (ADR-0001, #799)' "$d" 'OK'
+
 d="$(new_repo new-package-with-changeset)"
 write "$d/packages/qadams/core/new/package.json" '{ "name": "@aiqadam/qadam-new", "version": "0.0.1" }'
 write "$d/packages/qadams/core/new/src/index.ts" 'export const n = 1'
@@ -183,6 +188,22 @@ d="$(new_repo dependency-no-changeset)"
 write "$d/packages/qadams/core/tables/package.json" '{ "name": "@aiqadam/qadam-tables", "version": "0.5.1", "dependencies": { "@aiqadam/shared": "workspace:*", "dayjs": "1.11.13" } }'
 commit_all "$d"
 expect 1 'a dependency change with no changeset -> FAIL' "$d" 'dependencies changed'
+
+d="$(new_repo shared-removal-plus-other-change)"
+write "$d/packages/qadams/core/tables/package.json" '{ "name": "@aiqadam/qadam-tables", "version": "0.5.1", "dependencies": { "dayjs": "1.11.13" } }'
+commit_all "$d"
+expect 1 'removing shared does not hide another dependency change in the same diff -> FAIL' "$d" 'dependencies changed'
+
+d="$(new_repo shared-spec-change)"
+write "$d/packages/qadams/core/tables/package.json" '{ "name": "@aiqadam/qadam-tables", "version": "0.5.1", "dependencies": { "@aiqadam/shared": "0.1.0", "dayjs": "1.11.0" } }'
+commit_all "$d"
+expect 1 'changing the shared spec, rather than removing it, still needs a changeset -> FAIL' "$d" 'dependencies changed'
+
+d="$(new_repo shared-removal-with-src-change)"
+write "$d/packages/qadams/core/tables/package.json" '{ "name": "@aiqadam/qadam-tables", "version": "0.5.1", "dependencies": { "dayjs": "1.11.0" } }'
+write "$d/packages/qadams/core/tables/src/index.ts" 'export const t = 2'
+commit_all "$d"
+expect 1 'a src change still needs a changeset even when shared was also removed -> FAIL' "$d" 'src changed'
 
 d="$(new_repo new-package-no-changeset)"
 write "$d/packages/qadams/core/new/package.json" '{ "name": "@aiqadam/qadam-new", "version": "0.0.1" }'
@@ -283,6 +304,16 @@ else
 fi
 commit_all "$d" 'chore(deps): changeset'
 expect 0 'and the gate then passes on that branch' "$d" 'OK'
+
+d="$(new_repo renovate-shared-removal-only)"
+write "$d/packages/qadams/core/tables/package.json" '{ "name": "@aiqadam/qadam-tables", "version": "0.5.1", "dependencies": { "dayjs": "1.11.0" } }'
+commit_all "$d"
+last_out="$(cd "$d" && PR_BASE_SHA=base PR_HEAD_SHA=HEAD GITHUB_HEAD_REF='renovate/shared-removal' node "$gate" --write-renovate-changeset 2>&1)"
+if [ -z "$(ls "$d/.changeset" | grep -v -e config.json -e README.md)" ]; then
+  ok
+else
+  fail_case 'the writer never writes a changeset for the exempt shared removal' "$(ls "$d/.changeset")"
+fi
 
 d="$(new_repo renovate-src)"
 write "$d/packages/qadams/core/tables/src/index.ts" 'export const t = 2'

@@ -40,6 +40,16 @@
 // - It reads base and head from git, not from the working tree: under the default pull_request
 //   checkout the working tree is the merge commit.
 //
+// ---------------------------------------------------------------------------
+// THE ONE DEPENDENCY CHANGE THAT NEEDS NO CHANGESET
+// ---------------------------------------------------------------------------
+// Removing `@aiqadam/shared`. It is private and no longer published (ADR-0001, #799), qadams may
+// not import it (gate 6, packages/qadams/eslint.config.mjs), and the entry was already unused when
+// #799 dropped it from all 238 manifests. Demanding a changeset would mean 238 releases with no
+// code change, which ADR-0001 and ADR-0003 both reject; each qadam ships the smaller manifest with
+// its next real release. Only the removal is exempt: adding the dependency back, or changing its
+// spec, still counts as a dependency change, and so does any other entry in the same section.
+//
 // Usage:
 //   PR_BASE_SHA=<sha> PR_HEAD_SHA=<sha> node tools/ci/check-changesets.mjs
 //   node tools/ci/check-changesets.mjs                      # local: origin/<GITHUB_BASE_REF|main>...HEAD
@@ -65,6 +75,7 @@ export const changesetGate = {
 
 const LEVEL_RANK = { none: 0, patch: 1, minor: 2, major: 3 }
 const DEP_SECTIONS = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']
+const REMOVABLE_WITHOUT_CHANGESET = ['@aiqadam/shared']
 const PLATFORM_PACKAGE = '@aiqadam/platform'
 const PLATFORM_DIR = 'packages/platform'
 const BREAKING_CHANGES_DOC = 'docs/install/configuration/breaking-changes.mdx'
@@ -360,7 +371,17 @@ const changedDependencySections = ({ range, file }) => {
   if (!base || !head) {
     throw new Error(`${file} is not valid JSON at one end of the range`)
   }
-  return DEP_SECTIONS.filter((section) => JSON.stringify(sortKeys(base[section])) !== JSON.stringify(sortKeys(head[section])))
+  return DEP_SECTIONS.filter((section) => JSON.stringify(sortKeys(withoutExemptRemovals({ before: base[section], after: head[section] }))) !== JSON.stringify(sortKeys(head[section])))
+}
+
+// `before` with the exempt entries dropped where `after` no longer has them, so their removal alone
+// compares equal (see "THE ONE DEPENDENCY CHANGE THAT NEEDS NO CHANGESET").
+const withoutExemptRemovals = ({ before, after }) => {
+  if (before === undefined || before === null || typeof before !== 'object') {
+    return before
+  }
+  const removed = REMOVABLE_WITHOUT_CHANGESET.filter((name) => name in before && !(name in (after ?? {})))
+  return Object.fromEntries(Object.entries(before).filter(([name]) => !removed.includes(name)))
 }
 
 const versionChanged = ({ range, file }) => {
