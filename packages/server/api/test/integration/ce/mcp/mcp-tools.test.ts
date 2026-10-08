@@ -1,4 +1,4 @@
-import { Property, QadamAuth } from '@aiqadam/qadams-framework'
+import { ContextVersion, LATEST_CONTEXT_VERSION, Property, QadamAuth } from '@aiqadam/qadams-framework'
 import {
     AgentQadamProps,
     AgentToolType,
@@ -61,6 +61,7 @@ import { apUpsertVariableTool } from '../../../../src/app/mcp/tools/ap-upsert-va
 import { apValidateFlowTool } from '../../../../src/app/mcp/tools/ap-validate-flow'
 import { apValidateStepConfigTool } from '../../../../src/app/mcp/tools/ap-validate-step-config'
 import { mcpUtils } from '../../../../src/app/mcp/tools/mcp-utils'
+import { frameworkCensusPolicy } from '../../../../src/app/qadams/census/framework-census-policy'
 import { fieldService } from '../../../../src/app/tables/field/field.service'
 import { recordService } from '../../../../src/app/tables/record/record.service'
 import { tableService } from '../../../../src/app/tables/table/table.service'
@@ -3334,6 +3335,97 @@ describe('MCP Tools integration', () => {
             expect(JSON.stringify(result.structuredContent?.steps)).not.toContain('"qadamVersionResolvable":false')
         })
     })
+
+    // ADR-0002 (#803): a step pinned to a qadam built against a context version this release has
+    // retired stops running. The flow stays enabled; the marking is the read-time signal.
+    describe('framework version no longer supported (#803)', () => {
+        it('ap_flow_structure marks a step pinned to a context-V1 qadam once the shim is retired, and not before', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            await saveCustomQadamWithContextVersion({ platformId: ctx.platform.id, contextVersion: ContextVersion.V1 })
+            const flowId = await createFlowAndGetId(mcp, 'Framework Retirement Flow')
+            await pinTriggerToCustomQadam({ mcp, flowId })
+
+            const before = await apFlowStructureTool(mcp, mockLog).execute({ flowId })
+            expect(text(before)).not.toContain('FRAMEWORK VERSION NO LONGER SUPPORTED')
+
+            await withRetiredContextVersion([LATEST_CONTEXT_VERSION], async () => {
+                const after = await apFlowStructureTool(mcp, mockLog).execute({ flowId })
+                expect(text(after)).toContain('FRAMEWORK VERSION NO LONGER SUPPORTED: update this step')
+                expect(JSON.stringify(after.structuredContent?.steps)).toContain('"frameworkVersionSupported":false')
+            })
+
+            // The retirement is a release property, not a stored one: without the stand-in the
+            // surface is back to normal.
+            const restored = await apFlowStructureTool(mcp, mockLog).execute({ flowId })
+            expect(text(restored)).not.toContain('FRAMEWORK VERSION NO LONGER SUPPORTED')
+        })
+
+        it('ap_validate_flow reports a retired framework version as an issue, and leaves a V2 step valid', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            await saveCustomQadamWithContextVersion({ platformId: ctx.platform.id, contextVersion: ContextVersion.V1 })
+            await saveCustomQadamWithContextVersion({ platformId: ctx.platform.id, contextVersion: ContextVersion.V2, name: '@census/qadam-context-v2' })
+            const retiredFlowId = await createFlowAndGetId(mcp, 'Retired Framework Flow')
+            await pinTriggerToCustomQadam({ mcp, flowId: retiredFlowId })
+            const currentFlowId = await createFlowAndGetId(mcp, 'Current Framework Flow')
+            await pinTriggerToCustomQadam({ mcp, flowId: currentFlowId, qadamName: '@census/qadam-context-v2' })
+
+            await withRetiredContextVersion([LATEST_CONTEXT_VERSION], async () => {
+                const retired = await apValidateFlowTool(mcp, mockLog).execute({ flowId: retiredFlowId })
+                expect(text(retired)).toContain('Unsupported Framework Versions')
+                expect(text(retired)).toContain('update this step')
+                expect(retired.structuredContent?.valid).toBe(false)
+                expect(JSON.stringify(retired.structuredContent?.issues)).toContain('framework_version')
+
+                const current = await apValidateFlowTool(mcp, mockLog).execute({ flowId: currentFlowId })
+                expect(text(current)).not.toContain('Unsupported Framework Versions')
+                expect(current.structuredContent?.valid).toBe(true)
+            })
+        })
+    })
+
+    async function saveCustomQadamWithContextVersion({ platformId, contextVersion, name = '@census/qadam-context-v1' }: { platformId: string, contextVersion: ContextVersion, name?: string }): Promise<void> {
+        const qadam = createMockQadamMetadata({
+            name,
+            displayName: 'Context Version Qadam',
+            version: '1.0.0',
+            qadamType: QadamType.CUSTOM,
+            packageType: PackageType.REGISTRY,
+            platformId,
+            triggers: {
+                new_item: {
+                    name: 'new_item',
+                    displayName: 'New Item',
+                    description: 'Triggers on a new item',
+                    requireAuth: false,
+                    props: {},
+                    type: TriggerStrategy.WEBHOOK,
+                    testStrategy: TriggerTestStrategy.SIMULATION,
+                    sampleData: {},
+                },
+            },
+        })
+        await db.save('qadam_metadata', qadam)
+        await db.update('qadam_metadata', qadam.id, { contextVersion })
+    }
+
+    async function pinTriggerToCustomQadam({ mcp, flowId, qadamName = '@census/qadam-context-v1' }: { mcp: ProjectScopedMcpServer, flowId: string, qadamName?: string }): Promise<void> {
+        const result = await apUpdateTriggerTool(mcp, mockLog).execute({ flowId, qadamName, triggerName: 'new_item' })
+        expect(text(result)).toContain('✅')
+    }
+
+    // A stand-in for a release that has retired shims: the surfaces read the engine's supported set
+    // through `engineContextVersions()` exactly so a test can drop one without touching the engine.
+    async function withRetiredContextVersion(contextVersions: ContextVersion[], run: () => Promise<void>): Promise<void> {
+        const spy = vi.spyOn(frameworkCensusPolicy, 'engineContextVersions').mockReturnValue(contextVersions)
+        try {
+            await run()
+        }
+        finally {
+            spy.mockRestore()
+        }
+    }
 
     describe('ap_export_flow / ap_import_flow', () => {
         it('93. ap_export_flow — exports a flow as a SharedTemplate JSON', async () => {

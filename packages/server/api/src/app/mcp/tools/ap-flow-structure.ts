@@ -22,6 +22,8 @@ import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
 import { flowService } from '../../flows/flow/flow.service'
 import { projectService } from '../../project/project-service'
+import { frameworkCensusMarking } from '../../qadams/census/framework-census-marking'
+import { PinFrameworkSupport } from '../../qadams/census/framework-census-service'
 import { QadamPinnedStep, qadamPinUtil } from '../../qadams/metadata/qadam-pin-util'
 import { mcpUtils } from './mcp-utils'
 
@@ -42,6 +44,9 @@ type StepInfo = {
     input: Record<string, unknown> | null
     qadamPin?: string
     qadamVersionResolvable?: boolean
+    // Only carried when the pinned qadam needs a framework context version this release no longer
+    // runs (ADR-0002, #803). Absent means the step is fine, or no shim has been retired yet.
+    frameworkVersionSupported?: false
 }
 
 function getStepInput(step: Step): Record<string, unknown> | null {
@@ -76,7 +81,7 @@ function getConfigStatus(step: Step): string {
 // the lookup errored) precisely so a caller that must not conflate the last two — the heal
 // migration — can tell them apart. This is a read-only report, not a persister, so it passes the
 // raw tri-state value straight through; `qadamPinWarning` below is where the collapse happens.
-function qadamPinInfo({ step, qadamResolutions }: { step: Step, qadamResolutions: Map<string, boolean | undefined> }): { qadamPin?: string, qadamVersionResolvable?: boolean } {
+function qadamPinInfo({ step, qadamResolutions, unsupportedPins }: { step: Step, qadamResolutions: Map<string, boolean | undefined>, unsupportedPins: Map<string, PinFrameworkSupport> }): Pick<StepInfo, 'qadamPin' | 'qadamVersionResolvable' | 'frameworkVersionSupported'> {
     if ((step.type !== FlowActionType.PIECE && step.type !== FlowTriggerType.PIECE) || isNil(step.settings.qadamName) || isNil(step.settings.qadamVersion)) {
         return {}
     }
@@ -85,7 +90,21 @@ function qadamPinInfo({ step, qadamResolutions }: { step: Step, qadamResolutions
     // (which come from `collectDistinctPins` → `pinOf`) — precisely the duplication `qadamPinUtil`
     // exists to end.
     const pin = qadamPinUtil.pinOf({ step })
-    return { qadamPin: pin, qadamVersionResolvable: qadamResolutions.get(pin) }
+    return {
+        qadamPin: pin,
+        qadamVersionResolvable: qadamResolutions.get(pin),
+        // Only the negative is reported: a step whose framework version is still run carries
+        // nothing, so the default case adds no noise (the `logFlags` pattern).
+        ...(unsupportedPins.has(pin) ? { frameworkVersionSupported: false as const } : {}),
+    }
+}
+
+// The ticket's own wording (ADR-0002, #803), echoed by `ap_validate_flow`'s `framework_version`
+// category so an agent reading either surface is told the same thing: update this step.
+const FRAMEWORK_VERSION_LABEL = 'FRAMEWORK VERSION NO LONGER SUPPORTED: update this step'
+
+function frameworkVersionWarning(step: StepInfo): string {
+    return step.frameworkVersionSupported === false ? ` ⚠️ ${FRAMEWORK_VERSION_LABEL}` : ''
 }
 
 // Wording is shared with `ap_validate_flow` via `mcpUtils.qadamPinIssue`, so the two tools cannot
@@ -108,19 +127,15 @@ function qadamPinWarning(step: StepInfo): string {
 }
 
 // A pin-availability signal is a decoration on top of the structure this tool exists to return —
-// before this feature, `ap_flow_structure` needed only the flow row. `getPlatformId` throws when
-// the project row carries no platform, and this tool is called constantly for navigation, so a
-// platform-lookup failure must degrade to "no pin info" rather than fail the whole response the
-// way `ap_validate_flow`'s equivalent unwrapped call is allowed to for a one-shot pre-publish gate.
-async function resolveQadamPinAvailability({ qadamSteps, projectId, log }: {
+// before this feature, `ap_flow_structure` needed only the flow row. The caller resolves the
+// platform under `tryCatch` (see `execute`) and passes it in: a platform-lookup failure degrades
+// to "no pin info" rather than failing the response, the way `ap_validate_flow`'s equivalent
+// unwrapped call is allowed to for a one-shot pre-publish gate.
+async function resolveQadamPinAvailability({ qadamSteps, platformId, log }: {
     qadamSteps: QadamPinnedStep[]
-    projectId: string
+    platformId: string
     log: FastifyBaseLogger
 }): Promise<Map<string, boolean | undefined>> {
-    const { data: platformId } = await tryCatch(() => projectService(log).getPlatformId(projectId))
-    if (isNil(platformId)) {
-        return new Map()
-    }
     return qadamPinUtil.resolvePins({
         pins: qadamPinUtil.collectDistinctPins({ steps: qadamSteps }),
         platformId,
@@ -218,7 +233,7 @@ function formatBranchConditions(conditions: BranchCondition[][]): string {
     return groups.join(' OR ')
 }
 
-function buildFlowStructure({ trigger, qadamResolutions }: { trigger: Step, qadamResolutions: Map<string, boolean | undefined> }): { structure: StepInfo[], stepByName: Map<string, Step> } {
+function buildFlowStructure({ trigger, qadamResolutions, unsupportedPins }: { trigger: Step, qadamResolutions: Map<string, boolean | undefined>, unsupportedPins: Map<string, PinFrameworkSupport> }): { structure: StepInfo[], stepByName: Map<string, Step> } {
     const allSteps = flowStructureUtil.getAllSteps(trigger)
     const stepByName = new Map(allSteps.map(s => [s.name, s]))
     const structure = allSteps.map((step): StepInfo => {
@@ -234,7 +249,7 @@ function buildFlowStructure({ trigger, qadamResolutions }: { trigger: Step, qada
                 ...logFlags(step),
                 configStatus: getConfigStatus(step),
                 input: getStepInput(step),
-                ...qadamPinInfo({ step, qadamResolutions }),
+                ...qadamPinInfo({ step, qadamResolutions, unsupportedPins }),
             }
         }
         let parentName: string | null = null
@@ -289,7 +304,7 @@ function buildFlowStructure({ trigger, qadamResolutions }: { trigger: Step, qada
             ...logFlags(step),
             configStatus: getConfigStatus(step),
             input: getStepInput(step),
-            ...qadamPinInfo({ step, qadamResolutions }),
+            ...qadamPinInfo({ step, qadamResolutions, unsupportedPins }),
         }
     })
     return { structure, stepByName }
@@ -348,7 +363,7 @@ function formatFlowStructure(
             if (fullStep && fullStep.type === FlowTriggerType.PIECE && fullStep.settings.qadamName) {
                 triggerDetail = ` (qadam: ${mcpUtils.wrapUntrustedValue(fullStep.settings.qadamName)}, trigger: ${fullStep.settings.triggerName ? mcpUtils.wrapUntrustedValue(fullStep.settings.triggerName) : 'not set'})`
             }
-            lines.push(`- [TRIGGER] ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${triggerDetail}${qadamPinWarning(step)} | parent: — | ${step.configStatus}${sampleLabel}${skipLabel}${logLabel}${canvasLabel}`)
+            lines.push(`- [TRIGGER] ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${triggerDetail}${qadamPinWarning(step)}${frameworkVersionWarning(step)} | parent: — | ${step.configStatus}${sampleLabel}${skipLabel}${logLabel}${canvasLabel}`)
             if (fullStep) {
                 lines.push(...formatStepSettings(fullStep, includeInput))
             }
@@ -363,7 +378,7 @@ function formatFlowStructure(
             if (s?.qadamName) stepDetail = ` (qadam: ${mcpUtils.wrapUntrustedValue(s.qadamName)}, action: ${s.actionName ? mcpUtils.wrapUntrustedValue(s.actionName) : 'not set'})`
         }
 
-        lines.push(`- ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${stepDetail}${qadamPinWarning(step)} | parent: ${step.parentName} | ${rel} | ${step.configStatus}${sampleLabel}${skipLabel}${logLabel}${canvasLabel}`)
+        lines.push(`- ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${stepDetail}${qadamPinWarning(step)}${frameworkVersionWarning(step)} | parent: ${step.parentName} | ${rel} | ${step.configStatus}${sampleLabel}${skipLabel}${logLabel}${canvasLabel}`)
 
         if (fullStep) {
             lines.push(...formatStepSettings(fullStep, includeInput))
@@ -457,7 +472,7 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
     return {
         title: 'ap_flow_structure',
         permission: Permission.READ_FLOW,
-        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), valid insert locations for ap_add_step, the flow\'s localeSource, and whether each step\'s pinned qadam version is still available on this installation. Pass includeInput=true to also get each step\'s full untruncated input in structuredContent; text input: lines are returned untruncated too.',
+        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), valid insert locations for ap_add_step, the flow\'s localeSource, whether each step\'s pinned qadam version is still available on this installation, and whether a step\'s pinned qadam needs a framework version this release no longer supports. Pass includeInput=true to also get each step\'s full untruncated input in structuredContent; text input: lines are returned untruncated too.',
         inputSchema: {
             flowId: z.string().describe('The id of the flow'),
             includeInput: z.boolean().optional().describe('When true, include the full step input (untruncated) in structuredContent.steps[].input and render text input: lines untruncated'),
@@ -485,10 +500,17 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
                 // bundled (#474) — worth knowing before calling this tool in a hot loop over many
                 // distinct pins, though no worse than `ap_validate_flow` already accepts.
                 const qadamSteps = qadamPinUtil.getQadamSteps({ trigger: flow.version.trigger })
-                const qadamResolutions = qadamSteps.length > 0
-                    ? await resolveQadamPinAvailability({ qadamSteps, projectId: mcp.projectId, log })
+                // `getPlatformId` throws when the project row carries no platform; this tool is a
+                // navigation read, so that degrades to "no pin info" (see above) rather than failing
+                // the response. Both signals below share the one lookup.
+                const { data: platformId } = await tryCatch(() => projectService(log).getPlatformId(mcp.projectId))
+                const qadamResolutions = !isNil(platformId) && qadamSteps.length > 0
+                    ? await resolveQadamPinAvailability({ qadamSteps, platformId, log })
                     : new Map<string, boolean | undefined>()
-                const { structure, stepByName } = buildFlowStructure({ trigger: flow.version.trigger, qadamResolutions })
+                const unsupportedPins = isNil(platformId)
+                    ? new Map<string, PinFrameworkSupport>()
+                    : await frameworkCensusMarking(log).unsupportedPins({ qadamSteps, platformId })
+                const { structure, stepByName } = buildFlowStructure({ trigger: flow.version.trigger, qadamResolutions, unsupportedPins })
                 const positions = flowCanvasUtils.computeStepPositions(flow.version.trigger)
                 const localeSource = flow.version.localeSource ?? null
                 const text = [
@@ -516,6 +538,7 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
                             configStatus: s.configStatus,
                             ...(includeInput && s.input !== null ? { input: s.input } : {}),
                             ...(s.qadamPin !== undefined ? { qadamPin: s.qadamPin, qadamVersionResolvable: s.qadamVersionResolvable } : {}),
+                            ...(s.frameworkVersionSupported === false ? { frameworkVersionSupported: false } : {}),
                         })),
                         stepCount: structure.length,
                     },
