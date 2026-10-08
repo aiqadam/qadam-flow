@@ -49,7 +49,7 @@ function addLegacyMethodsAndServerUrl({ context }: { context: ActionContext<Qada
 }
 
 /**
- * @deprecated Since 2026-04-12. Remove after 2026-10-12 once all pieces migrate to createWaitpoint/waitForWaitpoint.
+ * @deprecated Since 2026-04-12. Kept under ADR-0002 (`adr/0002-two-framework-majors-supported-for-at-least-12-months.md`): this shim serves the `0.x` row of the framework support table and may be removed no earlier than 12 months after `@aiqadam/qadams-framework@1.0.0`, and only once the support-table gate allows it. Qadams use `createWaitpoint`/`waitForWaitpoint` instead.
  */
 function buildLegacyPauseHook({ context }: { context: ActionContext<QadamAuthProperty, InputPropertyMap> }): PauseHook {
     return (req) => {
@@ -65,7 +65,7 @@ function buildLegacyPauseHook({ context }: { context: ActionContext<QadamAuthPro
 }
 
 /**
- * @deprecated Since 2026-04-12. Remove after 2026-10-12 once all pieces migrate to createWaitpoint/waitForWaitpoint.
+ * @deprecated Since 2026-04-12. Kept under ADR-0002 (`adr/0002-two-framework-majors-supported-for-at-least-12-months.md`): this shim serves the `0.x` row of the framework support table and may be removed no earlier than 12 months after `@aiqadam/qadams-framework@1.0.0`, and only once the support-table gate allows it. Qadams use `createWaitpoint`/`waitForWaitpoint` instead.
  */
 function buildLegacyGenerateResumeUrl({ context }: { context: ActionContext<QadamAuthProperty, InputPropertyMap> }): (params: { queryParams: Record<string, string>, sync?: boolean }) => string {
     return (params) => {
