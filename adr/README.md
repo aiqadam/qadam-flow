@@ -100,6 +100,6 @@ Immutability of accepted ADRs is checked in review.
 
 | ADR | Title | Status |
 | --- | --- | --- |
-| [`0001`](0001-official-qadams-run-from-a-versioned-local-store.md) | Official qadams run from a versioned local store, on libraries the platform provides | `proposed` |
+| [`0001`](0001-everything-versioned-follows-semver-declared-with-changesets.md) | Everything versioned in the repo follows semver, declared with changesets and enforced in CI | `proposed` |
 | [`0002`](0002-two-framework-majors-supported-for-at-least-12-months.md) | The platform supports two framework majors for at least 12 months, enforced by a CI gate | `proposed` |
-| [`0003`](0003-everything-versioned-follows-semver-declared-with-changesets.md) | Everything versioned in the repo follows semver, declared with changesets and enforced in CI | `proposed` |
+| [`0003`](0003-official-qadams-run-from-a-versioned-local-store.md) | Official qadams run from a versioned local store, on libraries the platform provides | `proposed` |

@@ -7,7 +7,10 @@ supersedes: null            # "NNNN" (or ["NNNN", "NNNN"]) if this replaces earl
 superseded-by: null         # set when a later ADR replaces this one
 ---
 
-# 0001. Official qadams run from a versioned local store, on libraries the platform provides
+# 0003. Official qadams run from a versioned local store, on libraries the platform provides
+
+Builds on: ADR-0001 (what a version means, the SDK, the caret-range promise) and ADR-0002 (which
+SDK majors the platform must run).
 
 ## Decision
 
@@ -32,15 +35,12 @@ qadam version.
   published as static JSON on GitHub Pages under `flow.aiqadam.org/catalog/v1/`. Releases append to
   it; slim images carry a snapshot; the URL is configurable for mirroring.
 - **Unavailable version.** If a pinned version cannot be fetched, the step moves to the image's
-  version only when that version is inside the pin's caret range (ADR-0003) and the catalogue shows
+  version only when that version is inside the pin's caret range (ADR-0001) and the catalogue shows
   its props are compatible, with an audit record. Otherwise
   the step is marked "version unavailable — update this step" in the builder, MCP and runs, and the
   flow is never disabled (#435).
-- **The SDK.** The 104 symbols qadams import from `@aiqadam/shared` move into
-  `@aiqadam/qadams-framework`, which re-exports them; qadams may no longer import `shared`.
-  `qadams-framework@1.0.0` is cut when that move, the import ban and the API-diff gate are in
-  place; from then on the support policy in ADR-0002 applies. `shared` itself stops being
-  published (ADR-0003). What each version number means, and how it is raised, is ADR-0003.
+- **Qadams at `1.0.0`.** A qadam's `1.0.0` (ADR-0001) is the release that switches it to the
+  bundle format; `0.x` versions are the legacy npm format.
 
 This answers #785: a pin covers the qadam's own code and its third-party dependencies; the
 framework chain is the platform's, kept compatible by API discipline.
@@ -126,15 +126,13 @@ version.
 | --- | --- | --- |
 | Artifact format | One bundle, same file in images and npm | npm package + `bun install` per version: needs network and dependency resolution at install, two sources that can drift (upstream ADR 0028), and permanent overrides of exact `@aiqadam/*` pins |
 | What the platform provides | `@aiqadam/*` + `zod` | `@aiqadam/*` only: qadams build prop schemas with `zod` and the framework validates them, so two `zod` copies would meet at that boundary |
-| Where qadam-facing `shared` symbols go | Re-exported from `qadams-framework` | A new `@aiqadam/qadams-sdk`: a second package to keep stable and version in step, for symbols that are mostly enums and helpers (`QadamCategory` in 196 qadams, `isNil` 126, `MarkdownVariant` 61) |
 | Catalogue scope | Every version | Current versions only: no schema to decide the fallback, to render an old step in the builder (#422), or to import a flow from another instance; history costs ~2 MB/year |
 | When to fetch | Publish / import, and at start-up | Publish / import only: after a lost volume or a switch to `:slim`, already published flows would point at missing versions |
 | Signature check | Mandatory for `@aiqadam/*`; setting for custom | Mandatory for everything: customers' private registries may not carry npm signatures |
 | Default image | `run.sh` → `:slim`; `:latest` = `:fat` | `:latest` = `:slim`: a plain `docker compose pull` would silently turn existing installs into slim ones that need a registry; dropping `:latest` breaks every existing install |
 | GC | Image-shipped versions never; others after 10 days unreferenced | One rule for all: the image would re-seed what GC just removed |
-| Already published 238 versions | Republish in the new format — as `1.0.0` (ADR-0003) — only when each qadam next changes; older versions installed from npm with `@aiqadam/*` overridden | Mass republish: a release of every qadam with no code change |
+| Already published 238 versions | Republish in the new format — as `1.0.0` (ADR-0001) — only when each qadam next changes; older versions installed from npm with `@aiqadam/*` overridden | Mass republish: a release of every qadam with no code change |
 | Registry at install | `QADAM_REGISTRY_URL` / `QADAM_REGISTRY_TOKEN` passed to `run.sh`, reachability checked, `:fat` suggested on failure | Configure later only: a slim install behind a proxy would look healthy and fail on first use; reading the host's `~/.npmrc`: host and container config differ and tokens would move silently |
-| `qadams-framework@1.0.0` | When the SDK move, import ban and API-diff gate are in place | Now: the first `shared` move would force 2.0 at once; at the first external author: too late for a contract |
 
 ## Consequences
 
@@ -143,9 +141,6 @@ offline, for every version in the store. One copy of the libraries per engine. T
 file per republish" pattern ends.
 
 **New obligations.**
-- `qadams-framework` and `qadams-common` are a public API from 1.0.0: an API-diff gate in CI;
-  breaking changes only in a major; the support window and its CI gate are ADR-0002.
-- A lint rule forbids qadams from importing `@aiqadam/shared`.
 - New publishes declare `@aiqadam/*` and `zod` as `peerDependencies` (#772 option B); older versions
   installed from npm get them overridden (#772 option C). The loader reads both formats.
 - Release artifacts are archived when built and never rebuilt from git: the prototype could not
@@ -202,8 +197,6 @@ per-version fixes `migrate-v24`, `-v25`, `-v27`).
 
 ## Follow-ups
 
-- SDK: move the qadam-facing `shared` symbols into `qadams-framework`; lint ban; API-diff gate; cut
-  `qadams-framework@1.0.0`.
 - Artifact: bundle build per qadam (`@aiqadam/*` and `zod` external), native-module exception,
   archive at release, publish as `peerDependencies`; override path for already published versions.
 - Store: layout on a persistent volume, seeding from the image, per-platform namespace for custom

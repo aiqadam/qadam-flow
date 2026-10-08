@@ -7,7 +7,7 @@ supersedes: null            # "NNNN" (or ["NNNN", "NNNN"]) if this replaces earl
 superseded-by: null         # set when a later ADR replaces this one
 ---
 
-# 0003. Everything versioned in the repo follows semver, declared with changesets and enforced in CI
+# 0001. Everything versioned in the repo follows semver, declared with changesets and enforced in CI
 
 ## Decision
 
@@ -19,7 +19,7 @@ package in the PR that makes the change, and checked by CI.
 | Layer | Contract with | major | minor | patch |
 | --- | --- | --- | --- | --- |
 | Platform (root `package.json`, release tag, images) | instance operators | the upgrade needs operator action — always with an entry in `docs/install/configuration/breaking-changes.mdx` | new capability | fix |
-| SDK — `@aiqadam/qadams-framework`, `@aiqadam/qadams-common` | qadam authors | a broken public API, or a new engine ↔ qadam `context` version (support window: ADR-0002) | new export | fix |
+| SDK — `@aiqadam/qadams-framework`, `@aiqadam/qadams-common` | qadam authors | a broken public API, or a new engine ↔ qadam `context` version | new export | fix |
 | Qadam | flows that pin it | an action, trigger or prop removed or renamed; a new required prop without a default; a narrowed type; a changed output shape; **or a behaviour change an existing step would notice** | new action or trigger, optional prop, new output field | fix that changes none of the above |
 | `@aiqadam/shared` | nobody outside the repository | — | — | — |
 
@@ -27,17 +27,23 @@ package in the PR that makes the change, and checked by CI.
 `shared`, including types, at publish time. Versions already on npm stay installable for the `0.x`
 qadams that pin them and are marked with `npm deprecate`.
 
-**Qadams move to `1.0.0` one by one**, each at its next change, together with the bundle format from
-ADR-0001. Until then the `0.x` rule applies (minor = breaking). The unavailable-version fallback in
-ADR-0001 therefore moves a step only within the caret range of its pin (`^1.2.3` → `<2.0.0`,
-`^0.3.1` → `<0.4.0`) **and** when the props schema check passes.
+**The SDK.** Qadams import only `@aiqadam/qadams-framework` and `@aiqadam/qadams-common`. The 104
+symbols they import from `shared` today move into `qadams-framework`, which re-exports them, and a
+lint rule forbids qadams from importing `shared`. `qadams-framework@1.0.0` and
+`qadams-common@1.0.0` are cut once that move, the `shared` bundling and the API-diff gate are in
+place; before 1.0.0 the SDK makes no compatibility promise.
+
+**Qadams move to `1.0.0` one by one**, each at its next change. Until then the `0.x` rule applies
+(minor = breaking). **The compatibility promise is the caret range:** a version inside `^` of a pin
+(`^1.2.3` → `<2.0.0`, `^0.3.1` → `<0.4.0`) is a drop-in replacement at the contract level, and
+anything that moves a pin automatically may move it only inside that range.
 
 **The platform version.** Root `package.json` holds the **last released** version. A release PR
 raises it together with the tag (`version-tag-gate` keeps them equal). Images built from `main` report
 a prerelease computed at build time (`2.1.0-main.<n>`), which semver orders below the release, so a
-canary never claims a release it is not. The first release under this scheme is `2.0.0`. Image tags:
-exact `:<version>-fat` / `:<version>-slim`, moving `:fat`, `:slim`, `:latest` (= `:fat`, ADR-0001) and
-`:main-fat` / `:main-slim`.
+canary never claims a release it is not. The first release under this scheme is `2.0.0`. Image tags
+carry the exact version (`:<version>`, with a `-<flavour>` suffix where images come in flavours)
+plus moving tags; builds from `main` are tagged `:main`.
 
 **Who raises versions: changesets.** A PR that changes a versioned package adds a `.changeset/*.md`
 naming each package, its level and one line on what changed. The release PR collects them, raises
@@ -52,18 +58,18 @@ stay for history; their format check stays.
    `origin/main` (#783).
 4. A platform major has a `breaking-changes.mdx` entry (`breaking-change-gate`, tied to the changeset).
 5. Tag equals root `package.json` (`version-tag-gate`).
-6. The framework support table and its gate (ADR-0002).
-7. Qadams do not import `@aiqadam/shared` (ADR-0001).
-8. Compatibility floors are consistent: every qadam's `minimumSupportedRelease` is at or below the
+6. Qadams do not import `@aiqadam/shared`.
+7. Compatibility floors are consistent: every qadam's `minimumSupportedRelease` is at or below the
    current platform version, and `maximumSupportedRelease`, when set, is not below it.
 
 A behaviour change with an unchanged schema cannot be detected; it is a question in the PR template
 and an obligation in the agent rule, not a gate. A maintainer-only `semver-override` label bypasses
 gate 2 when CI over-estimates the level; every use stays visible on the PR. Gate 2 can only demand
-a higher level, never accept a lower one.
+a higher level, never accept a lower one. ADRs that build on this one add their gates to the same
+required set.
 
-**Conventions.** One always-on rule, `.agents/rules/versioning.md` (it also carries ADR-0002's
-support-window rule), listed in the AGENTS.md rules index; one skill, `versioning`, with the
+**Conventions.** One always-on rule, `.agents/rules/versioning.md` (ADRs that build on this one add
+their rules to it), listed in the AGENTS.md rules index; one skill, `versioning`, with the
 procedure (choosing a level, writing a changeset, what to do when gate 2 disagrees, when the
 override applies); the "Published-package version bumps" section of AGENTS.md replaced by a pointer;
 a section in `CONTRIBUTING.md`; `docs/build-qadams/qadam-reference/qadam-versioning.mdx` rewritten for external
@@ -91,8 +97,8 @@ Inventory from #776 and #783 (`main` @ `717e7390` / `94dc9ae3`):
 - **Existing gates to build on**: Conventional Commits format check, `version-tag-gate` and
   `breaking-change-gate` in `.github/workflows/release.yml`, `check-qadam-version-bumps`,
   `release-drafter`, `qadam-version-bump.yml` for Renovate branches.
-- ADR-0001 makes a pinned version the code a flow runs, and ADR-0002 keys the engine contract to
-  framework majors — both only mean something if version numbers do.
+- An exact pin only protects a flow if the number means something; today the same number can name
+  different code in the image and on npm.
 
 ## Options considered
 
@@ -122,19 +128,21 @@ exactly why #424's fallback could not move `tables@0.3.1` to a props-compatible 
 
 | Question | Chosen | Rejected, and why |
 | --- | --- | --- |
-| Separate ADR or extend 0001/0002 | Separate (this one) | Extending: semver for the whole repo can be accepted or rejected independently of the store model and the context policy; #776 is its own ticket |
+| Separate ADR, and numbered first | Yes — the support window and the store model both build on what a version means | Folding it into either: semver for the whole repo can be accepted or rejected on its own; #776 is its own ticket |
 | Qadam contract | Schema **and** observable behaviour | Schema only: #397 and #393 would have been patches |
-| Qadams `0.x` → `1.0` | Each at its next change, with the bundle format | All at once: 238 releases with no code change, already rejected for ADR-0001; staying on `0.x`: see Option D |
+| Qadams `0.x` → `1.0` | Each at its next change | All at once: 238 releases with no code change; staying on `0.x`: see Option D |
 | Platform `package.json` | Last released version; prereleases for `main` builds | Next release (today's state): `main` images claim an unreleased version; tag-only with a placeholder: local builds report `0.0.0` |
-| Gates | 1–8 required from the first changesets release; override label for gate 2 | Advisory first: unenforced checks are how #783 happened; only the changeset-presence gate required: levels would go unchecked |
+| Gates | 1–7 required from the first changesets release; override label for gate 2 | Advisory first: unenforced checks are how #783 happened; only the changeset-presence gate required: levels would go unchecked |
+| Where qadam-facing `shared` symbols go | Re-exported from `qadams-framework` | A new `@aiqadam/qadams-sdk`: a second package to keep stable and version in step, for symbols that are mostly enums and helpers (`QadamCategory` in 196 qadams, `isNil` 126, `MarkdownVariant` 61) |
+| `qadams-framework@1.0.0` | Once `shared` is out of its API, bundled, and the API-diff gate exists | Now: the first `shared` move would force 2.0 at once; at the first external author: too late for a contract |
 | Conventions | Rule + skill + docs, one source | AGENTS.md section only: bloats the root doc; skill only: unread when its trigger is missed |
 | `shared` | Private; bundled into `framework` | Published without promises: every `shared` change ripples through authors' lockfiles (#494, #772); a stable public API: spends majors on the most-changed internal package |
 
 ## Consequences
 
 **Answers to #776.** (1) Platform version: as above. (2) Platform and packages: independent semver
-per package; a platform release ships whatever SDK versions its tree holds, and the engine supports
-framework majors per ADR-0002. (3) The engine ↔ qadam contract has its own axis — the framework
+per package; a platform release ships whatever SDK versions its tree holds; how long it keeps
+running an older SDK major is a separate decision. (3) The engine ↔ qadam contract has its own axis — the framework
 major — so `minimumSupportedRelease` / `maximumSupportedRelease` only express platform-release
 floors, kept consistent by gate 8. (4) Offline: no compatibility signal in this ADR needs GitHub or
 npm at run time; the "update available" check keeps degrading as today. (5) One source of truth: the
@@ -165,8 +173,10 @@ does not exist yet.
 
 - Changesets: setup, bun workspace check, release PR, Renovate integration; retire `release-drafter`
   and `qadam-version-bump.yml`.
-- Gates 1–8 with fixtures; `semver-override` label restricted to maintainers.
+- Gates 1–7 with fixtures; `semver-override` label restricted to maintainers.
 - Platform: tag `2.0.0`; prerelease versions for `main` builds; image tag scheme.
+- SDK: move the qadam-facing `shared` symbols into `qadams-framework`; lint ban; API-diff gate; cut
+  `qadams-framework@1.0.0` / `qadams-common@1.0.0`.
 - `shared`: stop publishing, bundle into `framework` (code and `.d.ts`), `npm deprecate` old versions.
 - Conventions: `.agents/rules/versioning.md` + index row, `versioning` skill + registry row,
   AGENTS.md pointer, CONTRIBUTING section, `qadam-versioning.mdx` rewrite, clean-up of the

@@ -9,10 +9,12 @@ superseded-by: null         # set when a later ADR replaces this one
 
 # 0002. The platform supports two framework majors for at least 12 months, enforced by a CI gate
 
+Builds on: ADR-0001 (what a framework major is, the SDK, the gate set and the `versioning` rule).
+
 ## Decision
 
-From `@aiqadam/qadams-framework@1.0.0` (cut as described in ADR-0001), the engine ↔ qadam contract
-follows semver on the framework as defined in ADR-0003: a new `context` version is a new **framework major**, and the
+From `@aiqadam/qadams-framework@1.0.0` (ADR-0001), the engine ↔ qadam contract follows the
+framework's semver as ADR-0001 defines it: a new `context` version is a new **framework major**, and the
 platform runs qadams built against the **current and the previous major**. A previous major stays
 supported for **at least 12 months after the next major is released**, even if a third major
 ships in that time.
@@ -24,7 +26,7 @@ The policy is enforced, not remembered:
   says its major is still supported, when a framework major is released without a row, or when an
   official qadam is built against a major the engine no longer supports. The gate is monotonic:
   the passage of time can only allow a removal, never make existing code fail.
-- **A convention** in `.agents/rules/versioning.md` (ADR-0003's rule, listed in the AGENTS.md rules
+- **A convention** in `.agents/rules/versioning.md` (ADR-0001's rule, listed in the AGENTS.md rules
   index) and in `CONTRIBUTING.md` states the rule for agents and humans and points at the table
   and the gate.
 
@@ -50,7 +52,7 @@ the existing shims stay until this policy retires them.
   platform gates that removal against stored flows (#775).
 - Every official qadam built in this repository reports V2: `LATEST_CONTEXT_VERSION` was already `V2`
   at the fork's first commit (`f611ac80`). The shims protect only qadams built against an older
-  framework — custom qadams uploaded to an instance, and, after ADR-0001, external authors' qadams.
+  framework — custom qadams uploaded to an instance, and external authors' qadams.
 - Qadam Flow is self-hosted with no central telemetry, and on-prem upgrade cadence varies, so
   "is anyone still on the old contract" can only be answered on each instance, offline.
 - External authors will build against the SDK (recorded on #433), so the window is a public promise.
@@ -84,7 +86,7 @@ fail at run time on someone's instance with no warning (#775).
 ### Option E — a pin migration per retirement (the `migrate-v24` … `v30` shape)
 
 Rejected. A hand-written file per change that silently moves published steps onto different code —
-the pattern ADR-0001 ends.
+the pattern a store of versions ends.
 
 ### Option F — block the upgrade until an operator confirms
 
@@ -106,14 +108,14 @@ than marked steps with a clear repair path.
 
 - `LATEST_CONTEXT_VERSION = ContextVersion.V2` at `f611ac80` and at `94dc9ae3`
   (`packages/qadams/framework/src/lib/context/versioning.ts:17`).
-- ADR-0001 prototype: `tables@0.3.1`, `@0.4.5` and `@0.5.1` all report `contextVersion=2`.
+- Prototype on `94dc9ae3`: `tables@0.3.1`, `@0.4.5` and `@0.5.1` all report `contextVersion=2`.
 - `@aiqadam/qadams-framework` is at `0.35.0` on `94dc9ae3`; no 1.0.0 has been published.
 
 ## Follow-ups
 
 - Support table and the CI gate (removal, missing row, unsupported major), with fixture tests.
-- The support-window paragraph in `.agents/rules/versioning.md` and `CONTRIBUTING.md` (ADR-0003).
+- The support-window paragraph in `.agents/rules/versioning.md` and `CONTRIBUTING.md` (ADR-0001).
 - Replace the `Remove after 2026-10-12` comments with a reference to this ADR (#775).
 - Census: query over stored flow versions → pinned `name@version` → framework major from the store
-  metadata (ADR-0001); `doctor` command; admin and MCP surfaces; post-upgrade marking.
+  metadata; `doctor` command; admin and MCP surfaces; post-upgrade marking.
 - SDK docs: the support window for qadam authors.
