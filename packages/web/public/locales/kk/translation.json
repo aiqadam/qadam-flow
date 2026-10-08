@@ -2257,5 +2257,8 @@
   "You cannot change your own membership": "Өз мүшелігіңізді өзгерте алмайсыз",
   "The project owner cannot be changed here": "Жоба иесін мұнда өзгерту мүмкін емес",
   "This member is managed by your directory": "Бұл мүше каталогыңызбен басқарылады",
-  "The last admin cannot be removed or demoted": "Соңғы әкімшіні жою немесе төмендету мүмкін емес"
+  "The last admin cannot be removed or demoted": "Соңғы әкімшіні жою немесе төмендету мүмкін емес",
+  "Framework version retirement": "Framework нұсқасын қолдау тоқтатылды",
+  "This release no longer runs context versions {versions}. Affected steps: {unsupported}. Affected flows: {flows}. Update each step to a qadam version built against a supported framework version.": "Бұл релиз {versions} контекст нұсқаларын енді қолдамайды. Әсер етілген қадамдар: {unsupported}. Әсер етілген ағындар: {flows}. Әр қадамды қолдау көрсетілетін framework нұсқасына сәйкес qadam нұсқасына жаңартыңыз.",
+  "and {remaining} more": "тағы {remaining}"
 }

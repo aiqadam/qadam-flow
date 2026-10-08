@@ -2257,5 +2257,8 @@
   "You cannot change your own membership": "You cannot change your own membership",
   "The project owner cannot be changed here": "The project owner cannot be changed here",
   "This member is managed by your directory": "This member is managed by your directory",
-  "The last admin cannot be removed or demoted": "The last admin cannot be removed or demoted"
+  "The last admin cannot be removed or demoted": "The last admin cannot be removed or demoted",
+  "Framework version retirement": "Framework version retirement",
+  "This release no longer runs context versions {versions}. Affected steps: {unsupported}. Affected flows: {flows}. Update each step to a qadam version built against a supported framework version.": "This release no longer runs context versions {versions}. Affected steps: {unsupported}. Affected flows: {flows}. Update each step to a qadam version built against a supported framework version.",
+  "and {remaining} more": "and {remaining} more"
 }
