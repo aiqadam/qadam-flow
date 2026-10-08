@@ -30,7 +30,7 @@ Then answer, before writing code:
 
 - Define Zod schemas + `z.infer` types in `src/lib/{domain}/`
 - Export from `src/index.ts` barrel
-- Bump version in `package.json` (patch for fix, minor for new export)
+- Add a changeset (patch for a fix, minor for a new export)
 
 ## Step 2: Server (`packages/server/api`)
 

@@ -10,8 +10,8 @@ description: Builds Qadam Flow qadams (integrations) with actions and triggers. 
 | Mode | What you're doing | Where to go |
 |---|---|---|
 | **New piece** | Building an integration for an app that has no piece yet | Full 5-step workflow below |
-| **Add action / trigger** | An existing qadam needs another operation or event | Skip Steps 1–3. Open the existing piece, **match its conventions** (its `common/` helpers, auth access, file naming, error handling), then jump to Step 4 IMPLEMENT and Step 5 WIRE & VERIFY. Bump the piece version. |
-| **Fix a bug** | An existing action/trigger misbehaves | Reproduce → read the offending file *and its `common/` helpers* → smallest fix that matches surrounding style → Step 5 VERIFY. Bump the piece version. |
+| **Add action / trigger** | An existing qadam needs another operation or event | Skip Steps 1–3. Open the existing piece, **match its conventions** (its `common/` helpers, auth access, file naming, error handling), then jump to Step 4 IMPLEMENT and Step 5 WIRE & VERIFY. Declare a changeset for the piece. |
+| **Fix a bug** | An existing action/trigger misbehaves | Reproduce → read the offending file *and its `common/` helpers* → smallest fix that matches surrounding style → Step 5 VERIFY. Declare a changeset for the piece. |
 
 **Golden rule for existing-piece modes:** the piece you're editing is the source of truth, not these templates. If the piece already has a helper, a particular auth access pattern, or a way of shaping output, follow *that*. Reach into the reference files only for a pattern the piece doesn't already demonstrate.
 
@@ -157,7 +157,7 @@ Common TS errors: missing import in `src/index.ts`, missing `tsconfig.base.json`
 
 ## Versioning an existing piece
 
-Every change to an existing piece needs a version bump in its `package.json`. Without it, live flows never pick up your change.
+Every change to an existing piece needs a changeset naming it and its level. Without it the release PR never raises the version, and live flows never pick up your change.
 
 Which level, and how to apply it, is the **`versioning` skill** — open it now; it is mandatory for any change to a qadam. What each level promises (the qadam row of ADR-0001's table, the `0.x` shift, the behaviour question) is [`.agents/rules/versioning.md`](../../rules/versioning.md). Neither is repeated here. The one qadam-specific trap they point back to is below.
 
@@ -168,9 +168,9 @@ A flow built against the old schema stores its configuration once, at authoring 
 So a new prop on an already-shipped action or trigger must be one of:
 
 - **Optional** (`required: false` or the key omitted) — the safe default for almost every new prop.
-- **Required, with a `defaultValue` that reproduces the exact behavior a flow authored before the prop existed already had.** This is what `executionMode` on `callFlow` did when it was added in PR #365 (addressing #363): `defaultValue: 'queue'`, matching the only behavior that existed before — the `defaultValue` pattern is worth copying. (That PR did not itself bump `qadam-subflows`'s version, which is a pre-existing gap in that PR's process, not something to copy — bump yours, per the `versioning` skill.)
+- **Required, with a `defaultValue` that reproduces the exact behavior a flow authored before the prop existed already had.** This is what `executionMode` on `callFlow` did when it was added in PR #365 (addressing #363): `defaultValue: 'queue'`, matching the only behavior that existed before — the `defaultValue` pattern is worth copying. (That PR did not itself bump `qadam-subflows`'s version, which is a pre-existing gap in that PR's process, not something to copy — declare yours in a changeset, per the `versioning` skill.)
 
-A required prop with **no** default is a breaking change to the piece, not an oversight to catch in review after the fact — bump the **breaking slot** (minor on `0.x`, major from `1.0.0` on) in the *same* commit/PR that adds the prop. `npm run check-required-prop-defaults` (`tools/ci/check-required-prop-defaults.mjs`) enforces the mechanical half of this in CI: it diffs the pull request's own base and head, and fails if a prop becomes required with no default on an action/trigger that already existed before the PR, unless the qadam's own `package.json` version moved into the breaking slot in the same diff. When the base version is `0.x`, a minor increase counts (`0.4.15` → `0.5.0`); otherwise only a major increase does. A major increase always counts, so `0.4.15` → `1.0.0` also passes the check. Its header comment documents exactly what it can and cannot see — most importantly, it cannot audit props that already shipped this way before the check existed, and it cannot see a change that never went through a pull request.
+A required prop with **no** default is a breaking change to the piece, not an oversight to catch in review after the fact — declare the **breaking slot** (minor on `0.x`, major from `1.0.0` on) for the qadam in a changeset in the *same* PR that adds the prop. `npm run check-required-prop-defaults` (`tools/ci/check-required-prop-defaults.mjs`) enforces the mechanical half of this in CI: it diffs the pull request's own base and head, and fails if a prop becomes required with no default on an action/trigger that already existed before the PR, unless a changeset added in the same diff declares the breaking slot for the qadam's base version. When the base version is `0.x`, a minor declaration counts (`0.4.15` → `0.5.0`); otherwise only a major declaration does. A major declaration always counts, so `0.4.15` → `1.0.0` also passes the check. A hand-edited `version` no longer satisfies it (gate 1 fails hand edits). Its header comment documents exactly what it can and cannot see — most importantly, it cannot audit props that already shipped this way before the check existed, and it cannot see a change that never went through a pull request.
 
 Giving a required prop a default does **not**, by itself, make already-published flows revalidate as configured — the resolver backfilling a schema default into a flow's already-stored `step.settings.input` is separate, unresolved machinery (tracked outside this ticket). What this rule and its CI check guarantee is narrower and entirely within a qadam author's control: the *schema* a new required prop declares does not, by construction, orphan the value a flow built under the old schema already had.
 
@@ -315,7 +315,7 @@ rather than assumed safe, so a new conditional action is visible without an API 
 3. **Auth lives in `src/lib/auth.ts`** — define there, import in actions/triggers via `import { myAppAuth } from '../auth'`. Do NOT re-export from `index.ts`.
 4. **Always provide `sampleData`** on triggers — even `{}`.
 5. **Build AND lint must both pass** — lint failures (unused imports, `any`, unused vars) block CI even when build is green.
-6. **Bump version on every existing-piece change** — the `versioning` skill. Skipping means flows never get your fix.
+6. **Declare a changeset on every existing-piece change** — the `versioning` skill. Skipping means the release never raises the version, and flows never get your fix.
 7. **Never import `@aiqadam/shared`** — qadams import only `@aiqadam/qadams-framework` and `@aiqadam/qadams-common` (ADR-0001). `QadamCategory`, `isNil`, `MarkdownVariant` and every other qadam-facing `shared` symbol come from `@aiqadam/qadams-framework`; a missing one is added to `packages/qadams/framework/src/lib/shared-reexports.ts`. Lint fails on the import.
 
 ---

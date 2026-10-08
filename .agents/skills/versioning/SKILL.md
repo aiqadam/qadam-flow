@@ -9,10 +9,6 @@ description: Chooses and applies the version level for a change to a versioned p
 the layer table, the `0.x` shift, the caret-range promise, compatibility floors and the framework
 support window. This skill is the procedure. Read the rule first; this file does not repeat its tables.
 
-**Transition status.** Changesets (#796) and the CI gates (#797) are not in the repo yet. Steps 1–4
-are how a level is chosen and applied today. Steps 5–7 describe ADR-0001's target and do nothing
-until those tickets land; #796 replaces step 4 and fills in step 5.
-
 ## 1. List the versioned packages the diff touches
 
 ```bash
@@ -59,32 +55,45 @@ Take the higher one.
 One line per package: what an existing step would notice (or "nothing"), and the level that follows.
 No gate checks this (ADR-0001); the line is how a reviewer checks it.
 
-## 4. Apply the level — today, by hand
+## 4. Apply the level — a changeset, never a hand edit
 
-1. Check what the branch already did: `git diff origin/main...HEAD -- <package>/package.json`. One
-   bump per branch: if it already reaches the level you need, stop; if it is lower, raise it from
-   the `origin/main` version, not on top of the branch's bump.
-2. Edit `version` in the package's own `package.json`, then `bun install` and commit the matching
-   `version` line in `bun.lock` with it (#795 is a recent example).
-3. Changed a qadam's dependencies? `npm run check-qadam-version-bumps` must pass. Changed a prop?
-   `npm run check-required-prop-defaults` must pass. On a Renovate branch `qadam-version-bump.yml`
-   makes the bump — do not add a second one.
-4. A platform change that needs operator action: give the PR a `type!:` title — squash merges use it
-   as the commit subject, which is what the gate reads — or put a `BREAKING CHANGE:` footer in a
-   commit, and write the `docs/install/configuration/breaking-changes.mdx` section;
-   `breaking-change-gate` checks it at release.
+1. Check what the branch already did: `git diff origin/main...HEAD -- .changeset/`. One changeset
+   per package is enough; if it already declares the level you need, stop.
+2. Add the changeset (step 5). Never edit `version` in a package's own `package.json` (or the
+   root): only the release PR raises versions, and gate 1 fails a hand edit.
+3. Changed a qadam's dependencies? Gate 1 requires the changeset. Changed a prop?
+   `npm run check-required-prop-defaults` must pass — it accepts the breaking slot declared in a
+   changeset (a hand-edited version fails gate 1 instead). On a Renovate branch
+   `renovate-changeset.yml` writes the changeset — do not add a second one.
+4. A platform change that needs operator action: a `"@aiqadam/platform": major` changeset plus the
+   `docs/install/configuration/breaking-changes.mdx` entry — gate 4 fails the PR without the pair.
+   `breaking-change-gate` re-checks the version jump at release; a `type!:` subject still counts as
+   a breaking marker there, but the changeset is what raises the version.
 
-## 5. Write a changeset — after #796 (stub)
+## 5. Write the changeset
 
-Not available yet. Under ADR-0001 a PR adds a `.changeset/*.md` naming each package, its level and
-one line on what changed. The file format, the command and how the release PR consumes it are
-#796's to define, and it fills in this step. Do not create `.changeset/` by hand before then:
-nothing reads it, and gate 1 does not exist to require it.
+A PR adds a `.changeset/*.md` naming each package, its level and one line on what changed:
 
-## 6. When gate 2 disagrees — after #797
+```md
+---
+"@aiqadam/qadam-slack": minor
+---
 
-Gate 2 computes a level from the public `.d.ts` diff (SDK) or the actions / triggers / props /
-output-schema diff (qadams) and fails when the declared level is lower.
+Add the "Schedule message" action.
+```
+
+`npx changeset` writes one interactively (or write the file by hand). The release PR
+("chore(release): version packages") collects them, raises the versions and their in-repo
+dependents, writes the changelogs and deletes the files; it never publishes or tags — a maintainer
+tags the merged result, which starts `release.yml`. Format and mechanics: `.changeset/README.md`
+and `tools/scripts/changesets/version.mjs`.
+
+## 6. When gate 2 disagrees
+
+Gate 2 computes a level from the actions / triggers / props / output-schema diff (qadams) and fails
+when the declared level is lower. The SDK `.d.ts` half is not implemented yet (TODO in
+`tools/ci/check-changeset-levels.mjs`), so an SDK change is reported as "not computed" and only
+gate 1 applies.
 
 - Assume CI is right first. Read what it reports; if it found a removal or a narrowing you missed,
   raise the level.

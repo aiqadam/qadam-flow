@@ -76,35 +76,3 @@ tag is `v1.1.0` (#326): leave it alone outside a release. `@aiqadam/shared` beco
 into `qadams-framework` (#799). Gates 1–7 (#797) and gate 8 (#801, landed) are required; the maintainer-only
 `semver-override` label bypasses gate 2 alone, when CI over-estimates the level.
 
-## Until #796 and #797 land
-
-**Most of the section above does not exist yet** — no `.changeset/`, no release PR, no
-`semver-override` label; the support table and gate 8 landed in #801 (PR #814), and the rest of the
-gates arrive with #797. The PR that lands them deletes this section and rewrites, in the same pass,
-every statement that a version is bumped by hand: the last two sentences of AGENTS.md's
-"Published-package version bumps"; CONTRIBUTING.md's "How a version moves today" bullet and its
-PR-checklist line; the first paragraph of `packages/shared/AGENTS.md`; the `versioning` skill's
-transition note, step 4 and step 5; the qadam-builder skill's "Versioning an existing piece"
-opening, critical reminder 6, its mode-table "Bump the piece version." rows and its required-prop
-breaking-slot paragraph; and in `.opencodereview/rules/`, the repo-wide block (identical in
-`10`, `20`, `30`, `40`, `60` and `90-*.md`), `40-shared.md`'s "Version bump" and `60-qadams.md`'s
-"Version bump on every existing-piece change". Until then:
-
-- **Bump by hand, in the same PR.** A change to what `shared`, `qadams-framework`, `qadams-common`
-  or a qadam ships — its `src/**` (`i18n` included) or its own `package.json` — raises that
-  package's own `version`, at the level above. Check first whether the branch already bumped it;
-  one bump per branch is enough. A comment-only `src/` change still needs one.
-- **Nothing cascades.** A `shared` bump does not bump `framework` or `common`; the release PR's
-  internal-dependency bumps will.
-- **What CI catches today — and nothing else.** `check-qadam-version-bumps` (required, in
-  `_verify.yml`) fails when the dependency section of any `packages/qadams/**/package.json` — a
-  qadam, `framework` or `common` — changed without a version increase, and
-  `qadam-version-bump.yml` applies that bump on Renovate's branches. `check-required-prop-defaults`
-  fails a newly required prop with no default unless the version moved into the breaking slot. At
-  release, `breaking-change-gate` wants a `breaking-changes.mdx` section when a commit in the range
-  has a `type!:` subject (the PR title, after a squash merge) or a `BREAKING CHANGE:` footer, and `version-tag-gate` wants the tag to equal root
-  `package.json`. A `src/` change with no bump is caught by nothing: `packagePrePublishChecks` diffs
-  against `origin/main`, which on the publish path is the commit itself (#783), so an unbumped
-  package reads as already published and is skipped without a word.
-- **Do not move a qadam to `1.0.0` on your own.** Whether "each at its next change" starts before
-  the first changesets release is not decided; ask a maintainer.

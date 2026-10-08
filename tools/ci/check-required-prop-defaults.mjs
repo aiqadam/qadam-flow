@@ -22,22 +22,23 @@
 // checks out with `fetch-depth: 0` and already threads `PR_BASE_SHA`/`PR_HEAD_SHA` through to
 // tools/scripts/check-migration-rollback.ts for exactly this reason. This script reuses that
 // same range. It catches a required-prop-with-no-default that a SINGLE pull request introduces
-// on an action/trigger that already existed before that PR, without also moving the qadam's own
-// package.json version into the breaking slot in the same range.
+// on an action/trigger that already existed before that PR, without also declaring the qadam's
+// breaking slot in the same range — a `.changeset/*.md` added by the PR (ADR-0001); a hand-edited
+// `version` fails gate 1 instead.
 //
 // ---------------------------------------------------------------------------
 // THE BREAKING SLOT DEPENDS ON THE BASE VERSION (#670)
 // ---------------------------------------------------------------------------
-// AGENTS.md ("Published-package version bumps") puts the breaking slot on MINOR while a package
-// is on 0.x and on MAJOR from 1.0.0 on. So the bar is read off the BASE version, the one the PR
-// started from:
-// - base major is 0: a minor increase counts (0.4.15 -> 0.5.0), and so does any major increase
-//   (0.4.15 -> 1.0.0). The skill does not ask for the latter, but it is still a bump past the
-//   breaking slot, and this script does not second-guess a stronger bump.
-// - base major is 1 or more: only a major increase counts (1.1.6 -> 2.0.0). 1.1.6 -> 1.2.0 fails.
-// A patch-only bump fails on either line. Before #670 this script required a major increase
-// everywhere, which made a 0.x qadam that followed AGENTS.md fail, and passed only on the
-// wrong-slot 1.0.0 bump.
+// AGENTS.md ("Published-package version bumps") and ADR-0001 put the breaking slot on MINOR while
+// a package is on 0.x and on MAJOR from 1.0.0 on. So the bar is read off the BASE version, the one
+// the PR started from:
+// - base major is 0: a minor or major declaration counts (0.4.15 -> 0.5.0), and a stronger one is
+//   not second-guessed.
+// - base major is 1 or more: only a major declaration counts (1.1.6 -> 2.0.0). 1.1.6 -> 1.2.0 fails.
+// A patch-only declaration fails on either line. The declaration is a `.changeset/*.md` added by
+// the PR; a version move into the slot also passes, since it is the same level (the release PR is
+// where that happens). Before #670 this script required a major increase everywhere, which made a
+// 0.x qadam that followed AGENTS.md fail, and passed only on the wrong-slot 1.0.0 bump.
 //
 // ---------------------------------------------------------------------------
 // WHAT THIS PROVABLY CANNOT DO — read before trusting a clean run
@@ -107,11 +108,12 @@
 //   old), this is a diff gate: it only stops a NEW instance of the shape from landing. A required
 //   prop with no default that already shipped before this check existed will never be flagged
 //   retroactively.
-// - A bump into the breaking slot is treated as sufficient to pass. This script does not verify the
-//   bump is accompanied by a migration path, a changelog entry, or that `minimumSupportedRelease`
-//   was reconsidered — only that the qadam's own package.json version moved into the breaking slot
-//   (see "THE BREAKING SLOT DEPENDS ON THE BASE VERSION" above) in the same range. Only the
-//   numeric major and minor components are read; a prerelease or build suffix is not compared.
+// - A breaking-slot declaration is treated as sufficient to pass. This script does not verify it is
+//   accompanied by a migration path, a changelog entry, or that `minimumSupportedRelease` was
+//   reconsidered — only that the qadam's own package.json version moved into the breaking slot, or
+//   that a changeset added by the range declares that level (see "THE BREAKING SLOT DEPENDS ON THE
+//   BASE VERSION" above). Only the numeric major and minor components are read; a prerelease or
+//   build suffix is not compared.
 //   That is the same bar "Versioning an existing piece" already sets for this case; this script
 //   does not raise that bar, only enforces it mechanically. If the qadam's `package.json` cannot
 //   be read at either end of the range, or its version's major/minor cannot be parsed, the prop
@@ -194,13 +196,13 @@ const main = () => {
   const violations = files.flatMap((file) => checkFile({ file, range }))
 
   if (violations.length === 0) {
-    console.log(`[check-required-prop-defaults] OK — checked ${files.length} modified file(s) in ${range.label}, no unversioned newly-required prop found.`)
+    console.log(`[check-required-prop-defaults] OK — checked ${files.length} modified file(s) in ${range.label}, no newly-required prop without a breaking-slot declaration found.`)
     return
   }
 
-  console.error(`[check-required-prop-defaults] ${violations.length} newly-required prop(s) with no default, not paired with a breaking-slot version bump:\n`)
+  console.error(`[check-required-prop-defaults] ${violations.length} newly-required prop(s) with no default, not paired with a breaking-slot declaration:\n`)
   for (const violation of violations) {
-    console.error(`  ${violation.file} — prop '${violation.propKey}' on ${violation.factory}('${violation.actionName}') became required with no defaultValue, but ${violation.packageJsonPath} did not move into the breaking slot (${violation.baseVersion} -> ${violation.headVersion}; ${violation.requiredBump})`)
+    console.error(`  ${violation.file} — prop '${violation.propKey}' on ${violation.factory}('${violation.actionName}') became required with no defaultValue, and no changeset in this PR declares the breaking slot for ${violation.packageJsonPath} (${violation.baseVersion} -> ${violation.headVersion}; ${violation.requiredBump})`)
   }
   console.error('\nEither give the prop a `defaultValue` that preserves the previous behaviour, drop `required: true`, or declare the breaking slot for the qadam in a changeset in this same change: minor while it is on 0.x, major from 1.0.0 on (ADR-0001; a hand-edited version fails check-changesets.mjs) — see "Versioning an existing piece" in .agents/skills/qadam-builder/SKILL.md.')
   process.exitCode = 1
