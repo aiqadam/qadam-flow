@@ -47,7 +47,7 @@ Once a version is published, its number names that code forever. npm refuses to 
 
 ## Why the level matters: the caret range
 
-Qadam Flow treats any version inside the caret range of a pinned one as a drop-in replacement: `^1.2.3` covers everything below `2.0.0`, and `^0.3.1` everything below `0.4.0`. When the platform has to move a step's version without asking anyone — for example because the exact version is not available — it moves it only inside that range. A breaking change shipped as a PATCH therefore reaches flows that nobody chose to upgrade.
+Qadam Flow treats any version inside the caret range of a pinned one as a drop-in replacement: `^1.2.3` covers everything below `2.0.0`, and `^0.3.1` everything below `0.4.0`. When the platform has to move a step's version without asking anyone — for example because the exact version is not available — it moves it only inside that range. (One migration that healed pins which could no longer be resolved at all ran once per flow version and did cross it — see [When a pinned version is not available](/install/architecture/qadam-syncing#when-a-pinned-version-is-not-available).) A breaking change shipped as a PATCH therefore reaches flows that nobody chose to upgrade.
 
 Upgrades across the range are a person's decision. The builder's version dialog warns whenever an upgrade crosses a MINOR or MAJOR boundary.
 

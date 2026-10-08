@@ -55,7 +55,7 @@ under `.agents/` only. `npm run check-agent-docs` fails on either.
 | --- | --- | --- | --- |
 | `AGENTS.md` (this file) + per-package `AGENTS.md` | — | Every session | Rules every task needs |
 | `.agents/features/*.md` | 35–221 lines each | Before modifying a module | Entity schemas, services, data flows |
-| `.agents/rules/*.md` | 2–94 lines each | Every session — all of them, always | Non-negotiable invariants and process gates (full index below) |
+| `.agents/rules/*.md` | 2–105 lines each | Every session — all of them, always | Non-negotiable invariants and process gates (full index below) |
 | `.agents/skills/*/SKILL.md` | 12–1100 lines each | **Before the first line of code**, whenever the task matches a skill's trigger | 14 step-by-step workflows. Trigger registry: [`skill-usage.md`](.agents/rules/skill-usage.md) |
 | `.agents/agents/*.md` | 25–80 lines each | **Before you report a code change complete** | 5 subagent charters. Delegation matrix: [`agent-delegation.md`](.agents/rules/agent-delegation.md) |
 | `.agents/docs/*.md` | deep dives | On trigger (see [Verification](#verification)) | Verification pitfalls, CI node_modules cache, dependency updates |
@@ -78,7 +78,7 @@ is in force in every session:
 | [`read-the-ticket.md`](.agents/rules/read-the-ticket.md) | Writing code against an issue body you did not finish reading |
 | [`safe-http.md`](.agents/rules/safe-http.md) | An unfiltered outbound request (SSRF) |
 | [`skill-usage.md`](.agents/rules/skill-usage.md) | Re-deriving a workflow a skill already encodes |
-| [`versioning.md`](.agents/rules/versioning.md) | Shipping a change to a versioned package at the wrong level, or with no bump while bumps are still made by hand |
+| [`versioning.md`](.agents/rules/versioning.md) | Shipping a change to a versioned package at the wrong level, or without the version change its consumers rely on |
 
 ## Architecture (Non-Obvious Rules)
 

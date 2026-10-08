@@ -34,7 +34,9 @@ ADR disagree, the ADR wins. The procedure — choosing a level, applying it — 
 A version inside `^` of a pin (`^1.2.3` → `<2.0.0`, `^0.3.1` → `<0.4.0`) is a drop-in replacement at
 the contract level. Anything that moves a pin automatically may move it only inside that range —
 #424's bundled fallback (`satisfiesRequestedRange`) is the model. Moving a pin across it is a user
-action in the builder, never a resolver, migration or job.
+action in the builder, never a resolver, migration or job. The one existing exception is the
+one-off heal `migrate-v31-heal-unresolvable-qadam-pins.ts` (#474), which still runs once per flow
+version and may cross the range; do not add a second.
 
 ## Compatibility floors
 
@@ -64,7 +66,9 @@ support table and gate 8, which fails a removal the table does not allow, are #8
 A PR that changes a versioned package adds a `.changeset/*.md` naming each package, its level and
 one line on what changed. The release PR collects them, raises versions (dependents inside the repo
 included), writes changelogs and tags. Root `package.json` holds the last released version; images
-built from `main` report `<next>-main.<n>` (#798). Until #798 lands it reads `2.0.0` while the latest
+built from `main` report `<next>-main.<n>` (#798). How a `main` build versions *changed package* code
+is [ADR-0004](../../adr/0004-main-builds-give-changed-packages-their-own-prerelease-versions.md),
+still `proposed` and so not binding (snapshot `-main.<n>` versions, gate 9). Until #798 lands it reads `2.0.0` while the latest
 tag is `v1.1.0` (#326): leave it alone outside a release. `@aiqadam/shared` becomes private and bundled
 into `qadams-framework` (#799). Gates 1–7 (#797) and gate 8 (#801) are required; the maintainer-only
 `semver-override` label bypasses gate 2 alone, when CI over-estimates the level.
@@ -72,8 +76,14 @@ into `qadams-framework` (#799). Gates 1–7 (#797) and gate 8 (#801) are require
 ## Until #796 and #797 land
 
 **None of the section above exists yet** — no `.changeset/`, no release PR, no gates 1–3 or 6–8, no
-`semver-override` label. Delete this section in the PR that lands them, with what points at it: the
-AGENTS.md pointer's last two sentences and step 4 of the `versioning` skill. Until then:
+`semver-override` label. The PR that lands them deletes this section and rewrites, in the same pass,
+every statement that a version is bumped by hand: the last two sentences of AGENTS.md's
+"Published-package version bumps"; CONTRIBUTING.md's "How a version moves today" bullet and its
+PR-checklist line; the first paragraph of `packages/shared/AGENTS.md`; the `versioning` skill's
+transition note, step 4 and step 5; the qadam-builder skill's "Versioning an existing piece"
+opening and critical reminder 6; and in `.opencodereview/rules/`, the repo-wide block (identical in
+`10`, `20`, `30`, `40`, `60` and `90-*.md`), `40-shared.md`'s "Version bump" and `60-qadams.md`'s
+"Version bump on every existing-piece change". Until then:
 
 - **Bump by hand, in the same PR.** A change to what `shared`, `qadams-framework`, `qadams-common`
   or a qadam ships — its `src/**` (`i18n` included) or its own `package.json` — raises that
@@ -82,11 +92,12 @@ AGENTS.md pointer's last two sentences and step 4 of the `versioning` skill. Unt
 - **Nothing cascades.** A `shared` bump does not bump `framework` or `common`; the release PR's
   internal-dependency bumps will.
 - **What CI catches today — and nothing else.** `check-qadam-version-bumps` (required, in
-  `_verify.yml`) fails when a qadam's dependency section changed without a version increase, and
+  `_verify.yml`) fails when the dependency section of any `packages/qadams/**/package.json` — a
+  qadam, `framework` or `common` — changed without a version increase, and
   `qadam-version-bump.yml` applies that bump on Renovate's branches. `check-required-prop-defaults`
   fails a newly required prop with no default unless the version moved into the breaking slot. At
   release, `breaking-change-gate` wants a `breaking-changes.mdx` section when a commit in the range
-  is marked `type!:` or `BREAKING CHANGE:`, and `version-tag-gate` wants the tag to equal root
+  has a `type!:` subject (the PR title, after a squash merge) or a `BREAKING CHANGE:` footer, and `version-tag-gate` wants the tag to equal root
   `package.json`. A `src/` change with no bump is caught by nothing: `packagePrePublishChecks` diffs
   against `origin/main`, which on the publish path is the commit itself (#783), so an unbumped
   package reads as already published and is skipped without a word.

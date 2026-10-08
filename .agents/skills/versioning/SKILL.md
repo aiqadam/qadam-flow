@@ -69,9 +69,10 @@ No gate checks this (ADR-0001); the line is how a reviewer checks it.
 3. Changed a qadam's dependencies? `npm run check-qadam-version-bumps` must pass. Changed a prop?
    `npm run check-required-prop-defaults` must pass. On a Renovate branch `qadam-version-bump.yml`
    makes the bump — do not add a second one.
-4. A platform change that needs operator action: mark the commit `type!:` or add a
-   `BREAKING CHANGE:` footer, and write the `docs/install/configuration/breaking-changes.mdx`
-   section; `breaking-change-gate` checks it at release.
+4. A platform change that needs operator action: give the PR a `type!:` title — squash merges use it
+   as the commit subject, which is what the gate reads — or put a `BREAKING CHANGE:` footer in a
+   commit, and write the `docs/install/configuration/breaking-changes.mdx` section;
+   `breaking-change-gate` checks it at release.
 
 ## 5. Write a changeset — after #796 (stub)
 
