@@ -109,4 +109,4 @@ Immutability of accepted ADRs is checked in review.
 | [`0001`](0001-everything-versioned-follows-semver-declared-with-changesets.md) | Everything versioned in the repo follows semver, declared with changesets and enforced in CI | `accepted` |
 | [`0002`](0002-two-framework-majors-supported-for-at-least-12-months.md) | The platform supports two framework majors for at least 12 months, enforced by a CI gate | `accepted` |
 | [`0003`](0003-official-qadams-run-from-a-versioned-local-store.md) | Official qadams run from a versioned local store, on libraries the platform provides | `accepted` |
-| [`0004`](0004-main-builds-give-changed-packages-their-own-prerelease-versions.md) | Builds from `main` give changed packages their own prerelease versions, kept in the instance store and never published to npm | `proposed` |
+| [`0004`](0004-main-builds-give-changed-packages-their-own-prerelease-versions.md) | Builds from `main` give changed packages their own prerelease versions; qadam snapshots stay in the instance store and are never published | `proposed` |
