@@ -131,7 +131,7 @@ export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag, pack
   }
 
   if (!skipRegistryCheck) {
-    const packageAlreadyPublished = await packagePrePublishChecks(path);
+    const packageAlreadyPublished = await packagePrePublishChecks({ path });
     if (packageAlreadyPublished) {
       // No tarball is produced, so in pack mode this package simply does not appear in the
       // publish manifest and the publishing job never sees it. That is what keeps a re-run

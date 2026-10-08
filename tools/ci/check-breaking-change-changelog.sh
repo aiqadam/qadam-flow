@@ -30,7 +30,9 @@
 # ---------------------------------------------------------------------------
 # Guarantees: if any commit in the released range *declares itself* breaking —
 # conventional-commit `type!:` subject, or a `BREAKING CHANGE:` /
-# `BREAKING-CHANGE:` footer — then the changelog file must have been touched in
+# `BREAKING-CHANGE:` footer — or the tag is a platform MAJOR over the previous
+# release (ADR-0001 gate 4: under changesets a `"@aiqadam/platform": major`
+# changeset is what raises it), then the changelog file must have been touched in
 # that range AND must carry a non-empty `## <version>` section for the version
 # being released. Otherwise the release fails.
 #
@@ -299,6 +301,27 @@ main() {
 "
     fi
   done <<< "$commits"
+
+  # ADR-0001 gate 4: a platform MAJOR is itself a declaration that operators must act, whatever
+  # the commit subjects say. Under changesets the release PR raised the root version from a
+  # `"@aiqadam/platform": major` changeset, so the version bump is where that declaration
+  # arrives here. Only compared against a previous release; the first release has nothing to
+  # compare with and is covered by the commit markers alone, as before. Not exemptable by a
+  # commit trailer — only by the annotated-tag override below.
+  local prev_major version_major
+  if [ "$first_release" != true ]; then
+    prev_major="$(printf '%s' "${prev#v}" | cut -d. -f1)"
+    version_major="$(printf '%s' "$base_version" | cut -d. -f1)"
+    case "${prev_major}${version_major}" in
+      *[!0-9]*|'') die_unknown "cannot read the major version of ${prev} or ${tag}" ;;
+    esac
+    if [ "$version_major" -gt "$prev_major" ]; then
+      say "platform major: ${prev} -> ${tag} (ADR-0001 gate 4 — a major always needs an entry)"
+      say ''
+      breaking="${breaking}(platform major) ${prev} -> ${tag}
+"
+    fi
+  fi
 
   if [ -n "$exempted" ]; then
     say "breaking-marked commits exempted by a ${EXEMPT_TRAILER} trailer:"

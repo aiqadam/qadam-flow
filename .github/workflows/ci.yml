@@ -298,7 +298,49 @@ jobs:
   # "verify-run / Lint + unit test suite", while the ruleset requires the bare
   # context "Lint + Unit Tests". The gate job below carries that name.
   verify-run:
+    needs: semver-override
+    # `!cancelled()`, not the implicit success(): `semver-override` is skipped outside pull
+    # requests, and a skipped `needs:` would otherwise skip the required lint/test suite with it.
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/_verify.yml
+    with:
+      semver-override: ${{ needs.semver-override.outputs.verdict || 'absent' }}
+
+  # ADR-0001: the `semver-override` label bypasses gate 2, and only when a maintainer applied it.
+  # GitHub lets anyone with triage apply a label, so who applied it is checked here — from the
+  # issue events and the collaborator permission API, which is why this is its own job with
+  # `issues: read` rather than a step inside _verify.yml (a called workflow cannot hold more
+  # permissions than every one of its three callers grants). The verdict goes to the gate as an
+  # input; see tools/ci/resolve-semver-override.sh. Like `refresh-cache`, the label takes effect on
+  # the next push — `pull_request` here does not fire on `labeled` (see the top of this file).
+  semver-override:
+    name: Resolve the semver-override label
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      verdict: ${{ steps.resolve.outputs.verdict }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Resolve who applied the label
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'semver-override') }}
+        run: |
+          set -uo pipefail
+          verdict="$(tools/ci/resolve-semver-override.sh)"
+          echo "semver-override: ${verdict}"
+          echo "verdict=${verdict}" >> "$GITHUB_OUTPUT"
 
   # Required status check. Exists purely to keep the required context name stable
   # across the extraction above — same pattern, and the same reason, as the

@@ -306,6 +306,38 @@ d="$(build_release override-not-from-commit 'feat!: remove the thing' untouched 
 expect 1 'override trailer in a commit body is NOT a release override -> FAIL' \
   "$d" v1.1.0 'FAIL'
 
+echo "== ADR-0001 gate 4: a platform MAJOR needs an entry even with no commit marker =="
+
+# No `!` and no footer anywhere: under changesets the major comes from a
+# `"@aiqadam/platform": major` changeset, which the release PR turns into the
+# root version. The version jump itself is the declaration.
+d="$(build_release major-undocumented - untouched)"
+commit "$d" 'src/z.txt' 'fix: after the last release'
+git -C "$d" tag v2.0.0
+expect 1 'v1.1.0 -> v2.0.0 with no markers and no entry -> FAIL' "$d" v2.0.0 '(platform major) v1.1.0 -> v2.0.0'
+
+d="$(build_release major-documented - untouched)"
+commit "$d" 'src/z.txt' 'fix: after the last release'
+write_doc "$d" '---' 'title: "Breaking Changes"' '---' '' '## 2.0.0' '' '- operators must set AP_FOO' '' '## 1.0.0' '' '- the old one' ''
+commit "$d" "$doc_path" 'docs: record 2.0.0'
+git -C "$d" tag v2.0.0
+expect 0 'v1.1.0 -> v2.0.0 with a `## 2.0.0` entry -> PASS' "$d" v2.0.0 'PASS'
+
+d="$(build_release major-rc-undocumented - untouched)"
+commit "$d" 'src/z.txt' 'fix: after the last release'
+git -C "$d" tag v2.0.0-rc.1
+expect 1 'a major rc (v2.0.0-rc.1) is a major too -> FAIL' "$d" v2.0.0-rc.1 '(platform major)'
+
+d="$(build_release minor-no-entry - untouched)"
+commit "$d" 'src/z.txt' 'fix: after the last release'
+git -C "$d" tag v1.2.0
+expect 0 'a minor with no markers needs no entry -> PASS' "$d" v1.2.0 'PASS'
+
+d="$(build_release major-override - untouched)"
+commit "$d" 'src/z.txt' 'fix: after the last release'
+git -C "$d" tag -a v2.0.0 -m 'Release-Gate-Override: entry lands in #999' >/dev/null
+expect 0 'a platform major can be overridden only by the annotated tag -> PASS' "$d" v2.0.0 'OVERRIDDEN'
+
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

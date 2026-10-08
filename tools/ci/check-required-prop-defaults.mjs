@@ -158,6 +158,7 @@
 //
 import { execFileSync } from 'node:child_process'
 import ts from 'typescript'
+import { changesetGate } from './check-changesets.mjs'
 
 // `common` deliberately excluded — see "WHAT THIS PROVABLY CANNOT DO" above.
 const QADAM_ROOTS = ['packages/qadams/community', 'packages/qadams/core']
@@ -201,7 +202,7 @@ const main = () => {
   for (const violation of violations) {
     console.error(`  ${violation.file} — prop '${violation.propKey}' on ${violation.factory}('${violation.actionName}') became required with no defaultValue, but ${violation.packageJsonPath} did not move into the breaking slot (${violation.baseVersion} -> ${violation.headVersion}; ${violation.requiredBump})`)
   }
-  console.error('\nEither give the prop a `defaultValue` that preserves the previous behaviour, drop `required: true`, or bump the qadam\'s version in the breaking slot in this same change: minor while it is on 0.x, major from 1.0.0 on (AGENTS.md, "Published-package version bumps") — see "Versioning an existing piece" in .agents/skills/qadam-builder/SKILL.md.')
+  console.error('\nEither give the prop a `defaultValue` that preserves the previous behaviour, drop `required: true`, or declare the breaking slot for the qadam in a changeset in this same change: minor while it is on 0.x, major from 1.0.0 on (ADR-0001; a hand-edited version fails check-changesets.mjs) — see "Versioning an existing piece" in .agents/skills/qadam-builder/SKILL.md.')
   process.exitCode = 1
 }
 
@@ -293,6 +294,13 @@ const checkFile = ({ file, range }) => {
         // paid the cost this rule asks for).
         continue
       }
+      if (changesetDeclaresBreakingSlot({ packageJsonPath, range, baseVersion: versionCheck.baseVersion })) {
+        // ADR-0001: versions are raised by the release PR, and a hand-edited version now fails
+        // tools/ci/check-changesets.mjs, so the breaking slot is declared in a changeset instead.
+        // The same slot rule applies to the declared level. Gate 2 (check-changeset-levels.mjs)
+        // computes this same finding independently.
+        continue
+      }
 
       violations.push({
         file,
@@ -354,6 +362,25 @@ const checkBreakingBump = ({ packageJsonPath, range }) => {
     return { resolvable: true, inBreakingSlot, baseVersion, headVersion, requiredBump: 'on 0.x the breaking slot is a minor increase' }
   }
   return { resolvable: true, inBreakingSlot: head.major > base.major, baseVersion, headVersion, requiredBump: 'from 1.0.0 on the breaking slot is a major increase' }
+}
+
+// A changeset added in this range that names the qadam at the breaking slot for its BASE version:
+// minor or major on 0.x, major from 1.0.0 on.
+const changesetDeclaresBreakingSlot = ({ packageJsonPath, range, baseVersion }) => {
+  const head = readFileAt({ sha: range.head, file: packageJsonPath })
+  const base = parseMajorMinor({ version: baseVersion })
+  if (head === null || base === null) {
+    return false
+  }
+  let name
+  try {
+    name = JSON.parse(head).name
+  }
+  catch {
+    return false
+  }
+  const declared = changesetGate.declaredLevels({ changesets: changesetGate.readAddedChangesets({ range }) }).get(name)
+  return base.major === 0 ? declared === 'minor' || declared === 'major' : declared === 'major'
 }
 
 // A version whose major or minor component is not a plain non-negative integer cannot be placed

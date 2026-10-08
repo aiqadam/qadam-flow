@@ -15,15 +15,15 @@ const main = async () => {
   const qadamsMetadata = await findAllQadamsDirectoryInSource()
   const sharedDeps = ['packages/qadams/framework', 'packages/qadams/common']
 
-  const sharedResults = await Promise.all(sharedDeps.map(packagePrePublishChecks))
+  const sharedResults = await Promise.all(sharedDeps.map((path) => packagePrePublishChecks({ path })))
   const validationResults = await processBatches(
     qadamsMetadata.filter(p => !sharedDeps.includes(p)),
     10,
-    packagePrePublishChecks
+    (path) => packagePrePublishChecks({ path })
   )
 
   if (!sharedResults.every(p => p)) {
-    validationResults.push(await packagePrePublishChecks('packages/shared'))
+    validationResults.push(await packagePrePublishChecks({ path: 'packages/shared' }))
   }
 }
 
