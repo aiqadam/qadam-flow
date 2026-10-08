@@ -76,6 +76,11 @@
       "merge_system_rule": true
     },
     {
+      "path": "adr/**/*.md",
+      "rule": ".opencodereview/rules/80-adr.md",
+      "merge_system_rule": true
+    },
+    {
       "path": "**/*.{ts,tsx,js,jsx,mjs,cjs}",
       "rule": ".opencodereview/rules/90-typescript.md",
       "merge_system_rule": true

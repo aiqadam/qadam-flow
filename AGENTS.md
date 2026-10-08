@@ -58,6 +58,7 @@ under `.agents/` only. `npm run check-agent-docs` fails on either.
 | `.agents/skills/*/SKILL.md` | 12–1100 lines each | **Before the first line of code**, whenever the task matches a skill's trigger | 13 step-by-step workflows. Trigger registry: [`skill-usage.md`](.agents/rules/skill-usage.md) |
 | `.agents/agents/*.md` | 25–80 lines each | **Before you report a code change complete** | 5 subagent charters. Delegation matrix: [`agent-delegation.md`](.agents/rules/agent-delegation.md) |
 | `.agents/docs/*.md` | deep dives | On trigger (see [Verification](#verification)) | Verification pitfalls, CI node_modules cache, dependency updates |
+| `adr/*.md` | one decision each | **Before changing a contract, versioning/distribution, an external runtime dependency, or anything costly to reverse** | Architecture Decision Records — accepted decisions are binding. Standard, triggers and index: [`adr/README.md`](adr/README.md) |
 
 ### Every rule, and what it stops you doing
 
@@ -66,6 +67,7 @@ is in force in every session:
 
 | Rule | What it stops you doing |
 | --- | --- |
+| [`adr.md`](.agents/rules/adr.md) | Contradicting an accepted architecture decision, or making a new one without an ADR |
 | [`agent-delegation.md`](.agents/rules/agent-delegation.md) | Shipping code no second agent read, or briefing a subagent from memory |
 | [`bun-install.md`](.agents/rules/bun-install.md) | Running `npm install` |
 | [`data-isolation.md`](.agents/rules/data-isolation.md) | A query that does not filter by `projectId` / `platformId` |

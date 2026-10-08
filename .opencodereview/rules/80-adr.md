@@ -1,0 +1,18 @@
+# Architecture Decision Records
+
+Scope: `adr/**/*.md`. Source: `adr/README.md`, `.agents/rules/adr.md`.
+
+- A new ADR is `adr/NNNN-kebab-case-title.md`, numbered one above the highest existing file. A
+  reused, skipped or renumbered number is a finding.
+- Frontmatter must carry `status`, `date`, `deciders`, `issue`, `supersedes`, `superseded-by`, and
+  `status` must be one of `proposed`, `accepted`, `rejected`, `superseded`, `deprecated`.
+- Sections follow `adr/TEMPLATE.md`. Missing `Options considered`, or a rejected option with no
+  reason it lost, is a finding — that section is what stops the debate from restarting.
+- Editing the body of an `accepted` ADR is a finding. Only `status`, `superseded-by` and broken
+  links may change; a changed decision is a new ADR with `supersedes`, and the old one flips to
+  `superseded` in the same PR.
+- An agent-authored diff that sets `status: accepted` without named `deciders` is a finding.
+- The index table in `adr/README.md` must list every ADR file with its current status.
+- Claims need evidence: numbers say how they were measured, code is cited as `path:line` at a
+  commit, history cites the issue or PR. An unsupported "this is faster / safer / standard" is a
+  finding.
