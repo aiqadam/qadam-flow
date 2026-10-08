@@ -22,6 +22,24 @@
     "labels": ["security"],
     "automerge": false
   },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "The sandbox loads whatever isolated-vm the Dockerfiles install, so these pins must move with the manifests (#810).",
+      "managerFilePatterns": [
+        "/^Dockerfile$/",
+        "/^packages/server/worker/test/e2e/Dockerfile$/",
+        "/^\\.devcontainer/Dockerfile$/"
+      ],
+      "matchStrings": [
+        "ARG ISOLATED_VM_VERSION=(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)",
+        "bun i isolated-vm@(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)"
+      ],
+      "depNameTemplate": "isolated-vm",
+      "datasourceTemplate": "npm",
+      "versioningTemplate": "npm"
+    }
+  ],
   "packageRules": [
     {
       "description": "Qadam packages are published on npm and carry a manual version contract (AGENTS.md, 'Published-package version bumps'). Routine dependency updates inside one are left to humans. Security/OSV alerts bypass this file-scoped disable; the version bump such a fix needs is applied by the `Qadam version bumps` workflow (tools/ci/check-qadam-version-bumps.mjs), not by a Renovate rule — Renovate cannot do it here (bumpVersion is npm-only, and the bun manager supersedes npm).",
@@ -44,6 +62,12 @@
       "matchUpdateTypes": ["patch", "pin", "digest"],
       "automerge": true,
       "platformAutomerge": true
+    },
+    {
+      "description": "isolated-vm is the sandbox isolation boundary. Its Dockerfile pins must move in one PR with the manifests (see customManagers above), and it must never merge unattended — #771 merged while Docker Image and Sandbox e2e were red (#810).",
+      "matchPackageNames": ["isolated-vm"],
+      "groupName": "isolated-vm",
+      "automerge": false
     },
     {
       "description": "Families that must move together.",

@@ -76,7 +76,7 @@ RUN --mount=type=cache,target=/root/.npm \
 # Install isolated-vm globally (needed for sandboxes). Isolate mode resolves it only from here
 # (NODE_PATH=/usr/src/node_modules), fork mode from /usr/src/app/node_modules, so the two must be
 # the same version. The default must equal the root package.json pin; the build stage checks it (#641).
-ARG ISOLATED_VM_VERSION=7.0.0
+ARG ISOLATED_VM_VERSION=7.0.1
 RUN --mount=type=cache,target=/root/.bun/install/cache \
     cd /usr/src && bun install isolated-vm@${ISOLATED_VM_VERSION}
 
