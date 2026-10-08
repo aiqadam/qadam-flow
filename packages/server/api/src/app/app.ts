@@ -50,6 +50,8 @@ import { mcpOAuthApproveController } from './mcp/oauth/code/mcp-oauth-approve.co
 import { platformModule } from './platform/platform.module'
 import { projectMemberModule } from './project/project-member/project-member.module'
 import { projectModule } from './project/project-module'
+import { frameworkCensusMarking } from './qadams/census/framework-census-marking'
+import { frameworkCensusModule } from './qadams/census/framework-census-module'
 import { communityQadamsModule } from './qadams/community-qadam-module'
 import { startDevQadamWatcher } from './qadams/dev-qadam-watcher'
 import { qadamModule } from './qadams/metadata/qadam-metadata-controller'
@@ -155,6 +157,7 @@ export const setupApp = async (app: FastifyInstance): Promise<FastifyInstance> =
     await app.register(folderModule)
     await qadamMetadataService(app.log).setup()
     await app.register(qadamModule)
+    await app.register(frameworkCensusModule)
     await app.register(collaborativeModule)
     await app.register(flowModule)
     await app.register(flowRunModule)
@@ -289,6 +292,9 @@ The application started on ${await domainHelper.getPublicApiUrl({ path: '' })}, 
             )
         }
     }
+    // ADR-0002 (#803): after a release that retires a framework context version, say so at boot.
+    // Cheap — it logs the retirement, not a walk of every flow; the doctor command lists the steps.
+    frameworkCensusMarking(app.log).logRetirement()
     void startDevQadamWatcher(app)
 }
 
