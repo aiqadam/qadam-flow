@@ -1,5 +1,4 @@
-import { AppConnectionValueForAuthProperty, FilesService, Store } from '@aiqadam/qadams-framework';
-import { isNil } from '@aiqadam/shared';
+import { AppConnectionValueForAuthProperty, FilesService, Store, isNil } from '@aiqadam/qadams-framework';
 
 
 interface TimebasedPolling<AuthValue, PropsValue> {

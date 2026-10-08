@@ -10,6 +10,9 @@ import {
   AppConnectionValueForAuthProperty,
   ExtractQadamAuthPropertyTypeForMethods,
   ApFile,
+  assertNotNullOrUndefined,
+  isEmpty,
+  isNil,
 } from '@aiqadam/qadams-framework';
 import {
   HttpError,
@@ -20,7 +23,6 @@ import {
   httpClient,
   httpRequestBodyUtils,
 } from '../http';
-import { assertNotNullOrUndefined, isEmpty, isNil } from '@aiqadam/shared';
 import fs from 'fs';
 import mime from 'mime-types';
 import FormData from 'form-data';
