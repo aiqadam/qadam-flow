@@ -1,6 +1,9 @@
 # @aiqadam/shared
 
-Types, DTOs, Zod schemas, utilities. Version bump required on ANY change (patch for fixes, minor for new exports).
+Types, DTOs, Zod schemas, utilities. Every change bumps this package's own version, by hand, until
+changesets land (#796) — the level is the `versioning` skill's call, the rule is
+[`.agents/rules/versioning.md`](../../.agents/rules/versioning.md). It is still published and pinned
+exactly by every published qadam until #799 makes it private.
 
 ## Skills for this package
 

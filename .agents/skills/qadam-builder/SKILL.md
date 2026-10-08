@@ -159,18 +159,7 @@ Common TS errors: missing import in `src/index.ts`, missing `tsconfig.base.json`
 
 Every change to an existing piece needs a version bump in its `package.json`. Without it, live flows never pick up your change.
 
-Which segment you bump depends on the version the qadam is on now. The slot rule is the "Published-package version bumps" bullet in [AGENTS.md](../../../AGENTS.md#coding-conventions); this table only maps qadam changes onto it. Read the qadam's current `version` before choosing: AGENTS.md also lists which packages are already past `1.0.0`.
-
-| Change | On `0.x` | On `1.0.0` and later |
-|---|---|---|
-| **Breaking**: remove an action/trigger/prop; add a **required prop with no `defaultValue`** to an existing action/trigger (see below — give it a default instead if the old behavior can be preserved); change existing behavior | **minor** (`0.4.15` → `0.5.0`) | **major** (`1.1.6` → `2.0.0`) |
-| **Non-breaking addition**: add a new action or trigger; add an **optional** prop; add a **required prop that carries a `defaultValue`** reproducing the old behavior; add an output attribute | **patch** | **minor** |
-| **New export**: a new named export from the qadam's `src/index.ts` — most often a re-exported auth, sometimes a helper such as a client factory | **minor** | **minor** |
-| **Fix**: fix a bug | **patch** | **patch** |
-
-A new action or trigger is **not** a "new export" in AGENTS.md's sense. A qadam's package entry exports its `createQadam(...)` object, and roughly a third of qadams (76 of 238 when this was written) also export their auth or helpers from it (`slackAuth`, gmail's `getAccessToken`, sftp's `getClient`). Actions and triggers are entries inside the qadam object, reached only through the platform; no consumer imports them by name. Adding one is a non-breaking addition, which AGENTS.md puts on patch for `0.x`. The "new export" row is for when `src/index.ts` itself gains a named export.
-
-Rule of thumb: **any removal is breaking; a new required prop is breaking unless it carries a `defaultValue` that preserves prior behavior; everything else is non-breaking.** When in doubt, treat the change as breaking. A break goes in the breaking slot for the qadam's line: minor on `0.x`, major from `1.0.0` on. Do not take a `0.x` qadam to `1.0.0` just to signal a break; that is a separate decision (declaring the qadam stable), not the breaking slot.
+Which level, and how to apply it, is the **`versioning` skill** — open it now; it is mandatory for any change to a qadam. What each level promises (the qadam row of ADR-0001's table, the `0.x` shift, the behaviour question) is [`.agents/rules/versioning.md`](../../rules/versioning.md). Neither is repeated here. The one qadam-specific trap they point back to is below.
 
 ### Adding a prop to an action/trigger that has already shipped (#479)
 
@@ -179,9 +168,9 @@ A flow built against the old schema stores its configuration once, at authoring 
 So a new prop on an already-shipped action or trigger must be one of:
 
 - **Optional** (`required: false` or the key omitted) — the safe default for almost every new prop.
-- **Required, with a `defaultValue` that reproduces the exact behavior a flow authored before the prop existed already had.** This is what `executionMode` on `callFlow` did when it was added in PR #365 (addressing #363): `defaultValue: 'queue'`, matching the only behavior that existed before — the `defaultValue` pattern is worth copying. (That PR did not itself bump `qadam-subflows`'s version, which is a pre-existing gap in that PR's process, not something to copy — see the table above and bump yours.)
+- **Required, with a `defaultValue` that reproduces the exact behavior a flow authored before the prop existed already had.** This is what `executionMode` on `callFlow` did when it was added in PR #365 (addressing #363): `defaultValue: 'queue'`, matching the only behavior that existed before — the `defaultValue` pattern is worth copying. (That PR did not itself bump `qadam-subflows`'s version, which is a pre-existing gap in that PR's process, not something to copy — bump yours, per the `versioning` skill.)
 
-A required prop with **no** default is a breaking change to the piece, not an oversight to catch in review after the fact — bump the **breaking slot** (minor on `0.x`, major from `1.0.0` on), per the table above, in the *same* commit/PR that adds the prop. `npm run check-required-prop-defaults` (`tools/ci/check-required-prop-defaults.mjs`) enforces the mechanical half of this in CI: it diffs the pull request's own base and head, and fails if a prop becomes required with no default on an action/trigger that already existed before the PR, unless the qadam's own `package.json` version moved into the breaking slot in the same diff. When the base version is `0.x`, a minor increase counts (`0.4.15` → `0.5.0`); otherwise only a major increase does. A major increase always counts, so `0.4.15` → `1.0.0` also passes the check, even though the table above does not ask for it. Its header comment documents exactly what it can and cannot see — most importantly, it cannot audit props that already shipped this way before the check existed, and it cannot see a change that never went through a pull request.
+A required prop with **no** default is a breaking change to the piece, not an oversight to catch in review after the fact — bump the **breaking slot** (minor on `0.x`, major from `1.0.0` on) in the *same* commit/PR that adds the prop. `npm run check-required-prop-defaults` (`tools/ci/check-required-prop-defaults.mjs`) enforces the mechanical half of this in CI: it diffs the pull request's own base and head, and fails if a prop becomes required with no default on an action/trigger that already existed before the PR, unless the qadam's own `package.json` version moved into the breaking slot in the same diff. When the base version is `0.x`, a minor increase counts (`0.4.15` → `0.5.0`); otherwise only a major increase does. A major increase always counts, so `0.4.15` → `1.0.0` also passes the check. Its header comment documents exactly what it can and cannot see — most importantly, it cannot audit props that already shipped this way before the check existed, and it cannot see a change that never went through a pull request.
 
 Giving a required prop a default does **not**, by itself, make already-published flows revalidate as configured — the resolver backfilling a schema default into a flow's already-stored `step.settings.input` is separate, unresolved machinery (tracked outside this ticket). What this rule and its CI check guarantee is narrower and entirely within a qadam author's control: the *schema* a new required prop declares does not, by construction, orphan the value a flow built under the old schema already had.
 
@@ -241,7 +230,6 @@ import { myTrigger } from './lib/triggers/my-trigger';
 export const myApp = createQadam({
     displayName: 'My App',
     description: 'What the app does in one sentence.',
-    minimumSupportedRelease: '0.36.1',
     logoUrl: '/assets/qadams/my-app.png',
     categories: [QadamCategory.PRODUCTIVITY],
     auth: myAppAuth,
@@ -327,7 +315,7 @@ rather than assumed safe, so a new conditional action is visible without an API 
 3. **Auth lives in `src/lib/auth.ts`** — define there, import in actions/triggers via `import { myAppAuth } from '../auth'`. Do NOT re-export from `index.ts`.
 4. **Always provide `sampleData`** on triggers — even `{}`.
 5. **Build AND lint must both pass** — lint failures (unused imports, `any`, unused vars) block CI even when build is green.
-6. **Bump version on every existing-piece change** — see Versioning above. Skipping means flows never get your fix.
+6. **Bump version on every existing-piece change** — the `versioning` skill. Skipping means flows never get your fix.
 7. **Never import `@aiqadam/shared`** — qadams import only `@aiqadam/qadams-framework` and `@aiqadam/qadams-common` (ADR-0001). `QadamCategory`, `isNil`, `MarkdownVariant` and every other qadam-facing `shared` symbol come from `@aiqadam/qadams-framework`; a missing one is added to `packages/qadams/framework/src/lib/shared-reexports.ts`. Lint fails on the import.
 
 ---

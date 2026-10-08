@@ -28,23 +28,26 @@ the language rules OCR already merges from its system layer.
 - **Util files.** Multiple plain functions in one util file are grouped into a
   single exported `const` object; callers use `myUtils.fn1()`. React components
   are named exports instead.
-- **Published package versioning.** `@aiqadam/shared`, `@aiqadam/qadams-framework`,
-  `@aiqadam/qadams-common` and every qadam publish to npm, so a version is a public
-  contract. Any change under one of those packages must bump the version in that
-  package's own `package.json`: patch for fixes or non-breaking additions, minor for
-  new exports or behaviour changes. They are on `0.x`, where minor is the breaking
-  slot; on any package at or above `1.0.0` (currently only `qadam-assemblyai`) a break is major instead. A
-  diff without a version bump is a finding (note the diff may put the two files in
-  different review groups — check the changeset, not just this file).
+- **Published package versioning.** Every version is a semver promise to a named
+  consumer (ADR-0001; rule: `.agents/rules/versioning.md`). Until changesets land
+  (#796), any change under `@aiqadam/shared`, `@aiqadam/qadams-framework`,
+  `@aiqadam/qadams-common` or a qadam must raise that package's own `package.json`
+  version in the same branch. On `0.x` minor is the breaking slot and a new export is
+  minor; everything else is patch. From `1.0.0` (today only `qadam-assemblyai`) a break
+  is major, a new capability minor, a fix patch. For a qadam, a behaviour change an
+  existing step would notice is a break even with an unchanged schema. A diff without
+  a version bump, or at a level below what it changes, is a finding (the diff may put
+  the two files in different review groups — check the whole diff, not just this file).
 - **Agent knowledge lives in `.agents/`.** `.claude/` and `.cursor/` are
   git-symlink mirrors; editing a mirror instead of `.agents/` is a finding.
 <!-- repo-wide:end -->
 
-- **Version bump.** Any change under `packages/shared` must be accompanied by a
-  version bump in `packages/shared/package.json`: patch for fixes and
-  non-breaking additions, minor for new exports or behaviour changes. Check
-  whether the branch already bumps the version before flagging — one bump per
-  branch is enough. This is now a published package, so the bump is what a
+- **Version bump.** Until changesets land (#796), any change under
+  `packages/shared` must be accompanied by a version bump in
+  `packages/shared/package.json`, at the level `.agents/rules/versioning.md`
+  gives: on `0.x`, minor for a break or a new export, patch for anything else.
+  Check whether the branch already bumps the version before flagging — one bump
+  per branch is enough. This is now a published package, so the bump is what a
   consumer resolves and not bookkeeping: every published qadam pins an exact
   `@aiqadam/shared`, so a break here is a break in the whole catalogue's install
   graph. Flag a missing bump even for a comment-only diff — `packages/shared`

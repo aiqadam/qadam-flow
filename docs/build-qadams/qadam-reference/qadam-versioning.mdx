@@ -1,46 +1,74 @@
 ---
 title: "Qadam versioning"
 icon: "code-compare"
-description: "How to choose a version number when publishing a qadam"
+description: "What a qadam version promises to the flows that pin it, and how to choose the next one"
 ---
 
-Qadams are npm packages and follow **semantic versioning**.
+A qadam's version number is a promise to every flow that uses it. When someone adds a step, the step stores the exact version of the qadam it was built with. Whether a later version may ever run that step in its place is read from the version numbers, so choosing the next version is choosing what you promise those flows.
 
 <Note>
-This page is for *qadam authors* deciding what version number to publish. For how flows adopt new qadam versions, see [Qadam syncing & versioning](/install/architecture/qadam-syncing).
+This page is for *qadam authors*. For how a server loads qadams and how flows adopt new versions, see [Qadam syncing & versioning](/install/architecture/qadam-syncing). The rules on this page come from [ADR-0001](https://github.com/aiqadam/qadam-flow/blob/main/adr/0001-everything-versioned-follows-semver-declared-with-changesets.md) and [ADR-0002](https://github.com/aiqadam/qadam-flow/blob/main/adr/0002-two-framework-majors-supported-for-at-least-12-months.md); the repository keeps one copy of them in [`.agents/rules/versioning.md`](https://github.com/aiqadam/qadam-flow/blob/main/.agents/rules/versioning.md).
 </Note>
 
-## Semantic versioning
+## Choose the level
 
-The version number is `MAJOR.MINOR.PATCH`. Which segment a change goes in depends on whether the qadam has reached `1.0.0`:
+Qadams use semantic versioning, `MAJOR.MINOR.PATCH`. Which segment a change goes in depends on what it does to a flow that already uses the qadam, and on whether the qadam has reached `1.0.0`:
 
-| Change | On `0.x` | From `1.0.0` on |
+| The change | On `0.x` | From `1.0.0` on |
 |---|---|---|
-| Breaking change | MINOR (`0.4.15` → `0.5.0`) | MAJOR (`1.1.6` → `2.0.0`) |
-| New functionality that doesn't break existing flows | PATCH | MINOR |
-| New named export from the package entry (`src/index.ts`) | MINOR | MINOR |
-| Bug fix that doesn't change behavior | PATCH | PATCH |
+| **Breaking** — see the list below | MINOR (`0.4.15` → `0.5.0`) | MAJOR (`1.1.6` → `2.0.0`) |
+| **New capability** — a new action or trigger, an optional prop, a new output field | PATCH | MINOR |
+| New named export from the package entry (`src/index.ts`), such as an auth or a client factory | MINOR | MINOR |
+| **Fix** that changes none of the above | PATCH | PATCH |
 
-On `0.x`, MINOR is the breaking segment. npm reads versions the same way: the range `^0.4.15` accepts `0.4.16` but not `0.5.0`. The builder's version dialog also warns whenever an upgrade crosses a minor or major boundary, so a breaking change on `0.x` reaches the people upgrading a step with that warning. Don't move a `0.x` qadam to `1.0.0` only to mark a breaking change; `1.0.0` is the point where you declare the qadam stable.
+On `0.x`, MINOR is the breaking segment. npm reads versions the same way: `^0.4.15` accepts `0.4.16` but not `0.5.0`. When a change fits no row, choose the higher level: a version that claims too little breaks flows nobody touched, while one that claims too much only makes upgrades more cautious than they need to be.
 
-## Classifying changes
+### Breaking changes
 
-Use this checklist when deciding which segment to bump.
+A change is breaking when a flow that already uses the qadam, and that nobody edits, could fail or behave differently afterwards:
 
-### Breaking changes (MINOR on `0.x`, MAJOR from `1.0.0` on)
+- An action, trigger or prop is removed or renamed.
+- A required prop is added without a `defaultValue` that reproduces the previous behavior.
+- A type is narrowed — a dropdown loses an option, an input accepts less than it did.
+- The output changes shape — a field is removed, renamed or changes type.
+- **The behavior changes in a way an existing step would notice**, even if every prop and output stays the same. A trigger that starts rejecting requests it used to accept, or that delivers events by a different mechanism, is breaking.
 
-- Remove an existing action or trigger.
-- Add a required prop with no `defaultValue` to an existing action or trigger.
-- Remove an existing prop, whether required or optional.
-- Remove an attribute from an action output.
-- Change the existing behavior of an action or trigger.
+A required prop that carries a `defaultValue` reproducing the old behavior is not breaking. `callFlow`'s `executionMode` shipped that way, as required with `defaultValue: 'queue'`, the only behavior that existed before.
 
-### Non-breaking changes (PATCH on `0.x`, MINOR or PATCH from `1.0.0` on)
+No tool can detect the last kind of break, so the answer is yours. Ask yourself whether a step built last month would still do the same thing after your change.
 
-- Add a new action or trigger.
-- Add an optional prop.
-- Add a required prop that carries a `defaultValue` reproducing the previous behavior (for example, `callFlow`'s `executionMode` shipped as required with `defaultValue: 'queue'`, matching the only behavior that existed before).
-- Add an attribute to an action output.
-- Fix a bug without changing the public surface (PATCH).
+### Moving to `1.0.0`
 
-The rule of thumb: **any removal is breaking; a new required prop is breaking unless it carries a `defaultValue` that preserves prior behavior; everything else is non-breaking.**
+`1.0.0` is where a qadam declares its contract stable; from then on MAJOR is the breaking segment and MINOR means new capability. Qadam Flow's own qadams move to `1.0.0` one at a time. Move yours when you are ready to make that promise, not as a way to mark a single breaking change.
+
+### Never reuse a version
+
+Once a version is published, its number names that code forever. npm refuses to publish the same version twice, and a flow pinned to it must keep getting the same code. Every change, however small, gets a new version.
+
+## Why the level matters: the caret range
+
+Qadam Flow treats any version inside the caret range of a pinned one as a drop-in replacement: `^1.2.3` covers everything below `2.0.0`, and `^0.3.1` everything below `0.4.0`. When the platform has to move a step's version without asking anyone — for example because the exact version is not available — it moves it only inside that range. (One migration that healed pins which could no longer be resolved at all ran once per flow version and did cross it — see [When a pinned version is not available](/install/architecture/qadam-syncing#when-a-pinned-version-is-not-available).) A breaking change shipped as a PATCH therefore reaches flows that nobody chose to upgrade.
+
+Upgrades across the range are a person's decision. The builder's version dialog warns whenever an upgrade crosses a MINOR or MAJOR boundary.
+
+## Compatibility floors
+
+`minimumSupportedRelease` and `maximumSupportedRelease` in `createQadam` are the range of **Qadam Flow platform releases** the qadam works on. The server hides a qadam whose range excludes its own release. They say nothing about the framework version; that is the [support window](#framework-versions-and-the-support-window) below.
+
+- Leave `minimumSupportedRelease` out unless the qadam needs a platform feature first shipped in a specific Qadam Flow release. If it does, set it to that release.
+- The framework raises any floor below `0.82.0` to `0.82.0`, so `'0.0.0'`, which many existing qadams declare, behaves exactly like leaving the field out. Every Qadam Flow release from `1.0.0` on is above that floor.
+- Do not copy floors such as `0.36.1` or `0.58.0` from older examples. They are release numbers of Activepieces, the project Qadam Flow was forked from, and mean nothing for a Qadam Flow server.
+- Set `maximumSupportedRelease` only when you know a later platform release breaks the qadam.
+
+## Framework versions and the support window
+
+Your qadam is built against `@aiqadam/qadams-framework` and `@aiqadam/qadams-common`. Both are still on `0.x` and make no compatibility promise yet; they reach `1.0.0` once the symbols qadams use today from `@aiqadam/shared` move into `@aiqadam/qadams-framework` ([#786](https://github.com/aiqadam/qadam-flow/issues/786)), after which `@aiqadam/shared` stops being published ([#799](https://github.com/aiqadam/qadam-flow/issues/799)).
+
+From `qadams-framework@1.0.0` on, the contract between the engine and your qadam follows the framework's major version:
+
+- A change to the contract the engine passes to your qadam (the `context`) is a new framework major.
+- A Qadam Flow server runs qadams built against the **current and the previous framework major**.
+- The previous major stays supported for **at least 12 months after the next major is released**, even if a third major ships in that time.
+- Retiring a major is announced as a breaking platform release in [Breaking changes](/install/configuration/breaking-changes).
+
+Qadams built before `1.0.0` keep working on the same terms: the engine's adapters for older framework builds stay until at least 12 months after `qadams-framework@1.0.0`. The table that records each major's dates, and the check that stops an adapter being removed early, landed in [#801](https://github.com/aiqadam/qadam-flow/issues/801) (PR #814).
