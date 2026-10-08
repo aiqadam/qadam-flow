@@ -142,12 +142,21 @@ FIXTURE
 }
 
 commit_base() {
-  git -C "$root" init -q 2>/dev/null
+  git -C "$root" init -q 2>/dev/null || { echo "fixture setup: git init failed"; exit 1; }
   git -C "$root" config user.email test@example.com
   git -C "$root" config user.name test
+  commit_all base
+}
+
+# Commits the working tree as the new PR base. The commit date is pinned because the table-history
+# check reads it: a date the PR fills in may not be earlier than one day before the base commit.
+commit_all() {
   git -C "$root" add -A
-  git -C "$root" commit -qm base
+  GIT_AUTHOR_DATE=2026-10-01T00:00:00Z GIT_COMMITTER_DATE=2026-10-01T00:00:00Z \
+    git -C "$root" -c commit.gpgsign=false commit -qm "$1" \
+    || { echo "fixture setup: git commit failed ($1)"; exit 1; }
   base_sha="$(git -C "$root" rev-parse HEAD)"
+  [ -n "$base_sha" ] || { echo "fixture setup: no base SHA after committing $1"; exit 1; }
 }
 
 # A base already on three majors, with every shim still in place.
@@ -156,9 +165,7 @@ new_repo_three_majors() {
   write_framework_version "2.0.0"
   write_versioning "$ENUM_THREE" "V3" "$DISPATCH_THREE"
   write_table "$TABLE_THREE"
-  git -C "$root" add -A
-  git -C "$root" commit -qm three-majors
-  base_sha="$(git -C "$root" rev-parse HEAD)"
+  commit_all three-majors
 }
 
 # $1 = --now date; remaining args go to the checker
@@ -201,7 +208,7 @@ run_check_base 2026-10-08
 expect_status 0 "the 0.x row, V1 and pre-getContextInfo shims in place"
 expect_contains "0.x (contexts none, 1, 2): supported — the current major" "0.x is the current major"
 expect_contains "official qadams: 1" "the qadam was read"
-expect_contains "2 shim branch(es) at base, 2 now" "both shim sites were found, at base and at head"
+expect_contains "2 shim site(s) at base, 2 now" "both shim sites were found, at base and at head"
 
 echo "== [#801] removing a shim while its major is supported fails =="
 new_repo
@@ -212,7 +219,7 @@ write_versioning "V1 = '1', V2 = '2'," "V2" '            case ContextVersion.V2:
 run_check_base 2026-10-08
 expect_status 1 "the V1 shim removed from the dispatcher"
 expect_contains 'context shim "1" is missing from `makeActionContextBackwardCompatible`' "the tree check names the shim"
-expect_contains 'a context shim for "1" was removed: 2 branch(es) handled it at' "the base comparison names it too"
+expect_contains 'a context shim for "1" was removed: 2 shim site(s) handled it at' "the base comparison names it too"
 expect_contains "0.x still needs it — the current major" "the reason is the table's"
 # The tree check alone catches it, so a push to main or a tag build (no PR base) catches it too.
 run_check 2026-10-08
@@ -227,7 +234,7 @@ write_connection_resolver '        case ContextVersion.V1:
             return connection.value'
 run_check_base 2026-10-08
 expect_status 1 "the connection resolver's pre-getContextInfo shim removed"
-expect_contains 'a context shim for "none" was removed: 2 branch(es) handled it' "named by context"
+expect_contains 'a context shim for "none" was removed: 2 shim site(s) handled it' "named by context"
 expect_contains "no longer in packages/server/engine/src/lib/qadam-context/connection-resolver.ts getConnectionValue" "named by site"
 # Documented limit: without a base the tree alone cannot show a branch that is gone.
 run_check 2026-10-08
@@ -293,8 +300,7 @@ write_table '[
     { "major": 0, "contextVersions": ["none", "1", "2"], "released": null, "successorReleased": "2027-01-15" },
     { "major": 1, "contextVersions": ["2"], "released": "2027-01-15", "successorReleased": null }
   ]'
-git -C "$root" add -A && git -C "$root" commit -qm one-later-major
-base_sha="$(git -C "$root" rev-parse HEAD)"
+commit_all one-later-major
 write_versioning "V1 = '1', V2 = '2'," "V2" '            case ContextVersion.V2:
                 return context;'
 run_check_base 2040-01-01
@@ -315,11 +321,78 @@ write_table '[
   ]'
 run_check_base 2026-10-08
 expect_status 0 "the release PR with its row"
-# A prerelease of the next major is that major.
+# A prerelease of the next major needs its row too.
 write_framework_version "2.0.0-rc.1"
 run_check_base 2026-10-08
 expect_status 1 "2.0.0-rc.1 without a row"
-expect_contains "framework major 2" "the prerelease's major is named"
+expect_contains 'framework major 2 (the prerelease @aiqadam/qadams-framework@2.0.0-rc.1' "the prerelease's major is named"
+expect_contains '"released": null' "and the row it needs carries no date"
+
+echo "== a prerelease of a new major is not a release =="
+new_repo
+write_framework_version "1.0.0-rc.1"
+run_check_base 2026-10-08
+expect_status 1 "1.0.0-rc.1 without a row"
+write_table '[
+    { "major": 0, "contextVersions": ["none", "1", "2"], "released": null, "successorReleased": null },
+    { "major": 1, "contextVersions": ["2"], "released": null, "successorReleased": null }
+  ]'
+run_check_base 2026-10-08
+expect_status 0 "1.0.0-rc.1 with an undated row"
+expect_contains "(a prerelease of 1.0.0)" "the prerelease is reported"
+expect_contains "0.x (contexts none, 1, 2): supported — the current major" "0.x is still the current released major"
+expect_contains "1.x (contexts 2): supported — not released yet" "1.x is on its way"
+# A dated row for a prerelease would start 0.x's 12-month window before 1.0.0 exists.
+write_table '[
+    { "major": 0, "contextVersions": ["none", "1", "2"], "released": null, "successorReleased": "2026-10-08" },
+    { "major": 1, "contextVersions": ["2"], "released": "2026-10-08", "successorReleased": null }
+  ]'
+run_check_base 2026-10-08
+expect_status 1 "a prerelease row with a release date"
+expect_contains "a prerelease does not start 0.x's 12-month window" "named"
+# 1.0.0 itself: the dates are filled in, from null, in the release PR.
+write_table '[
+    { "major": 0, "contextVersions": ["none", "1", "2"], "released": null, "successorReleased": null },
+    { "major": 1, "contextVersions": ["2"], "released": null, "successorReleased": null }
+  ]'
+commit_all rc
+write_framework_version "1.0.0"
+run_check_base 2026-10-08
+expect_status 1 "1.0.0 with its row still undated"
+expect_contains "1.x.released is null" "named"
+write_table '[
+    { "major": 0, "contextVersions": ["none", "1", "2"], "released": null, "successorReleased": "2026-10-08" },
+    { "major": 1, "contextVersions": ["2"], "released": "2026-10-08", "successorReleased": null }
+  ]'
+run_check_base 2026-10-08
+expect_status 0 "1.0.0 released, dates filled in from null"
+# A prerelease inside a released major is that major, not a new one.
+commit_all ga
+write_framework_version "1.1.0-next.0"
+run_check_base 2026-10-08
+expect_status 0 "1.1.0-next.0 inside the released 1.x"
+expect_not_contains "a prerelease of" "not reported as a new major on its way"
+
+echo "== a prerelease of the next major does not retire the one before the current =="
+new_repo
+write_framework_version "1.0.0"
+write_table '[
+    { "major": 0, "contextVersions": ["none", "1", "2"], "released": null, "successorReleased": "2026-10-01" },
+    { "major": 1, "contextVersions": ["2"], "released": "2026-10-01", "successorReleased": null }
+  ]'
+commit_all one-zero
+write_framework_version "2.0.0-next.3"
+write_table '[
+    { "major": 0, "contextVersions": ["none", "1", "2"], "released": null, "successorReleased": "2026-10-01" },
+    { "major": 1, "contextVersions": ["2"], "released": "2026-10-01", "successorReleased": null },
+    { "major": 2, "contextVersions": ["2"], "released": null, "successorReleased": null }
+  ]'
+write_versioning "V1 = '1', V2 = '2'," "V2" '            case ContextVersion.V2:
+                return context;'
+write_connection_resolver ''
+run_check_base 2030-01-01
+expect_status 1 "0.x's shims removed under 2.0.0-next.3, years after 1.0.0"
+expect_contains "0.x still needs it — the previous major" "0.x is the previous released major until 2.0.0 itself"
 
 echo "== a row for a major that is not released fails =="
 new_repo
@@ -391,11 +464,91 @@ run_check_base 2026-10-08
 expect_status 1 "a date that is not a date"
 expect_contains '.released must be a YYYY-MM-DD date' "named"
 
+echo "== [review] narrowing a row and deleting its shim in the same PR fails =="
+new_repo
+write_table '[ { "major": 0, "contextVersions": ["none", "2"], "released": null, "successorReleased": null } ]'
+write_versioning "V1 = '1', V2 = '2'," "V2" '            case ContextVersion.V2:
+                return context;
+            case undefined:
+                return { ...context, legacy: true, serverUrl: true };'
+write_connection_resolver '        case undefined:
+            return { legacy: connection.value }'
+run_check_base 2026-10-08
+expect_status 1 "0.x row narrowed to drop V1, V1 shims deleted"
+expect_contains '0.x.contextVersions changed from ["none","1","2"] to ["none","2"]' "the table edit is named"
+# Narrowing to nothing but the latest and deleting every shim is the same edit.
+write_table '[ { "major": 0, "contextVersions": ["2"], "released": null, "successorReleased": null } ]'
+write_versioning "V1 = '1', V2 = '2'," "V2" '            case ContextVersion.V2:
+                return context;'
+write_connection_resolver ''
+run_check_base 2026-10-08
+expect_status 1 "0.x row narrowed to V2 only, all shims deleted"
+expect_contains '0.x.contextVersions changed' "named"
+
+echo "== [review] backdating a recorded release to retire a major early fails =="
+new_repo_three_majors
+write_table '[
+    { "major": 0, "contextVersions": ["none", "1", "2"], "released": null, "successorReleased": "2026-01-15" },
+    { "major": 1, "contextVersions": ["2"], "released": "2026-01-15", "successorReleased": "2027-06-01" },
+    { "major": 2, "contextVersions": ["3"], "released": "2027-06-01", "successorReleased": null }
+  ]'
+write_versioning "$ENUM_THREE" "V3" "$DISPATCH_THREE_WITHOUT_0X"
+write_connection_resolver '        case ContextVersion.V2:
+            return connection.value'
+run_check_base 2027-02-01
+expect_status 1 "1.0.0 moved a year back so 0.x's window has passed"
+expect_contains "1.x.released changed from 2027-01-15 to 2026-01-15" "named"
+expect_contains "0.x.successorReleased changed from 2027-01-15 to 2026-01-15" "both sides of the date are named"
+
+echo "== [review] appending backdated rows to retire a major early fails =="
+new_repo
+write_framework_version "2.0.0"
+write_table '[
+    { "major": 0, "contextVersions": ["none", "1", "2"], "released": null, "successorReleased": "2020-01-01" },
+    { "major": 1, "contextVersions": ["2"], "released": "2020-01-01", "successorReleased": "2020-06-01" },
+    { "major": 2, "contextVersions": ["3"], "released": "2020-06-01", "successorReleased": null }
+  ]'
+write_versioning "$ENUM_THREE" "V3" "$DISPATCH_THREE_WITHOUT_0X"
+write_connection_resolver '        case ContextVersion.V2:
+            return connection.value'
+run_check_base 2026-10-08
+expect_status 1 "two majors recorded as released in 2020 by a PR based on 2026-10-01"
+expect_contains "1.x.released is set to 2020-01-01 in this change, before its base (2026-10-01)" "named"
+
+echo "== a release date in the future fails until that day =="
+new_repo
+write_framework_version "1.0.0"
+write_table '[
+    { "major": 0, "contextVersions": ["none", "1", "2"], "released": null, "successorReleased": "2027-01-01" },
+    { "major": 1, "contextVersions": ["2"], "released": "2027-01-01", "successorReleased": null }
+  ]'
+run_check_base 2026-10-08
+expect_status 1 "1.0.0 recorded as released next year"
+expect_contains "which is after today (2026-10-08)" "named"
+run_check_base 2027-01-01
+expect_status 0 "and accepted on the day: time only turns a failure into a pass"
+
+echo "== a deleted row fails =="
+new_repo_three_majors
+write_framework_version "1.0.0"
+write_table '[
+    { "major": 0, "contextVersions": ["none", "1", "2"], "released": null, "successorReleased": "2027-01-15" },
+    { "major": 1, "contextVersions": ["2"], "released": "2027-01-15", "successorReleased": null }
+  ]'
+write_versioning "V1 = '1', V2 = '2'," "V2" "$DISPATCH_TODAY"
+run_check_base 2028-01-15
+expect_status 1 "the 2.x row dropped"
+expect_contains "the row for 2.x was deleted" "named"
+
 echo "== the engine must still call the dispatcher =="
 new_repo
 printf 'export const run = () => undefined\n' > "$root/packages/server/engine/src/lib/handler/qadam-executor.ts"
 run_check_base 2026-10-08
 expect_status 1 "the dispatcher is intact but nothing calls it"
+# Naming it is not calling it.
+printf "// makeActionContextBackwardCompatible used to be called here\nimport { makeActionContextBackwardCompatible } from 'x'\nexport const run = () => makeActionContextBackwardCompatible\n" > "$root/packages/server/engine/src/lib/handler/qadam-executor.ts"
+run_check_base 2026-10-08
+expect_status 1 "a comment, an import and a reference, but no call"
 expect_contains "nothing under packages/server/engine/src calls \`makeActionContextBackwardCompatible\`" "named"
 
 echo "== the gate fails loudly rather than pass having checked nothing =="
@@ -403,6 +556,23 @@ new_repo
 run_check 2026-10-08 --base 0000000000000000000000000000000000000000
 expect_status 1 "an unreachable PR base"
 expect_contains "cannot resolve the PR base" "named"
+# A `git show` that fails at the base must not shrink the base to nothing and report "no shim
+# removed". A stub `git` on PATH fails only that one read and passes everything else through.
+new_repo
+real_git="$(command -v git)"
+mkdir -p "$root/.stub-bin"
+cat > "$root/.stub-bin/git" <<STUB
+#!/usr/bin/env bash
+for arg in "\$@"; do
+  case "\$arg" in *:packages/server/engine/src/lib/qadam-context/connection-resolver.ts) [ "\$1" = "-C" ] && [ "\$3" = "show" ] && exit 128 ;; esac
+done
+exec "$real_git" "\$@"
+STUB
+chmod +x "$root/.stub-bin/git"
+out="$(PATH="$root/.stub-bin:$PATH" node "$checker" --root "$root" --now 2026-10-08 --base "$base_sha" 2>&1)"
+status=$?
+expect_status 1 "a base file git show cannot read"
+expect_contains "\`git show\` failed at" "named"
 new_repo
 rm "$root/packages/qadams/framework/src/lib/context/framework-support-table.json"
 run_check_base 2026-10-08
@@ -414,7 +584,6 @@ run_check_base 2026-10-08
 expect_status 1 "no official qadams"
 expect_contains "found no official qadam package.json" "named"
 new_repo
-run_check_base 2026-10-08
 rm "$root/packages/qadams/framework/src/lib/context/versioning.ts"
 run_check_base 2026-10-08
 expect_status 1 "no versioning.ts"

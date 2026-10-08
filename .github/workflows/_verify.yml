@@ -386,10 +386,11 @@ jobs:
       # engine while the table says its framework major is still supported, a framework major may
       # not be released without a row, and no official qadam may be built against a major the
       # engine has dropped. Unlike the three gates above it runs on every event, not only on
-      # pull requests: the tree check needs no diff. PR_BASE_SHA adds the comparison against the
-      # base that catches a shim branch deleted outside the dispatcher; it is empty outside
-      # pull_request, and the checker then skips only that comparison. See the checker's header
-      # for why the date it reads can only ever allow a removal, never fail a tree that passed.
+      # pull requests: the tree check needs no diff. PR_BASE_SHA adds the two comparisons against
+      # the base — that the PR does not rewrite the table's history (narrow a row, move a date),
+      # and that no shim branch was deleted outside the dispatcher. It is empty outside
+      # pull_request, and the checker then skips only those. See the checker's header for why the
+      # date it reads can only ever turn a failure into a pass, never fail a tree that passed.
       - name: Test the framework support gate
         run: tools/ci/test-framework-support-gate.sh
 
