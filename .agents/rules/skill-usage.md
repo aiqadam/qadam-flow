@@ -38,6 +38,7 @@ here names a skill that does not exist — so this table cannot quietly go stale
 | `playwright-e2e-testing` | Adding, debugging or restructuring an E2E spec | `packages/tests-e2e` |
 | `qadam-builder` | Creating or changing a qadam — its actions, triggers, props or auth | `packages/qadams` |
 | `ubiquitous-language` | Before proposing ANY new feature, and when adding or renaming a domain term | `.agents/features` |
+| `versioning` | Any change to a versioned package — a qadam, `qadams-framework`, `qadams-common`, `shared` — or to the platform version; writing a changeset; a semver-gate or `semver-override` question | `packages/qadams`, `packages/shared` |
 
 Two or more triggers can match at once; that is normal, not a conflict. A new
 project-scoped table plus its UI is `add-feature` **and** `add-entity` **and**

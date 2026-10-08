@@ -7,6 +7,10 @@ triggers, props or auth. It carries the patterns this file only summarises (`pro
 `auth-patterns.md`, `trigger-patterns.md`, `output-quality.md`, `ux-guidelines.md`). Full
 registry: [`.agents/rules/skill-usage.md`](../../.agents/rules/skill-usage.md).
 
+The **`versioning` skill is mandatory** for any change to a qadam, `framework` or `common`: every
+one of them is published, and the version is what a pinned flow or a qadam author relies on. The
+rule is [`.agents/rules/versioning.md`](../../.agents/rules/versioning.md).
+
 ## Quick Start
 
 ```bash

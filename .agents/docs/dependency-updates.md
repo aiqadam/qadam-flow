@@ -60,7 +60,7 @@ family from being split across PRs.
 
 `packages/qadams/**` is disabled entirely, and `@aiqadam/*` packages are disabled as
 dependencies. A bump inside a qadam requires that qadam's own version bump and a
-republish (AGENTS.md, "Published-package version bumps"), so the bot must never make that
+republish ([`versioning.md`](../rules/versioning.md)), so the bot must never make that
 change silently. This also covers `packages/qadams/{framework,common}`. The qadams still
 appear transitively in the root `bun.lock`; the exclusion only stops PRs that target their
 own `package.json` files.

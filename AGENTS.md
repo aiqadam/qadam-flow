@@ -55,8 +55,8 @@ under `.agents/` only. `npm run check-agent-docs` fails on either.
 | --- | --- | --- | --- |
 | `AGENTS.md` (this file) + per-package `AGENTS.md` | — | Every session | Rules every task needs |
 | `.agents/features/*.md` | 35–221 lines each | Before modifying a module | Entity schemas, services, data flows |
-| `.agents/rules/*.md` | 2–90 lines each | Every session — all of them, always | Non-negotiable invariants and process gates (full index below) |
-| `.agents/skills/*/SKILL.md` | 12–1100 lines each | **Before the first line of code**, whenever the task matches a skill's trigger | 13 step-by-step workflows. Trigger registry: [`skill-usage.md`](.agents/rules/skill-usage.md) |
+| `.agents/rules/*.md` | 2–94 lines each | Every session — all of them, always | Non-negotiable invariants and process gates (full index below) |
+| `.agents/skills/*/SKILL.md` | 12–1100 lines each | **Before the first line of code**, whenever the task matches a skill's trigger | 14 step-by-step workflows. Trigger registry: [`skill-usage.md`](.agents/rules/skill-usage.md) |
 | `.agents/agents/*.md` | 25–80 lines each | **Before you report a code change complete** | 5 subagent charters. Delegation matrix: [`agent-delegation.md`](.agents/rules/agent-delegation.md) |
 | `.agents/docs/*.md` | deep dives | On trigger (see [Verification](#verification)) | Verification pitfalls, CI node_modules cache, dependency updates |
 | `adr/*.md` | one decision each | **Before a change that meets an ADR trigger** (listed in [`adr/README.md`](adr/README.md)) | Architecture Decision Records — accepted decisions are binding. Standard, triggers and index: [`adr/README.md`](adr/README.md) |
@@ -78,6 +78,7 @@ is in force in every session:
 | [`read-the-ticket.md`](.agents/rules/read-the-ticket.md) | Writing code against an issue body you did not finish reading |
 | [`safe-http.md`](.agents/rules/safe-http.md) | An unfiltered outbound request (SSRF) |
 | [`skill-usage.md`](.agents/rules/skill-usage.md) | Re-deriving a workflow a skill already encodes |
+| [`versioning.md`](.agents/rules/versioning.md) | Shipping a change to a versioned package at the wrong level, or with no bump while bumps are still made by hand |
 
 ## Architecture (Non-Obvious Rules)
 
@@ -98,15 +99,7 @@ is in force in every session:
 - **No deprecated APIs** — Before using any library method or export, check its JSDoc. If it carries a `@deprecated` tag, use the recommended replacement instead. Examples: prefer `z.enum` over `z.nativeEnum`.
 - **Go-style error handling** — Use `tryCatch` / `tryCatchSync` from `@aiqadam/shared` (in qadams: from `@aiqadam/qadams-framework`)
 - **Zod error messages must be i18n keys** — Every `.min()`, `.refine()`, `.superRefine()`, etc. that surfaces a user-facing message must pass a string that exists as a key in `packages/web/public/locales/en/translation.json`. For common messages (e.g. required fields) use the `formErrors` constant from `@aiqadam/shared`. Add a new translation key if none fits; never use raw English sentences that are not in the translation file.
-- **Published-package version bumps** — `@aiqadam/shared`, `@aiqadam/qadams-framework` and `@aiqadam/qadams-common` are on npm under the `@aiqadam` scope (#475), and #476 puts the 238 qadams there too. A version number in any of them is a **public contract**, not an internal counter. Any change to `packages/shared` must still be accompanied by a bump in `packages/shared/package.json` — check first whether the current branch already bumped it — and the same now applies to `packages/qadams/framework`, `packages/qadams/common` and any qadam you touch. All of them are on `0.x` except `@aiqadam/qadam-assemblyai`, which is past `1.0.0`. On `0.x` semver puts the breaking slot on **minor**, so for everything but assemblyai:
-  - **patch** — non-breaking additions and fixes;
-  - **minor** — a new export, a behaviour change, or anything a consumer could observe as a break (a removed or renamed export, a changed signature, a narrowed type).
-
-  On any package at or above `1.0.0` (currently only `qadam-assemblyai`) the ordinary rule applies instead: **major** for a break, **minor** for a new export, **patch** for a fix. Check the version you are bumping before you choose the slot.
-
-  **Never** reuse or republish a version: npm answers 403, and `packagePrePublishChecks` skips a version already on the registry, so a bump is the only way a change reaches consumers. Do not expect CI to catch a missing bump for you — with one exception: a **dependency** change inside a qadam is caught. `npm run check-qadam-version-bumps` (`tools/ci/check-qadam-version-bumps.mjs`, a required CI step) fails unless the qadam's own version moved, and `qadam-version-bump.yml` applies that bump on Renovate's branches, because Renovate cannot here — `bumpVersion` is supported only by the `npm` manager and this repo's `bun` manager supersedes `npm`. Any other `package.json` edit — a description, a keyword — is still on you: `packagePrePublishChecks` throws `version not incremented` only when the package changed and its `package.json` did **not**; change `package.json` itself without bumping the version and it is silently skipped as "already published from this branch". Green job, nothing published, nothing said.
-
-  A `shared` bump stopped being free the day it was published. Every published qadam pins an **exact** `@aiqadam/shared` version — `prepareQadamDistForPublish` rewrites `workspace:*` to the version in the tree at publish time — so a break there is a break in the install graph of the whole catalogue, not just in this tree's next build. Nothing in CI can tell a breaking change from a compatible one; `publish-packages.yml`'s header says so in as many words. It is on whoever bumps.
+- **Published-package version bumps** — every version number in this repo is a semver promise to a named consumer ([ADR-0001](adr/0001-everything-versioned-follows-semver-declared-with-changesets.md), [ADR-0002](adr/0002-two-framework-majors-supported-for-at-least-12-months.md)). What each number means, the caret-range promise, compatibility floors and the framework support window are in [`.agents/rules/versioning.md`](.agents/rules/versioning.md); choosing and applying a level is the `versioning` skill. Changesets (#796) and the CI gates (#797) have not landed, so a change to `packages/shared`, `packages/qadams/framework`, `packages/qadams/common` or a qadam still bumps that package's own `package.json` by hand in the same PR. CI catches few of the misses; the rule's interim section lists the ones it does.
 - **Helper functions** — Define non-exported helpers outside of const declarations
 - **Named parameters** — Always use a single destructured object parameter instead of positional arguments. This applies to every function with more than one parameter, regardless of type. It prevents mix-ups at the call site and makes future additions non-breaking.
 - **Prefer immutable data flow** — Functions should produce data by returning it, not by mutating an array/object the caller passes in. If a helper accumulates results (logs, derived rows, computed bindings), it should build the collection locally and return it — not take a pre-allocated bag the caller will read after. Local mutation inside a function's own body is fine; mutation that crosses the function boundary is not. Build new collections with `.map` / `.filter` / `.reduce` / spread rather than in-place `push` / `splice` / property assignment when feasible.
@@ -245,7 +238,7 @@ When running in `--mode=cloud`, do not use OAuth2 connections — the OAuth prov
 
 ## Skills and Subagents — Mandatory, Not Optional
 
-This repo ships 13 skills (`.agents/skills/`) and 5 subagent charters (`.agents/agents/`).
+This repo ships 14 skills (`.agents/skills/`) and 5 subagent charters (`.agents/agents/`).
 They are not slash commands idling until a user types them; they are how work is done here,
 and an agent that ignores them is not being efficient, it is re-deriving — badly — an answer
 the repo already paid for.

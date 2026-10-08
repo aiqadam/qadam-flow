@@ -28,14 +28,16 @@ the language rules OCR already merges from its system layer.
 - **Util files.** Multiple plain functions in one util file are grouped into a
   single exported `const` object; callers use `myUtils.fn1()`. React components
   are named exports instead.
-- **Published package versioning.** `@aiqadam/shared`, `@aiqadam/qadams-framework`,
-  `@aiqadam/qadams-common` and every qadam publish to npm, so a version is a public
-  contract. Any change under one of those packages must bump the version in that
-  package's own `package.json`: patch for fixes or non-breaking additions, minor for
-  new exports or behaviour changes. They are on `0.x`, where minor is the breaking
-  slot; on any package at or above `1.0.0` (currently only `qadam-assemblyai`) a break is major instead. A
-  diff without a version bump is a finding (note the diff may put the two files in
-  different review groups — check the changeset, not just this file).
+- **Published package versioning.** Every version is a semver promise to a named
+  consumer (ADR-0001; rule: `.agents/rules/versioning.md`). Until changesets land
+  (#796), any change under `@aiqadam/shared`, `@aiqadam/qadams-framework`,
+  `@aiqadam/qadams-common` or a qadam must raise that package's own `package.json`
+  version in the same branch. On `0.x` minor is the breaking slot and a new export is
+  minor; everything else is patch. From `1.0.0` (today only `qadam-assemblyai`) a break
+  is major, a new capability minor, a fix patch. For a qadam, a behaviour change an
+  existing step would notice is a break even with an unchanged schema. A diff without
+  a version bump, or at a level below what it changes, is a finding (the diff may put
+  the two files in different review groups — check the whole diff, not just this file).
 - **Agent knowledge lives in `.agents/`.** `.claude/` and `.cursor/` are
   git-symlink mirrors; editing a mirror instead of `.agents/` is a finding.
 <!-- repo-wide:end -->
@@ -47,15 +49,19 @@ the language rules OCR already merges from its system layer.
   `packages/qadams/{community,core}/<name>/package.json`'s `version` — a step
   pins the exact qadam version it was built with
   (`flowQadamUtil.getExactVersion`), so an unbumped change is invisible to
-  every live flow. On a `0.x` qadam: patch for a bug fix, new optional prop,
-  new action/trigger, or new output attribute; bump the middle version segment
-  (the `0.x` breaking slot, e.g. `0.6.14` → `0.7.0`) for a removed
-  action/trigger/prop, a new *required* prop with no `defaultValue` that
-  preserves the old behaviour, or any other change to existing behaviour (a
-  required prop *with* such a default is a non-breaking addition). On a qadam
-  already at `1.0.0` or later the breaking slot is major and a non-breaking
-  addition is minor. A diff can legitimately touch several qadams in one PR —
-  check each changed qadam's own `package.json`, not just one of them.
+  every live flow. The levels are ADR-0001's qadam row
+  (`.agents/rules/versioning.md`). On a `0.x` qadam: patch for a bug fix, new
+  optional prop, new action/trigger, or new output attribute; bump the middle
+  version segment (the `0.x` breaking slot, e.g. `0.6.14` → `0.7.0`) for a
+  removed or renamed action/trigger/prop, a new *required* prop with no
+  `defaultValue` that preserves the old behaviour, a narrowed type, a changed
+  output shape, or a behaviour change an existing step would notice even with
+  an unchanged schema (a required prop *with* such a default is a non-breaking
+  addition). On a qadam already at `1.0.0` or later the breaking slot is major
+  and a non-breaking addition is minor. A diff can legitimately touch several
+  qadams in one PR — check each changed qadam's own `package.json`, not just
+  one of them. Until changesets land (#796) the bump is a hand edit in the
+  same branch.
 - **A `StaticDropdown`/`StaticMultiSelectDropdown` prop's own `defaultValue`
   must be one of its own declared `options`** (#427). The framework's
   `staticDropdownSchema` accepts a prop's own out-of-list default so the form

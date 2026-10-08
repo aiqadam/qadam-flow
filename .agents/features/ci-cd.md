@@ -3,18 +3,17 @@
 ## Summary
 Qadam Flow ships as a **monolithic Docker image** — the entire web frontend, API server, worker,
 engine, all 211 community qadams and 27 core qadams are bundled into one OCI image
-(`ghcr.io/aiqadam/qadam-flow`). The philosophy is Linux-kernel-style: everything is built-in,
-no separate npm publishes per qadam, no per-piece versioning. CI/CD is built around this
-single artifact.
+(`ghcr.io/aiqadam/qadam-flow`). The engine and the qadam builds it runs come from the same commit,
+and CI/CD is built around that artifact.
 
-That is still true of the **engine**, but it is no longer the whole picture. Step 1a of #433
-(#475) publishes three framework packages — `@aiqadam/shared`, `@aiqadam/qadams-framework`,
-`@aiqadam/qadams-common` — to npm, because every qadam depends on them through the bun
-`workspace:*` protocol, which no registry client can resolve. Step 1b (#476) adds the 238
-qadams themselves, so the same pipeline now publishes 241 packages. All of them version
-independently of the root `package.json`, so a `vX.Y.Z` tag on the image says nothing about
-any of their versions — and a version number in any of them is a public contract now, which
-is what the version-bump policy in `AGENTS.md` exists for.
+It is no longer the only artifact. The same pipeline publishes **241 packages to npm** under the
+`@aiqadam` scope: `@aiqadam/shared`, `@aiqadam/qadams-framework` and `@aiqadam/qadams-common`
+(step 1a of #433, #475) and the 238 qadams (step 1b, #476). Every one versions independently of
+the root `package.json`, so a `vX.Y.Z` tag on the image says nothing about any of their versions,
+and every one of those numbers is a public contract. What each number means and how it may move is
+[`.agents/rules/versioning.md`](../rules/versioning.md) (ADR-0001, ADR-0002) — this file describes
+the pipeline, not the rule. Under ADR-0001 the pipeline changes again: changesets raise the versions
+(#796), required CI gates check them (#797), and `shared` stops being published (#799).
 
 The qadams ride the **same** pack half, the **same** `publish-order.txt` manifest and the
 **same** `tools/ci/publish-packed-tarballs.sh` as the three framework packages, behind
@@ -132,7 +131,9 @@ Forked from upstream Activepieces, which carried a large set of workflow files d
 their own infra: GHCR org (`ghcr.io/activepieces/*`), BetterStack, Checkly, Crowdin, Depot,
 EE license server, separate npm publishes per qadam, staging/canary/prod deploy targets.
 
-All of them were dropped. The replacement is the 4 files in `.github/workflows/` above,
+All of them were dropped. Per-qadam npm publishing came back later in this fork's own form — one
+pack-and-publish pipeline for the `@aiqadam` scope (#475, #476, see Summary) — not as upstream's
+per-piece workflows. The replacement is the 4 files in `.github/workflows/` above,
 focused only on what this fork needs: build → test → publish a single image.
 
 ## What Is NOT Yet Covered (Backlog)

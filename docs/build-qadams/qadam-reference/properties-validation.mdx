@@ -8,9 +8,9 @@ Qadam Flow uses Zod for runtime validation of qadam properties. Zod provides a p
 
 To use Zod validation in your qadam, first import the validation helper and Zod:
 
-<Warning>
-Please make sure the `minimumSupportedRelease` is set to at least `0.36.1` for the validation to work.
-</Warning>
+<Note>
+Every Qadam Flow release supports props validation, so it needs no `minimumSupportedRelease` of its own — see [Compatibility floors](/build-qadams/qadam-reference/qadam-versioning#compatibility-floors).
+</Note>
 
 ```typescript
 import { createAction, Property } from '@aiqadam/qadams-framework';

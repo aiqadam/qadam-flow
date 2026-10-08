@@ -413,7 +413,7 @@ It has a `code` property which is a function that takes in an object parameter w
 
 - You can return a clean up function at the end of the `code` property function to remove any listeners or HTML elements you inserted (this is important for development mode, the component gets [mounted twice](https://react.dev/reference/react/useEffect#my-effect-runs-twice-when-the-component-mounts)).
 - This function must be pure without any imports from external packages or variables outside the function scope. 
-- **Must** mark your qadam `minimumSupportedRelease` property to be at least `0.58.0` after introducing this property to it.
+- Every Qadam Flow release supports this property, so it needs no `minimumSupportedRelease` of its own — see [Compatibility floors](/build-qadams/qadam-reference/qadam-versioning#compatibility-floors).
 
 Here is how to define such a property:
 ```typescript

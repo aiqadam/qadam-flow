@@ -134,7 +134,6 @@ export const ${qadamNameCamelCase} = createQadam({
   displayName: '${capitalizeFirstLetter(qadamName)}',
   description: '',
   auth: QadamAuth.None(),
-  minimumSupportedRelease: '0.36.1',
   logoUrl: '/assets/qadams/${qadamName}.png',
   authors: [],
   actions: [],
