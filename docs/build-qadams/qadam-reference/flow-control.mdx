@@ -35,7 +35,7 @@ A **waitpoint** is a durable checkpoint: the run is marked `PAUSED`, its executi
 The same action runs twice — once to create the waitpoint, once to read the resume payload — so every pausing action branches on `ctx.executionType`:
 
 ```typescript
-import { ExecutionType } from '@aiqadam/shared';
+import { ExecutionType } from '@aiqadam/qadams-framework';
 
 async run(ctx) {
   if (ctx.executionType === ExecutionType.BEGIN) {

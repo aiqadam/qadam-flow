@@ -21,7 +21,7 @@ Use `community/` for almost all work.
 ## QadamCategory Values
 
 ```typescript
-import { QadamCategory } from '@aiqadam/shared';
+import { QadamCategory } from '@aiqadam/qadams-framework';
 ```
 
 | Category | Use for |

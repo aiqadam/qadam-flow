@@ -67,7 +67,6 @@ const scaffoldQadam = async (
     dependencies: {
       '@aiqadam/qadams-common': 'workspace:*',
       '@aiqadam/qadams-framework': 'workspace:*',
-      '@aiqadam/shared': 'workspace:*',
       tslib: '2.6.2',
     },
     scripts: {

@@ -63,7 +63,6 @@ tsconfig.lib.json
     "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
-        "@aiqadam/shared": "workspace:*",
         "tslib": "2.6.2"
     }
 }
@@ -233,9 +232,8 @@ export const myAppAuth = QadamAuth.SecretText({
 
 **`src/index.ts`**
 ```typescript
-import { createQadam } from '@aiqadam/qadams-framework';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { QadamCategory } from '@aiqadam/shared';
 import { myAppAuth } from './lib/auth';
 import { myAction } from './lib/actions/my-action';
 import { myTrigger } from './lib/triggers/my-trigger';
@@ -330,6 +328,7 @@ rather than assumed safe, so a new conditional action is visible without an API 
 4. **Always provide `sampleData`** on triggers — even `{}`.
 5. **Build AND lint must both pass** — lint failures (unused imports, `any`, unused vars) block CI even when build is green.
 6. **Bump version on every existing-piece change** — see Versioning above. Skipping means flows never get your fix.
+7. **Never import `@aiqadam/shared`** — qadams import only `@aiqadam/qadams-framework` and `@aiqadam/qadams-common` (ADR-0001). `QadamCategory`, `isNil`, `MarkdownVariant` and every other qadam-facing `shared` symbol come from `@aiqadam/qadams-framework`; a missing one is added to `packages/qadams/framework/src/lib/shared-reexports.ts`. Lint fails on the import.
 
 ---
 
