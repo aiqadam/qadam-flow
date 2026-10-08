@@ -6,7 +6,6 @@
   "dependencies": {
     "@aiqadam/qadams-common": "workspace:*",
     "@aiqadam/qadams-framework": "workspace:*",
-    "@aiqadam/shared": "workspace:*",
     "form-data": "4.0.6",
     "mime-types": "2.1.35",
     "openai": "4.67.1",

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 import { readPackageJson } from './files'
 import { packagePrePublishChecks } from './package-pre-publish-checks'
+import { stagePackageForPublish } from './stage-package-for-publish'
 import { prepareQadamDistForPublish } from '../../../packages/cli/src/lib/utils/prepare-qadam-utils'
 import { isExactVersion } from '../../../packages/cli/src/lib/utils/workspace-utils'
 
@@ -203,69 +204,83 @@ export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag, pack
     `# ${json.name}\n\n${json.description ?? ''}\n\nPart of the [Qadam Flow](https://github.com/aiqadam/qadam-flow) monorepo. See the repository for documentation. Licensed under MIT.\n`,
   )
 
-  // Pack and dry run are the same operation with a different destination: stage `dist`, run
-  // every check above, produce the tarball, stop short of the registry. They share this branch
-  // deliberately — the `pack-framework-packages` job hands its tarball to a separate
-  // publishing job (#486), and if that artifact were produced by a code path `--dry-run` does
-  // not exercise, a local dry run would stop being evidence about the release.
-  //
-  // A destination OUTSIDE outputPath: `npm pack` with no `--pack-destination` writes the
-  // tarball into its own cwd, and npm's default ignore rules do not exclude `.tgz` — a
-  // second run would then pack the previous run's own tarball into the new one. Verified by
-  // reproducing it: a bare `npm pack` run twice from `outputPath` embeds the first tarball
-  // inside the second.
-  // execFileSync, not a template-string execSync: the destination is caller-supplied and
-  // npmDistTag below is env-var sourced, and running both through the same code shape rather
-  // than one safe and one shell-interpolated is the point.
-  if (packDestination || dryRun) {
-    const destination = packDestination ?? mkdtempSync(join(tmpdir(), 'qadam-flow-npm-pack-'))
-    // `--json` rather than deriving the filename from name+version ourselves: npm owns the
-    // scope-mangling rule (`@aiqadam/shared` -> `aiqadam-shared-0.135.0.tgz`), and a publish
-    // manifest built from our guess at it would send the publishing job looking for a file
-    // that is not there — a failure that could only ever surface on a real tag.
-    // stdout piped so it can be parsed; stderr inherited so npm's own diagnostics still reach
-    // the log rather than being swallowed into a variable nobody prints.
-    const packOutput = execFileSync('npm', ['pack', '--json', '--pack-destination', destination], {
-      cwd: outputPath,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'inherit'],
-    })
-    const filename = parsePackedFilename(packOutput)
+  // `qadams-framework` is packed from a staged copy carrying the private `@aiqadam/shared` it uses
+  // (ADR-0001, #799), removed once packed or published; every other package is packed from
+  // `outputPath`. Either way this refuses a package whose manifest or emitted code still reaches a
+  // private workspace package. REPO_ROOT, not the process cwd: the workspace map has to be this
+  // repository's whatever directory the script is started from.
+  return stagePackageForPublish({
+    outputPath,
+    workspaceRoot: REPO_ROOT,
+    use: (publishRoot): PublishNpmPackageResult => {
+      assertNoUnresolvedWorkspaceDeps(`${publishRoot}/package.json`)
+      assertNoSemverRanges(`${publishRoot}/package.json`)
 
-    // The second guard: make a skip-check pack structurally unpublishable rather than
-    // unpublishable by convention. tools/ci/publish-packed-tarballs.sh refuses any directory
-    // entry its manifest does not declare, so this marker aborts it before it publishes anything
-    // out of a directory packed with the guards off — including across the artifact upload and
-    // download between the packing job (_pack-framework-packages.yml) and each caller's own
-    // publishing job, which is why the name is not a dotfile.
-    // ci.yml's `pack-smoke` reads only the manifest and is unaffected.
-    //
-    // What this is: a stop on maintainer error and on this flag drifting from ci.yml's smoke job
-    // into the real pack step. What it is not: a control against anyone who can edit that
-    // workflow, who could equally delete this write or widen the sweep. The required-reviewers
-    // `npm-publish` environment remains the actual provenance control.
-    if (skipRegistryCheck) {
-      writeFileSync(
-        join(destination, SKIP_REGISTRY_CHECK_MARKER),
-        'Packed with --skip-registry-check: the already-published guard was disabled, so these\ntarballs are a build smoke test and must never be published.\n',
-      )
-    }
+      // Pack and dry run are the same operation with a different destination: stage `dist`, run
+      // every check above, produce the tarball, stop short of the registry. They share this branch
+      // deliberately — the `pack-framework-packages` job hands its tarball to a separate
+      // publishing job (#486), and if that artifact were produced by a code path `--dry-run` does
+      // not exercise, a local dry run would stop being evidence about the release.
+      //
+      // A destination OUTSIDE outputPath: `npm pack` with no `--pack-destination` writes the
+      // tarball into its own cwd, and npm's default ignore rules do not exclude `.tgz` — a
+      // second run would then pack the previous run's own tarball into the new one. Verified by
+      // reproducing it: a bare `npm pack` run twice from `outputPath` embeds the first tarball
+      // inside the second.
+      // execFileSync, not a template-string execSync: the destination is caller-supplied and
+      // npmDistTag below is env-var sourced, and running both through the same code shape rather
+      // than one safe and one shell-interpolated is the point.
+      if (packDestination || dryRun) {
+        const destination = packDestination ?? mkdtempSync(join(tmpdir(), 'qadam-flow-npm-pack-'))
+        // `--json` rather than deriving the filename from name+version ourselves: npm owns the
+        // scope-mangling rule (`@aiqadam/shared` -> `aiqadam-shared-0.135.0.tgz`), and a publish
+        // manifest built from our guess at it would send the publishing job looking for a file
+        // that is not there — a failure that could only ever surface on a real tag.
+        // stdout piped so it can be parsed; stderr inherited so npm's own diagnostics still reach
+        // the log rather than being swallowed into a variable nobody prints.
+        const packOutput = execFileSync('npm', ['pack', '--json', '--pack-destination', destination], {
+          cwd: publishRoot,
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'inherit'],
+        })
+        const filename = parsePackedFilename(packOutput)
 
-    console.info(`[publishPackage] packed only, path=${path}, version=${version}, filename=${filename}, destination=${destination}`)
-    return { status: 'packed', filename, version }
-  }
+        // The second guard: make a skip-check pack structurally unpublishable rather than
+        // unpublishable by convention. tools/ci/publish-packed-tarballs.sh refuses any directory
+        // entry its manifest does not declare, so this marker aborts it before it publishes anything
+        // out of a directory packed with the guards off — including across the artifact upload and
+        // download between the packing job (_pack-framework-packages.yml) and each caller's own
+        // publishing job, which is why the name is not a dotfile.
+        // ci.yml's `pack-smoke` reads only the manifest and is unaffected.
+        //
+        // What this is: a stop on maintainer error and on this flag drifting from ci.yml's smoke job
+        // into the real pack step. What it is not: a control against anyone who can edit that
+        // workflow, who could equally delete this write or widen the sweep. The required-reviewers
+        // `npm-publish` environment remains the actual provenance control.
+        if (skipRegistryCheck) {
+          writeFileSync(
+            join(destination, SKIP_REGISTRY_CHECK_MARKER),
+            'Packed with --skip-registry-check: the already-published guard was disabled, so these\ntarballs are a build smoke test and must never be published.\n',
+          )
+        }
 
-  // --provenance needs `permissions: { id-token: write }` on the calling job (for the OIDC
-  // token npm exchanges for the signed attestation) and a `repository` field on the
-  // package.json being published, which npm records in that attestation. Without either,
-  // a hand-published tarball from an exfiltrated token is indistinguishable from a real
-  // release build — `npm audit signatures` has nothing to check. execFileSync (argv array, no
-  // shell) rather than execSync template-string interpolation: a step holding an org publish
-  // token should not build a shell command out of an env-var-sourced value, even a validated one.
-  execFileSync('npm', ['publish', '--access', 'public', '--tag', resolvedNpmDistTag, '--provenance'], { cwd: outputPath, stdio: 'inherit' })
+        console.info(`[publishPackage] packed only, path=${path}, version=${version}, filename=${filename}, destination=${destination}`)
+        return { status: 'packed', filename, version }
+      }
 
-  console.info(`[publishProject] success, path=${path}, version=${version}, npmDistTag=${resolvedNpmDistTag}`)
-  return { status: 'published', version }
+      // --provenance needs `permissions: { id-token: write }` on the calling job (for the OIDC
+      // token npm exchanges for the signed attestation) and a `repository` field on the
+      // package.json being published, which npm records in that attestation. Without either,
+      // a hand-published tarball from an exfiltrated token is indistinguishable from a real
+      // release build — `npm audit signatures` has nothing to check. execFileSync (argv array, no
+      // shell) rather than execSync template-string interpolation: a step holding an org publish
+      // token should not build a shell command out of an env-var-sourced value, even a validated one.
+      execFileSync('npm', ['publish', '--access', 'public', '--tag', resolvedNpmDistTag, '--provenance'], { cwd: publishRoot, stdio: 'inherit' })
+
+      console.info(`[publishProject] success, path=${path}, version=${version}, npmDistTag=${resolvedNpmDistTag}`)
+      return { status: 'published', version }
+    },
+  })
 }
 
 // npm pack --json emits an array with one entry per packed package. Anything else means npm

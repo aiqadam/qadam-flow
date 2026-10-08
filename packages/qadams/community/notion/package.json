@@ -6,7 +6,6 @@
   "dependencies": {
     "@aiqadam/qadams-common": "workspace:*",
     "@aiqadam/qadams-framework": "workspace:*",
-    "@aiqadam/shared": "workspace:*",
     "@notionhq/client": "2.2.14",
     "@tryfabric/martian": "1.2.4",
     "dayjs": "1.11.9",

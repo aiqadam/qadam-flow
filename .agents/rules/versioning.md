@@ -12,7 +12,7 @@ ADR disagree, the ADR wins. The procedure — choosing a level, applying it — 
 | Platform (root `package.json`, release tag, images) | instance operators | the upgrade needs operator action — always with an entry in `docs/install/configuration/breaking-changes.mdx` | new capability | fix |
 | SDK — `@aiqadam/qadams-framework`, `@aiqadam/qadams-common` | qadam authors | a broken public API, or a new engine ↔ qadam `context` version | new export | fix |
 | Qadam | flows that pin it | an action, trigger or prop removed or renamed; a new required prop without a default; a narrowed type; a changed output shape; **or a behaviour change an existing step would notice** | new action or trigger, optional prop, new output field | fix that changes none of the above |
-| `@aiqadam/shared` | nobody outside the repo (once #799 lands) | — | — | — |
+| `@aiqadam/shared` | nobody outside the repo — private and bundled into `qadams-framework` since #799 | — | — | — |
 
 - **On `0.x` the breaking slot is minor** (`0.4.15` → `0.5.0`); everything non-breaking is patch,
   except a new named export from a package entry, which this repo puts on minor. Read the current
@@ -23,11 +23,15 @@ ADR disagree, the ADR wins. The procedure — choosing a level, applying it — 
   what an existing step does (#397's `secret_token`, #393's long polling) is breaking. No gate can
   see it; say in the PR which way you answered and why.
 - **When a change fits no row, take the higher level.** A level that is too low breaks a consumer;
-  gate 2 (#797) will reject a level only as too low, never as too high.
+  gate 2 (#797) rejects a level only as too low, never as too high.
 - **A version is never reused or republished.** npm answers 403, and a skipped publish is silent.
-- **`shared` is still published until #799.** Every published qadam pins an exact `@aiqadam/shared`
-  (`prepareQadamDistForPublish` rewrites `workspace:*`), so until then a break there is a break in
-  the whole catalogue's install graph; version it like the SDK.
+- **`shared` is private and no longer published (#799).** `qadams-framework` ships all of it — every
+  file of its build, code and `.d.ts` — inside its own tarball, and re-exports from it, so a change
+  to `shared` is a change to what the framework ships and is declared on `qadams-framework` too, at
+  the SDK level (gate 1 requires the changeset; the level is the `versioning` skill's call).
+  `shared` itself stays a versioned package inside the repo (`.changeset/config.json` sets
+  `privatePackages.version`) because the framework depends on it at source level, but no `shared`
+  version reaches npm again.
 
 ## The caret-range promise
 
@@ -50,7 +54,7 @@ framework raises any declared floor below `MINIMUM_SUPPORTED_RELEASE_AFTER_LATES
 official qadams that declare `'0.0.0'` really report `0.82.0`. Leave the field out unless the qadam
 needs a platform capability first shipped in a specific Qadam Flow release, and then set it to that
 release. Never copy an Activepieces-era number (`0.36.1`, `0.58.0`): they name releases of another
-product. Gate 7 (#797) will check every floor against the current platform version.
+product. Gate 7 (#797) checks every floor against the current platform version.
 
 ## Framework support window (ADR-0002)
 
@@ -72,7 +76,7 @@ included), writes changelogs and tags. Root `package.json` holds the last releas
 built from `main` report `<next>-main.<n>` (#798). How a `main` build versions *changed package* code
 is [ADR-0004](../../adr/0004-main-builds-give-changed-packages-their-own-prerelease-versions.md),
 still `proposed` and so not binding (snapshot `-main.<n>` versions, gate 9). Until #798 lands it reads `2.0.0` while the latest
-tag is `v1.1.0` (#326): leave it alone outside a release. `@aiqadam/shared` becomes private and bundled
+tag is `v1.1.0` (#326): leave it alone outside a release. `@aiqadam/shared` is private and bundled
 into `qadams-framework` (#799). Gates 1–7 (#797) and gate 8 (#801, landed) are required; the maintainer-only
 `semver-override` label bypasses gate 2 alone, when CI over-estimates the level.
 

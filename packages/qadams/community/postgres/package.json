@@ -6,7 +6,6 @@
   "dependencies": {
     "@aiqadam/qadams-common": "workspace:*",
     "@aiqadam/qadams-framework": "workspace:*",
-    "@aiqadam/shared": "workspace:*",
     "dayjs": "1.11.9",
     "pg": "8.11.3",
     "pg-format": "1.0.4",

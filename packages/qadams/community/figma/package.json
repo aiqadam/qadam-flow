@@ -10,7 +10,6 @@
   "dependencies": {
     "@aiqadam/qadams-common": "workspace:*",
     "@aiqadam/qadams-framework": "workspace:*",
-    "@aiqadam/shared": "workspace:*",
     "nanoid": "3.3.18",
     "tslib": "2.6.2"
   }

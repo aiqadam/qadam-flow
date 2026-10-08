@@ -43,16 +43,19 @@ the language rules OCR already merges from its system layer.
   git-symlink mirrors; editing a mirror instead of `.agents/` is a finding.
 <!-- repo-wide:end -->
 
-- **Changeset.** Any change under `packages/shared` must be named by a
-  `.changeset/*.md` added in the same PR, at the level `.agents/rules/versioning.md`
-  gives: on `0.x`, minor for a break or a new export, patch for anything else.
-  Check whether the branch already adds a changeset for it before flagging — one
-  per package is enough. This is still a published package, so the released
-  version is what a consumer resolves and not bookkeeping: every published qadam
-  pins an exact `@aiqadam/shared`, so a break here is a break in the whole
-  catalogue's install graph. Flag a missing changeset even for a comment-only
-  diff — gate 1 counts any `src/` change, and only the release PR can raise the
-  version that reaches consumers.
+- **Changeset — two packages.** Any change under `packages/shared` must be named
+  by a `.changeset/*.md` added in the same PR, for `@aiqadam/shared` **and** for
+  `@aiqadam/qadams-framework`. `shared` is private since #799 and no longer
+  published, but the framework re-exports from it and its tarball vendors all of
+  `shared`'s build, so what changes here ships to qadam authors as a framework
+  change. The framework line's level is the SDK level in
+  `.agents/rules/versioning.md`, judged from what a qadam reaches through the
+  framework: on `0.x`, minor for a break or a new export, patch for anything else.
+  A framework patch for a change to a re-exported symbol's signature or type is a
+  finding — gate 1 checks only that the line exists, and the release PR would
+  patch the framework anyway. Check whether the branch already adds the
+  changesets before flagging — one per package is enough. Flag a missing one even
+  for a comment-only diff: gate 1 counts any `src/` change.
 - **No `any`, no `as` casts.** This package is the type surface every other
   package consumes; a forced cast here hides errors everywhere.
 - **Error helpers.** `QadamFlowError({ code, params })`, `tryCatch`,

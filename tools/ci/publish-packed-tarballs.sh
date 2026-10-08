@@ -12,7 +12,7 @@
 # properties come out of that separation, and each is asserted here rather than left to the
 # job's shape:
 #
-#   ORDER. `pack-framework-packages` emits shared, then framework, then common — the
+#   ORDER. `pack-framework-packages` emits framework, then common, then the qadams — the
 #   dependency order, so a registry client racing the tail never sees a dependent published
 #   ahead of what it depends on. A `*.tgz` glob would sort `aiqadam-qadams-common` FIRST,
 #   exactly backwards. publish-order.txt is what carries the order across the job boundary,
@@ -110,7 +110,7 @@ fi
 directory="$(cd "$directory" && pwd)"
 manifest="${directory}/${PUBLISH_ORDER_FILENAME}"
 
-# Absent, not empty. Empty is the normal "all three were already published at their current
+# Absent, not empty. Empty is the normal "both were already published at their current
 # version" outcome; absent means the pack job never wrote one or the artifact did not arrive,
 # and publishing nothing because a file is missing is the failure this distinction exists for.
 if [ ! -f "$manifest" ]; then

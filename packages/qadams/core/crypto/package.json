@@ -6,7 +6,6 @@
   "dependencies": {
     "@aiqadam/qadams-common": "workspace:*",
     "@aiqadam/qadams-framework": "workspace:*",
-    "@aiqadam/shared": "workspace:*",
     "buffer": "6.0.3",
     "openpgp": "6.3.0",
     "zod": "4.3.6",

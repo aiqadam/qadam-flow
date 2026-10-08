@@ -3,8 +3,10 @@
 Types, DTOs, Zod schemas, utilities. Every change adds a changeset naming this package and its level
 — the level is the `versioning` skill's call, the rule is
 [`.agents/rules/versioning.md`](../../.agents/rules/versioning.md); only the release PR raises the
-version. It is still published and pinned exactly by every published qadam until #799 makes it
-private.
+version. It is private since #799: `qadams-framework` vendors all of its build at publish and
+re-exports from it, so no `shared` version is published again — and every change here also needs a
+changeset naming `@aiqadam/qadams-framework`, at the level the change has for a qadam author (gate 1
+enforces it; the `versioning` skill says how to choose).
 
 ## Skills for this package
 

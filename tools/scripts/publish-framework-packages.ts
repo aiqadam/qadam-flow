@@ -4,16 +4,18 @@ import { publishNpmPackage } from './utils/publish-npm-package'
 import { findOfficialQadamPackagePaths } from './utils/qadam-publish-paths'
 import { chunk } from '../../packages/shared/src/lib/core/common/utils/utils'
 
-// Every qadam depends on these three through the bun workspace protocol
-// (`"@aiqadam/shared": "workspace:*"`, etc. — see #475), so they are step 1a of the
+// Every qadam depends on these two through the bun workspace protocol
+// (`"@aiqadam/qadams-framework": "workspace:*"`, etc. — see #475), so they are step 1a of the
 // version-model decision in #433 and must publish before any qadam (#476, step 1b) can.
-// `framework` and `common` themselves depend on `shared` (`common` on both), so the order
-// below is the dependency order — not load-bearing for `npm publish` itself (it uploads
-// whatever version each package.json declares without resolving it), but it means a
-// registry client racing the tail of the publish never observes a dependent published ahead
-// of what it depends on.
+// `common` depends on `framework`, so the order below is the dependency order — not
+// load-bearing for `npm publish` itself (it uploads whatever version each package.json
+// declares without resolving it), but it means a registry client racing the tail of the
+// publish never observes a dependent published ahead of what it depends on.
+//
+// `@aiqadam/shared` is not here: it is private and no longer published (ADR-0001, #799).
+// `framework` carries the part of it it uses inside its own tarball — see
+// tools/scripts/utils/stage-package-for-publish.ts.
 const FRAMEWORK_PACKAGE_PATHS = [
-  'packages/shared',
   'packages/qadams/framework',
   'packages/qadams/common',
 ]
@@ -21,7 +23,7 @@ const FRAMEWORK_PACKAGE_PATHS = [
 // The name tools/ci/publish-packed-tarballs.sh reads. Since #486 split packing from
 // publishing, this ORDER no longer survives implicitly: the publishing job sees a directory
 // of tarballs, and `*.tgz` glob order is alphabetical — `aiqadam-qadams-common` sorts ahead
-// of `aiqadam-shared`, i.e. exactly backwards from the dependency order above. The manifest
+// of `aiqadam-qadams-framework`, i.e. exactly backwards from the dependency order above. The manifest
 // is what carries the order across the job boundary.
 //
 // Not exported: the consumer is a shell script, which cannot import it and hardcodes the same
@@ -38,7 +40,7 @@ const PUBLISH_ORDER_FILENAME = 'publish-order.txt'
 // the same trade made less precisely.
 //
 // Bounded concurrency is safe here in a way it would not be at publish time: the 238 qadams
-// depend only on the three framework packages and on none of each other (checked across all 238
+// depend only on the framework packages and on none of each other (checked across all 238
 // manifests), so nothing in this set has an ordering constraint against anything else in it.
 const QADAM_PACK_CONCURRENCY = 16
 
@@ -50,7 +52,7 @@ const packOfficialQadams = async ({ dryRun, npmDistTag, packDestination, skipReg
 
   // Not a formality. The whole point of 1b is that the catalogue in the image and the catalogue
   // on the registry are the same set; a traversal that silently found nothing (a moved root, a
-  // `dist`-only checkout) would publish the three framework packages, report green, and leave
+  // `dist`-only checkout) would publish the framework packages, report green, and leave
   // the qadams unpublished — which is the exact state #477 must not be flipped on top of.
   if (qadamPaths.length === 0) {
     throw new Error('[publishFrameworkPackages] --include-qadams found no official qadams to pack — refusing to report a successful catalogue publish that shipped none.')
@@ -99,7 +101,7 @@ const main = async (): Promise<void> => {
   const skipRegistryCheck = process.argv.includes('--skip-registry-check')
   // Step 1b of #433 (#476). Opt-in rather than always-on so ci.yml's `pack-smoke` job — which
   // exists to prove the real pack path still works on every PR — does not grow a build and pack
-  // of the whole catalogue, and so the three framework packages stay publishable on their own.
+  // of the whole catalogue, and so the framework packages stay publishable on their own.
   const includeQadams = process.argv.includes('--include-qadams')
 
   // Same shape as the skipRegistryCheck guard above and for the same reason: without a pack
@@ -119,7 +121,7 @@ const main = async (): Promise<void> => {
     }
   }
 
-  // After the three, never interleaved with them: publish-packed-tarballs.sh walks this manifest
+  // After the framework packages, never interleaved with them: publish-packed-tarballs.sh walks this manifest
   // in order, so the framework packages a qadam depends on are on the registry before the qadam
   // that names them is, and a client racing the tail never resolves a dependent ahead of its
   // dependency.
@@ -128,7 +130,7 @@ const main = async (): Promise<void> => {
   }
 
   if (packDestination) {
-    // Written even when empty — all three already published at their current version is a
+    // Written even when empty — both already published at their current version is a
     // normal, green outcome, and the publishing job has to be able to tell it apart from an
     // artifact that failed to upload. A missing manifest is an error there; an empty one is not.
     writeFileSync(join(packDestination, PUBLISH_ORDER_FILENAME), packedFilenames.map((name) => `${name}\n`).join(''))

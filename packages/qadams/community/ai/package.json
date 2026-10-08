@@ -7,7 +7,6 @@
   "dependencies": {
     "@aiqadam/qadams-common": "workspace:*",
     "@aiqadam/qadams-framework": "workspace:*",
-    "@aiqadam/shared": "workspace:*",
     "@ai-sdk/amazon-bedrock": "5.0.105",
     "@ai-sdk/anthropic": "4.0.71",
     "@ai-sdk/azure": "4.0.90",

@@ -6,7 +6,6 @@
   "dependencies": {
     "@aiqadam/qadams-common": "workspace:*",
     "@aiqadam/qadams-framework": "workspace:*",
-    "@aiqadam/shared": "workspace:*",
     "dayjs": "1.11.9",
     "imapflow": "1.7.8",
     "mailparser": "3.9.31",

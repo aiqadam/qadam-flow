@@ -32,6 +32,10 @@ name: Publish packages
 # publishing job below — which is in THIS file, not the called one, for the reason that job's
 # own comment gives.
 #
+# Since #799 (ADR-0001) `@aiqadam/shared` is private and no longer published; `qadams-framework`
+# carries the part of it it uses. The history above predates that and is kept as the reason this
+# file exists.
+#
 # `verify` here is a strict subset of what a PR gets: two of its steps (the new-migration
 # metadata check and check-required-prop-defaults) carry `if: github.event_name ==
 # 'pull_request'` and are skipped. Neither is a publish-path control, and the tag path has
@@ -154,8 +158,8 @@ jobs:
     # design (see its own header), and `on: push: tags` runs whatever release.yml says at the
     # tagged commit regardless of who pushed the tag. Anyone with `contents: write` — a
     # collaborator, a leaked PAT, a compromised Action — could otherwise push a tag at a
-    # commit that never touched `main` and publish `@aiqadam/shared`, the transitive root of
-    # every qadam, to public npm at `latest` with no human in the loop. The dispatch path
+    # commit that never touched `main` and publish `@aiqadam/qadams-framework`, the root of
+    # every qadam's dependency graph, to public npm at `latest` with no human in the loop. The dispatch path
     # replaces "can push a tag" with "can start a workflow_dispatch run", the same set of
     # credentials, and clears two of the three gates, which makes the human load-bearing
     # rather than a formality.

@@ -58,8 +58,8 @@ expect 1 'an eslint-disable comment does not hide it (the point of a second chec
   "$(tree eslint-disable "$Q" $'// eslint-disable-next-line no-restricted-imports\nimport { isNil } from \'@aiqadam/shared\'')" "$Q:2"
 
 echo "== look-alikes pass =="
-expect 0 'the framework itself may use shared until #799' "$(tree framework packages/qadams/framework/src/index.ts "import { isNil } from '@aiqadam/shared'")" 'OK'
-expect 0 'common may use shared until #799' "$(tree common packages/qadams/common/src/index.ts "import { isNil } from '@aiqadam/shared'")" 'OK'
+expect 0 'the framework itself may use shared (it bundles it into its tarball, #799)' "$(tree framework packages/qadams/framework/src/index.ts "import { isNil } from '@aiqadam/shared'")" 'OK'
+expect 0 'common is out of scope (its tarball is checked at publish instead, #799)' "$(tree common packages/qadams/common/src/index.ts "import { isNil } from '@aiqadam/shared'")" 'OK'
 expect 1 'a qadam test file is in scope (15 core qadams lint only src/)' "$(tree test packages/qadams/core/csv/test/a.test.ts "import { isNil } from '@aiqadam/shared'")" 'packages/qadams/core/csv/test/a.test.ts:1'
 expect 1 'a custom qadam is in scope' "$(tree custom packages/qadams/custom/mine/src/index.ts "import { isNil } from '@aiqadam/shared'")" 'packages/qadams/custom/mine/src/index.ts:1'
 expect 0 'a vitest alias key naming the package is not an import' "$(tree alias packages/qadams/core/csv/vitest.config.ts "export default { resolve: { alias: { '@aiqadam/shared': '../../shared/src/index.ts' } } }")" 'OK'

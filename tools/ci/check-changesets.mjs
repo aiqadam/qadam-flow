@@ -4,7 +4,8 @@
 // only thing that raises a version. Fails a pull request when:
 //
 //   1. a file under `<pkg>/src/` of a versioned package changed, or one of its dependency sections
-//      in `package.json` changed, and no changeset added in this PR names that package;
+//      in `package.json` changed, and no changeset added in this PR names that package — or, for
+//      `@aiqadam/shared`, none names `@aiqadam/qadams-framework`, which bundles it (see below);
 //   2. a changeset added in this PR is malformed, names a package that is not in the workspace, or
 //      names one that changesets is configured never to version;
 //   3. a versioned package's `version` (or the root `package.json`'s) was edited by hand — only the
@@ -40,6 +41,29 @@
 // - It reads base and head from git, not from the working tree: under the default pull_request
 //   checkout the working tree is the merge commit.
 //
+// ---------------------------------------------------------------------------
+// THE ONE DEPENDENCY CHANGE THAT NEEDS NO CHANGESET
+// ---------------------------------------------------------------------------
+// Removing `@aiqadam/shared` from a qadam (`packages/qadams/{core,community,custom}/<name>`). It is
+// private and no longer published (ADR-0001, #799), qadams may not import it (gate 6,
+// packages/qadams/eslint.config.mjs), and the entry was already unused when #799 dropped it from
+// all 238 manifests. Demanding a changeset would mean 238 releases with no code change, which
+// ADR-0001 and ADR-0003 both reject; each qadam ships the smaller manifest with its next real
+// release. Only the removal, and only from a qadam, is exempt: adding the dependency back, or
+// changing its spec, still counts as a dependency change, and so does any other entry in the same
+// section. Dropping it from the framework or `common` changes what they ship and is not exempt.
+//
+// ---------------------------------------------------------------------------
+// A CHANGE TO `@aiqadam/shared` IS ALSO A CHANGE TO `qadams-framework`
+// ---------------------------------------------------------------------------
+// The framework's tarball vendors all of `shared`'s build and re-exports from it
+// (tools/scripts/utils/stage-package-for-publish.ts, BUNDLED_PRIVATE_DEPENDENCIES — mirrored in
+// BUNDLED_INTO below, since this file imports nothing). The release PR would patch the framework
+// for any `shared` release anyway (`updateInternalDependencies`), so a breaking change to a
+// re-exported symbol would ship as a framework patch with nothing to stop it. A `src/` or dependency
+// change in `shared` therefore needs a changeset naming the framework too, at the level the change
+// has for a qadam author — usually a second line in the same changeset.
+//
 // Usage:
 //   PR_BASE_SHA=<sha> PR_HEAD_SHA=<sha> node tools/ci/check-changesets.mjs
 //   node tools/ci/check-changesets.mjs                      # local: origin/<GITHUB_BASE_REF|main>...HEAD
@@ -65,6 +89,9 @@ export const changesetGate = {
 
 const LEVEL_RANK = { none: 0, patch: 1, minor: 2, major: 3 }
 const DEP_SECTIONS = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']
+const REMOVABLE_WITHOUT_CHANGESET = ['@aiqadam/shared']
+const QADAM_DIRS = ['packages/qadams/core/', 'packages/qadams/community/', 'packages/qadams/custom/']
+const BUNDLED_INTO = { '@aiqadam/shared': '@aiqadam/qadams-framework' }
 const PLATFORM_PACKAGE = '@aiqadam/platform'
 const PLATFORM_DIR = 'packages/platform'
 const BREAKING_CHANGES_DOC = 'docs/install/configuration/breaking-changes.mdx'
@@ -127,13 +154,21 @@ const evaluate = ({ range }) => {
     if (!pkg || !pkg.versioned) {
       continue
     }
+    const bundler = workspace.byName.get(BUNDLED_INTO[pkg.name])
+    const bundlerNeeds = bundler?.versioned ? [bundler] : []
     if (file.startsWith(`${pkg.dir}/src/`)) {
-      addReason({ needs, pkg, reason: `src changed (${file})` })
+      addReason({ needs, pkg, reason: `src changed (${file})`, srcChange: true })
+      for (const target of bundlerNeeds) {
+        addReason({ needs, pkg: target, reason: `bundles ${pkg.name}, whose src changed (${file})`, srcChange: true })
+      }
     }
     if (file === `${pkg.dir}/package.json` && existedAtBase({ range, file })) {
-      const sections = changedDependencySections({ range, file })
+      const sections = changedDependencySections({ range, file, exemptRemovals: QADAM_DIRS.some((dir) => pkg.dir.startsWith(dir)) })
       if (sections.length > 0) {
         addReason({ needs, pkg, reason: `${sections.join(', ')} changed`, dependencyChange: true })
+        for (const target of bundlerNeeds) {
+          addReason({ needs, pkg: target, reason: `bundles ${pkg.name}, whose ${sections.join(', ')} changed`, dependencyChange: true })
+        }
       }
       if (!isReleaseBranch && versionChanged({ range, file })) {
         versionEdits.push(file)
@@ -186,7 +221,7 @@ const printReport = ({ report, range }) => {
 }
 
 const writeRenovateChangeset = ({ report }) => {
-  const uncovered = report.missing.filter((entry) => entry.dependencyChange && entry.reasons.every((reason) => !reason.startsWith('src changed')))
+  const uncovered = report.missing.filter((entry) => entry.dependencyChange && !entry.srcChange)
   if (uncovered.length === 0) {
     console.log('[check-changesets] nothing to write — every dependency change already has a changeset.')
     return
@@ -342,25 +377,38 @@ const declaredLevels = ({ changesets }) => {
   return declared
 }
 
-const addReason = ({ needs, pkg, reason, dependencyChange = false }) => {
-  const entry = needs.get(pkg.name) ?? { pkg, reasons: [], dependencyChange: false }
+const addReason = ({ needs, pkg, reason, dependencyChange = false, srcChange = false }) => {
+  const entry = needs.get(pkg.name) ?? { pkg, reasons: [], dependencyChange: false, srcChange: false }
   const reasons = entry.reasons.length < 3
     ? [...entry.reasons, reason]
     : entry.reasons.length === 3
       ? [...entry.reasons, '…']
       : entry.reasons
-  needs.set(pkg.name, { ...entry, reasons, dependencyChange: entry.dependencyChange || dependencyChange })
+  needs.set(pkg.name, { ...entry, reasons, dependencyChange: entry.dependencyChange || dependencyChange, srcChange: entry.srcChange || srcChange })
 }
 
 const existedAtBase = ({ range, file }) => readFileAt({ sha: range.base, file }) !== null
 
-const changedDependencySections = ({ range, file }) => {
+const changedDependencySections = ({ range, file, exemptRemovals }) => {
   const base = readJsonAt({ sha: range.base, file })
   const head = readJsonAt({ sha: range.head, file })
   if (!base || !head) {
     throw new Error(`${file} is not valid JSON at one end of the range`)
   }
-  return DEP_SECTIONS.filter((section) => JSON.stringify(sortKeys(base[section])) !== JSON.stringify(sortKeys(head[section])))
+  return DEP_SECTIONS.filter((section) => {
+    const before = exemptRemovals ? withoutExemptRemovals({ before: base[section], after: head[section] }) : base[section]
+    return JSON.stringify(sortKeys(before)) !== JSON.stringify(sortKeys(head[section]))
+  })
+}
+
+// `before` with the exempt entries dropped where `after` no longer has them, so their removal alone
+// compares equal (see "THE ONE DEPENDENCY CHANGE THAT NEEDS NO CHANGESET").
+const withoutExemptRemovals = ({ before, after }) => {
+  if (before === undefined || before === null || typeof before !== 'object') {
+    return before
+  }
+  const removed = REMOVABLE_WITHOUT_CHANGESET.filter((name) => name in before && !(name in (after ?? {})))
+  return Object.fromEntries(Object.entries(before).filter(([name]) => !removed.includes(name)))
 }
 
 const versionChanged = ({ range, file }) => {

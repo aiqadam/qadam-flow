@@ -480,13 +480,15 @@ jobs:
 
       # `--skip-registry-check` is what keeps this job honest. packagePrePublishChecks answers
       # "is this version already published, and was the package changed since main" — once these
-      # versions are released, a PR that leaves them UNCHANGED gets "skip" for all three and the
+      # versions are released, a PR that leaves them UNCHANGED gets "skip" for both and the
       # pack produces NOTHING. (Changed-and-unbumped makes it throw instead; the skip is the
       # common case, and the one that would go green having proved nothing.) The job would then pass having exercised none of the path it
       # exists to exercise. publishNpmPackage refuses the flag unless the run also packs, so it
       # cannot be used to force a publish past that guard. It also drops this job's dependency on
       # registry.npmjs.org being reachable.
-      - name: Pack shared, qadams-framework, qadams-common
+      # `shared` is built above but not packed: it is private since #799, and the framework
+      # tarball carries it. The pack itself refuses a framework tarball that still depends on it.
+      - name: Pack qadams-framework (shared bundled), qadams-common
         run: |
           mkdir -p "${{ runner.temp }}/npm-packages"
           npm run publish-framework-packages -- --pack-to="${{ runner.temp }}/npm-packages" --skip-registry-check

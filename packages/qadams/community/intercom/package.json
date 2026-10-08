@@ -6,7 +6,6 @@
   "dependencies": {
     "@aiqadam/qadams-common": "workspace:*",
     "@aiqadam/qadams-framework": "workspace:*",
-    "@aiqadam/shared": "workspace:*",
     "dayjs": "1.11.9",
     "intercom-client": "6.2.0",
     "string-strip-html": "8.5.0",

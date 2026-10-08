@@ -6,7 +6,6 @@
   "dependencies": {
     "@aiqadam/qadams-common": "workspace:*",
     "@aiqadam/qadams-framework": "workspace:*",
-    "@aiqadam/shared": "workspace:*",
     "dayjs": "1.11.9",
     "googleapis": "129.0.0",
     "tslib": "2.6.2"

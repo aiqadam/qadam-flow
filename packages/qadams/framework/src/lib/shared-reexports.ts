@@ -111,6 +111,20 @@ export type {
   ToolCallBase,
 } from '@aiqadam/shared'
 
+// Not in the import census: no qadam names these. They are what `AppConnectionValueForAuthProperty`
+// resolves `context.auth` to, so they sit in the inferred type of any action or trigger with auth.
+// A qadam no longer depends on `shared` (#799), so its declaration emit can only name them through
+// the framework; without these exports `tsc` fails with TS2742 (azure-devops, bitly, gmail, mautic).
+export type {
+  AppConnectionValue,
+  BasicAuthConnectionValue,
+  CustomAuthConnectionValue,
+  NoAuthConnectionValue,
+  OAuth2ConnectionValueWithApp,
+  PlatformOAuth2ConnectionValue,
+  SecretTextConnectionValue,
+} from '@aiqadam/shared'
+
 export {
   AIProviderModel,
   AIProviderName,
