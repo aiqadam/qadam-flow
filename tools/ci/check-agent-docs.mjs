@@ -69,6 +69,8 @@ const ADR_FILE_PATTERN = /^(\d{4})-[a-z0-9]+(?:-[a-z0-9]+)*\.md$/
 const ADR_STATUSES = ['proposed', 'accepted', 'rejected', 'superseded', 'deprecated']
 // Every status past `proposed` is a decision somebody made, so it must say who.
 const ADR_DECIDED_STATUSES = new Set(['accepted', 'rejected', 'superseded', 'deprecated'])
+// A proposal that is still open, or one that lost, has replaced nothing.
+const ADR_UNDECIDED_STATUSES = new Set(['proposed', 'rejected'])
 // What an unset frontmatter scalar looks like once its comment is stripped.
 const ADR_EMPTY_VALUES = new Set(['', 'null', '~'])
 
@@ -407,7 +409,7 @@ const checkAdrs = ({ root }) => {
       continue
     }
     statuses.set(number, status)
-    supersedes.set(number, adrField({ frontmatter, key: 'supersedes' }))
+    supersedes.set(number, adrList({ value: adrField({ frontmatter, key: 'supersedes' }) }))
     if (ADR_DECIDED_STATUSES.has(status) && isEmptyAdrList({ value: adrField({ frontmatter, key: 'deciders' }) })) {
       problems.push(`${relative}: status is "${status}" but "deciders" is empty — a decision records who made it.`)
     }
@@ -428,11 +430,26 @@ const checkAdrs = ({ root }) => {
     else if (successor === number) {
       problems.push(`${relative}: "superseded-by" names the ADR itself.`)
     }
-    else if (statuses.get(successor) !== 'accepted') {
-      problems.push(`${relative}: superseded by ADR ${successor}, which is not accepted — flip this one only when its successor is accepted.`)
+    // A successor may itself be superseded or deprecated later; only one that was never accepted
+    // cannot have replaced anything.
+    else if (ADR_UNDECIDED_STATUSES.has(statuses.get(successor))) {
+      problems.push(`${relative}: superseded by ADR ${successor}, which is ${statuses.get(successor)} — flip this one only when its successor is accepted.`)
     }
-    else if (supersedes.get(successor) !== number) {
+    else if (!supersedes.get(successor).includes(number)) {
       problems.push(`${relative}: superseded by ADR ${successor}, whose "supersedes" does not name ${number}.`)
+    }
+  }
+  // The other side: a decided ADR that replaces another must have retired it, or two contradictory
+  // decisions are both binding.
+  for (const [number, replaced] of supersedes) {
+    const relative = `${ADR_DIR}/${files.get(number)}`
+    for (const predecessor of replaced) {
+      if (!files.has(predecessor) || predecessor === number) {
+        problems.push(`${relative}: "supersedes" names ADR ${predecessor}, which ${predecessor === number ? 'is this ADR' : 'does not exist'}.`)
+      }
+      else if (!ADR_UNDECIDED_STATUSES.has(statuses.get(number)) && statuses.get(predecessor) !== 'superseded') {
+        problems.push(`${relative}: supersedes ADR ${predecessor}, which is still ${statuses.get(predecessor)} — flip it to superseded in the PR that accepts this one.`)
+      }
     }
   }
 
@@ -466,9 +483,13 @@ const checkAdrs = ({ root }) => {
   return problems
 }
 
+// `supersedes: "0001"` and `supersedes: ["0001", "0002"]` both read as a list of numbers.
+const adrList = ({ value }) => ADR_EMPTY_VALUES.has(value)
+  ? []
+  : value.replace(/^\[|\]$/g, '').split(',').map((item) => unquote(item)).filter((item) => item !== '')
+
 // `deciders: []`, `[ ]` and `[""]` all name nobody.
-const isEmptyAdrList = ({ value }) => ADR_EMPTY_VALUES.has(value)
-  || value.replace(/^\[|\]$/g, '').split(',').every((item) => unquote(item) === '')
+const isEmptyAdrList = ({ value }) => adrList({ value }).length === 0
 
 // The template documents the allowed values in trailing comments; drop the comment first so a
 // quoted value with a comment after it is still unquoted.
@@ -486,6 +507,7 @@ const collectAdrIndexRows = ({ content }) => {
   }
   const rows = []
   let inTable = false
+  let pastHeader = false
   for (const line of lines.slice(headingIndex + 1)) {
     if (!line.trimStart().startsWith('|')) {
       if (inTable || line.startsWith('#')) {
@@ -495,7 +517,8 @@ const collectAdrIndexRows = ({ content }) => {
     }
     inTable = true
     const cells = line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim())
-    if (/^[\s:-]*$/.test(cells[0] ?? '') || rows.length === 0 && /^ADR$/i.test(cells[0] ?? '')) {
+    if (!pastHeader) {
+      pastHeader = cells.every((cell) => /^:?-+:?$/.test(cell))
       continue
     }
     rows.push({

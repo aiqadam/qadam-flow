@@ -70,7 +70,8 @@ proposed ──► accepted ──► superseded (by NNNN)
 ## Rules that keep ADRs useful
 
 - **An accepted ADR is immutable.** Only `status`, `superseded-by` and broken links may change.
-  Changing the decision means writing a new ADR with `supersedes: NNNN`. The old one flips to
+  Changing the decision means writing a new ADR with `supersedes: "NNNN"` (a list such as
+  `["0003", "0005"]` when one decision replaces several). The old one flips to
   `superseded` (with `superseded-by`) in the PR that accepts the new one — not while it is still
   `proposed`.
 - **Evidence over assertion.** Numbers say how they were measured; claims about code cite
@@ -89,8 +90,8 @@ proposed ──► accepted ──► superseded (by NNNN)
 One row per ADR, in number order: ``| [`0001`](0001-title.md) | Title | `accepted` |``.
 `npm run check-agent-docs` fails when a file is missing from this table, a row has no file, a
 row shows a status other than the file's, a file name or status is invalid, a decided ADR has no
-`deciders`, a row is duplicated or the placeholder row outlives the first ADR, or a superseded ADR
-names anything but a different, accepted ADR whose `supersedes` points back. Immutability of accepted ADRs is checked in review.
+`deciders`, a row is duplicated or the placeholder row outlives the first ADR, or supersession is
+not recorded on both sides (`superseded-by` on the old ADR, `supersedes` on the new one). Immutability of accepted ADRs is checked in review.
 
 | ADR | Title | Status |
 | --- | --- | --- |

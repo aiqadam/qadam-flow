@@ -505,7 +505,7 @@ list_adr 0001 superseded
 list_adr 0002 proposed
 run_check
 expect_status 1 "the old decision stands until the new one is accepted"
-expect_contains 'which is not accepted' "says why"
+expect_contains 'which is proposed' "says why"
 
 echo "== a successor that does not point back fails =="
 new_root
@@ -541,6 +541,86 @@ printf '| [`0001`](0001-demo.md) | Demo decision | `proposed` |\n' >> "$root/adr
 run_check
 expect_status 1 "the first real ADR PR is where this is forgotten"
 expect_contains 'row without an ADR number' "points at the placeholder"
+
+echo "== a chain of supersessions passes =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0002"'
+write_adr 0002-demo.md superseded '[binalirustamov]' '"0003"' '"0001"'
+write_adr 0003-demo.md accepted '[binalirustamov]' null '"0002"'
+list_adr 0001 superseded
+list_adr 0002 superseded
+list_adr 0003 accepted
+run_check
+expect_status 0 "a decision replaced twice is normal, and the middle one must not turn CI red"
+
+echo "== a successor that was later deprecated passes =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0002"'
+write_adr 0002-demo.md deprecated '[binalirustamov]' null '"0001"'
+list_adr 0001 superseded
+list_adr 0002 deprecated
+run_check
+expect_status 0 "deprecating the successor does not un-replace the original"
+
+echo "== one ADR replacing two passes =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0003"'
+write_adr 0002-demo.md superseded '[binalirustamov]' '"0003"'
+write_adr 0003-demo.md accepted '[binalirustamov]' null '["0001", "0002"]'
+list_adr 0001 superseded
+list_adr 0002 superseded
+list_adr 0003 accepted
+run_check
+expect_status 0 "consolidating two decisions into one is a real case"
+
+echo "== an accepted ADR whose predecessor was never retired fails =="
+new_root
+write_adr 0001-demo.md accepted '[binalirustamov]'
+write_adr 0002-demo.md accepted '[binalirustamov]' null '"0001"'
+list_adr 0001 accepted
+list_adr 0002 accepted
+run_check
+expect_status 1 "two contradictory decisions must not both be binding"
+expect_contains 'supersedes ADR 0001, which is still accepted' "names the predecessor and its status"
+
+echo "== a proposed ADR may name a predecessor that is still accepted =="
+new_root
+write_adr 0001-demo.md accepted '[binalirustamov]'
+write_adr 0002-demo.md proposed '[]' null '"0001"'
+list_adr 0001 accepted
+list_adr 0002 proposed
+run_check
+expect_status 0 "the old decision stands until the new one is accepted"
+
+echo "== supersedes naming a missing ADR fails =="
+new_root
+write_adr 0001-demo.md proposed '[]' null '"0009"'
+list_adr 0001 proposed
+run_check
+expect_status 1 "a predecessor that does not exist is a typo"
+expect_contains '"supersedes" names ADR 0009, which does not exist' "names the missing ADR"
+
+echo "== deciders written as a list of one empty string fails =="
+new_root
+write_adr 0001-demo.md accepted '[""]'
+list_adr 0001 accepted
+run_check
+expect_status 1 "[\"\"] names nobody"
+expect_contains '"deciders" is empty' "says which field is empty"
+
+echo "== a renamed header row is still a header =="
+new_root
+write_adr 0001-demo.md proposed
+list_adr 0001 proposed
+sed -i.bak 's/^| ADR | Title | Status |$/| Number | Title | Status |/' "$root/adr/README.md" && rm "$root/adr/README.md.bak"
+run_check
+expect_status 0 "the header is whatever sits above the separator"
+
+echo "== a table under a later heading is not read as the index =="
+new_root
+printf '\n## Elsewhere\n\n| ADR | Note |\n| --- | --- |\n| [`0009`](0009-x.md) | `proposed` |\n' >> "$root/adr/README.md"
+run_check
+expect_status 0 "only the first table under the index heading is the index"
 
 echo "== a misnamed file under adr/ fails =="
 new_root
