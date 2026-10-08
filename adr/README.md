@@ -35,6 +35,9 @@ the new decision is an ADR, and the feature doc links to it.
   merged. Next number: one above the highest file on `main`. If another PR merges that number
   first, renumber yours on rebase.
 - Start from [`TEMPLATE.md`](./TEMPLATE.md). Keep its frontmatter and section order.
+- Supporting material — prototype scripts, measurements, session records, diagrams — lives under
+  `adr/assets/<descriptive-name>/` (or a single file in `adr/assets/`) and is linked from the ADRs
+  that rely on it. Name it after what it is, not after one ADR, since several may cite it.
 - One decision per file. A decision with independent parts that could be accepted or rejected
   separately is two ADRs.
 - **Number order is dependency order.** An ADR that relies on others says so under its title

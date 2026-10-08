@@ -29,7 +29,7 @@ qadams that pin them and are marked with `npm deprecate`.
 
 **The SDK.** Qadams import only `@aiqadam/qadams-framework` and `@aiqadam/qadams-common`. The 104
 symbols they import from `shared` today (measured as described in
-`adr/assets/0003-prototype/README.md`) move into `qadams-framework`, which re-exports them, and a
+`adr/assets/2026-10-08-versioning-prototype/README.md`) move into `qadams-framework`, which re-exports them, and a
 lint rule forbids qadams from importing `shared`. `qadams-framework@1.0.0` and
 `qadams-common@1.0.0` are cut once that move, the `shared` bundling and the API-diff gate are in
 place; before 1.0.0 the SDK makes no compatibility promise.
@@ -85,7 +85,8 @@ Inventory from #776 and #783 (`main` @ `717e7390` / `94dc9ae3`):
   #326, never tagged). `apVersionUtil.getCurrentRelease()` reads `package.json`, so every image built
   from `main` reports `2.0.0`, and `isSupportedRelease` filters the qadam catalogue against it.
 - **Packages.** `shared` 0.156.0, `framework` 0.35.0, `common` 0.17.0 in the tree — three independent
-  counters — and 238 qadams on `0.0.x`–`0.18.x` (`assemblyai` alone past `1.0.0`). `shared` was raised 29 times
+  counters — and 238 qadams on `0.0.x`–`0.18.x` (`assemblyai` alone past `1.0.0`; #776's title says
+  `0.13.x`, but `slack` and `google-sheets` are `0.18.0`). `shared` was raised 29 times
   since 2026-09-21 (#783) and has 13 versions on npm.
 - **Nothing enforces a bump.** `packagePrePublishChecks` diffs against `origin/main`, which is empty
   on the publish path, so it never fires there; `check-qadam-version-bumps` sees only dependency

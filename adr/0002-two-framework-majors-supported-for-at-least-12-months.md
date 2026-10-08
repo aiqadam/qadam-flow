@@ -31,10 +31,12 @@ The policy is enforced, not remembered:
   and the gate.
 
 Each instance makes a retirement safe locally with a **census**: from its own database it counts
-the steps pinned to qadam versions built against each major, reading each version's `contextInfo`
-from its stored metadata (`contextInfo` in
-`packages/qadams/framework/src/lib/qadam-metadata.ts:112-117` at `94dc9ae3`). A pin whose metadata is unknown counts as "still needs
-the old contract", so the census errs towards keeping a shim. Before an upgrade a
+the steps pinned to qadam versions built against each major, reading each pinned version's context
+version from `qadam_metadata`. That needs a new column: `contextInfo` exists today only on the
+in-memory metadata type (`packages/qadams/framework/src/lib/qadam-metadata.ts:112-117` at `94dc9ae3`)
+and is not persisted (`packages/server/api/src/app/qadams/metadata/qadam-metadata-entity.ts` has no
+such column). A pin whose context version is unknown counts as "still needs the old contract", so
+the census errs towards keeping a shim. Before an upgrade a
 `doctor` command lists the steps a release will stop running; after it, affected steps are marked
 "framework version no longer supported — update this step" in the builder, MCP and runs, an
 operator banner and log line appear, and the release starts normally — it does not block, and no
@@ -62,7 +64,7 @@ This ADR adds **gate 8** to ADR-0001's required set: the support-table gate abov
   framework — custom qadams uploaded to an instance, and external authors' qadams.
 - Qadam Flow is self-hosted with no central telemetry, and on-prem upgrade cadence varies, so
   "is anyone still on the old contract" can only be answered on each instance, offline.
-- External authors will build against the SDK (the architecture storming session of 2026-10-08 (answers recorded in these ADRs)), so the window is a public promise.
+- External authors will build against the SDK (the 2026-10-08 session, `adr/assets/2026-10-08-versioning-session.md`), so the window is a public promise.
 
 ## Options considered
 
@@ -92,7 +94,7 @@ fail at run time on someone's instance with no warning (#775).
 ### Option E — a pin migration per retirement (the `migrate-v24` … `v30` shape)
 
 Rejected. A hand-written file per change that silently moves published steps onto different code —
-the pattern a store of versions ends.
+the pattern this repository is moving away from (#411, #422, #432).
 
 ### Option F — block the upgrade until an operator confirms
 
@@ -123,6 +125,8 @@ than marked steps with a clear repair path.
 - Support table and the CI gate (removal, missing row, unsupported major), with fixture tests.
 - The support-window paragraph in `.agents/rules/versioning.md` and `CONTRIBUTING.md` (ADR-0001).
 - Replace the `Remove after 2026-10-12` comments with a reference to this ADR (#775).
-- Census: query over stored flow versions → pinned `name@version` → framework major from the store
-  metadata; `doctor` command; admin and MCP surfaces; post-upgrade marking.
+- Persist each qadam version's `contextInfo` in `qadam_metadata` (new column, backfilled from the
+  bundled builds).
+- Census: query over stored flow versions → pinned `name@version` → context version from
+  `qadam_metadata`; `doctor` command; admin and MCP surfaces; post-upgrade marking.
 - SDK docs: the support window for qadam authors.

@@ -34,20 +34,24 @@ qadam version.
 - **Catalogue.** Metadata for **every** version of every official qadam, with tarball integrity, is
   published as static JSON on GitHub Pages under `flow.aiqadam.org/catalog/v1/`. Releases append to
   it; slim images carry a snapshot; the URL is configurable for mirroring.
-- **Versions that were never published.** npm holds only what was published from 2026-09-21 on
-  (#476 published current versions only; `tables` has `0.5.1`). Older pins — the #411 / #422 / #432
-  population — cannot be fetched and have no catalogue metadata; they go straight to the
-  "update this step" path below, after the one-off heal of #474 / #487 already re-pointed the dead
-  ones. The catalogue covers every version published from then on.
+- **Versions that were never published.** Official qadams were first published in early October
+  2026, current versions only (#476; e.g. `tables` has `0.5.1`, not `0.5.0` from 2026-09-29). Pins to
+  older versions — the #411 / #422 / #432 population — cannot be fetched and have no catalogue
+  entry. For them the platform keeps today's #424 behaviour: move to the image's version if it is
+  inside the pin's caret range, with an audit record; otherwise "update this step". The catalogue
+  covers every version published from then on.
 - **Unavailable version.** If a pinned version cannot be fetched, the step moves to the image's
   version only when that version is inside the pin's caret range (ADR-0001) and the catalogue shows
-  its props are compatible, with an audit record. Otherwise
+  its props are compatible, with an audit record. Props compatibility does not prove the target
+  runs — upstream's register accepted an Oracle build that could not start (activepieces#15957) —
+  so the move stays inside the caret range and every move can be reverted from the audit record. Otherwise
   the step is marked "version unavailable — update this step" in the builder, MCP and runs, and the
   flow is never disabled (#435).
 - **Qadams at `1.0.0`.** A qadam's `1.0.0` (ADR-0001) is the release that switches it to the
   bundle format; `0.x` versions are the legacy npm format.
 
-This answers #785: a pin covers the qadam's own code and its third-party dependencies; the
+This answers #784 (every pinnable version stays resolvable, from the first published version on)
+and #785: a pin covers the qadam's own code and its third-party dependencies; the
 framework chain is the platform's, kept compatible by API discipline.
 
 ## Context
@@ -81,7 +85,7 @@ metadata exists for older official versions (#778), and that installs need netwo
 (2026-09-21 → 2026-10-07) — it is not a contract qadams can depend on. The goal of #433 stands; this ADR replaces how
 it is delivered.
 
-**Deployment constraints** (the architecture storming session of 2026-10-08 (answers recorded in these ADRs)): instances run in our cloud and at customers' sites with
+**Deployment constraints** (the 2026-10-08 session, `adr/assets/2026-10-08-versioning-session.md`): instances run in our cloud and at customers' sites with
 internet or a corporate npm proxy (Nexus / Artifactory). This **narrows** the earlier assumption in
 #433's comments and #775 that fully air-gapped installs are supported: a site with no proxy at all
 is no longer a target for fetching, though `:fat` keeps running every version it ships with no
@@ -111,8 +115,8 @@ retire its S3 mirror for pinning bugs (upstream ADR 0028) and bump all community
 ### Option C — one version per image, automatic pin migration to it
 
 Rejected as the model; kept as the fallback for an unfetchable version. Cheapest and fully offline,
-and the prototype shows it would have been safe at the props level for every core qadam that changed
-since June. But it changes the code under a published flow — props-compatible is not
+and the prototype shows it would have been safe at the props level for the 12 measured core qadams
+that changed since June. But it changes the code under a published flow — props-compatible is not
 behaviour-compatible (#397 changed `telegram-bot` behaviour with an identical schema) — and
 upstream, which does this through `piece-upgrade-register.json` + `migrate-v23`, moved working
 Oracle steps onto a target that failed every run (repaired in activepieces#15957).
@@ -135,7 +139,7 @@ version.
 | --- | --- | --- |
 | Artifact format | One bundle, same file in images and npm | npm package + `bun install` per version: needs network and dependency resolution at install, two sources that can drift (upstream ADR 0028), and permanent overrides of exact `@aiqadam/*` pins |
 | What the platform provides | `@aiqadam/*` + `zod` | `@aiqadam/*` only: qadams build prop schemas with `zod` and the framework validates them, so two `zod` copies would meet at that boundary |
-| Catalogue scope | Every version | Current versions only: no schema to decide the fallback, to render an old step in the builder (#422), or to import a flow from another instance; history costs ~2 MB/year gzipped (derived in `adr/assets/0003-prototype/README.md`) |
+| Catalogue scope | Every version | Current versions only: no schema to decide the fallback, to render an old step in the builder (#422), or to import a flow from another instance; history costs ~2 MB/year gzipped (derived in `adr/assets/2026-10-08-versioning-prototype/README.md`) |
 | When to fetch | Publish / import, and at start-up | Publish / import only: after a lost volume or a switch to `:slim`, already published flows would point at missing versions |
 | Signature check | Mandatory for `@aiqadam/*`; setting for custom | Mandatory for everything: customers' private registries may not carry npm signatures |
 | Default image | `run.sh` → `:slim`; `:latest` = `:fat` | `:latest` = `:slim`: a plain `docker compose pull` would silently turn existing installs into slim ones that need a registry; dropping `:latest` breaks every existing install |
@@ -164,6 +168,8 @@ persistent volume, seeded by the image at start-up; custom qadams live in the sa
 per-platform namespace.
 
 **Harder / risks.**
+- Pins older than the first publication keep today's #424 caret fallback without a schema check,
+  because no metadata exists for them.
 - Old qadam code runs on new libraries: a behaviour change in `framework` / `common` changes old
   qadams too. Mitigated by the API gate and ADR-0002.
 - Bundling has edge cases (`import.meta`, native modules: `crypto` failed to load, `sftp`, `duckdb`
@@ -178,7 +184,7 @@ later releases must read.
 ## Evidence
 
 Prototype on `origin/main` @ `94dc9ae3`, Node v24.21.0, a local dev container, warm disk; not
-measured on QA. Commands and scripts: `adr/assets/0003-prototype/`. Old versions were rebuilt from their own commits with today's third-party
+measured on QA. Commands and scripts: `adr/assets/2026-10-08-versioning-prototype/`. Old versions were rebuilt from their own commits with today's third-party
 dependencies, so they approximate, not reproduce, the original artifacts. `@aiqadam/*` were left
 external to each bundle and resolved to one built copy.
 
@@ -194,7 +200,7 @@ external to each bundle and resolved to one built copy.
 | Each extra copy of `shared` (Option B's cost) | +41 MiB heap, 60–100 ms |
 | `tables@0.3.1` and `@0.4.5` on the current framework | load, expose metadata, `contextVersion=2` |
 | `csv@0.4.14`, `@0.5.0`, `@0.6.0` running `convert_csv_to_json` in one process | identical output |
-| Props ABI, June version → current, every core qadam that changed | 12 of 12 compatible (only additions) |
+| Props ABI, June version → current, core qadams that changed | 12 of the 14 that changed compatible (only additions); `crypto` failed to load and `sftp` to bundle, so 2 not measured |
 | Old `tables` source type-checked against today's `shared` | 2–3 errors (`FieldType`, `Filter` unions widened) |
 | `shared` symbols imported by qadams | 104 distinct; 206 qadams import `shared`, 238 `framework`, 200 `common` |
 
