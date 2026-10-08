@@ -28,7 +28,7 @@ Most findings here are violations of documented conventions, not exotic bugs.
    references actually say what the author says they say.
 3. **Project conventions** (from AGENTS.md — not exhaustive):
    - no `any`, no `as` type casts, no deprecated APIs
-   - `tryCatch` / `tryCatchSync` from `@aiqadam/shared` for error handling
+   - `tryCatch` / `tryCatchSync` from `@aiqadam/shared` (in qadams: from `@aiqadam/qadams-framework`) for error handling
    - named/destructured single-object params for any function with >1 parameter
    - types at the **end** of the file, after all logic; exported constants at the top, right after imports (namespace const on top per server STYLE.md). Sanctioned exceptions: zod `z.infer` types adjacent to their schema, small local types directly above their only consumer, trailing enums in type-domain files
    - util files group plain functions into one exported `const`; React components stay named exports
