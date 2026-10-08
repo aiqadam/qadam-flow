@@ -3043,7 +3043,7 @@
         "@fastify/swagger": "9.5.1",
         "@modelcontextprotocol/sdk": "1.31.0",
         "@openrouter/ai-sdk-provider": "3.1.0",
-        "@openrouter/sdk": "1.4.21",
+        "@openrouter/sdk": "1.4.22",
         "@opentelemetry/api": "1.9.1",
         "@opentelemetry/auto-instrumentations-node": "0.80.0",
         "@opentelemetry/exporter-metrics-otlp-http": "0.222.0",
@@ -4682,7 +4682,7 @@
 
     "@openrouter/ai-sdk-provider": ["@openrouter/ai-sdk-provider@3.1.0", "", { "peerDependencies": { "ai": "^7.0.0", "zod": "^3.25.76 || ^4.1.8" } }, "sha512-BQy1TA9fKrh47s9ivsO6FY5QimN7GUF0i8Qon3pkxQclEgShso0dClpcWn8OIyPLEZZPFaFKgI8TW4S/O0p0Dw=="],
 
-    "@openrouter/sdk": ["@openrouter/sdk@1.4.21", "", { "dependencies": { "zod": "^3.25.0 || ^4.0.0" } }, "sha512-fWaxZ6NV7/qfocMfZfwb0cAjMLTh69B7S/H2b+Mb2dJzS2eZTTGTCb4egHEpB60SRcovUMv/ZqKW2DFU8tpExw=="],
+    "@openrouter/sdk": ["@openrouter/sdk@1.4.22", "", { "dependencies": { "zod": "^3.25.0 || ^4.0.0" } }, "sha512-8IPn9VCf2K+qpMtQMuLOJrcdEF38bLG26Qjo9DqPYPtv1C+Sfv+BRGg4OPjNmgXgmFeD2Six6akasgsY7nka0g=="],
 
     "@opentelemetry/api": ["@opentelemetry/api@1.9.1", "", {}, "sha512-gLyJlPHPZYdAk1JENA9LeHejZe1Ti77/pTeFm/nMXmQH/HFZlcS/O2XJB+L8fkbrNSqhdtlvjBVjxwUYanNH5Q=="],
 
