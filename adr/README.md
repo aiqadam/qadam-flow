@@ -62,11 +62,13 @@ proposed ──► accepted ──► superseded (by NNNN)
 
 1. **Discuss in an issue first.** Exploration, measurements and dead ends belong in the issue.
 2. **Open a PR that adds the ADR with `status: proposed`**, linked from that issue. The PR carries
-   only the ADR (and this index); implementation goes in separate PRs.
+   only the ADR (and this index); implementation goes in separate PRs. It may be merged while still
+   `proposed`, so the draft is on `main` to read and link — a proposed ADR binds nothing.
 3. **Decide.** Maintainers decide — at an architecture session or in the PR review. Record who
    decided in `deciders`.
-4. **Flip to `accepted`** (or `rejected`), set `date` to the decision date, update the index below,
-   merge, and comment on the issue with a link to the ADR.
+4. **Flip to `accepted`** (or `rejected`) — in the same PR if it is still open, otherwise in a PR that
+   changes only the status, `deciders`, `date` and the index — and comment on the issue with a link
+   to the ADR.
 5. **Implementation tickets and PRs reference the ADR** as `ADR-NNNN` with a link. Implementation
    may be prototyped while the ADR is `proposed`, but it merges only after the ADR is `accepted`.
 
