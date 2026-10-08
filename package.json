@@ -43,6 +43,7 @@
     "check-i18n": "node tools/ci/check-i18n.mjs",
     "check-dropdown-defaults": "node tools/ci/check-dropdown-defaults.mjs",
     "check-pause-markers": "node tools/ci/check-pause-markers.mjs",
+    "check-framework-support": "node tools/ci/check-framework-support.mjs",
     "check-required-prop-defaults": "node tools/ci/check-required-prop-defaults.mjs",
     "check-qadam-version-bumps": "node tools/ci/check-qadam-version-bumps.mjs",
     "check-agent-docs": "node tools/ci/check-agent-docs.mjs",

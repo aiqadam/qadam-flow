@@ -382,6 +382,22 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: npm run check-qadam-version-bumps
 
+      # Gate 8 of ADR-0002 (#801): the framework support table. A context shim may not leave the
+      # engine while the table says its framework major is still supported, a framework major may
+      # not be released without a row, and no official qadam may be built against a major the
+      # engine has dropped. Unlike the three gates above it runs on every event, not only on
+      # pull requests: the tree check needs no diff. PR_BASE_SHA adds the comparison against the
+      # base that catches a shim branch deleted outside the dispatcher; it is empty outside
+      # pull_request, and the checker then skips only that comparison. See the checker's header
+      # for why the date it reads can only ever allow a removal, never fail a tree that passed.
+      - name: Test the framework support gate
+        run: tools/ci/test-framework-support-gate.sh
+
+      - name: Check the framework support table (ADR-0002 gate 8)
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: npm run check-framework-support
+
       # _pack-framework-packages.yml's `pack-framework-packages` job trusts a custom
       # workspace:* rewrite instead of bun's own (see that job's header for why). Needs
       # ts-node and the transform's own runtime deps (axios, via package-pre-publish-checks.ts) from
