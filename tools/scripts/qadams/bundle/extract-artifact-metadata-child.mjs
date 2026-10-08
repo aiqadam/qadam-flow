@@ -44,7 +44,7 @@ const metadata = {
 }
 writeFileSync(join(artifactDir, 'metadata.json'), JSON.stringify(metadata))
 
-const platformResolved = Object.fromEntries(['@aiqadam/qadams-framework', 'zod'].map((name) => [name, artifactRequire.resolve(name)]))
+const platformResolved = Object.fromEntries(['@aiqadam/shared', '@aiqadam/qadams-framework', '@aiqadam/qadams-common', 'zod'].map((name) => [name, artifactRequire.resolve(name)]))
 const insideArtifact = Object.entries(platformResolved).filter(([, path]) => path.startsWith(artifactDir))
 if (insideArtifact.length > 0) {
     console.error(`[extract-artifact-metadata] platform packages resolved from inside the artifact: ${insideArtifact.map(([name]) => name).join(', ')}`)

@@ -65,7 +65,7 @@ const main = async () => {
     const results = await runPool({
         items: selected,
         concurrency,
-        worker: async (qadam, index) => {
+        worker: async ({ qadam, index }) => {
             const result = await qadamArtifact.build({
                 qadamDir: qadam.dir,
                 outRoot,
@@ -114,6 +114,8 @@ const writeArchiveIndex = async ({ results, packDestination, commit }) => {
         size: r.tarball.size,
         commit,
     }))
+    // `--pack --allow-failures` can reach here with no tarball at all; the index is still written.
+    await mkdir(packDestination, { recursive: true })
     await writeFile(join(packDestination, 'archive-index.json'), JSON.stringify({ formatVersion: 1, artifacts: entries }, null, 2) + '\n')
 }
 
@@ -149,7 +151,7 @@ const runPool = async ({ items, concurrency, worker }) => {
     const lane = async () => {
         while (cursor.next < items.length) {
             const index = cursor.next++
-            results[index] = await worker(items[index], index)
+            results[index] = await worker({ qadam: items[index], index })
         }
     }
     await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, lane))

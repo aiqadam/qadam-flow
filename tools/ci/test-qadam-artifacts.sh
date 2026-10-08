@@ -6,7 +6,8 @@
 # platform packages external and declared as peers, translations inside the artifact and its
 # tarball, metadata.json written from a successful load, the node_modules exception, extra entry
 # points, an action executed with only the platform's copies of `@aiqadam/*` and `zod` — and that
-# each guard fails when its exception is taken away.
+# each guard fails when its exception is taken away. `--pack --allow-failures` still writes the
+# archive index (empty) when every build failed.
 #
 # Needs `bun install` and the three platform packages built:
 #   npx turbo run build --filter='@aiqadam/qadams-common...'
@@ -71,6 +72,8 @@ for (const q of ['csv', 'crypto', 'oracle-database', 'text-helper']) {
   check(`${q}: metadata.json in the tarball`, tarEntries(q).includes('package/metadata.json'))
 }
 check('csv: ru translations reach metadata.json (#606)', typeof metadata('csv').i18n?.ru === 'object')
+check('csv: locale list excludes translation.json', !byName.csv.i18nLocales.includes('translation') && byName.csv.i18nLocales.includes('ru'))
+check('csv: translation.json still in the artifact', existsSync(join(dir('csv'), 'src', 'i18n', 'translation.json')))
 check('csv: plain bundle, no dependencies', manifest('csv').qadamArtifact.kind === 'bundle' && manifest('csv').dependencies === undefined)
 check('csv: worker entry beside the bundle', existsSync(join(dir('csv'), 'src', 'excel-to-csv-worker.js')))
 check('crypto: zod is a peer', manifest('crypto').peerDependencies.zod?.startsWith('^'))
@@ -120,6 +123,19 @@ Object.entries(expected).forEach(([q, s]) => console.log(`${status[q] === s ? 'o
 process.exit(wrong.length === 0 ? 0 : 1)
 EOF
 expect_exit "guards report the missing exception" 0 $?
+
+# --- --pack when every build fails: the archive index is still written, with no entries ---------
+node "$builder" --out "${root}/pack-failures" --qadams csv --config "${root}/empty-config.json" --pack --allow-failures >"${root}/pack-failures.log" 2>&1
+expect_exit "--pack --allow-failures with a failed build exits 0" 0 $?
+
+PACK_FAILURES="${root}/pack-failures" node --input-type=module - <<'EOF'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+const archive = JSON.parse(readFileSync(join(process.env.PACK_FAILURES, 'archive', 'archive-index.json'), 'utf8'))
+console.log(`${archive.artifacts.length === 0 ? 'ok   ' : 'FAIL '} archive index written with no artifacts`)
+process.exit(archive.artifacts.length === 0 ? 0 : 1)
+EOF
+expect_exit "empty archive index after a failed build" 0 $?
 
 # The oracle runner declared but oracledb not: the addon must still be caught.
 echo '{"qadams":{"@aiqadam/qadam-oracle-database":{"extraEntryPoints":{"src/lib/common/oracle-runner.ts":"test"}}}}' >"${root}/runner-only.json"

@@ -78,74 +78,81 @@ export const qadamArtifact = {
         await rm(artifactDir, { recursive: true, force: true })
         await mkdir(join(artifactDir, 'src'), { recursive: true })
 
-        const bundleOutcome = await runEsbuild({
-            qadamDir,
-            artifactDir,
-            nodeModulesPackages: qadamConfig.nodeModules,
-            extraEntryPoints: qadamConfig.extraEntryPoints,
-        })
-        if (bundleOutcome.error) {
-            return fail({ status: ARTIFACT_STATUS.BUNDLE_FAILED, error: bundleOutcome.error })
-        }
-        const analysis = await analyseMetafile({
-            metafile: bundleOutcome.metafile,
-            qadamDir,
-            repoRoot,
-            nativeAddonImports: bundleOutcome.nativeAddonImports,
-            qadamConfig,
-        })
-        const kind = qadamConfig.nodeModules.length > 0 ? ARTIFACT_KIND.BUNDLE_WITH_NODE_MODULES : ARTIFACT_KIND.BUNDLE
-        const sizes = { bundleBytes: (await stat(join(artifactDir, 'src', 'index.js'))).size }
-        const common = { kind, sizes, ...analysis.report, esbuildWarnings: bundleOutcome.warnings }
+        try {
+            const bundleOutcome = await runEsbuild({
+                qadamDir,
+                artifactDir,
+                nodeModulesPackages: qadamConfig.nodeModules,
+                extraEntryPoints: qadamConfig.extraEntryPoints,
+            })
+            if (bundleOutcome.error) {
+                return fail({ status: ARTIFACT_STATUS.BUNDLE_FAILED, error: bundleOutcome.error })
+            }
+            const analysis = await analyseMetafile({
+                metafile: bundleOutcome.metafile,
+                qadamDir,
+                repoRoot,
+                nativeAddonImports: bundleOutcome.nativeAddonImports,
+                qadamConfig,
+            })
+            const kind = qadamConfig.nodeModules.length > 0 ? ARTIFACT_KIND.BUNDLE_WITH_NODE_MODULES : ARTIFACT_KIND.BUNDLE
+            const sizes = { bundleBytes: (await stat(join(artifactDir, 'src', 'index.js'))).size }
+            const common = { kind, sizes, ...analysis.report, esbuildWarnings: bundleOutcome.warnings }
 
-        if (analysis.inlinedPeers.length > 0) {
-            return fail({ ...common, status: ARTIFACT_STATUS.PEER_INLINED, error: `bundle contains platform-provided code: ${analysis.inlinedPeers.join(', ')}` })
-        }
-        const unknownPeers = analysis.peers.filter((peer) => peer !== 'zod' && PLATFORM_PROVIDED_PACKAGES[peer] === undefined)
-        if (unknownPeers.length > 0) {
-            return fail({ ...common, status: ARTIFACT_STATUS.UNKNOWN_PEER, error: `imports @aiqadam packages the platform does not provide: ${unknownPeers.join(', ')}` })
-        }
-        if (analysis.undeclaredNative.length > 0) {
-            return fail({ ...common, status: ARTIFACT_STATUS.NATIVE_UNDECLARED, error: `native addon packages need a declared exception (nodeModules or optionalNative): ${analysis.undeclaredNative.join(', ')}` })
-        }
+            if (analysis.inlinedPeers.length > 0) {
+                return fail({ ...common, status: ARTIFACT_STATUS.PEER_INLINED, error: `bundle contains platform-provided code: ${analysis.inlinedPeers.join(', ')}` })
+            }
+            const unknownPeers = analysis.peers.filter((peer) => peer !== 'zod' && PLATFORM_PROVIDED_PACKAGES[peer] === undefined)
+            if (unknownPeers.length > 0) {
+                return fail({ ...common, status: ARTIFACT_STATUS.UNKNOWN_PEER, error: `imports @aiqadam packages the platform does not provide: ${unknownPeers.join(', ')}` })
+            }
+            if (analysis.undeclaredNative.length > 0) {
+                return fail({ ...common, status: ARTIFACT_STATUS.NATIVE_UNDECLARED, error: `native addon packages need a declared exception (nodeModules or optionalNative): ${analysis.undeclaredNative.join(', ')}` })
+            }
 
-        // The qadam's own code locating a file beside itself (a worker, a forked runner) needs that
-        // file emitted next to the bundle; without a declared entry the bundle loads and the action
-        // fails when it runs, which no load check sees.
-        if (analysis.ownRuntimeFileReferences.length > 0 && qadamConfig.extraEntryPoints.length === 0) {
-            return fail({ ...common, status: ARTIFACT_STATUS.RUNTIME_FILE_UNDECLARED, error: `own source locates files from its own path, declare extraEntryPoints: ${analysis.ownRuntimeFileReferences.join(', ')}` })
-        }
+            // The qadam's own code locating a file beside itself (a worker, a forked runner) needs that
+            // file emitted next to the bundle; without a declared entry the bundle loads and the action
+            // fails when it runs, which no load check sees.
+            if (analysis.ownRuntimeFileReferences.length > 0 && qadamConfig.extraEntryPoints.length === 0) {
+                return fail({ ...common, status: ARTIFACT_STATUS.RUNTIME_FILE_UNDECLARED, error: `own source locates files from its own path, declare extraEntryPoints: ${analysis.ownRuntimeFileReferences.join(', ')}` })
+            }
 
-        const i18nLocales = await copyI18n({ qadamDir, artifactDir })
-        const nodeModules = kind === ARTIFACT_KIND.BUNDLE_WITH_NODE_MODULES
-            ? await copyNodeModulesClosure({ roots: qadamConfig.nodeModules, fromDir: qadamDir, artifactDir })
-            : {}
-        const peerDependencies = await computePeerDependencies({ peers: analysis.peers, repoRoot })
-        await writeFile(join(artifactDir, 'package.json'), JSON.stringify(buildArtifactPackageJson({
-            sourcePackageJson,
-            kind,
-            peerDependencies,
-            nodeModules,
-        }), null, 2) + '\n')
+            const i18nLocales = await copyI18n({ qadamDir, artifactDir })
+            const nodeModules = kind === ARTIFACT_KIND.BUNDLE_WITH_NODE_MODULES
+                ? await copyNodeModulesClosure({ roots: qadamConfig.nodeModules, fromDir: qadamDir, artifactDir })
+                : {}
+            const peerDependencies = await computePeerDependencies({ peers: analysis.peers, repoRoot })
+            await writeFile(join(artifactDir, 'package.json'), JSON.stringify(buildArtifactPackageJson({
+                sourcePackageJson,
+                kind,
+                peerDependencies,
+                nodeModules,
+            }), null, 2) + '\n')
 
-        const withFiles = { ...common, i18nLocales, peerDependencies, nodeModules: Object.keys(nodeModules).length }
-        if (!loadCheck) {
-            return finish({ ...withFiles, status: ARTIFACT_STATUS.OK, metadata: null })
+            const withFiles = { ...common, i18nLocales, peerDependencies, nodeModules: Object.keys(nodeModules).length }
+            if (!loadCheck) {
+                return finish({ ...withFiles, status: ARTIFACT_STATUS.OK, metadata: null })
+            }
+            const loaded = await extractMetadata({ artifactDir })
+            if (loaded.error) {
+                return fail({ ...withFiles, status: ARTIFACT_STATUS.LOAD_FAILED, error: loaded.error })
+            }
+            const artifactBytes = await directorySize({ dir: artifactDir })
+            const loadedFields = { ...withFiles, sizes: { ...sizes, artifactBytes }, metadata: loaded.summary }
+            if (!pack) {
+                return finish({ ...loadedFields, status: ARTIFACT_STATUS.OK })
+            }
+            const packed = await packArtifact({ artifactDir, packDestination })
+            if (packed.error) {
+                return fail({ ...loadedFields, status: ARTIFACT_STATUS.PACK_FAILED, error: packed.error })
+            }
+            return finish({ ...loadedFields, status: ARTIFACT_STATUS.OK, tarball: packed.tarball })
+        } catch (e) {
+            // A failure the guards do not classify (a required dependency that cannot be resolved,
+            // an I/O error) must not leave a half-built version in the store.
+            await rm(artifactDir, { recursive: true, force: true })
+            throw e
         }
-        const loaded = await extractMetadata({ artifactDir })
-        if (loaded.error) {
-            return fail({ ...withFiles, status: ARTIFACT_STATUS.LOAD_FAILED, error: loaded.error })
-        }
-        const artifactBytes = await directorySize({ dir: artifactDir })
-        const loadedFields = { ...withFiles, sizes: { ...sizes, artifactBytes }, metadata: loaded.summary }
-        if (!pack) {
-            return finish({ ...loadedFields, status: ARTIFACT_STATUS.OK })
-        }
-        const packed = await packArtifact({ artifactDir, packDestination })
-        if (packed.error) {
-            return fail({ ...loadedFields, status: ARTIFACT_STATUS.PACK_FAILED, error: packed.error })
-        }
-        return finish({ ...loadedFields, status: ARTIFACT_STATUS.OK, tarball: packed.tarball })
     },
 
     // The platform's copies, where a store would keep them: `<outRoot>/node_modules`. Only the load
@@ -342,6 +349,10 @@ const referencesRuntimeFiles = async ({ files }) => {
     return sources.some((source) => /\b__dirname\b|\b__filename\b|import\.meta\.url|require\.resolve\(/.test(source))
 }
 
+// `translation.json` is the English source catalogue, not a locale: the platform loads i18n by
+// locale name (`qadamTranslation.initializeI18n`), so it must not count as one.
+const NON_LOCALE_I18N_FILES = new Set(['translation.json'])
+
 const copyI18n = async ({ qadamDir, artifactDir }) => {
     const source = join(qadamDir, 'src', 'i18n')
     const files = await readdir(source).catch(() => [])
@@ -351,7 +362,7 @@ const copyI18n = async ({ qadamDir, artifactDir }) => {
     }
     await mkdir(join(artifactDir, 'src', 'i18n'), { recursive: true })
     await Promise.all(jsonFiles.map((f) => cp(join(source, f), join(artifactDir, 'src', 'i18n', f))))
-    return jsonFiles.map((f) => basename(f, '.json')).sort()
+    return jsonFiles.filter((f) => !NON_LOCALE_I18N_FILES.has(f)).map((f) => basename(f, '.json')).sort()
 }
 
 // Flat where possible, nested under the dependent where two versions of one name meet — the same
@@ -381,15 +392,25 @@ const copyNodeModulesClosure = async ({ roots, fromDir, artifactDir }) => {
             topLevel.set(packageName, manifest.version)
         }
         await cp(sourceDir, target, { recursive: true, dereference: true, filter: (src) => !src.slice(sourceDir.length).split(sep).includes('node_modules') })
-        const dependencies = Object.keys({ ...manifest.dependencies, ...manifest.optionalDependencies })
-        const resolved = await Promise.all(dependencies.map(async (dependency) => ({
-            packageName: dependency,
-            sourceDir: await findPackageDir({ packageName: dependency, fromDir: sourceDir }).catch(() => null),
+        // npm treats a name declared in both fields as optional.
+        const optionalNames = Object.keys(manifest.optionalDependencies ?? {})
+        const optional = new Set(optionalNames)
+        const required = Object.keys(manifest.dependencies ?? {}).filter((name) => !optional.has(name))
+        // A required dependency that cannot be resolved is a broken install, not a skip: throw so
+        // the build fails and `build` removes the half-built artifact.
+        const requiredResolved = await Promise.all(required.map(async (packageName) => ({
+            packageName,
+            sourceDir: await findPackageDir({ packageName, fromDir: sourceDir }),
             installParent: target,
         })))
         // An optional dependency that was never installed (another platform's binary) is skipped,
         // as the package manager skipped it.
-        queue.push(...resolved.filter((r) => r.sourceDir !== null))
+        const optionalResolved = await Promise.all(optionalNames.map(async (packageName) => ({
+            packageName,
+            sourceDir: await findPackageDir({ packageName, fromDir: sourceDir }).catch(() => null),
+            installParent: target,
+        })))
+        queue.push(...requiredResolved, ...optionalResolved.filter((r) => r.sourceDir !== null))
     }
     return Object.fromEntries([...topLevel].sort(([a], [b]) => a.localeCompare(b)))
 }
