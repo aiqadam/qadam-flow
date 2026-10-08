@@ -95,10 +95,22 @@ export const QadamMetadataEntity =
                 nullable: true,
             },
             // The context version the qadam reports (`getContextInfo`), for the ADR-0002 census
-            // (#803). NULL means unknown — never determined, or the qadam could not be loaded —
-            // and the census counts it as still needing the old contract.
+            // (#803): a ContextVersion, NONE or UNRECOGNISED (`qadam-context-version.ts`). NULL
+            // means not measured yet, or the qadam could not be loaded. The census counts every
+            // value except V2 as still needing the old contract.
             contextVersion: {
                 type: String,
+                nullable: true,
+            },
+            // How often the backfill failed to load this row, and when it last tried: it retries
+            // with a growing interval and stops at a small maximum (`qadam-context-version-backfill.ts`).
+            contextVersionAttempts: {
+                type: Number,
+                nullable: false,
+                default: 0,
+            },
+            contextVersionLastAttemptAt: {
+                type: 'timestamp with time zone',
                 nullable: true,
             },
         },
@@ -127,4 +139,6 @@ export const QadamMetadataEntity =
 export type QadamMetadataSchema = BaseModel<ApId> & QadamMetadataModel & {
     // Optional: `loadBundledQadams` types bundled qadams as this schema too, and they have no row.
     contextVersion?: QadamContextVersion | null
+    contextVersionAttempts?: number
+    contextVersionLastAttemptAt?: string | null
 }

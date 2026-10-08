@@ -14,7 +14,7 @@ import { FastifyBaseLogger, FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { MockInstance } from 'vitest'
 import { databaseConnection } from '../../../../src/app/database/database-connection'
-import { NO_CONTEXT_INFO } from '../../../../src/app/qadams/metadata/qadam-context-version'
+import { NO_CONTEXT_INFO, UNRECOGNISED_CONTEXT_VERSION } from '../../../../src/app/qadams/metadata/qadam-context-version'
 import { qadamMetadataService } from '../../../../src/app/qadams/metadata/qadam-metadata-service'
 import { userInteractionWatcher } from '../../../../src/app/workers/user-interaction-watcher'
 import { createMemberContext, createTestContext } from '../../../helpers/test-context'
@@ -109,6 +109,7 @@ describe('POST /v1/pieces — private piece installation', () => {
         [{ version: ContextVersion.V1 }, ContextVersion.V1],
         [{ version: ContextVersion.V2 }, ContextVersion.V2],
         [undefined, NO_CONTEXT_INFO],
+        [{ version: '99' }, UNRECOGNISED_CONTEXT_VERSION],
     ])('should persist the context version the engine reports (%j)', async (contextInfo, expected) => {
         const ctx = await createTestContext(app!)
         interactionSpy.mockResolvedValue({

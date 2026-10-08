@@ -1,6 +1,6 @@
 import { ContextVersion } from '@aiqadam/qadams-framework'
 import { describe, expect, it } from 'vitest'
-import { NO_CONTEXT_INFO, qadamContextVersion } from '../../../../src/app/qadams/metadata/qadam-context-version'
+import { NO_CONTEXT_INFO, qadamContextVersion, UNRECOGNISED_CONTEXT_VERSION } from '../../../../src/app/qadams/metadata/qadam-context-version'
 
 describe('qadamContextVersion.fromContextInfo (#802)', () => {
     it.each([
@@ -20,14 +20,15 @@ describe('qadamContextVersion.fromContextInfo (#802)', () => {
         expect(qadamContextVersion.fromContextInfo(contextInfo)).toBe(NO_CONTEXT_INFO)
     })
 
-    // Anything that does not name a shim this server has is unknown, never a guess.
+    // Anything that does not name a shim this server has is UNRECOGNISED: measured, so never loaded
+    // again, and never mistaken for V2 by the census.
     it.each([
         [null],
         ['2'],
         [{ version: '3' }],
         [{ version: 2 }],
         [{ version: null }],
-    ])('stores unknown (null) for an unrecognised context info: %j', (contextInfo) => {
-        expect(qadamContextVersion.fromContextInfo(contextInfo)).toBeNull()
+    ])('stores UNRECOGNISED for an unrecognised context info: %j', (contextInfo) => {
+        expect(qadamContextVersion.fromContextInfo(contextInfo)).toBe(UNRECOGNISED_CONTEXT_VERSION)
     })
 })
