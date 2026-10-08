@@ -100,4 +100,5 @@ Immutability of accepted ADRs is checked in review.
 
 | ADR | Title | Status |
 | --- | --- | --- |
-| — | No ADRs yet | — |
+| [`0001`](0001-official-qadams-run-from-a-versioned-local-store.md) | Official qadams run from a versioned local store, on libraries the platform provides | `proposed` |
+| [`0002`](0002-qadam-context-versions-are-retired-by-policy-with-a-local-census.md) | Qadam context versions are retired by published policy, made safe by a local census | `proposed` |
