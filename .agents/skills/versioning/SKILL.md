@@ -45,7 +45,7 @@ For each one, note its name, its layer in the rule's table and its current `vers
 **SDK** (`qadams-framework`, `qadams-common`) — judge from the public API a qadam compiles against:
 a removed or renamed export, a changed signature or a narrowed type is major; a new `context`
 version is major and, from `1.0.0`, needs a support-table row and keeps the previous major's engine
-shim (ADR-0002, #801); a new export is minor; a fix is patch.
+shim (ADR-0002, landed in #801/#814); a new export is minor; a fix is patch.
 
 **`@aiqadam/shared`** — until #799 makes it private it is still published and pinned exactly by
 every published qadam, so judge it like the SDK.

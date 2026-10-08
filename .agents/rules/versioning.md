@@ -34,9 +34,12 @@ ADR disagree, the ADR wins. The procedure — choosing a level, applying it — 
 A version inside `^` of a pin (`^1.2.3` → `<2.0.0`, `^0.3.1` → `<0.4.0`) is a drop-in replacement at
 the contract level. Anything that moves a pin automatically may move it only inside that range —
 #424's bundled fallback (`satisfiesRequestedRange`) is the model. Moving a pin across it is a user
-action in the builder, never a resolver, migration or job. The one existing exception is the
+action in the builder, never a resolver, migration or job. The only exception since this rule is the
 one-off heal `migrate-v31-heal-unresolvable-qadam-pins.ts` (#474), which still runs once per flow
-version and may cross the range; do not add a second.
+version and may cross the range; the legacy `v24`–`v30` republish migrations
+(`packages/server/api/src/app/flows/flow-version/migrations/index.ts`) predate it and can still
+rewrite an `ai` pin when an old flow version is migrated — they are history, not a precedent. Do not
+add another.
 
 ## Compatibility floors
 
@@ -59,7 +62,7 @@ major; it needs no operator action, so it is not a platform major. **Retiring** 
 its shim — is a platform major, with its `breaking-changes.mdx` entry. Today's shims (context V1, and
 qadams predating `getContextInfo`) sit in a `0.x` row whose successor is `1.0.0`, so they go no
 earlier than 12 months after `1.0.0`; the old `Remove after 2026-10-12` date is withdrawn. The
-support table and gate 8, which fails a removal the table does not allow, are #801.
+support table and gate 8, which fails a removal the table does not allow, landed in #801 (PR #814).
 
 ## Who raises versions: changesets (ADR-0001)
 
@@ -70,18 +73,20 @@ built from `main` report `<next>-main.<n>` (#798). How a `main` build versions *
 is [ADR-0004](../../adr/0004-main-builds-give-changed-packages-their-own-prerelease-versions.md),
 still `proposed` and so not binding (snapshot `-main.<n>` versions, gate 9). Until #798 lands it reads `2.0.0` while the latest
 tag is `v1.1.0` (#326): leave it alone outside a release. `@aiqadam/shared` becomes private and bundled
-into `qadams-framework` (#799). Gates 1–7 (#797) and gate 8 (#801) are required; the maintainer-only
+into `qadams-framework` (#799). Gates 1–7 (#797) and gate 8 (#801, landed) are required; the maintainer-only
 `semver-override` label bypasses gate 2 alone, when CI over-estimates the level.
 
 ## Until #796 and #797 land
 
-**None of the section above exists yet** — no `.changeset/`, no release PR, no gates 1–3 or 6–8, no
-`semver-override` label. The PR that lands them deletes this section and rewrites, in the same pass,
+**Most of the section above does not exist yet** — no `.changeset/`, no release PR, no
+`semver-override` label; the support table and gate 8 landed in #801 (PR #814), and the rest of the
+gates arrive with #797. The PR that lands them deletes this section and rewrites, in the same pass,
 every statement that a version is bumped by hand: the last two sentences of AGENTS.md's
 "Published-package version bumps"; CONTRIBUTING.md's "How a version moves today" bullet and its
 PR-checklist line; the first paragraph of `packages/shared/AGENTS.md`; the `versioning` skill's
 transition note, step 4 and step 5; the qadam-builder skill's "Versioning an existing piece"
-opening and critical reminder 6; and in `.opencodereview/rules/`, the repo-wide block (identical in
+opening, critical reminder 6, its mode-table "Bump the piece version." rows and its required-prop
+breaking-slot paragraph; and in `.opencodereview/rules/`, the repo-wide block (identical in
 `10`, `20`, `30`, `40`, `60` and `90-*.md`), `40-shared.md`'s "Version bump" and `60-qadams.md`'s
 "Version bump on every existing-piece change". Until then:
 
