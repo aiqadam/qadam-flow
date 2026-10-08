@@ -137,14 +137,14 @@ EOF
 }
 
 write_adr() {
-  # $1 = file name, $2 = status, $3 = deciders (YAML), $4 = superseded-by
+  # $1 = file name, $2 = status, $3 = deciders (YAML), $4 = superseded-by, $5 = supersedes
   cat > "$root/adr/$1" <<EOF
 ---
 status: $2            # proposed | accepted | rejected | superseded | deprecated
 date: 2026-10-08
 deciders: ${3:-[]}
 issue: "#1"
-supersedes: null
+supersedes: ${5:-null}
 superseded-by: ${4:-null}
 ---
 
@@ -475,7 +475,7 @@ expect_contains '"superseded-by" names no ADR' "says which field is missing"
 echo "== a superseded ADR that points at its successor passes =="
 new_root
 write_adr 0001-demo.md superseded '[binalirustamov]' '"0002"'
-write_adr 0002-demo.md accepted '[binalirustamov]'
+write_adr 0002-demo.md accepted '[binalirustamov]' null '"0001"'
 list_adr 0001 superseded
 list_adr 0002 accepted
 run_check
@@ -488,6 +488,59 @@ list_adr 0001 superseded
 run_check
 expect_status 1 "a successor that does not exist leaves the decision with no current answer"
 expect_contains 'names ADR 0009, which does not exist' "names the missing successor"
+
+echo "== an ADR superseded by itself fails =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0001"'
+list_adr 0001 superseded
+run_check
+expect_status 1 "a decision cannot replace itself"
+expect_contains '"superseded-by" names the ADR itself' "says what is wrong"
+
+echo "== an ADR superseded by one that is not accepted yet fails =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0002"'
+write_adr 0002-demo.md proposed '[]' null '"0001"'
+list_adr 0001 superseded
+list_adr 0002 proposed
+run_check
+expect_status 1 "the old decision stands until the new one is accepted"
+expect_contains 'which is not accepted' "says why"
+
+echo "== a successor that does not point back fails =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0002"'
+write_adr 0002-demo.md accepted '[binalirustamov]'
+list_adr 0001 superseded
+list_adr 0002 accepted
+run_check
+expect_status 1 "supersession is recorded on both sides"
+expect_contains 'whose "supersedes" does not name 0001' "names both ADRs"
+
+echo "== deciders written as an empty list with a space fails =="
+new_root
+write_adr 0001-demo.md accepted '[ ]'
+list_adr 0001 accepted
+run_check
+expect_status 1 "[ ] names nobody"
+expect_contains '"deciders" is empty' "says which field is empty"
+
+echo "== an ADR listed twice in the index fails =="
+new_root
+write_adr 0001-demo.md proposed
+list_adr 0001 proposed
+list_adr 0001 proposed
+run_check
+expect_status 1 "two rows for one decision will drift apart"
+expect_contains 'ADR 0001 has more than one row' "names the duplicate"
+
+echo "== the placeholder row left beside a real ADR fails =="
+new_root
+write_adr 0001-demo.md proposed
+printf '| [`0001`](0001-demo.md) | Demo decision | `proposed` |\n' >> "$root/adr/README.md"
+run_check
+expect_status 1 "the first real ADR PR is where this is forgotten"
+expect_contains 'row without an ADR number' "points at the placeholder"
 
 echo "== a misnamed file under adr/ fails =="
 new_root

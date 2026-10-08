@@ -69,8 +69,8 @@ const ADR_FILE_PATTERN = /^(\d{4})-[a-z0-9]+(?:-[a-z0-9]+)*\.md$/
 const ADR_STATUSES = ['proposed', 'accepted', 'rejected', 'superseded', 'deprecated']
 // Every status past `proposed` is a decision somebody made, so it must say who.
 const ADR_DECIDED_STATUSES = new Set(['accepted', 'rejected', 'superseded', 'deprecated'])
-// What an unset frontmatter field looks like once its comment is stripped.
-const ADR_EMPTY_VALUES = new Set(['', '[]', 'null', '~'])
+// What an unset frontmatter scalar looks like once its comment is stripped.
+const ADR_EMPTY_VALUES = new Set(['', 'null', '~'])
 
 // A description is the only thing a harness reads when deciding whether to load a skill. Two
 // failures make it useless, and both shipped here: too short to say anything (a derived H1),
@@ -374,6 +374,7 @@ const checkAdrs = ({ root }) => {
   const problems = []
   const files = new Map()
   const statuses = new Map()
+  const supersedes = new Map()
   const successors = []
   // Supporting files an ADR links to (a diagram, an assets/ folder) may sit beside it; only
   // Markdown at the top level is an ADR or the standard.
@@ -406,22 +407,32 @@ const checkAdrs = ({ root }) => {
       continue
     }
     statuses.set(number, status)
-    if (ADR_DECIDED_STATUSES.has(status) && ADR_EMPTY_VALUES.has(adrField({ frontmatter, key: 'deciders' }))) {
+    supersedes.set(number, adrField({ frontmatter, key: 'supersedes' }))
+    if (ADR_DECIDED_STATUSES.has(status) && isEmptyAdrList({ value: adrField({ frontmatter, key: 'deciders' }) })) {
       problems.push(`${relative}: status is "${status}" but "deciders" is empty — a decision records who made it.`)
     }
     if (status === 'superseded') {
       const successor = adrField({ frontmatter, key: 'superseded-by' })
-      if (ADR_EMPTY_VALUES.has(successor)) {
+      if (isEmptyAdrList({ value: successor })) {
         problems.push(`${relative}: status is "superseded" but "superseded-by" names no ADR.`)
       }
       else {
-        successors.push({ relative, successor })
+        successors.push({ relative, number, successor })
       }
     }
   }
-  for (const { relative, successor } of successors) {
+  for (const { relative, number, successor } of successors) {
     if (!files.has(successor)) {
       problems.push(`${relative}: "superseded-by" names ADR ${successor}, which does not exist.`)
+    }
+    else if (successor === number) {
+      problems.push(`${relative}: "superseded-by" names the ADR itself.`)
+    }
+    else if (statuses.get(successor) !== 'accepted') {
+      problems.push(`${relative}: superseded by ADR ${successor}, which is not accepted — flip this one only when its successor is accepted.`)
+    }
+    else if (supersedes.get(successor) !== number) {
+      problems.push(`${relative}: superseded by ADR ${successor}, whose "supersedes" does not name ${number}.`)
     }
   }
 
@@ -435,7 +446,15 @@ const checkAdrs = ({ root }) => {
   }))
 
   // Parity says the row exists; this says it is not lying about the file or the status.
-  for (const { number, link, status } of collectAdrIndexRows({ content: index })) {
+  const rows = collectAdrIndexRows({ content: index })
+  const listedNumbers = rows.map(({ number }) => number).filter((number) => number !== null)
+  for (const number of new Set(listedNumbers.filter((number, position) => listedNumbers.indexOf(number) !== position))) {
+    problems.push(`${ADR_INDEX}: ADR ${number} has more than one row in the index.`)
+  }
+  if (files.size > 0 && rows.some(({ number }) => number === null)) {
+    problems.push(`${ADR_INDEX}: the index still has a row without an ADR number (the "No ADRs yet" placeholder?) — remove it once an ADR exists.`)
+  }
+  for (const { number, link, status } of rows.filter(({ number }) => number !== null)) {
     if (files.has(number) && link !== files.get(number)) {
       problems.push(`${ADR_INDEX}: the row for ADR ${number} links to "${link}", but the file is ${files.get(number)}.`)
     }
@@ -447,13 +466,18 @@ const checkAdrs = ({ root }) => {
   return problems
 }
 
+// `deciders: []`, `[ ]` and `[""]` all name nobody.
+const isEmptyAdrList = ({ value }) => ADR_EMPTY_VALUES.has(value)
+  || value.replace(/^\[|\]$/g, '').split(',').every((item) => unquote(item) === '')
+
 // The template documents the allowed values in trailing comments; drop the comment first so a
 // quoted value with a comment after it is still unquoted.
 const adrField = ({ frontmatter, key }) => unquote((frontmatter[key] ?? '').replace(/\s+#.*$/, ''))
 
 // Rows of the first table under the index heading: the backticked number and link target from
-// the first cell, and the backticked status from the last. Same scoping as collectTableKeys, so
-// the parity check and this one agree about which table is the index.
+// the first cell (number is null for a row that has none, e.g. a placeholder), and the backticked
+// status from the last. Like collectTableKeys it gives up at the next heading, so the two agree
+// about which table is the index.
 const collectAdrIndexRows = ({ content }) => {
   const lines = content.split('\n')
   const headingIndex = lines.findIndex((line) => line.startsWith('#') && line.includes(ADR_INDEX_HEADING))
@@ -464,19 +488,18 @@ const collectAdrIndexRows = ({ content }) => {
   let inTable = false
   for (const line of lines.slice(headingIndex + 1)) {
     if (!line.trimStart().startsWith('|')) {
-      if (inTable) {
+      if (inTable || line.startsWith('#')) {
         break
       }
       continue
     }
     inTable = true
     const cells = line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim())
-    const number = cells[0]?.match(/`(\d{4})`/)?.[1]
-    if (number === undefined) {
+    if (/^[\s:-]*$/.test(cells[0] ?? '') || rows.length === 0 && /^ADR$/i.test(cells[0] ?? '')) {
       continue
     }
     rows.push({
-      number,
+      number: cells[0].match(/`(\d{4})`/)?.[1] ?? null,
       link: cells[0].match(/\]\(([^)]+)\)/)?.[1] ?? '',
       status: cells[cells.length - 1].match(/^`([^`]+)`$/)?.[1] ?? cells[cells.length - 1],
     })
