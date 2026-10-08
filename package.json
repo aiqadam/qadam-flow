@@ -22,6 +22,7 @@
     "check-release-migrations": "npx ts-node --project tools/tsconfig.tools.json tools/scripts/check-release-migrations.ts",
     "check-manifest-migrations": "npx ts-node --project tools/tsconfig.tools.json tools/scripts/check-manifest-migrations.ts",
     "rollback": "npm run rollback --workspace=packages/server/api --",
+ "doctor": "npm run doctor --workspace=packages/server/api --",
     "lint-all": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "lint-affected": "turbo run lint --affected",
