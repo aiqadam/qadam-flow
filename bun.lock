@@ -2993,7 +2993,7 @@
     },
     "packages/qadams/framework": {
       "name": "@aiqadam/qadams-framework",
-      "version": "0.35.0",
+      "version": "0.35.1",
       "dependencies": {
         "@aiqadam/shared": "workspace:*",
         "ai": "7.0.127",
