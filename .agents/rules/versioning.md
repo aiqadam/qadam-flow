@@ -25,9 +25,10 @@ ADR disagree, the ADR wins. The procedure — choosing a level, applying it — 
 - **When a change fits no row, take the higher level.** A level that is too low breaks a consumer;
   gate 2 (#797) rejects a level only as too low, never as too high.
 - **A version is never reused or republished.** npm answers 403, and a skipped publish is silent.
-- **`shared` is private and no longer published (#799).** `qadams-framework` ships the part of it
-  qadams use — code and `.d.ts` — inside its own tarball, so a change to what the framework bundles
-  from `shared` is a change to the framework's public surface and is declared on `qadams-framework`.
+- **`shared` is private and no longer published (#799).** `qadams-framework` ships all of it — every
+  file of its build, code and `.d.ts` — inside its own tarball, and re-exports from it, so a change
+  to `shared` is a change to what the framework ships and is declared on `qadams-framework` too, at
+  the SDK level (gate 1 requires the changeset; the level is the `versioning` skill's call).
   `shared` itself stays a versioned package inside the repo (`.changeset/config.json` sets
   `privatePackages.version`) because the framework depends on it at source level, but no `shared`
   version reaches npm again.

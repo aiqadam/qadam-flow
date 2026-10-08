@@ -412,11 +412,11 @@ async function tryInstallQadamsIndividually({ rootWorkspace, pieces, log, isComp
 // Gated on OFFICIAL_QADAMS_INSTALL_ENABLED because the check exists for the feature that flag
 // guards. With the flag off no official qadam is installed at all, and running the check anyway
 // would put a new hard dependency on registry reachability FROM THIS PROCESS onto the default
-// custom-qadam path: every qadam built against this framework pins `@aiqadam/shared`,
-// `@aiqadam/qadams-framework` and `@aiqadam/qadams-common`, so those three land in the lockfile of
-// a plain custom install too, and verifying them fail-closed would turn a brief registry outage
-// into a failed install where today there is none. The flag is also the documented escape hatch
-// for an npmjs key rotation, which only means anything if it gates this.
+// custom-qadam path: every qadam built against this framework pins `@aiqadam/qadams-framework` and
+// `@aiqadam/qadams-common` (one published before #799 also `@aiqadam/shared`), so those land in the
+// lockfile of a plain custom install too, and verifying them fail-closed would turn a brief
+// registry outage into a failed install where today there is none. The flag is also the
+// documented escape hatch for an npmjs key rotation, which only means anything if it gates this.
 async function verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, before, officialQadamsInstallEnabled, isCompromised, span, log }: {
     rootWorkspace: string
     installed: QadamPackage[]

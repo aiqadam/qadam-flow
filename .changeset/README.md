@@ -3,8 +3,9 @@
 Every version number in this repository is raised here, not by hand ([ADR-0001](../adr/0001-everything-versioned-follows-semver-declared-with-changesets.md)).
 
 A PR that changes a versioned package — a qadam, `@aiqadam/qadams-framework`, `@aiqadam/qadams-common`,
-`@aiqadam/shared` (private since #799, still versioned in-repo), or the platform (`@aiqadam/platform`,
-for a change operators notice) — adds a file here:
+`@aiqadam/shared` (private since #799, still versioned in-repo, and bundled into the framework, so a
+`shared` change names `@aiqadam/qadams-framework` as well), or the platform (`@aiqadam/platform`, for
+a change operators notice) — adds a file here:
 
 ```md
 ---

@@ -44,8 +44,24 @@ version is major and, from `1.0.0`, needs a support-table row and keeps the prev
 shim (ADR-0002, landed in #801/#814); a new export is minor; a fix is patch.
 
 **`@aiqadam/shared`** — private and no longer published since #799, so it has no consumer outside
-the repo: a patch changeset is enough, and the framework change that carries the new code to qadams
-declares its own level.
+the repo of its own: a patch changeset on `shared` is enough. But `qadams-framework` re-exports
+straight from `shared`, and its tarball vendors all of `shared`'s build — so a `shared` change is
+also a framework change, and needs its own changeset on `@aiqadam/qadams-framework` at the **SDK**
+level above: judge it from what a qadam reaches through the framework (a re-exported symbol, a type
+one of them references, the behaviour of a re-exported function). Nothing a qadam reaches changed →
+patch. Without that line the release PR still patches the framework (`updateInternalDependencies`),
+so a breaking change to a re-exported symbol would ship as a framework patch; gate 1 fails a
+`shared` `src/` or dependency change whose PR has no framework changeset. Usually it is a second
+line in the same file:
+
+```md
+---
+"@aiqadam/shared": patch
+"@aiqadam/qadams-framework": minor
+---
+
+Narrow `QadamCategory` (re-exported by the framework).
+```
 
 Then place the level on the package's line. On `0.x`: major → **minor**, everything else →
 **patch**, except a new export, which stays minor. From `1.0.0`: as is. Unsure between two levels?
