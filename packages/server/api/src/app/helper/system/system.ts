@@ -25,6 +25,12 @@ const systemPropDefaultValues: Partial<Record<SystemProp, string>> = {
     [AppSystemProp.CLIENT_REAL_IP_HEADER]: 'x-real-ip',
     [AppSystemProp.CLOUD_AUTH_ENABLED]: 'true',
     [AppSystemProp.CONFIG_PATH]: path.join(os.homedir(), '.activepieces'),
+    // ADR-0003's versioned qadam store (#805). In the image the working directory is /usr/src/app,
+    // where docker-compose.yml mounts the `qadam_versions` volume.
+    [AppSystemProp.QADAM_VERSION_STORE_PATH]: path.resolve('qadam-versions'),
+    // What the image ships to seed the store with: an `archive-index.json` and its tarballs (#804's
+    // `--pack` output). No image carries one before #807; a missing directory seeds nothing.
+    [AppSystemProp.QADAM_VERSION_STORE_SEED_PATH]: path.resolve('packages/qadams/version-store-seed'),
     [AppSystemProp.DB_TYPE]: DatabaseType.POSTGRES,
     [AppSystemProp.APP_WEBHOOK_SECRETS]: '{}',
     [AppSystemProp.PORT]: '3000',

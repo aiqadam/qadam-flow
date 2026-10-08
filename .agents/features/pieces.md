@@ -17,12 +17,14 @@ The qadams feature manages the metadata catalog of automation integrations (call
 - `packages/web/src/features/qadams/hooks/pieces-hooks.ts` — React Query hooks for piece listing, piece model, piece options
 - `packages/web/src/features/qadams/hooks/use-piece-output-schema.ts` — reads `outputSchema` for a given step (PIECE action or trigger) off the cached piece model; shares the existing `['piece', name, version]` React Query cache so no extra network call is made
 - `packages/web/src/features/qadams/components/` — `PieceIcon`, `PieceIconList`, `PieceSelectorSearch`, `InstallPieceDialog`
-- `tools/scripts/qadams/bundle/` — builds a qadam version as the ADR-0003 artifact (#804): one esbuild bundle with `@aiqadam/*` and `zod` external and declared as `peerDependencies`, `src/i18n`, and a `metadata.json` written from loading the artifact; `qadam-artifact-config.json` holds the reviewed per-qadam exceptions (node_modules for native addons and packages that read their own files, `__dirname`-started entry points). Build-only today: nothing publishes or loads this format yet (#805 store, #779 resolution). Header of `qadam-artifact.mjs` documents the layout; `tools/ci/test-qadam-artifacts.sh` pins it
+- `tools/scripts/qadams/bundle/` — builds a qadam version as the ADR-0003 artifact (#804): one esbuild bundle with `@aiqadam/*` and `zod` external and declared as `peerDependencies`, `src/i18n`, and a `metadata.json` written from loading the artifact; `qadam-artifact-config.json` holds the reviewed per-qadam exceptions (node_modules for native addons and packages that read their own files, `__dirname`-started entry points). Nothing publishes this format yet; the qadam version store (#805, below) reads it, and nothing resolves a step to it before #779. Header of `qadam-artifact.mjs` documents the layout; `tools/ci/test-qadam-artifacts.sh` pins it
+- `packages/server/utils/src/qadam-version-store/` — the qadam version store (ADR-0003 "Store", #805), see "Qadam Version Store" below
+- `packages/server/api/src/app/qadams/version-store/qadam-version-store-seeding.ts` — seeds the store from the image at API start-up
 - `packages/qadams/framework/src/lib/output-schema.ts` — `OutputSchema` / `OutputSchemaField` / `FieldFormat` plain TypeScript types (embedded into the piece metadata via `z.custom`)
 
 ## Domain Terms
 - **Qadam** — a named integration (e.g. `@aiqadam/qadam-gmail`) providing actions and triggers
-- **QadamType** — `OFFICIAL` or `CUSTOM` (platform-installed). Off the `OFFICIAL_QADAMS_INSTALL_ENABLED` flag (the default; it stays off — #477's npm-install model is ADR-0003's rejected Option B, and #805/#806 remove the flag), an `OFFICIAL` qadam is bundled: compiled into the image, loaded in-memory from `dist/package.json` (`loadBundledQadams`), never installed as a package, and shadows any persisted row of the same name regardless of version (`qadam-cache.ts`). With the flag on, `OFFICIAL` qadams are also installed through the same registry path a `CUSTOM` qadam already takes (`needsInstalling()` in `qadam-installer.ts`), and shadowing keys on `name@version` instead of `name` so a persisted official version can sit side by side with a differently-versioned bundled one. The flag additionally gates the install-time integrity check (`qadam-integrity.ts`, #482 item 4): every `@aiqadam/`-scoped entry in the workspace `bun.lock` must carry an npmjs publisher signature over the integrity bun enforced, verified against public keys **pinned in the image** (`NPM_SIGNING_KEYS`) rather than read from the registry being verified. A qadam that fails is rolled back and never marked `ready`, and the rollback restores the pre-install `bun.lock` so a refused attempt cannot launder its own output into the next attempt's baseline. One deliberate exception: a structurally unverifiable entry (a tarball, an alias) that was ALREADY in the lockfile before the install ran and whose name is not in the current batch is logged with a rename remedy rather than failing the install — the workspace is shared by every tenant, and failing every later install over somebody else's squatter bricks it for everyone without removing the squatter. A bad SIGNATURE is never tolerated this way. That pinning makes the flag the escape hatch for an npmjs key rotation too — turning it off returns the deployment to the bundled qadams. It is also why a `CUSTOM` qadam cannot be registered under the `@aiqadam/` scope: the check refuses an official-scope name resolved from a tarball, an alias, or anything else npmjs cannot have signed — and, independently of the flag, `qadamMetadataService.create` refuses the name outright (#503, `isOfficialQadamName` in `@aiqadam/shared`; migration `DeleteCustomQadamsUnderOfficialScope` removed the rows registered before that check existed). The reason the refusal does not wait for the flag: in the default `UNSANDBOXED` mode a `CUSTOM` qadam installs into the workspace every tenant shares (`getCustomPiecesPath` returns `getGlobalCacheCommonPath()`), and the engine loader (`qadam-loader.ts`) resolves an installed directory before the bundled `dist` — so a platform's `@aiqadam/qadam-slack` ran in place of the real one for every tenant on the worker. The loader now returns the bundled build for an alias whose `name@version` a bundled `dist/package.json` carries, whatever is installed under that alias; an installed copy at a version the image does not bundle still wins, which is the side-by-side case #477 needs.
+- **QadamType** — `OFFICIAL` or `CUSTOM` (platform-installed). Off the `OFFICIAL_QADAMS_INSTALL_ENABLED` flag (the default; it stays off — #477's npm-install model is ADR-0003's rejected Option B; the flag goes once steps resolve through the qadam version store, #806/#779 — #805 added the store and left the flag as it was), an `OFFICIAL` qadam is bundled: compiled into the image, loaded in-memory from `dist/package.json` (`loadBundledQadams`), never installed as a package, and shadows any persisted row of the same name regardless of version (`qadam-cache.ts`). With the flag on, `OFFICIAL` qadams are also installed through the same registry path a `CUSTOM` qadam already takes (`needsInstalling()` in `qadam-installer.ts`), and shadowing keys on `name@version` instead of `name` so a persisted official version can sit side by side with a differently-versioned bundled one. The flag additionally gates the install-time integrity check (`qadam-integrity.ts`, #482 item 4): every `@aiqadam/`-scoped entry in the workspace `bun.lock` must carry an npmjs publisher signature over the integrity bun enforced, verified against public keys **pinned in the image** (`NPM_SIGNING_KEYS`) rather than read from the registry being verified. A qadam that fails is rolled back and never marked `ready`, and the rollback restores the pre-install `bun.lock` so a refused attempt cannot launder its own output into the next attempt's baseline. One deliberate exception: a structurally unverifiable entry (a tarball, an alias) that was ALREADY in the lockfile before the install ran and whose name is not in the current batch is logged with a rename remedy rather than failing the install — the workspace is shared by every tenant, and failing every later install over somebody else's squatter bricks it for everyone without removing the squatter. A bad SIGNATURE is never tolerated this way. That pinning makes the flag the escape hatch for an npmjs key rotation too — turning it off returns the deployment to the bundled qadams. It is also why a `CUSTOM` qadam cannot be registered under the `@aiqadam/` scope: the check refuses an official-scope name resolved from a tarball, an alias, or anything else npmjs cannot have signed — and, independently of the flag, `qadamMetadataService.create` refuses the name outright (#503, `isOfficialQadamName` in `@aiqadam/shared`; migration `DeleteCustomQadamsUnderOfficialScope` removed the rows registered before that check existed). The reason the refusal does not wait for the flag: in the default `UNSANDBOXED` mode a `CUSTOM` qadam installs into the workspace every tenant shares (`getCustomPiecesPath` returns `getGlobalCacheCommonPath()`), and the engine loader (`qadam-loader.ts`) resolves an installed directory before the bundled `dist` — so a platform's `@aiqadam/qadam-slack` ran in place of the real one for every tenant on the worker. The loader now returns the bundled build for an alias whose `name@version` a bundled `dist/package.json` carries, whatever is installed under that alias; an installed copy at a version the image does not bundle still wins, which is the side-by-side case #477 needs.
 - **PackageType** — `REGISTRY` (NPM) or `ARCHIVE` (uploaded tarball)
 - **qadamCache** — an in-memory map of piece metadata keyed by name+version+platformId, rebuilt from DB
 - **QadamCategory** — enum grouping pieces (AI, CORE, COMMUNICATION, etc.)
@@ -159,3 +161,57 @@ fallback in `findBundledFallback`, `fetchQadamVersion`) could be that first call
   The scan froze those values at app start. The manifest freezes them at image build. They are the
   only leaves where the manifest and a fresh scan of the same tree differ; two scans in two
   processes differ in exactly the same four leaves.
+
+## Qadam Version Store (#805)
+ADR-0003's versioned store of qadam versions on a persistent volume. **Not authoritative yet:** the
+API seeds it and nothing else reads it; steps keep resolving to the bundled build until #779 switches
+the API, worker and engine to it. "Store" alone is ambiguous here (Store qadam, Store Entry): say
+"qadam version store".
+- **Where.** `AP_QADAM_VERSION_STORE_PATH` (default `qadam-versions` under the working directory,
+  i.e. `/usr/src/app/qadam-versions` in the image). `docker-compose.yml` mounts the named volume
+  `qadam_versions` there on the app and every worker. A named volume because the store refuses a
+  case-insensitive filesystem (`open` probes it): platform ids and prerelease versions differ by case.
+- **Layout** (`qadam-version-store-layout.ts`, an on-disk format later releases must read):
+  `qadams/<name>/<version>/` for official qadams (`@aiqadam/qadam-*` only),
+  `qadams/_platform/<platformId>/<name>/<version>/` for custom ones (never the `@aiqadam/` scope),
+  `qadams/node_modules/` reserved for the libraries the platform provides (#779 fills it or replaces
+  it), `.staging/` and `.trash/` beside `qadams/`. Names are held to `NPM_PACKAGE_NAME_REGEX` minus
+  a `node_modules` segment, versions to canonical semver without build metadata, platform ids to
+  the `ApId` shape; a path is built only from validated coordinates and checked to stay in its
+  namespace. `_platform` and dot-directories cannot collide with a package name.
+- **A version directory** holds the artifact (`package.json`, its entry point, `node_modules` when
+  the format has one), `metadata.json`, and `integrity.json` (store format version, coordinates,
+  format/kind, entry point, origin — `image-seed` / `registry` / `archive` with the tarball's sha512 —
+  and a sha512 digest over every file's path, executable bit and content, or a symlink's target).
+- **Formats** (`qadam-version-store-format.ts`). `bundle` when `package.json` carries
+  `qadamArtifact: { formatVersion: 1, kind }` (#804); any other `formatVersion` or kind is refused,
+  never read as legacy. `legacy-npm` when there is no marker — decided by the marker, not the version
+  (`qadam-assemblyai@2.0.0` is legacy). Both: `package.json` and `metadata.json` must name the
+  coordinates, `main` must be a regular file inside the version, and the version must not carry its
+  own `node_modules/@aiqadam/*` (any depth) or top-level `node_modules/zod` (#772 option C: those
+  resolve upward to the platform's copy). Bundles: peers only among `@aiqadam/shared|qadams-framework|qadams-common` and `zod`,
+  no `node_modules` for kind `bundle`, and `builtFor` os/cpu must match the host for
+  `bundle-with-node-modules`.
+- **Writes** are stage → check → `integrity.json` (files fsync'd while hashed) → `rename` into place;
+  a version is never overwritten (`EXISTS`), a concurrent writer loses the rename and discards its
+  copy, and an unreadable version is moved to `.trash/` and replaced. `putTarball` checks the sha512
+  integrity first (only sha512), then extracts with `qadam-version-store-tarball.ts`: regular files
+  and directories only, one top-level directory stripped, no `..`/absolute/backslash/NUL/duplicate
+  paths, `wx` creates, modes reduced to 0644/0755, entry/byte/file-size limits and node-tar's
+  decompression-ratio guard, one file open at a time. `createStaging` / `commit` are for a writer
+  that assembles a version itself (#806's legacy install): symlinks are accepted only when their
+  realpath stays inside the version, hard links (`nlink > 1`, e.g. bun's default hardlink backend)
+  are refused — install with `--backend=copyfile`.
+- **Reads** check `integrity.json`, the coordinates it names, `package.json` against the recorded
+  format, `builtFor`, the entry point, and that the real path is the layout's (no symlinked
+  component). `verify: true` re-walks and re-hashes the tree.
+- **Seeding** (`qadam-version-store-seed.ts`, `qadamVersionStoreSeeding` in the API's
+  `appPostBoot`, background, never throws). Reads `AP_QADAM_VERSION_STORE_SEED_PATH` (default
+  `packages/qadams/version-store-seed`): #804's `--pack` output, `archive-index.json` + tarballs.
+  No image ships one before #807, so today every start logs `status: no-seed`. Idempotent; replicas
+  serialise on the `qadam-version-store-seed` `distributedLock`, and correctness does not depend on
+  it. A version already stored is kept even if the image's tarball differs (warned). One line per
+  start: `[qadamVersionStore] Seeded the qadam version store from the image {status, stored, present, failed, durationMs}`.
+- **Left to other tickets:** resolution and the engine providing `@aiqadam/*`/`zod` (#779), fetching
+  and the legacy install path (#806), persisted signature verification next to the store (#780), GC
+  and registry config (#478), image seed contents (#807), the unavailable-version fallback (#808).

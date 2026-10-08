@@ -1,0 +1,54 @@
+---
+title: "Qadam version store"
+description: "The persistent volume that holds every qadam version your server can run, and how to keep it"
+icon: "boxes-stacked"
+---
+
+The qadam version store is a directory on a persistent volume where the server keeps the code of each qadam version it holds, by name and exact version. It is how [ADR-0003](https://github.com/aiqadam/qadam-flow/blob/main/adr/0003-official-qadams-run-from-a-versioned-local-store.md) makes a flow step pinned to `tables@0.5.1` run the code of `tables@0.5.1` across server upgrades, instead of whatever version the current image bundles.
+
+<Warning>
+The store is filled, but nothing runs from it yet. Flows still run the qadams bundled with the image, exactly as [Qadam syncing & versioning](/install/architecture/qadam-syncing) describes. Steps start resolving through the store in a later release ([#779](https://github.com/aiqadam/qadam-flow/issues/779)), and images start shipping versions to put in it with [#807](https://github.com/aiqadam/qadam-flow/issues/807). Until then the volume exists and the server prepares it on every start, so an install that adds it now needs no change later.
+</Warning>
+
+## Where it lives
+
+The bundled `docker-compose.yml` mounts the named volume `qadam_versions` at `/usr/src/app/qadam-versions` on the `app` service and on every `worker` replica. Re-running the [installer](/install/options/docker) on an existing install adds the volume; nothing else changes.
+
+If you run the containers another way, mount one volume at that path on the app and every worker, or set `AP_QADAM_VERSION_STORE_PATH` to where you mounted it. Two requirements:
+
+- **A case-sensitive filesystem.** Platform ids and prerelease versions can differ only by case. A Docker named volume is case-sensitive; a bind mount of a macOS or Windows folder usually is not. On a case-insensitive filesystem the server logs `[qadamVersionStore] The qadam version store is unavailable` and does not use the store.
+- **One volume per CPU architecture.** A qadam version that ships native modules runs only on the OS and CPU it was built for. Do not share one volume between `amd64` and `arm64` containers.
+
+## What the server does at start-up
+
+When the app starts, it creates the store's directories if they are missing, removes what an interrupted write left behind, and copies into the store every qadam version the image ships. A version already in the store is left as it is. With several app replicas, one seeds at a time and the others find the work done. Each start logs one line:
+
+```text
+[qadamVersionStore] Seeded the qadam version store from the image {"status":"no-seed","stored":0,"present":0,"failed":0}
+```
+
+`status` is `no-seed` on every image until [#807](https://github.com/aiqadam/qadam-flow/issues/807) adds the versions to ship. A seed that fails is logged as a warning and does not stop the app.
+
+## Layout
+
+```text
+qadam-versions/
+  qadams/
+    @aiqadam/qadam-tables/0.5.1/          an official qadam version
+    _platform/<platformId>/<name>/1.0.0/  a custom qadam of one platform
+```
+
+Each version directory holds the qadam's code (`package.json`, its entry point, and `node_modules` when the version needs it), `metadata.json`, and `integrity.json`. The store writes a version in a staging directory and renames it into place, so a version is either complete or absent. It never overwrites a version: a version is never republished (see [Qadam versioning](/build-qadams/qadam-reference/qadam-versioning)). `integrity.json` records a sha512 digest of every file, and a version whose record is missing or damaged is replaced the next time the server stores that version.
+
+Custom qadams get a directory per platform, so one platform's qadams are never found under another platform's name. Nothing writes custom qadams to the store yet; they are installed as described in [Manage qadams](/admin-guide/guides/manage-qadams) until resolution moves to the store.
+
+## Back up and move
+
+Keep the volume with your database when you back up or move an install. Today every version in it can be seeded again, so losing it costs nothing. Once the server fetches versions on demand ([#806](https://github.com/aiqadam/qadam-flow/issues/806)), a restored store saves fetching them again, and an install with no access to a registry depends on it.
+
+`docker compose down -v` deletes the volume together with the database.
+
+## Related
+
+- [Qadam syncing & versioning](/install/architecture/qadam-syncing) — how a step is pinned to a version and what runs today.
+- [Environment variables](/install/configuration/environment-variables) — `AP_QADAM_VERSION_STORE_PATH` and `AP_QADAM_VERSION_STORE_SEED_PATH`.

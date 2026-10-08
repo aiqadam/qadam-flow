@@ -58,6 +58,7 @@ import { qadamModule } from './qadams/metadata/qadam-metadata-controller'
 import { qadamMetadataService } from './qadams/metadata/qadam-metadata-service'
 import { qadamContextVersionBackfill } from './qadams/qadam-context-version-backfill'
 import { tagsModule } from './qadams/tags/tags-module'
+import { qadamVersionStoreSeeding } from './qadams/version-store/qadam-version-store-seeding'
 import { storeEntryModule } from './store-entry/store-entry.module'
 import { tablesModule } from './tables/tables.module'
 import { templateModule } from './template/template.module'
@@ -296,6 +297,9 @@ The application started on ${await domainHelper.getPublicApiUrl({ path: '' })}, 
     // Cheap — it logs the retirement, not a walk of every flow; the doctor command lists the steps.
     frameworkCensusMarking(app.log).logRetirement()
     void startDevQadamWatcher(app)
+    // ADR-0003 (#805): fills the versioned qadam store from the image, in the background. Nothing
+    // resolves a qadam through the store until #779, so this changes no behaviour yet.
+    void qadamVersionStoreSeeding(app.log).run()
 }
 
 function registerOpenApiSchemas() {
