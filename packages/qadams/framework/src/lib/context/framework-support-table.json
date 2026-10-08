@@ -1,0 +1,20 @@
+{
+  "$comment": [
+    "The framework support table of ADR-0002 (adr/0002-two-framework-majors-supported-for-at-least-12-months.md) and its source of truth.",
+    "One row per major of @aiqadam/qadams-framework, from 0 up to the major in packages/qadams/framework/package.json, with no gaps.",
+    "contextVersions: what a qadam built against that major reports through getContextInfo(); 'none' is a qadam that predates getContextInfo(). Majors from 1 on have exactly one.",
+    "released: the date (UTC, YYYY-MM-DD) that major was released; null for the 0.x row, which predates the policy and has no single release, and for a major that is still a prerelease (X.0.0-rc.N) in package.json.",
+    "successorReleased: the date the next major was released, equal to the next row's released; null on the last row.",
+    "A major stays supported while it is the current or the previous one, and for at least 12 months after its successor was released. Its context shims stay in the engine for as long as it is supported.",
+    "Releasing a new major: add its row and fill the previous row's successorReleased in the same PR (a prerelease adds the row with both dates null; X.0.0 fills them in).",
+    "Merged rows are history: never delete a row, change its contextVersions or change a date that is set; only append rows and fill in a null date. Gate 8 (tools/ci/check-framework-support.mjs) enforces all of this."
+  ],
+  "majors": [
+    {
+      "major": 0,
+      "contextVersions": ["none", "1", "2"],
+      "released": null,
+      "successorReleased": null
+    }
+  ]
+}

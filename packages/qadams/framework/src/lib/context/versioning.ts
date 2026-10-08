@@ -14,6 +14,9 @@ export enum ContextVersion {
 // run(undefined) — surfacing as "Cannot read properties of undefined".
 // Enforcing the floor in piece.ts keeps such pieces out of the registry on
 // incompatible servers instead of crashing at execution time.
+// A new context version is also a new framework major with its own row in
+// framework-support-table.json beside this file (ADR-0002); gate 8,
+// tools/ci/check-framework-support.mjs, fails the build until both are in.
 export const LATEST_CONTEXT_VERSION = ContextVersion.V2;
 export const MINIMUM_SUPPORTED_RELEASE_AFTER_LATEST_CONTEXT_VERSION = '0.82.0';
 
