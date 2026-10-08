@@ -49,7 +49,7 @@ qadam version.
   failed exactly that way (`import.meta` in CJS). It does not catch a target that loads but fails
   when an action runs: upstream moved Oracle pins within `^0.1.10` onto a build whose metadata and
   loading were fine but which lacked a file it forks at execution time (activepieces#15957). No check
-  made before a move catches that; the audit record and revert are the answer to it. Otherwise
+  this ADR makes before a move catches that; the audit record and revert are the answer to it. Otherwise
   the step is marked "version unavailable — update this step" in the builder, MCP and runs, and the
   flow is never disabled (#435).
 - **Qadams at `1.0.0`.** A qadam's `1.0.0` (ADR-0001) is the release that switches it to the
@@ -175,7 +175,7 @@ persistent volume, seeded by the image at start-up; custom qadams live in the sa
 per-platform namespace.
 
 **Harder / risks.**
-- Pins older than the first publication keep #424's caret fallback without a schema check, because
+- Pins older than the first publication get #424's caret fallback, extended, without a schema check, because
   no metadata exists for them; the load check guards against a target that does not load, and only the audit record and revert
   guard against one that loads but fails at run time.
 - Old qadam code runs on new libraries: a behaviour change in `framework` / `common` changes old

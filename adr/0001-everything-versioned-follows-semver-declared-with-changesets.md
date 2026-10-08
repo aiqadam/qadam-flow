@@ -165,7 +165,9 @@ tests; the rule, skill and docs; audit and fix the disagreeing floors and consta
 
 **Harder.** More majors than today, honestly declared. One more file per package-changing PR. Gates
 land together with the first changesets release PR, not before, so gate 1 never demands a tool that
-does not exist yet.
+does not exist yet. Until a release PR raises them, images built from `main` carry changed package
+code under the last released number — today each PR raises the version itself; how `main` builds
+version unreleased code is a separate decision (#784).
 
 ## Evidence
 
@@ -187,5 +189,6 @@ does not exist yet.
 - Conventions: `.agents/rules/versioning.md` + index row, `versioning` skill + registry row,
   AGENTS.md pointer, CONTRIBUTING section, `qadam-versioning.mdx` rewrite, clean-up of the
   qadam-builder skill and floor constants.
+- Decide how `main` builds version unreleased package code (#784).
 - Close #776 and #783 against this ADR once accepted; fold #494 deliverable 3 (cascade) into
   changesets' internal-dependency bumps.

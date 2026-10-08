@@ -35,8 +35,8 @@ the steps pinned to qadam versions built against each major, and needs each pinn
 - **Official qadams** never have rows in `qadam_metadata` (only custom installs write there, and
   #503 refuses official names). Every official version built in this repository reports context V2
   (`LATEST_CONTEXT_VERSION` since `f611ac80`); from `1.0.0` on, an official version's framework major
-  — and with it the context version — is the major of `@aiqadam/qadams-framework` that its published
-  `package.json` depends on.
+  is the major of `@aiqadam/qadams-framework` that its published `package.json` depends
+  on, which the support table maps to a context version.
 - **Custom and installed qadams** — the population the shims protect — need a new `qadam_metadata`
   column: `contextInfo` exists today only on the in-memory metadata type
   (`packages/qadams/framework/src/lib/qadam-metadata.ts:112-117` at `94dc9ae3`) and is not persisted
@@ -137,5 +137,6 @@ than marked steps with a clear repair path.
 - Persist `contextInfo` for custom and installed qadams in `qadam_metadata` (new column; existing
   rows backfilled by loading the stored archive, unknown otherwise).
 - Census: query over stored flow versions → pinned `name@version` → context version (official:
-  context V2 before `1.0.0`, then the framework major in its `package.json`; custom: `qadam_metadata`); `doctor` command; admin and MCP surfaces; post-upgrade marking.
+  context V2 before `qadams-framework@1.0.0`, then the framework major in its `package.json`
+  mapped through the support table; custom: `qadam_metadata`); `doctor` command; admin and MCP surfaces; post-upgrade marking.
 - SDK docs: the support window for qadam authors.
