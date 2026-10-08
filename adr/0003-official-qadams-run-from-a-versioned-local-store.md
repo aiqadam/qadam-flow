@@ -15,7 +15,7 @@ SDK majors the platform must run).
 ## Decision
 
 The platform is the operating system; qadams are programs; flows are instructions that pin a
-program version. A step pinned to `tables@0.3.1` resolves to and executes `tables@0.3.1`'s own
+program version. A step pinned to `tables@1.2.0` resolves to and executes `tables@1.2.0`'s own
 code from a **versioned store on a persistent volume**, while `@aiqadam/qadams-framework`,
 `@aiqadam/qadams-common` and `zod` are **provided once by the platform** and never carried per
 qadam version.
@@ -34,6 +34,11 @@ qadam version.
 - **Catalogue.** Metadata for **every** version of every official qadam, with tarball integrity, is
   published as static JSON on GitHub Pages under `flow.aiqadam.org/catalog/v1/`. Releases append to
   it; slim images carry a snapshot; the URL is configurable for mirroring.
+- **Versions that were never published.** npm holds only what was published from 2026-09-21 on
+  (#476 published current versions only; `tables` has `0.5.1`). Older pins — the #411 / #422 / #432
+  population — cannot be fetched and have no catalogue metadata; they go straight to the
+  "update this step" path below, after the one-off heal of #474 / #487 already re-pointed the dead
+  ones. The catalogue covers every version published from then on.
 - **Unavailable version.** If a pinned version cannot be fetched, the step moves to the image's
   version only when that version is inside the pin's caret range (ADR-0001) and the catalogue shows
   its props are compatible, with an audit record. Otherwise
@@ -55,7 +60,8 @@ image upgrade that moves a qadam's version strands the steps pinned to the old o
 #432 (`tg-router` disabling itself on `pro-data-tech-qa`). The workarounds so far are symptom-level:
 five hand-written pin migrations for `@aiqadam/qadam-ai` (`migrate-v24` … `migrate-v30`, whose own
 comment says "the next republish after this one needs its own file too"), a caret-clamped bundled
-fallback (#424, `qadam-metadata-service.ts:304` at `94dc9ae3`) that cannot cross a `0.x` minor, and
+fallback (#424, `packages/server/api/src/app/qadams/metadata/qadam-metadata-service.ts:304` at
+`94dc9ae3`) that cannot cross a `0.x` minor, and
 a one-off heal (#474 / #487). #435 already stopped a missing pin from disabling a published flow.
 
 **How we got here.** The fork inherited upstream's model — exact pins, plus a catalogue of every
@@ -71,14 +77,16 @@ the flip found that published qadams pin their own exact `shared` / `framework` 
 `tables@0.5.1` depends on `shared@0.155.0`, `common@0.17.0`, `framework@0.35.0`), so each installed
 version brings its own copies (#772: 155 of 238 qadams carry three copies of `shared`), that no
 metadata exists for older official versions (#778), and that installs need network at run time
-(#780). `shared` itself moved through 13 published versions (0.135.0 → 0.155.0) in about three
-weeks — it is not a contract qadams can depend on. The goal of #433 stands; this ADR replaces how
+(#780). `shared` itself moved through 13 published versions (0.135.0 → 0.155.0) in 16 days
+(2026-09-21 → 2026-10-07) — it is not a contract qadams can depend on. The goal of #433 stands; this ADR replaces how
 it is delivered.
 
-**Deployment constraints** (recorded on #433, 2026-10-08): instances run in our cloud and at
-customers' sites with internet or a corporate npm proxy (Nexus / Artifactory); fully air-gapped
-sites with no proxy are not a target. Who upgrades on-prem, and how often, varies. External
-authors will write qadams against the SDK.
+**Deployment constraints** (the architecture storming session of 2026-10-08 (answers recorded in these ADRs)): instances run in our cloud and at customers' sites with
+internet or a corporate npm proxy (Nexus / Artifactory). This **narrows** the earlier assumption in
+#433's comments and #775 that fully air-gapped installs are supported: a site with no proxy at all
+is no longer a target for fetching, though `:fat` keeps running every version it ships with no
+network. Who upgrades on-prem, and how often, varies. External authors will write qadams against
+the SDK.
 
 ## Options considered
 
@@ -93,7 +101,8 @@ everything already in the store works without network.
 ### Option B — install every version from npm as published (#433's first mechanism, #477 as specified)
 
 Rejected. Each version installs with its own exact `shared` / `framework` / `common` (#772), ~41 MiB
-of heap per extra `shared` copy; QA's twelve most-used qadams would pull six. It needs metadata for
+of heap per extra `shared` copy — for every pin that differs from the image's build (#772, as
+corrected on 2026-10-08: #503 prefers the bundled build, so the copies come from stale pins). It needs metadata for
 versions the instance never bundled (#778) and network or a pre-seeded cache on every cold start
 (#780), and freezes library bugs into every published version. Upstream runs this model and had to
 retire its S3 mirror for pinning bugs (upstream ADR 0028) and bump all community pieces to ship one
@@ -106,7 +115,7 @@ and the prototype shows it would have been safe at the props level for every cor
 since June. But it changes the code under a published flow — props-compatible is not
 behaviour-compatible (#397 changed `telegram-bot` behaviour with an identical schema) — and
 upstream, which does this through `piece-upgrade-register.json` + `migrate-v23`, moved working
-Oracle steps onto a target that failed every run.
+Oracle steps onto a target that failed every run (repaired in activepieces#15957).
 
 ### Option D — behaviour versions inside one qadam package (n8n's `typeVersion`)
 
@@ -126,7 +135,7 @@ version.
 | --- | --- | --- |
 | Artifact format | One bundle, same file in images and npm | npm package + `bun install` per version: needs network and dependency resolution at install, two sources that can drift (upstream ADR 0028), and permanent overrides of exact `@aiqadam/*` pins |
 | What the platform provides | `@aiqadam/*` + `zod` | `@aiqadam/*` only: qadams build prop schemas with `zod` and the framework validates them, so two `zod` copies would meet at that boundary |
-| Catalogue scope | Every version | Current versions only: no schema to decide the fallback, to render an old step in the builder (#422), or to import a flow from another instance; history costs ~2 MB/year |
+| Catalogue scope | Every version | Current versions only: no schema to decide the fallback, to render an old step in the builder (#422), or to import a flow from another instance; history costs ~2 MB/year gzipped (derived in `adr/assets/0003-prototype/README.md`) |
 | When to fetch | Publish / import, and at start-up | Publish / import only: after a lost volume or a switch to `:slim`, already published flows would point at missing versions |
 | Signature check | Mandatory for `@aiqadam/*`; setting for custom | Mandatory for everything: customers' private registries may not carry npm signatures |
 | Default image | `run.sh` → `:slim`; `:latest` = `:fat` | `:latest` = `:slim`: a plain `docker compose pull` would silently turn existing installs into slim ones that need a registry; dropping `:latest` breaks every existing install |
@@ -147,8 +156,8 @@ file per republish" pattern ends.
   rebuild `csv@0.4.14` from its own commit because its `xlsx` dependency is no longer in the tree,
   and #476 found no per-version tags.
 - The release pipeline appends each new version's metadata to the catalogue.
-- A qadam that changes props is checked against its previous version in CI; that check also
-  decides when the unavailable-version fallback may move a step.
+- The props-schema check of ADR-0001's gate 2 also decides when the unavailable-version fallback
+  may move a step.
 
 **Store.** `<volume>/qadams/<name>/<version>/` (artifact + `metadata.json` + integrity) on a
 persistent volume, seeded by the image at start-up; custom qadams live in the same store under a
@@ -169,7 +178,7 @@ later releases must read.
 ## Evidence
 
 Prototype on `origin/main` @ `94dc9ae3`, Node v24.21.0, a local dev container, warm disk; not
-measured on QA. Old versions were rebuilt from their own commits with today's third-party
+measured on QA. Commands and scripts: `adr/assets/0003-prototype/`. Old versions were rebuilt from their own commits with today's third-party
 dependencies, so they approximate, not reproduce, the original artifacts. `@aiqadam/*` were left
 external to each bundle and resolved to one built copy.
 

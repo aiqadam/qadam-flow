@@ -39,7 +39,8 @@ the new decision is an ADR, and the feature doc links to it.
   separately is two ADRs.
 - **Number order is dependency order.** An ADR that relies on others says so under its title
   (`Builds on: ADR-NNNN`) and references only lower numbers; the one relied on is numbered, read
-  and accepted first. While proposed, ADRs may be renumbered to keep this true.
+  and accepted first. Renumber to keep this true only before an ADR is merged; once merged its
+  number is fixed, even while it is still `proposed`.
 - English, like the rest of the repo.
 
 ## Status lifecycle

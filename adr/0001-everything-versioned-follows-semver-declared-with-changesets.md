@@ -28,7 +28,8 @@ package in the PR that makes the change, and checked by CI.
 qadams that pin them and are marked with `npm deprecate`.
 
 **The SDK.** Qadams import only `@aiqadam/qadams-framework` and `@aiqadam/qadams-common`. The 104
-symbols they import from `shared` today move into `qadams-framework`, which re-exports them, and a
+symbols they import from `shared` today (measured as described in
+`adr/assets/0003-prototype/README.md`) move into `qadams-framework`, which re-exports them, and a
 lint rule forbids qadams from importing `shared`. `qadams-framework@1.0.0` and
 `qadams-common@1.0.0` are cut once that move, the `shared` bundling and the API-diff gate are in
 place; before 1.0.0 the SDK makes no compatibility promise.
@@ -43,7 +44,8 @@ raises it together with the tag (`version-tag-gate` keeps them equal). Images bu
 a prerelease computed at build time (`2.1.0-main.<n>`), which semver orders below the release, so a
 canary never claims a release it is not. The first release under this scheme is `2.0.0`. Image tags
 carry the exact version (`:<version>`, with a `-<flavour>` suffix where images come in flavours)
-plus moving tags; builds from `main` are tagged `:main`.
+plus moving tags; builds from `main` are tagged `:main` (`:main-<flavour>` where images come in
+flavours).
 
 **Who raises versions: changesets.** A PR that changes a versioned package adds a `.changeset/*.md`
 naming each package, its level and one line on what changed. The release PR collects them, raises
@@ -82,8 +84,8 @@ Inventory from #776 and #783 (`main` @ `717e7390` / `94dc9ae3`):
 - **Platform.** Latest tags `v1.0.0` / `v1.1.0` (2026-07-21); root `package.json` is `2.0.0` (raised by
   #326, never tagged). `apVersionUtil.getCurrentRelease()` reads `package.json`, so every image built
   from `main` reports `2.0.0`, and `isSupportedRelease` filters the qadam catalogue against it.
-- **Packages.** `shared` 0.15x, `framework` 0.35.0, `common` 0.17.0 — three independent counters —
-  and 238 qadams on `0.0.x`–`0.13.x` (`assemblyai` alone past `1.0.0`). `shared` was raised 29 times
+- **Packages.** `shared` 0.156.0, `framework` 0.35.0, `common` 0.17.0 in the tree — three independent
+  counters — and 238 qadams on `0.0.x`–`0.18.x` (`assemblyai` alone past `1.0.0`). `shared` was raised 29 times
   since 2026-09-21 (#783) and has 13 versions on npm.
 - **Nothing enforces a bump.** `packagePrePublishChecks` diffs against `origin/main`, which is empty
   on the publish path, so it never fires there; `check-qadam-version-bumps` sees only dependency
@@ -133,7 +135,7 @@ exactly why #424's fallback could not move `tables@0.3.1` to a props-compatible 
 | Qadams `0.x` → `1.0` | Each at its next change | All at once: 238 releases with no code change; staying on `0.x`: see Option D |
 | Platform `package.json` | Last released version; prereleases for `main` builds | Next release (today's state): `main` images claim an unreleased version; tag-only with a placeholder: local builds report `0.0.0` |
 | Gates | 1–7 required from the first changesets release; override label for gate 2 | Advisory first: unenforced checks are how #783 happened; only the changeset-presence gate required: levels would go unchecked |
-| Where qadam-facing `shared` symbols go | Re-exported from `qadams-framework` | A new `@aiqadam/qadams-sdk`: a second package to keep stable and version in step, for symbols that are mostly enums and helpers (`QadamCategory` in 196 qadams, `isNil` 126, `MarkdownVariant` 61) |
+| Where qadam-facing `shared` symbols go | Re-exported from `qadams-framework` | A new `@aiqadam/qadams-sdk`: a second package to keep stable and version in step, for symbols that are mostly enums and helpers (`QadamCategory` in 196 qadams, `isNil` in 36, `MarkdownVariant` in 16) |
 | `qadams-framework@1.0.0` | Once `shared` is out of its API, bundled, and the API-diff gate exists | Now: the first `shared` move would force 2.0 at once; at the first external author: too late for a contract |
 | Conventions | Rule + skill + docs, one source | AGENTS.md section only: bloats the root doc; skill only: unread when its trigger is missed |
 | `shared` | Private; bundled into `framework` | Published without promises: every `shared` change ripples through authors' lockfiles (#494, #772); a stable public API: spends majors on the most-changed internal package |
@@ -144,7 +146,7 @@ exactly why #424's fallback could not move `tables@0.3.1` to a props-compatible 
 per package; a platform release ships whatever SDK versions its tree holds; how long it keeps
 running an older SDK major is a separate decision. (3) The engine ↔ qadam contract has its own axis — the framework
 major — so `minimumSupportedRelease` / `maximumSupportedRelease` only express platform-release
-floors, kept consistent by gate 8. (4) Offline: no compatibility signal in this ADR needs GitHub or
+floors, kept consistent by gate 7. (4) Offline: no compatibility signal in this ADR needs GitHub or
 npm at run time; the "update available" check keeps degrading as today. (5) One source of truth: the
 rule, with everything else linking to it.
 

@@ -30,15 +30,22 @@ The policy is enforced, not remembered:
   index) and in `CONTRIBUTING.md` states the rule for agents and humans and points at the table
   and the gate.
 
-Each instance makes a retirement safe locally with a **census**: from its own database and qadam
-store it counts the steps pinned to qadam versions built against each major. Before an upgrade a
+Each instance makes a retirement safe locally with a **census**: from its own database it counts
+the steps pinned to qadam versions built against each major, reading each version's `contextInfo`
+from its stored metadata (`contextInfo` in
+`packages/qadams/framework/src/lib/qadam-metadata.ts:112-117` at `94dc9ae3`). A pin whose metadata is unknown counts as "still needs
+the old contract", so the census errs towards keeping a shim. Before an upgrade a
 `doctor` command lists the steps a release will stop running; after it, affected steps are marked
 "framework version no longer supported — update this step" in the builder, MCP and runs, an
 operator banner and log line appear, and the release starts normally — it does not block, and no
 flow is disabled (#435). The `Remove after 2026-10-12` date on the current shims is withdrawn.
 
-Before 1.0.0 there is no guarantee: official qadams are built against the current framework, and
-the existing shims stay until this policy retires them.
+Before 1.0.0 there is no guarantee: official qadams are built against the current framework. The
+existing shims (context V1, and qadams predating `getContextInfo`) belong to no framework major, so
+the support table starts with a `0.x` row for them whose successor is `1.0.0`: they are retired by
+the same rule, no earlier than 12 months after `1.0.0`.
+
+This ADR adds **gate 8** to ADR-0001's required set: the support-table gate above.
 
 ## Context
 
@@ -55,9 +62,7 @@ the existing shims stay until this policy retires them.
   framework — custom qadams uploaded to an instance, and external authors' qadams.
 - Qadam Flow is self-hosted with no central telemetry, and on-prem upgrade cadence varies, so
   "is anyone still on the old contract" can only be answered on each instance, offline.
-- External authors will build against the SDK (recorded on #433), so the window is a public promise.
-- The platform's own version scheme is still open (#776); this policy is keyed to the framework's
-  semver, not to platform release numbers, so it does not wait for #776.
+- External authors will build against the SDK (the architecture storming session of 2026-10-08 (answers recorded in these ADRs)), so the window is a public promise.
 
 ## Options considered
 
@@ -66,7 +71,8 @@ the existing shims stay until this policy retires them.
 Semver gives authors one rule they already know. The 12-month floor protects instances that upgrade
 once a year if majors ever come quickly. The gate turns "someone must remember" into a failing
 check, and the census turns retirement from a run-time surprise into a visible, repairable list.
-Comparable: Kubernetes keeps a stable API at least 12 months or 3 releases after deprecation.
+Comparable: Kubernetes keeps a GA API at least 12 months or 3 releases after deprecation,
+whichever is longer (https://kubernetes.io/docs/reference/using-api/deprecation-policy/).
 
 ### Option B — two majors, no time floor
 
@@ -95,9 +101,10 @@ than marked steps with a clear repair path.
 
 ## Consequences
 
-- A framework major requires: a support-table row, a breaking-change entry in
-  `docs/install/configuration/breaking-changes.mdx` (through the `breaking-change-gate` in
-  `.github/workflows/release.yml`), and the engine shim for the previous major kept.
+- A framework major requires a support-table row and keeps the engine shim for the previous major.
+  It needs no operator action, so it is not a platform major.
+- **Retiring** a major — removing its shim — is what operators notice: it is a platform major under
+  ADR-0001, with its `breaking-changes.mdx` entry (gate 4) and the census output to act on.
 - Supporting two or occasionally three majors costs a branch and a small adapter per major in the
   engine — today's shims are that size.
 - The census needs a home in the CLI (`doctor`), the admin UI and `ap_flow_structure`; it treats an
