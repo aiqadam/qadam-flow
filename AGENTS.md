@@ -229,10 +229,11 @@ When running in `--mode=cloud`, do not use OAuth2 connections — the OAuth prov
 ## Verification
 
 - Always run `npm run lint-dev` as part of any verification step before considering a task complete.
-- Touched anything under `.agents/`, `.claude/`, `.cursor/` or any `AGENTS.md`? Run `npm run check-agent-docs` —
+- Touched anything under `.agents/`, `.claude/`, `.cursor/`, `adr/` or any `AGENTS.md`? Run `npm run check-agent-docs` —
   it fails on a skill missing from the trigger registry, a charter missing from the delegation matrix, a rule
   missing from the rules index, a `SKILL.md` without usable frontmatter, an `AGENTS.md` routing to a skill or
-  charter that no longer exists, or a mirror symlink someone replaced with a real directory.
+  charter that no longer exists, a mirror symlink someone replaced with a real directory, or an ADR that is
+  misnamed, has an invalid status or no `deciders`, or disagrees with the index in `adr/README.md`.
 - After touching anything under `packages/web`, also run `npm run typecheck` — `vite build` does not
   type-check, so a type error there surfaces nowhere else until CI.
 - **Before trusting any verification output** — especially a command that returned clean — read
