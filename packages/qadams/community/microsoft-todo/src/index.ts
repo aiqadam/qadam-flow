@@ -3,8 +3,8 @@ import { getGraphBaseUrl } from './lib/common/microsoft-cloud';
 import {
   createQadam,
   OAuth2PropertyValue,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 
 import { addAttachmentAction } from './lib/actions/add-attachment';
 import { completeTaskAction } from './lib/actions/complete-task';

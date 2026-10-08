@@ -1,10 +1,9 @@
-import { ApFile, createAction, QadamAuth, Property } from '@aiqadam/qadams-framework';
+import { ApFile, createAction, QadamAuth, Property, AIProviderName, spreadIfDefined } from '@aiqadam/qadams-framework';
 import { createAIModel } from '../../common/ai-sdk';
 import { generateText, tool, jsonSchema, ModelMessage, UserModelMessage } from 'ai';
 import mime from 'mime-types';
 import Ajv from 'ajv';
 import { aiProps } from '../../common/props';
-import { AIProviderName, spreadIfDefined } from '@aiqadam/shared';
 
 export const extractStructuredData = createAction({
 	name: 'extractStructuredData',

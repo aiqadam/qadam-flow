@@ -90,10 +90,9 @@
     },
     "packages/qadams/common": {
       "name": "@aiqadam/qadams-common",
-      "version": "0.17.0",
+      "version": "0.17.1",
       "dependencies": {
         "@aiqadam/qadams-framework": "workspace:*",
-        "@aiqadam/shared": "workspace:*",
         "axios": "1.20.0",
         "axios-retry": "4.4.1",
         "form-data": "4.0.6",
@@ -104,6 +103,7 @@
         "zod": "4.3.6",
       },
       "devDependencies": {
+        "@aiqadam/shared": "workspace:*",
         "@types/mime-types": "2.1.1",
         "vitest": "4.1.11",
       },
@@ -2993,7 +2993,7 @@
     },
     "packages/qadams/framework": {
       "name": "@aiqadam/qadams-framework",
-      "version": "0.35.2",
+      "version": "0.36.0",
       "dependencies": {
         "@aiqadam/shared": "workspace:*",
         "ai": "7.0.127",

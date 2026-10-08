@@ -1,4 +1,4 @@
-import { createQadam, QadamAuth, Property } from '@aiqadam/qadams-framework';
+import { createQadam, QadamAuth, Property, QadamCategory } from '@aiqadam/qadams-framework';
 import { httpClient, HttpMethod } from '@aiqadam/qadams-common';
 import { getFullList } from './lib/actions/get-full-list';
 import { getList } from './lib/actions/get-list';
@@ -6,7 +6,6 @@ import { getRecord } from './lib/actions/get-record';
 import { createRecord } from './lib/actions/create-record';
 import { updateRecord } from './lib/actions/update-record';
 import { deleteRecord } from './lib/actions/delete-record';
-import { QadamCategory } from '@aiqadam/shared';
 
 const markdown = `
 Provide your PocketBase **host URL** and **superuser credentials**.

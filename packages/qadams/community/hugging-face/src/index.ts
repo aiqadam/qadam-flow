@@ -1,5 +1,4 @@
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { documentQuestionAnswering } from './lib/actions/document-question-answering';
 import { languageTranslation } from './lib/actions/language-translation';
 import { textClassification } from './lib/actions/text-classification';

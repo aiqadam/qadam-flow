@@ -1,6 +1,5 @@
-import { createQadam } from '@aiqadam/qadams-framework';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { QadamCategory } from '@aiqadam/shared';
 import { createWorkItemAction } from './lib/actions/create-work-item';
 import { getWorkItemAction } from './lib/actions/get-work-item';
 import { updateWorkItemAction } from './lib/actions/update-work-item';

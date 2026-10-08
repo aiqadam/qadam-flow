@@ -5,8 +5,9 @@ import {
 	DynamicPropsValue,
 	Property,
 	TriggerStrategy,
+	MarkdownVariant,
+	isNil,
 } from '@aiqadam/qadams-framework';
-import { MarkdownVariant, isNil } from '@aiqadam/shared';
 import { customObjectDropdown, customObjectPropertiesDropdown } from '../common/props';
 import { Client } from '@hubspot/api-client';
 import { FilterOperatorEnum } from '../common/types';

@@ -1,9 +1,9 @@
 import {
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
 
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { QadamCategory } from '@aiqadam/shared';
 import { wooCreateCoupon } from './lib/actions/create-coupon';
 import { wooCreateCustomer } from './lib/actions/create-customer';
 import { wooCreateProduct } from './lib/actions/create-product';

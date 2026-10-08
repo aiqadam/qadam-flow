@@ -1,6 +1,5 @@
-import { createTrigger, TriggerStrategy, Property } from '@aiqadam/qadams-framework';
+import { createTrigger, TriggerStrategy, Property, WebhookHandshakeStrategy } from '@aiqadam/qadams-framework';
 import { httpClient, HttpMethod } from '@aiqadam/qadams-common';
-import { WebhookHandshakeStrategy } from '@aiqadam/shared';
 import { pandadocAuth } from '../common';
 
 export const documentStateChanged = createTrigger({

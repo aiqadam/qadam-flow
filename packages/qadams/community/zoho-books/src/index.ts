@@ -4,8 +4,8 @@ import {
   QadamAuth,
   Property,
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 
 export const zohoBooksAuth = QadamAuth.OAuth2({
   props: {

@@ -2,9 +2,9 @@ import { createCustomApiCallAction, httpClient, HttpMethod } from '@aiqadam/qada
 import {
   createQadam,
   Property,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
 
-import { QadamCategory } from '@aiqadam/shared';
 import crypto from 'node:crypto';
 import { requestActionDirectMessageAction } from './lib/actions/request-action-direct-message';
 import { requestActionMessageAction } from './lib/actions/request-action-message';

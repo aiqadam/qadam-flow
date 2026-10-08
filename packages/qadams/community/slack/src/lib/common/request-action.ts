@@ -4,7 +4,7 @@ import {
     slackSendMessage,
     textToSectionBlocks,
 } from './utils';
-import { assertNotNullOrUndefined, ExecutionType } from '@aiqadam/shared';
+import { assertNotNullOrUndefined, ExecutionType } from '@aiqadam/qadams-framework';
 import { ChatPostMessageResponse } from '@slack/web-api';
 import { getBotToken, SlackAuthValue } from './auth-helpers';
 

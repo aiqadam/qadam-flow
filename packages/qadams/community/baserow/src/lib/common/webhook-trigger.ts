@@ -1,5 +1,4 @@
-import { MarkdownVariant } from '@aiqadam/shared';
-import { DynamicPropsValue, Property } from '@aiqadam/qadams-framework';
+import { DynamicPropsValue, Property, MarkdownVariant } from '@aiqadam/qadams-framework';
 import { BaserowAuthValue, baserowAuth, baserowAuthHelpers } from '../auth';
 import { makeClient } from './index';
 

@@ -1,6 +1,5 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { chatGemini } from './lib/actions/chat-gemini.action';
 import { createVideoAction } from './lib/actions/create-video.action';
 import { generateContentFromImageAction } from './lib/actions/generate-content-from-image.action';

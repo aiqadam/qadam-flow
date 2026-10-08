@@ -1,5 +1,5 @@
 import { HttpMethod } from '@aiqadam/qadams-common';
-import { createAction, Property } from '@aiqadam/qadams-framework';
+import { createAction, Property, isNil } from '@aiqadam/qadams-framework';
 import { heygenAuth } from '../common/auth';
 import { heygenApiCall } from '../common/client';
 import {
@@ -8,7 +8,6 @@ import {
 	templateDropdown,
 	templateVariables,
 } from '../common/props';
-import { isNil } from '@aiqadam/shared';
 
 export const createVideoFromTemplateAction = createAction({
 	auth: heygenAuth,

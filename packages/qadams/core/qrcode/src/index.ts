@@ -1,6 +1,5 @@
 
-    import { createQadam, QadamAuth } from "@aiqadam/qadams-framework";
-    import { QadamCategory } from '@aiqadam/shared';
+    import { createQadam, QadamAuth, QadamCategory } from "@aiqadam/qadams-framework";
     import { outputQrcodeAction } from './lib/actions/output-qrcode-action'
     
     export const qrcode = createQadam({

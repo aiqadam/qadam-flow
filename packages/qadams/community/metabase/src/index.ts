@@ -1,4 +1,9 @@
-import { createQadam, QadamAuth, Property } from '@aiqadam/qadams-framework';
+import {
+  createQadam,
+  QadamAuth,
+  Property,
+  AppConnectionType,
+} from '@aiqadam/qadams-framework';
 import { getQuestion } from './lib/actions/get-question';
 import { getQuestionPngPreview } from './lib/actions/get-png-rendering';
 import { getDashboardQuestions } from './lib/actions/get-dashboard';
@@ -10,7 +15,6 @@ import {
 } from '@aiqadam/qadams-common';
 import { getGraphQuestion } from './lib/actions/get-graph-question';
 import { embedQuestion } from './lib/actions/embed-question';
-import { AppConnectionType } from '@aiqadam/shared';
 
 const baseProps = {
   baseUrl: Property.ShortText({

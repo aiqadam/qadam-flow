@@ -1,10 +1,10 @@
 import {
   createQadam,
   QadamAuth,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
 
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { QadamCategory } from '@aiqadam/shared';
 import { common } from './lib/common';
 import { newComment } from './lib/triggers/new-comment';
 import { newFile } from './lib/triggers/new-file';

@@ -1,5 +1,5 @@
 import { pipedriveAuth } from '../auth';
-import { createAction, Property } from '@aiqadam/qadams-framework';
+import { createAction, Property, isEmpty } from '@aiqadam/qadams-framework';
 import { dealCommonProps, dealIdProp } from '../common/props';
 import {
 	pipedriveApiCall,
@@ -10,7 +10,6 @@ import {
 import { HttpMethod } from '@aiqadam/qadams-common';
 import { GetField, GetDealResponse } from '../common/types';
 import dayjs from 'dayjs';
-import { isEmpty } from '@aiqadam/shared';
 
 export const updateDealAction = createAction({
 	auth: pipedriveAuth,

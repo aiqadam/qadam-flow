@@ -1,8 +1,7 @@
 import {
   createCustomApiCallAction,
 } from '@aiqadam/qadams-common';
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { clarifaiAskLLM } from './lib/actions/ask-llm';
 import { audioToTextModelPredictAction } from './lib/actions/call-audio-model';
 import {

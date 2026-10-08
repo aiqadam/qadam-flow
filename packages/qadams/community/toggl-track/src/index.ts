@@ -1,5 +1,4 @@
-import { QadamAuth, createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { QadamAuth, createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { HttpMethod, httpClient } from '@aiqadam/qadams-common';
 import { createClient } from './lib/actions/create-client';
 import { createProject } from './lib/actions/create-project';

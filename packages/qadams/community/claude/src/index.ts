@@ -1,8 +1,7 @@
-import { createQadam } from '@aiqadam/qadams-framework';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 import { askClaude } from './lib/actions/send-prompt';
 import { baseUrl } from './lib/common/common';
-import { QadamCategory } from '@aiqadam/shared';
 import { extractStructuredDataAction } from './lib/actions/extract-structured-data';
 import { claudeAuth } from './lib/auth';
 

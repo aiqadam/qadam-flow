@@ -1,5 +1,4 @@
-import { QadamAuth, createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { QadamAuth, createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { createApprovalLink } from './lib/actions/create-approval-link';
 import { waitForApprovalLink } from './lib/actions/wait-for-approval';
 

@@ -2,8 +2,8 @@ import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 import {
   createQadam,
   OAuth2PropertyValue,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 
 import { addWorksheetAction } from './lib/actions/add-worksheet';
 import { appendRowAction } from './lib/actions/append-row';

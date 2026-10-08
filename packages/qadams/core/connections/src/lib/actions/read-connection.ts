@@ -1,5 +1,4 @@
-import { Property, createAction } from '@aiqadam/qadams-framework';
-import { isNil } from '@aiqadam/shared';
+import { Property, createAction, isNil } from '@aiqadam/qadams-framework';
 
 const markdown = `
 **Advanced Piece**

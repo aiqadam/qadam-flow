@@ -1,6 +1,5 @@
-import { assertNotNullOrUndefined } from '@aiqadam/shared';
 import { todoistAuth } from '../..';
-import { createAction, Property } from '@aiqadam/qadams-framework';
+import { createAction, Property, assertNotNullOrUndefined } from '@aiqadam/qadams-framework';
 import { todoistRestClient } from '../common/client/rest-client';
 
 export const todoistMarkTaskCompletedAction = createAction({

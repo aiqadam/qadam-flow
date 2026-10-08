@@ -1,4 +1,4 @@
-import { AppConnectionValueForAuthProperty, Property, createTrigger } from '@aiqadam/qadams-framework';
+import { AppConnectionValueForAuthProperty, Property, createTrigger, MarkdownVariant } from '@aiqadam/qadams-framework';
 import { TriggerStrategy } from '@aiqadam/qadams-framework';
 import { DedupeStrategy, Polling, pollingHelper } from '@aiqadam/qadams-common';
 
@@ -6,7 +6,6 @@ import { amazonS3Auth } from '../auth';
 import { createS3 } from '../common';
 import dayjs from 'dayjs';
 import { ListObjectsV2CommandInput } from '@aws-sdk/client-s3';
-import { MarkdownVariant } from '@aiqadam/shared';
 
 const polling: Polling<AppConnectionValueForAuthProperty<typeof amazonS3Auth>, { folderPath?: string }> = {
 	strategy: DedupeStrategy.TIMEBASED,

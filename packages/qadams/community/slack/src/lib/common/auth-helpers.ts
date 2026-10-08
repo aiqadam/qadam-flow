@@ -1,5 +1,4 @@
-import { AppConnectionType } from '@aiqadam/shared';
-import { AppConnectionValueForAuthProperty } from '@aiqadam/qadams-framework';
+import { AppConnectionValueForAuthProperty, AppConnectionType } from '@aiqadam/qadams-framework';
 import { httpClient, HttpMethod } from '@aiqadam/qadams-common';
 import type { slackAuth } from '../auth';
 

@@ -1,4 +1,4 @@
-import { createAction, DynamicPropsValue, Property } from '@aiqadam/qadams-framework';
+import { createAction, DynamicPropsValue, Property, isNil } from '@aiqadam/qadams-framework';
 import { JiraDataCenterAuth, jiraDataCenterAuth } from '../../auth';
 import {
 	getProjectIdDropdown,
@@ -10,7 +10,6 @@ import {
 import { jiraApiCall, jiraPaginatedApiCall } from '../common';
 import { IssueFieldMetaData, VALID_CUSTOM_FIELD_TYPES } from '../common/types';
 import { HttpMethod } from '@aiqadam/qadams-common';
-import { isNil } from '@aiqadam/shared';
 
 function normalizeFields(fields: any[]): IssueFieldMetaData[] {
 	return fields.map((field) => ({

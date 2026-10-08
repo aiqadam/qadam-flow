@@ -2,8 +2,8 @@ import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 import {
   OAuth2PropertyValue,
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { asanaCreateTaskAction } from './lib/actions/create-task';
 import { asanaAuth } from './lib/auth';
 

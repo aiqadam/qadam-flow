@@ -1,7 +1,6 @@
 
-import { createQadam } from "@aiqadam/qadams-framework";
+import { createQadam, QadamCategory } from "@aiqadam/qadams-framework";
 import { askDeepseek } from "./lib/actions/ask-deepseek";
-import { QadamCategory } from "@aiqadam/shared";
 import { deepseekAuth } from './lib/auth';
 
         

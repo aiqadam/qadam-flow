@@ -2,8 +2,9 @@ import {
   QadamAuth,
   Property,
   createQadam,
+  AppConnectionType,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { AppConnectionType, QadamCategory } from '@aiqadam/shared';
 import { runQuery } from './lib/actions/run-query';
 import { newRow } from './lib/triggers/new-row';
 import { pgClient } from './lib/common';

@@ -1,5 +1,5 @@
 
-import { createQadam } from "@aiqadam/qadams-framework";
+import { createQadam, QadamCategory } from "@aiqadam/qadams-framework";
 import { cloudinaryAuth } from "./lib/common/auth";
 import { uploadResource } from "./lib/actions/upload-resource";
 import { deleteResource } from "./lib/actions/delete-resource";
@@ -8,7 +8,6 @@ import { findResourceByPublicId } from "./lib/actions/find-resource-by-public-id
 import { transformResource } from "./lib/actions/transform-resource";
 import { newResourceInFolder } from "./lib/triggers/new-resource";
 import { newTagAddedToAsset } from "./lib/triggers/new-tag-added-to-asset";
-import { QadamCategory } from "@aiqadam/shared";
 
 export const cloudinary = createQadam({
   displayName: "Cloudinary",

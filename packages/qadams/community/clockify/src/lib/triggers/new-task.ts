@@ -1,6 +1,5 @@
 import { HttpMethod } from '@aiqadam/qadams-common';
-import { createTrigger, TriggerStrategy } from '@aiqadam/qadams-framework';
-import { isNil } from '@aiqadam/shared';
+import { createTrigger, TriggerStrategy, isNil } from '@aiqadam/qadams-framework';
 import { clockifyAuth } from '../auth';
 import { clockifyApiCall } from '../common/client';
 import { projectId, workspaceId } from '../common/props';

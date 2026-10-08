@@ -1,8 +1,7 @@
-import { createAction, Property } from '@aiqadam/qadams-framework';
+import { createAction, Property, AIProviderName, spreadIfDefined } from '@aiqadam/qadams-framework';
 import { generateText } from 'ai';
 import { createAIModel } from '../../common/ai-sdk';
 import { aiProps } from '../../common/props';
-import { AIProviderName, spreadIfDefined } from '@aiqadam/shared';
 
 export const classifyText = createAction({
   name: 'classifyText',

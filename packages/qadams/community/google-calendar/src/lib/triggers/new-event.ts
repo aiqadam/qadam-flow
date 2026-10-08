@@ -3,8 +3,8 @@ import {
   TriggerStrategy,
   Property,
   WebhookRenewStrategy,
+  isNil,
 } from '@aiqadam/qadams-framework';
-import { isNil } from '@aiqadam/shared';
 import {
   googleCalendarCommon,
   googleCalendarAuth,

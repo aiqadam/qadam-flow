@@ -1,9 +1,10 @@
-import { MarkdownVariant, isNil } from '@aiqadam/shared';
 import { hubspotAuth } from '../auth';
 import {
 	createTrigger,
 	Property,
 	TriggerStrategy,
+	MarkdownVariant,
+	isNil,
 } from '@aiqadam/qadams-framework';
 import { getDefaultPropertiesForObject, standardObjectPropertiesDropdown } from '../common/props';
 import { OBJECT_TYPE, MAX_SEARCH_PAGE_SIZE, MAX_SEARCH_TOTAL_RESULTS } from '../common/constants';

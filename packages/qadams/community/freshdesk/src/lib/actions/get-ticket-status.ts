@@ -1,7 +1,6 @@
-import { createAction, Property } from '@aiqadam/qadams-framework';
+import { createAction, Property, isNil } from '@aiqadam/qadams-framework';
 import { httpClient, HttpMethod } from '@aiqadam/qadams-common';
 import { freshdeskAuth } from '../..';
-import { isNil } from '@aiqadam/shared';
 
 export const getTicketStatus = createAction({
   auth: freshdeskAuth,

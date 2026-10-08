@@ -2,8 +2,8 @@ import {
 	OAuth2PropertyValue,
 	createQadam,
 	PiecePropValueSchema,
+	QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 import { listTicketsAction } from './lib/actions/list-tickets';
 import { createTicketAction } from './lib/actions/create-ticket';

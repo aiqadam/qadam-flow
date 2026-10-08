@@ -1,10 +1,11 @@
 import {
   TriggerStrategy,
   createTrigger,
+  isEmpty,
+  WebhookHandshakeStrategy,
 } from '@aiqadam/qadams-framework';
 import { wooAuth } from '../auth';
 import { WebhookInformation, wooCommon } from '../common';
-import { isEmpty, WebhookHandshakeStrategy } from '@aiqadam/shared';
 import {
   AuthenticationType,
   httpClient,

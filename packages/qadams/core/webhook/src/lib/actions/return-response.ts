@@ -3,8 +3,8 @@ import {
   QadamAuth,
   Property,
   createAction,
+  StopResponse,
 } from '@aiqadam/qadams-framework';
-import { StopResponse } from '@aiqadam/shared';
 import { StatusCodes } from 'http-status-codes';
 
 enum ResponseType {

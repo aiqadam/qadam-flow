@@ -1,5 +1,4 @@
-import { createQadam, QadamAuth } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamAuth, QadamCategory } from '@aiqadam/qadams-framework';
 import { extractText } from './lib/actions/extract-text';
 import { convertToImage } from './lib/actions/convert-to-image';
 import { textToPdf } from './lib/actions/text-to-pdf';

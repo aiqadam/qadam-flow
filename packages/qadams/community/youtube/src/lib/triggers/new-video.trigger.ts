@@ -12,9 +12,9 @@ import {
   QadamAuth,
   Store,
   TriggerStrategy,
+  isNil,
 } from '@aiqadam/qadams-framework';
 import { channelIdentifier } from '../common/props';
-import { isNil } from '@aiqadam/shared';
 import dayjs from 'dayjs';
 import { load as cheerioLoad } from 'cheerio';
 import FeedParser from 'feedparser';

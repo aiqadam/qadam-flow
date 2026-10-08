@@ -1,4 +1,4 @@
-import { isNil } from '@aiqadam/shared';
+import { isNil } from '@aiqadam/qadams-framework';
 import mime from 'mime-types';
 import { HttpHeader } from './http-header';
 import type { HttpHeaders } from './http-headers';

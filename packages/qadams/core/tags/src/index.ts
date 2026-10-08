@@ -1,5 +1,4 @@
-import { createQadam, QadamAuth } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamAuth, QadamCategory } from '@aiqadam/qadams-framework';
 import { addTag } from './lib/add-tag';
 
 export const tags = createQadam({

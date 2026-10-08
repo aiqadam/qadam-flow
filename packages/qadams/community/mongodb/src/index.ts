@@ -3,8 +3,9 @@ import {
   createQadam,
   QadamAuth,
   Property,
+  AppConnectionType,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { AppConnectionType, QadamCategory } from '@aiqadam/shared';
 import { propsValidation } from '@aiqadam/qadams-common';
 import { z } from 'zod';
 

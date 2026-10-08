@@ -1,11 +1,10 @@
-import { FilesService, TriggerStrategy, createTrigger,  Property } from '@aiqadam/qadams-framework';
+import { FilesService, TriggerStrategy, createTrigger,  Property, isNil } from '@aiqadam/qadams-framework';
 import { getGraphBaseUrl } from '../common/microsoft-cloud';
 import { Client, PageCollection } from '@microsoft/microsoft-graph-client';
 import { Message, FileAttachment } from '@microsoft/microsoft-graph-types';
 import dayjs from 'dayjs';
 import { microsoftOutlookAuth } from '../common/auth';
 import { mailFolderIdDropdown } from '../common/props';
-import { isNil } from '@aiqadam/shared';
 
 async function enrichAttachments(
 	client: Client,

@@ -1,6 +1,5 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { OAuth2PropertyValue, QadamAuth, createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { OAuth2PropertyValue, QadamAuth, createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { webflowCreateCollectionItemAction } from './lib/actions/create-collection-item';
 import { webflowDeleteCollectionItem } from './lib/actions/delete-collection-item';
 import { webflowFindCollectionItem } from './lib/actions/find-collection-item';

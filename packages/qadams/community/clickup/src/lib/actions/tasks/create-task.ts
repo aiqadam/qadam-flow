@@ -2,9 +2,9 @@ import {
   OAuth2PropertyValue,
   Property,
   createAction,
+  MarkdownVariant,
 } from '@aiqadam/qadams-framework';
 import { HttpMethod, getAccessTokenOrThrow } from '@aiqadam/qadams-common';
-import { MarkdownVariant } from '@aiqadam/shared';
 
 import {
   clickupCommon,

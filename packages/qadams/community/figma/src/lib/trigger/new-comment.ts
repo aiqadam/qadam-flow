@@ -2,8 +2,8 @@ import {
   createTrigger,
   Property,
   TriggerStrategy,
+  assertNotNullOrUndefined,
 } from '@aiqadam/qadams-framework';
-import { assertNotNullOrUndefined } from '@aiqadam/shared';
 import { nanoid } from 'nanoid';
 import { figmaCommon } from '../common';
 import { figmaWebhookPostRequest, figmaDeleteRequest } from '../common/utils';

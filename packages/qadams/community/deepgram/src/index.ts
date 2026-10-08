@@ -1,10 +1,9 @@
-import { createQadam } from '@aiqadam/qadams-framework';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { deepgramAuth } from './common/auth';
 import { createSummaryAction } from './actions/create-summary';
 import { createTranscriptionCallbackAction } from './actions/create-transcription';
 import { listProjectsAction } from './actions/list-projects';
 import { textToSpeechAction } from './actions/text-to-speech';
-import { QadamCategory } from '@aiqadam/shared';
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 import { BASE_URL } from './common/constants';
 

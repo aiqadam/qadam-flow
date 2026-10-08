@@ -1,6 +1,5 @@
-import { QadamAuth } from '@aiqadam/qadams-framework';
+import { QadamAuth, tryCatch } from '@aiqadam/qadams-framework';
 import { httpClient, HttpMethod } from '@aiqadam/qadams-common';
-import { tryCatch } from '@aiqadam/shared';
 import { toFormUrlEncoded } from './common/form';
 
 export const uptimeRobotAuth = QadamAuth.SecretText({

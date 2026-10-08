@@ -1,6 +1,5 @@
-import { createQadam, QadamAuth } from "@aiqadam/qadams-framework";
+import { createQadam, QadamAuth, QadamCategory } from "@aiqadam/qadams-framework";
 import { createRecords } from "./lib/actions/create-records";
-import { QadamCategory } from "@aiqadam/shared";
 import { deleteRecord } from "./lib/actions/delete-record";
 import { updateRecord } from "./lib/actions/update-record";
 import { updateRecords } from "./lib/actions/update-records";

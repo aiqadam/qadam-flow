@@ -1,6 +1,5 @@
 
-import { createQadam } from "@aiqadam/qadams-framework";
-import { QadamCategory } from "@aiqadam/shared";
+import { createQadam, QadamCategory } from "@aiqadam/qadams-framework";
 import { runwayAuth } from "./lib/common/auth";
 import { generateImageFromText } from "./lib/actions/generate-image-from-text";
 import { generateVideoFromImage } from "./lib/actions/generate-video-from-image";

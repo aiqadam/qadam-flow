@@ -4,8 +4,7 @@ import {
   HttpMethod,
   AuthenticationType,
 } from '@aiqadam/qadams-common';
-import { QadamAuth, Property, createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory, tryCatch } from '@aiqadam/shared';
+import { QadamAuth, Property, createQadam, QadamCategory, tryCatch } from '@aiqadam/qadams-framework';
 import { sendEmail } from './lib/actions/send-email';
 import { validateEmail } from './lib/actions/validate-email';
 import { addMailingListMember } from './lib/actions/add-mailing-list-member';

@@ -1,11 +1,7 @@
-import { createAction, Property } from '@aiqadam/qadams-framework';
+import { createAction, Property, assertNotNullOrUndefined, ExecutionType } from '@aiqadam/qadams-framework';
 import { microsoftTeamsAuth } from '../auth';
 import { microsoftTeamsCommon } from '../common';
 import { createGraphClient } from '../common/graph';
-import {
-  assertNotNullOrUndefined,
-  ExecutionType,
-} from '@aiqadam/shared';
 
 export const requestApprovalDirectMessage = createAction({
   auth: microsoftTeamsAuth,

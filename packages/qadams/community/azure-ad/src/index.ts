@@ -1,6 +1,5 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { createQadam, OAuth2PropertyValue } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, OAuth2PropertyValue, QadamCategory } from '@aiqadam/qadams-framework';
 import { azureAdAuth } from './lib/auth';
 import { addMemberToGroupAction } from './lib/actions/add-member-to-group';
 import { addOrRemoveUserLicenseAction } from './lib/actions/add-or-remove-user-license';

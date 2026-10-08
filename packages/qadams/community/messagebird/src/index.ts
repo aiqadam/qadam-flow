@@ -1,6 +1,5 @@
-import { createQadam } from '@aiqadam/qadams-framework';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { sendSMSAction } from './lib/actions/send-sms.action';
-import { QadamCategory } from '@aiqadam/shared';
 import { listMessages } from './lib/actions/list-messages';
 import { birdAuth, BirdAuthValue } from './lib/auth';
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';

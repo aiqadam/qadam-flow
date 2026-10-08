@@ -1,5 +1,5 @@
 import { pipedriveAuth } from '../auth';
-import { createAction } from '@aiqadam/qadams-framework';
+import { createAction, isNil } from '@aiqadam/qadams-framework';
 import { personIdProp } from '../common/props';
 import {
 	pipedrivePaginatedV1ApiCall,
@@ -7,7 +7,6 @@ import {
 	pipedriveTransformCustomFields,
 } from '../common';
 import { HttpMethod } from '@aiqadam/qadams-common';
-import { isNil } from '@aiqadam/shared';
 import { GetField } from '../common/types';
 import { DEAL_OPTIONAL_FIELDS } from '../common/constants';
 

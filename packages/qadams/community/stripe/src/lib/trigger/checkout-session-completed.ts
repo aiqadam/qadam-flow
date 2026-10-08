@@ -2,11 +2,11 @@ import {
   createTrigger,
   TriggerStrategy,
   Property,
+  isEmpty,
 } from '@aiqadam/qadams-framework';
 import { stripeCommon } from '../common';
 import { StripeWebhookInformation } from '../common/types';
 import { stripeAuth } from '../..';
-import { isEmpty } from '@aiqadam/shared';
 import { httpClient, HttpMethod } from '@aiqadam/qadams-common';
 type StripeWebhookPayload = {
   data: {

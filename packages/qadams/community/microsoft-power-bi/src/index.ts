@@ -3,8 +3,8 @@ import { getMicrosoftCloudFromAuth, getPowerBiBaseUrl } from './lib/common/micro
 import {
   createQadam,
   OAuth2PropertyValue,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { createDatasetAction } from './lib/actions/create-dataset';
 import { pushRowsToDatasetTableAction } from './lib/actions/push-rows-to-table';
 import { microsoftPowerBiAuth } from './lib/auth';

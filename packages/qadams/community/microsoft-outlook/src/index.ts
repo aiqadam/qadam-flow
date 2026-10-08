@@ -1,7 +1,6 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 import { getGraphBaseUrl } from './lib/common/microsoft-cloud';
-import { createQadam, OAuth2PropertyValue } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, OAuth2PropertyValue, QadamCategory } from '@aiqadam/qadams-framework';
 import { addLabelToEmailAction } from './lib/actions/add-label-to-email';
 import { createDraftEmailAction } from './lib/actions/create-draft-email';
 import { downloadAttachmentAction } from './lib/actions/download-email-attachment';

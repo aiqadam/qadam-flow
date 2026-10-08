@@ -1,8 +1,8 @@
 import {
   createAction,
   Property,
+  ExecutionType,
 } from '@aiqadam/qadams-framework';
-import { ExecutionType } from '@aiqadam/shared';
 import { markdownDescription } from '../common';
 import { z } from 'zod';
 import { propsValidation } from '@aiqadam/qadams-common';

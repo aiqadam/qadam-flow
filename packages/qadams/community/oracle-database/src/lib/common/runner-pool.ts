@@ -6,7 +6,7 @@ import type {
   RunnerRequestPayload,
   RunnerResponse,
 } from './runner-protocol';
-import { apId } from '@aiqadam/shared';
+import { apId } from '@aiqadam/qadams-framework';
 
 class OracleRunnerError extends Error {
   public readonly logs?: string[];

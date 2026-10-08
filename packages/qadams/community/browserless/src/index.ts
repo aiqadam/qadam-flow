@@ -1,5 +1,4 @@
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { browserlessAuth } from './lib/common/auth';
 import { captureScreenshot } from './lib/actions/capture-screenshot';
 import { generatePdf } from './lib/actions/generate-pdf';

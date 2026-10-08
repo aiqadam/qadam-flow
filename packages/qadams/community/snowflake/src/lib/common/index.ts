@@ -2,8 +2,8 @@ import {
   DynamicPropsValue,
   DropdownState,
   Property,
+  AppConnectionType,
 } from '@aiqadam/qadams-framework';
-import { AppConnectionType } from '@aiqadam/shared';
 import { snowflakeAuth } from '../auth';
 import snowflake from 'snowflake-sdk';
 

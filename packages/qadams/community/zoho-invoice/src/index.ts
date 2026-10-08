@@ -4,8 +4,8 @@ import {
   OAuth2PropertyValue,
   QadamAuth,
   Property,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { common } from './lib/common';
 import { newInvoice } from './lib/triggers/new-invoice';
 

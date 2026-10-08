@@ -1,11 +1,7 @@
-import { createAction, Property } from '@aiqadam/qadams-framework';
+import { createAction, Property, assertNotNullOrUndefined, ExecutionType } from '@aiqadam/qadams-framework';
 import { getGraphBaseUrl } from '../common/microsoft-cloud';
 import { Client } from '@microsoft/microsoft-graph-client';
 import { BodyType } from '@microsoft/microsoft-graph-types';
-import {
-  assertNotNullOrUndefined,
-  ExecutionType,
-} from '@aiqadam/shared';
 import { microsoftOutlookAuth } from '../common/auth';
 
 export const requestApprovalInMail = createAction({

@@ -1,8 +1,7 @@
 import { trelloAuth } from '../..';
-import { TriggerStrategy, createTrigger } from '@aiqadam/qadams-framework';
+import { TriggerStrategy, createTrigger, isNil, WebhookHandshakeStrategy } from '@aiqadam/qadams-framework';
 import { getCardDetail, getCardsInList, trelloCommon } from '../common';
 import { TrelloCardMoved } from '../common/props/card';
-import { isNil, WebhookHandshakeStrategy } from '@aiqadam/shared';
 
 export const cardMovedTrigger = createTrigger({
 	auth: trelloAuth,

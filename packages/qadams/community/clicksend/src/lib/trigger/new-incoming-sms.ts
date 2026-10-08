@@ -1,8 +1,7 @@
-import { createTrigger, TriggerStrategy } from '@aiqadam/qadams-framework';
+import { createTrigger, TriggerStrategy, isNil } from '@aiqadam/qadams-framework';
 import { HttpMethod } from '@aiqadam/qadams-common';
 import { callClickSendApi } from '../common';
 import { clicksendAuth } from '../..';
-import { isNil } from '@aiqadam/shared';
 
 const TRIGGER_KEY = 'new_incoming_sms_trigger';
 

@@ -1,5 +1,4 @@
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { oracleDbAuth } from './lib/common/auth';
 import { insertRowAction } from './lib/actions/insert-row';
 import { insertRowsAction } from './lib/actions/insert-rows';

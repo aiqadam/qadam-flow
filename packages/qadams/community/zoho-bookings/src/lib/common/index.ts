@@ -1,6 +1,5 @@
 import { httpClient, HttpMethod } from '@aiqadam/qadams-common';
-import { QadamAuth, Property } from '@aiqadam/qadams-framework';
-import { OAuth2GrantType } from '@aiqadam/shared';
+import { QadamAuth, Property, OAuth2GrantType } from '@aiqadam/qadams-framework';
 import * as schemas from './schemas';
 
 export const zohoBookingsAuth = QadamAuth.OAuth2({

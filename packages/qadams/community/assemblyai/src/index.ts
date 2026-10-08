@@ -1,7 +1,6 @@
-import { createQadam } from '@aiqadam/qadams-framework';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import * as actions from './lib/actions';
 import { assemblyaiAuth } from './lib/auth';
-import { QadamCategory } from '@aiqadam/shared';
 
 export const assemblyai = createQadam({
   displayName: 'AssemblyAI',

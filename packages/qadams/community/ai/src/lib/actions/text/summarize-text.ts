@@ -1,6 +1,5 @@
-import { AIProviderName, spreadIfDefined } from '@aiqadam/shared';
 import { createAIModel } from '../../common/ai-sdk';
-import { createAction, Property } from '@aiqadam/qadams-framework';
+import { createAction, Property, AIProviderName, spreadIfDefined } from '@aiqadam/qadams-framework';
 import { generateText } from 'ai';
 import { aiProps } from '../../common/props';
 

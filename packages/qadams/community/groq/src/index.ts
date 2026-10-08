@@ -4,8 +4,7 @@ import {
   createCustomApiCallAction,
   httpClient,
 } from '@aiqadam/qadams-common';
-import { QadamAuth, createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { QadamAuth, createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { askGroq } from './lib/actions/ask-groq';
 import { transcribeAudio } from './lib/actions/transcribe-audio';
 import { translateAudio } from './lib/actions/translate-audio';

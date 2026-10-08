@@ -1,5 +1,4 @@
-import { QadamAuth, createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { QadamAuth, createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { delayForAction } from './lib/actions/delay-for-action';
 import { delayUntilAction } from './lib/actions/delay-until-action';
 

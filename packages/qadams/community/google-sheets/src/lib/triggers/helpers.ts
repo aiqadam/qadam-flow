@@ -3,7 +3,7 @@ import { nanoid } from 'nanoid';
 import dayjs from 'dayjs';
 import crypto from 'crypto';
 import { columnToLabel, createGoogleClient, GoogleSheetsAuthValue } from '../common/common';
-import { isNil } from '@aiqadam/shared';
+import { isNil } from '@aiqadam/qadams-framework';
 
 export async function getWorkSheetName(
 	auth: GoogleSheetsAuthValue,

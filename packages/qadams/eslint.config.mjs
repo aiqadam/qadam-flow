@@ -128,6 +128,14 @@ const PRETTIER = [
 
 const BASE_ONLY_FILES = BASE_ONLY.map((dir) => `${dir}/**`)
 
+// Qadams import only @aiqadam/qadams-framework and @aiqadam/qadams-common (ADR-0001, gate 6 of
+// #797). `framework` is exempt because it is the one package that re-exports the qadam-facing
+// `shared` symbols; `common/test` because it checks common's errors against the engine's own
+// formatter, which is platform code and not part of the SDK.
+const SHARED_IMPORT_MESSAGE = 'Qadams must not import @aiqadam/shared (ADR-0001). Import the symbol from @aiqadam/qadams-framework, which re-exports every qadam-facing one; if it is missing, add it to packages/qadams/framework/src/lib/shared-reexports.ts.'
+const SHARED_SPECIFIER = '/^@aiqadam\\u002Fshared(\\u002F|$)/'
+const SHARED_BAN_IGNORES = ['framework/**', 'common/test/**']
+
 export default defineConfig(
     {
         ignores: BASE_ONLY_FILES,
@@ -138,4 +146,32 @@ export default defineConfig(
         extends: [baseConfigs.base()],
     },
     prettierConfigs.recommended({ files: PRETTIER.map((dir) => `${dir}/**/*.{ts,tsx,js,jsx}`) }),
+    {
+        // The typescript-eslint variant, so the lodash ban the core rule carries is left alone, and
+        // `import x = require(...)` is covered as well as import/export declarations and type imports.
+        files: baseConfigs.tsFiles,
+        ignores: SHARED_BAN_IGNORES,
+        rules: {
+            '@typescript-eslint/no-restricted-imports': ['error', {
+                paths: [{ name: '@aiqadam/shared', message: SHARED_IMPORT_MESSAGE }],
+                patterns: [{ group: ['@aiqadam/shared/*'], message: SHARED_IMPORT_MESSAGE }],
+            }],
+        },
+    },
+    {
+        // What no import rule sees: require() and other calls taking the specifier (vi.mock,
+        // require.resolve), dynamic import(), and `typeof import(...)` types. The calls and import()
+        // also accept a template literal with no substitutions, which carries no `value`.
+        files: baseConfigs.scriptFiles,
+        ignores: SHARED_BAN_IGNORES,
+        rules: {
+            'no-restricted-syntax': ['error',
+                { selector: `CallExpression[arguments.0.value=${SHARED_SPECIFIER}]`, message: SHARED_IMPORT_MESSAGE },
+                { selector: `CallExpression[arguments.0.type='TemplateLiteral'][arguments.0.expressions.length=0][arguments.0.quasis.0.value.cooked=${SHARED_SPECIFIER}]`, message: SHARED_IMPORT_MESSAGE },
+                { selector: `ImportExpression[source.value=${SHARED_SPECIFIER}]`, message: SHARED_IMPORT_MESSAGE },
+                { selector: `ImportExpression[source.type='TemplateLiteral'][source.expressions.length=0][source.quasis.0.value.cooked=${SHARED_SPECIFIER}]`, message: SHARED_IMPORT_MESSAGE },
+                { selector: `TSImportType[argument.literal.value=${SHARED_SPECIFIER}]`, message: SHARED_IMPORT_MESSAGE },
+            ],
+        },
+    },
 )

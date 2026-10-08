@@ -3,8 +3,8 @@ import {
   QadamAuth,
   Property,
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { newTicketInView } from './lib/trigger/new-ticket-in-view';
 import { newTicket } from './lib/trigger/new-ticket';
 import { updatedTicket } from './lib/trigger/updated-ticket';

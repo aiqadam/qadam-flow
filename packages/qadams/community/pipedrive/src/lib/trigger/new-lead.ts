@@ -1,5 +1,5 @@
 import { pipedriveAuth } from '../auth';
-import { createTrigger, TriggerStrategy } from '@aiqadam/qadams-framework';
+import { createTrigger, TriggerStrategy, isNil } from '@aiqadam/qadams-framework';
 import { AuthenticationType, httpClient, HttpMethod } from '@aiqadam/qadams-common';
 import {
 	pipedriveApiCall,
@@ -7,7 +7,6 @@ import {
     pipedriveTransformV1CustomFields,
 } from '../common';
 import { GetField } from '../common/types';
-import { isNil } from '@aiqadam/shared';
 
 interface PipedriveLeadV2 {
 	id: string;

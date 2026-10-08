@@ -1,8 +1,7 @@
 import {
   createCustomApiCallAction,
 } from '@aiqadam/qadams-common';
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { airtableCreateRecordAction } from './lib/actions/create-record';
 import { airtableDeleteRecordAction } from './lib/actions/delete-record';
 import { airtableFindRecordAction } from './lib/actions/find-record';

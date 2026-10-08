@@ -7,7 +7,7 @@ import {
 	httpClient,
 } from '@aiqadam/qadams-common';
 import { JiraDataCenterAuth } from '../../auth';
-import { isNil } from '@aiqadam/shared';
+import { isNil } from '@aiqadam/qadams-framework';
 
 export async function sendJiraRequest(request: HttpRequest & { auth: JiraDataCenterAuth }) {
 	return httpClient.sendRequest({

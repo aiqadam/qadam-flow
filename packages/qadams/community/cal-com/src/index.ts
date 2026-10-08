@@ -1,5 +1,4 @@
-import { QadamAuth, createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { QadamAuth, createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { triggers } from './lib/triggers';
 
 export const calcomAuth = QadamAuth.SecretText({

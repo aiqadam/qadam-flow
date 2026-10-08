@@ -1,8 +1,7 @@
-import { createAction, Property } from '@aiqadam/qadams-framework';
+import { createAction, Property, AppConnectionType } from '@aiqadam/qadams-framework';
 import { httpClient, HttpMethod } from '@aiqadam/qadams-common';
 import { umamiAuth, UmamiAuthValue } from '../auth';
 import { umamiCommon } from '../common';
-import { AppConnectionType } from '@aiqadam/shared';
 
 export const sendEvent = createAction({
   auth: umamiAuth,

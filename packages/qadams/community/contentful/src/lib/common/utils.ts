@@ -1,4 +1,4 @@
-import { camelCase, startCase } from '@aiqadam/shared';
+import { camelCase, startCase } from '@aiqadam/qadams-framework';
 import { ContentFields } from 'contentful-management';
 
 export const getLinkHelperText = (

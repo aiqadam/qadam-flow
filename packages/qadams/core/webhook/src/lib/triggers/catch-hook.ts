@@ -4,11 +4,9 @@ import {
   QadamAuth,
   Property,
   TriggerStrategy,
-} from '@aiqadam/qadams-framework';
-import {
   assertNotNullOrUndefined,
   MarkdownVariant,
-} from '@aiqadam/shared';
+} from '@aiqadam/qadams-framework';
 import { createHmac, timingSafeEqual } from 'crypto';
 
 const liveMarkdown = `**Live URL:**

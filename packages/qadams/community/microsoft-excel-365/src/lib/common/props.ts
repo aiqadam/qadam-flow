@@ -1,8 +1,7 @@
-import { DropdownOption, DynamicPropsValue, OAuth2PropertyValue, Property } from '@aiqadam/qadams-framework';
+import { DropdownOption, DynamicPropsValue, OAuth2PropertyValue, Property, isEmpty } from '@aiqadam/qadams-framework';
 import { createMSGraphClient, getHeaders } from './helpers';
 import { PageCollection } from '@microsoft/microsoft-graph-client';
 import { Drive, DriveItem, Site } from '@microsoft/microsoft-graph-types';
-import { isEmpty } from '@aiqadam/shared';
 import { excelAuth } from '../auth';
 
 const createEmptyOptions = (message: string) => {

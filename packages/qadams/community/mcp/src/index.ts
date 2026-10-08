@@ -1,7 +1,6 @@
-import { createQadam, QadamAuth } from "@aiqadam/qadams-framework";
+import { createQadam, QadamAuth, QadamCategory } from "@aiqadam/qadams-framework";
 import { replyToMcpClient } from "./lib/actions/reply-to-mcp-client";
 import { mcpTool } from "./lib/triggers/mcp-tool";
-import { QadamCategory } from "@aiqadam/shared";
 
 export const mcp = createQadam({
   displayName: "MCP",

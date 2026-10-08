@@ -1,4 +1,4 @@
-import { DropdownOption, Property } from '@aiqadam/qadams-framework';
+import { DropdownOption, Property, isNil } from '@aiqadam/qadams-framework';
 import { google, drive_v3 } from 'googleapis';
 import {
 	columnToLabel,
@@ -8,7 +8,6 @@ import {
 	GoogleSheetsAuthValue,
 	googleSheetsCommon,
 } from './common';
-import { isNil } from '@aiqadam/shared';
 
 const createEmptyOptionList = (message: string) => {
 	return {

@@ -1,7 +1,6 @@
-import { createQadam } from '@aiqadam/qadams-framework';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { QadamCategory } from '@aiqadam/shared';
 import { JiraDataCenterAuth, jiraDataCenterAuth } from './auth';
 import { createIssueAction } from './lib/actions/create-issue';
 import { searchIssuesAction } from './lib/actions/search-issues';

@@ -6,7 +6,7 @@ import {
 	HttpRequest,
 	QueryParams,
 } from '@aiqadam/qadams-common';
-import { isNil } from '@aiqadam/shared';
+import { isNil } from '@aiqadam/qadams-framework';
 
 function normalizeDomain(domain: string): string {
 	return domain.replace(/\/+$/, '');

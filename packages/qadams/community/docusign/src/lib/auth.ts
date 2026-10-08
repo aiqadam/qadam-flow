@@ -1,5 +1,8 @@
-import { QadamAuth, Property } from '@aiqadam/qadams-framework';
-import { AppConnectionType } from '@aiqadam/shared';
+import {
+  QadamAuth,
+  Property,
+  AppConnectionType,
+} from '@aiqadam/qadams-framework';
 import { createApiClient } from './common';
 
 export const docusignAuth = QadamAuth.CustomAuth({

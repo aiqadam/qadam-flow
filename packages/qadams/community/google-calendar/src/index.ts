@@ -1,8 +1,8 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 import {
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { createEvent } from './lib/actions/create-event';
 import { createQuickCalendarEvent } from './lib/actions/create-quick-event';
 import { deleteEventAction } from './lib/actions/delete-event.action';

@@ -1,5 +1,4 @@
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { blueskyAuth } from './lib/common/auth';
 import { createPost } from './lib/actions/create-post';
 import { likePost } from './lib/actions/like-post';

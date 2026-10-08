@@ -2,6 +2,7 @@ import {
   createAction,
   QadamAuth,
   Property,
+  ExportTableResponse,
 } from '@aiqadam/qadams-framework';
 import { tablesCommon, csvUtils } from '../common';
 import {
@@ -9,7 +10,6 @@ import {
   httpClient,
   HttpMethod,
 } from '@aiqadam/qadams-common';
-import { ExportTableResponse } from '@aiqadam/shared';
 
 export const downloadTable = createAction({
   name: 'tables-download-table',

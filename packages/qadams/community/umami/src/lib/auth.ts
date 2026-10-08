@@ -6,8 +6,8 @@ import {
   AppConnectionValueForAuthProperty,
   QadamAuth,
   Property,
+  AppConnectionType,
 } from '@aiqadam/qadams-framework';
-import { AppConnectionType } from '@aiqadam/shared';
 
 const selfHostedAuth = QadamAuth.CustomAuth({
   displayName: 'Self-hosted (Username & Password)',

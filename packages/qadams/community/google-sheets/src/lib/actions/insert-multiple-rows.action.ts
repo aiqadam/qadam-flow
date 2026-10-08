@@ -4,6 +4,7 @@ import {
 	DropdownOption,
 	DynamicPropsValue,
 	Property,
+	MarkdownVariant,
 } from '@aiqadam/qadams-framework';
 import {
 	Dimension,
@@ -17,7 +18,6 @@ import {
 } from '../common/common';
 import { getWorkSheetName, getWorkSheetGridSize } from '../triggers/helpers';
 import { google, sheets_v4 } from 'googleapis';
-import { MarkdownVariant } from '@aiqadam/shared';
 import { parse } from 'csv-parse/sync';
 import { commonProps } from '../common/props';
 

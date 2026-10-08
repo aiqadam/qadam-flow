@@ -1,10 +1,6 @@
-import { createAction } from '@aiqadam/qadams-framework';
+import { createAction, assertNotNullOrUndefined, ExecutionType } from '@aiqadam/qadams-framework';
 import { buildFlowOriginContextBlock, slackSendMessage, textToSectionBlocks } from '../common/utils';
 import { slackAuth } from '../auth';
-import {
-  assertNotNullOrUndefined,
-  ExecutionType,
-} from '@aiqadam/shared';
 import {
   profilePicture,
   singleSelectChannelInfo,

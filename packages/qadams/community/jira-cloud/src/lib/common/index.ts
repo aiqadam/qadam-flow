@@ -7,7 +7,7 @@ import {
 	httpClient,
 } from '@aiqadam/qadams-common';
 import { JiraAuth } from '../../auth';
-import { isNil } from '@aiqadam/shared';
+import { isNil } from '@aiqadam/qadams-framework';
 import { JiraSearchResponse } from './types';
 
 export async function sendJiraRequest(request: HttpRequest & { auth: JiraAuth }) {

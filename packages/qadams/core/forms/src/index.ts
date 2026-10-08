@@ -1,5 +1,4 @@
-import { createQadam, QadamAuth } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamAuth, QadamCategory } from '@aiqadam/qadams-framework';
 import { onChatSubmission } from './lib/triggers/chat-trigger';
 import { onFormSubmission } from './lib/triggers/form-trigger';
 import { returnResponse } from './lib/actions/return-response';

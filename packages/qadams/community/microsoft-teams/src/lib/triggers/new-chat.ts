@@ -4,8 +4,8 @@ import {
 	createTrigger,
 	AppConnectionValueForAuthProperty,
 	TriggerStrategy,
+	isNil,
 } from '@aiqadam/qadams-framework';
-import { isNil } from '@aiqadam/shared';
 import { createGraphClient, withGraphRetry } from '../common/graph';
 import { PageCollection } from '@microsoft/microsoft-graph-client';
 import { Chat, ChatType } from '@microsoft/microsoft-graph-types';

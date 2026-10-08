@@ -5,7 +5,7 @@ import {
   HttpRequest,
   QueryParams,
 } from '@aiqadam/qadams-common';
-import { AppConnectionType } from '@aiqadam/shared';
+import { AppConnectionType } from '@aiqadam/qadams-framework';
 
 const BASE_URL = 'https://api.digitalocean.com/v2';
 

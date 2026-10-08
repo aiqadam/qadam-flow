@@ -1,5 +1,4 @@
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { newEmail } from './lib/triggers/new-email';
 import { imapAuth } from './lib/common';
 import { markEmailAsRead } from './lib/actions/mark-email-read';

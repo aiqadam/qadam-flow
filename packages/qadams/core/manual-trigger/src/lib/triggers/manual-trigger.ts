@@ -1,6 +1,5 @@
 
-import { createTrigger, Property, TriggerStrategy  } from '@aiqadam/qadams-framework';
-import { MarkdownVariant } from '@aiqadam/shared';
+import { createTrigger, Property, TriggerStrategy, MarkdownVariant  } from '@aiqadam/qadams-framework';
 
 export const manualTrigger = createTrigger({
 name: 'manual_trigger',

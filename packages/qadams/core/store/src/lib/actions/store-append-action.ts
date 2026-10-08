@@ -5,11 +5,11 @@ import {
   Property,
   ShortTextProperty,
   StaticDropdownProperty,
+  isNil,
 } from '@aiqadam/qadams-framework';
 import { common, getScopeAndKey, PieceStoreScope } from './common';
 import { z } from 'zod';
 import { propsValidation } from '@aiqadam/qadams-common';
-import { isNil } from '@aiqadam/shared';
 
 async function executeStorageAppend(context: ActionContext<QadamAuthProperty | undefined, {
   key: ShortTextProperty<true>;

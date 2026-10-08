@@ -1,9 +1,8 @@
-import { createAction, Property } from '@aiqadam/qadams-framework';
+import { createAction, Property, isNil } from '@aiqadam/qadams-framework';
 import { zohoDeskApiCall } from '../common';
 import { zohoDeskAuth } from '../common/auth';
 import { organizationId } from '../common/props';
 import { HttpMethod } from '@aiqadam/qadams-common';
-import { isNil } from '@aiqadam/shared';
 
 export const findContactAction = createAction({
 	auth: zohoDeskAuth,

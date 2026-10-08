@@ -1,9 +1,9 @@
-import { AppConnectionType } from '@aiqadam/shared';
 import {
   AppConnectionValueForAuthProperty,
   OAuth2PropertyValue,
   QadamAuth,
   Property,
+  AppConnectionType,
 } from '@aiqadam/qadams-framework';
 import { httpClient, HttpMethod } from '@aiqadam/qadams-common';
 import { google } from 'googleapis';

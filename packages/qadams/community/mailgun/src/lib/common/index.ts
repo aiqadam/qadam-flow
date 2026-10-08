@@ -7,8 +7,7 @@ import {
   HttpResponse,
   HttpError,
 } from '@aiqadam/qadams-common';
-import { Property } from '@aiqadam/qadams-framework';
-import { tryCatch } from '@aiqadam/shared';
+import { Property, tryCatch } from '@aiqadam/qadams-framework';
 import { mailgunAuth } from '../..';
 
 export function verifyMailgunSignature(

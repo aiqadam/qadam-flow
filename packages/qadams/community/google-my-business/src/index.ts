@@ -3,8 +3,8 @@ import {
   OAuth2PropertyValue,
   QadamAuth,
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { createReply } from './lib/actions/create-reply';
 import { newReview } from './lib/triggers/new-review';
 

@@ -1,4 +1,4 @@
-import { DynamicPropsValue, Property, createAction } from '@aiqadam/qadams-framework';
+import { DynamicPropsValue, Property, createAction, isNil } from '@aiqadam/qadams-framework';
 import { JiraAuth, jiraCloudAuth } from '../../auth';
 import {
 	createPropertyDefinition,
@@ -11,7 +11,6 @@ import {
 import { jiraApiCall } from '../common';
 import { IssueFieldMetaData, VALID_CUSTOM_FIELD_TYPES } from '../common/types';
 import { HttpMethod } from '@aiqadam/qadams-common';
-import { isNil } from '@aiqadam/shared';
 
 async function getFields(auth: JiraAuth, issueId: string): Promise<IssueFieldMetaData[]> {
 	const response = await jiraApiCall<{ fields: { [x: string]: IssueFieldMetaData } }>({

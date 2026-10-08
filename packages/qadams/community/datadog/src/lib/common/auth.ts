@@ -1,6 +1,5 @@
-import { QadamAuth, Property } from '@aiqadam/qadams-framework';
+import { QadamAuth, Property, AppConnectionType } from '@aiqadam/qadams-framework';
 import { getDatadogConfiguration } from './helpers';
-import { AppConnectionType } from '@aiqadam/shared';
 import { v1 } from '@datadog/datadog-api-client';
 
 export const datadogAuth = QadamAuth.CustomAuth({

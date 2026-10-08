@@ -1,6 +1,5 @@
-import { createAction } from '@aiqadam/qadams-framework';
+import { createAction, assertNotNullOrUndefined } from '@aiqadam/qadams-framework';
 import { slackAuth } from '../auth';
-import { assertNotNullOrUndefined } from '@aiqadam/shared';
 import {
   profilePicture,
   text,

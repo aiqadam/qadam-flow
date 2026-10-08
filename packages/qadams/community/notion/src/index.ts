@@ -1,6 +1,5 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { notionAuth } from './lib/auth';
 import { getNotionToken, NotionAuthValue } from './lib/common';
 import { appendToPage } from './lib/actions/append-to-page';

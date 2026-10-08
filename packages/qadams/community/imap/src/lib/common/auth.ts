@@ -2,9 +2,9 @@ import {
   QadamAuth,
   Property,
   AppConnectionValueForAuthProperty,
+  AppConnectionType,
 } from '@aiqadam/qadams-framework';
 import { performImapOperation } from './imap';
-import { AppConnectionType } from '@aiqadam/shared';
 
 const description = `
 **Gmail Users:**

@@ -1,9 +1,8 @@
-import { createAction, Property } from '@aiqadam/qadams-framework';
+import { createAction, Property, isString } from '@aiqadam/qadams-framework';
 import { areSheetIdsValid, createGoogleClient, Dimension, objectToArray, ValueInputOption } from '../common/common';
 import { googleSheetsAuth } from '../common/common';
 import { getWorkSheetName } from '../triggers/helpers';
 import { google } from 'googleapis';
-import {  isString } from '@aiqadam/shared';
 import { commonProps, isFirstRowHeaderProp, rowValuesProp } from '../common/props';
 
 export const updateRowAction = createAction({

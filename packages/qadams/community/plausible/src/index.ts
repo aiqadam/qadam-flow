@@ -1,11 +1,10 @@
-import { createQadam, QadamAuth } from '@aiqadam/qadams-framework';
+import { createQadam, QadamAuth, QadamCategory } from '@aiqadam/qadams-framework';
 import {
   createCustomApiCallAction,
   AuthenticationType,
   HttpMethod,
   httpClient,
 } from '@aiqadam/qadams-common';
-import { QadamCategory } from '@aiqadam/shared';
 import { getRealtimeVisitors } from './lib/actions/get-realtime-visitors.action';
 import { getAggregateStats } from './lib/actions/get-aggregate-stats.action';
 import { getBreakdown } from './lib/actions/get-breakdown.action';

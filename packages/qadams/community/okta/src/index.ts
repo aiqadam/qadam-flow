@@ -1,5 +1,4 @@
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { oktaAuth } from './lib/common/common';
 import { createUserAction } from './lib/actions/create-user';
 import { activateUserAction } from './lib/actions/activate-user';

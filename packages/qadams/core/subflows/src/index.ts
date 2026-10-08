@@ -1,9 +1,8 @@
-import { createQadam, QadamAuth } from '@aiqadam/qadams-framework';
+import { createQadam, QadamAuth, QadamCategory } from '@aiqadam/qadams-framework';
 import { callFlow } from './lib/actions/call-flow';
 import { callFlowForEach } from './lib/actions/call-flow-for-each';
 import { callableFlow } from './lib/triggers/callable-flow';
 import { response } from './lib/actions/respond';
-import { QadamCategory } from '@aiqadam/shared';
 
 export const flows = createQadam({
   displayName: 'Sub Flows',

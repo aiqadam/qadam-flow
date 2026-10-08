@@ -1,6 +1,6 @@
 import { pipedriveAuth } from '../auth';
 import { HttpMethod } from '@aiqadam/qadams-common';
-import { createTrigger, Property, TriggerStrategy } from '@aiqadam/qadams-framework';
+import { createTrigger, Property, TriggerStrategy, isNil } from '@aiqadam/qadams-framework';
 import { filterIdProp } from '../common/props';
 import {
 	pipedriveApiCall,
@@ -9,7 +9,6 @@ import {
 	pipedriveTransformCustomFields,
 } from '../common';
 import { GetField, LeadListResponse } from '../common/types';
-import { isNil } from '@aiqadam/shared';
 import { DEAL_OPTIONAL_FIELDS } from '../common/constants';
 
 export const dealMatchingFilterTrigger = createTrigger({

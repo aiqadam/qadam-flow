@@ -2,10 +2,12 @@ import {
   InputPropertyMap,
   QadamAuth,
   Property,
+  spreadIfDefined,
+  AIProviderName,
+  getEffectiveProviderAndModel,
 } from '@aiqadam/qadams-framework';
 import { ToolSet } from 'ai';
 import { ProviderOptions } from '@ai-sdk/provider-utils';
-import { spreadIfDefined, AIProviderName, getEffectiveProviderAndModel } from '@aiqadam/shared';
 import { anthropicSearchTool, openaiSearchTool, googleSearchTool } from './ai-sdk';
 
 function buildWebSearchOptionsProps(provider: string, params?: { showIncludeSources?: boolean }): InputPropertyMap {

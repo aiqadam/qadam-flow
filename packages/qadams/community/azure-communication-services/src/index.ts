@@ -1,6 +1,5 @@
-import { createQadam, QadamAuth } from '@aiqadam/qadams-framework';
+import { createQadam, QadamAuth, QadamCategory } from '@aiqadam/qadams-framework';
 import { sendEmail } from './lib/actions/send-email';
-import { QadamCategory } from '@aiqadam/shared';
 
 export const azureCommunicationServiceAuth = QadamAuth.SecretText({
   displayName: 'Connection string',

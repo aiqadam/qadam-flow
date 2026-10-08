@@ -1,5 +1,5 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { createQadam, OAuth2PropertyValue } from "@aiqadam/qadams-framework";
+import { createQadam, OAuth2PropertyValue, QadamCategory } from "@aiqadam/qadams-framework";
 import { retrieveRedditPost } from './lib/actions/retrieve-reddit-post';
 import { getRedditPostDetails } from './lib/actions/get-reddit-post-details';
 import { createRedditPost } from './lib/actions/create-reddit-post';
@@ -9,7 +9,6 @@ import { editRedditPost } from './lib/actions/edit-reddit-post';
 import { editRedditComment } from './lib/actions/edit-reddit-comment';
 import { deleteRedditPost } from './lib/actions/delete-reddit-post';
 import { deleteRedditComment } from './lib/actions/delete-reddit-comment';
-import { QadamCategory } from '@aiqadam/shared';
 import { redditAuth } from './lib/auth';
 
 const markdown = `

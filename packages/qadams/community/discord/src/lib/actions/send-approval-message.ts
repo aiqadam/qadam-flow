@@ -1,11 +1,10 @@
-import { createAction, Property } from '@aiqadam/qadams-framework';
+import { createAction, Property, ExecutionType } from '@aiqadam/qadams-framework';
 import {
   HttpRequest,
   HttpMethod,
   httpClient,
 } from '@aiqadam/qadams-common';
 import { discordAuth } from '../auth';
-import { ExecutionType } from '@aiqadam/shared';
 import { discordCommon } from '../common';
 
 export const discordSendApprovalMessage = createAction({

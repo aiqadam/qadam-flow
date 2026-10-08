@@ -6,9 +6,9 @@ import {
 	DynamicPropsValue,
 	PiecePropValueSchema,
 	Property,
+	isNil,
 } from '@aiqadam/qadams-framework';
 import { GetField, StageWithPipelineInfo } from './types';
-import { isNil } from '@aiqadam/shared';
 
 /**
  * Fetches options for Pipedrive filters.

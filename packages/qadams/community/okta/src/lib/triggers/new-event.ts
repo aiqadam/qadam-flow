@@ -2,10 +2,10 @@ import {
   createTrigger,
   TriggerStrategy,
   Property,
+  WebhookHandshakeStrategy,
 } from '@aiqadam/qadams-framework';
 import { oktaAuth, makeOktaRequest } from '../common/common';
 import { HttpMethod } from '@aiqadam/qadams-common';
-import { WebhookHandshakeStrategy } from '@aiqadam/shared';
 
 export const newEventTrigger = createTrigger({
   auth: oktaAuth,

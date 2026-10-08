@@ -5,6 +5,10 @@ import {
   InputPropertyMap,
   QadamAuth,
   Property,
+  isNil,
+  getEffectiveProviderAndModel,
+  spreadIfDefined,
+  AIProviderName,
 } from '@aiqadam/qadams-framework';
 import {
   GeneratedFile,
@@ -13,9 +17,7 @@ import {
 } from 'ai';
 import { generateImage } from 'ai';
 import mime from 'mime-types';
-import { isNil, getEffectiveProviderAndModel, spreadIfDefined } from '@aiqadam/shared';
 import { createAIModel } from '../../common/ai-sdk';
-import { AIProviderName } from '@aiqadam/shared';
 import { aiProps } from '../../common/props';
 
 export const generateImageAction = createAction({

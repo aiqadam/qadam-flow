@@ -1,4 +1,4 @@
-import { createQadam, QadamAuth } from '@aiqadam/qadams-framework';
+import { createQadam, QadamAuth, QadamCategory } from '@aiqadam/qadams-framework';
 import {
   AuthenticationType,
   createCustomApiCallAction,
@@ -6,7 +6,6 @@ import {
   HttpMethod,
   httpClient,
 } from '@aiqadam/qadams-common';
-import { QadamCategory } from '@aiqadam/shared';
 import { sendEmail } from './lib/actions/send-email';
 import { sendBatchEmails } from './lib/actions/send-batch-emails.action';
 import { createContact } from './lib/actions/create-contact.action';

@@ -1,5 +1,4 @@
-import { QadamAuth, OAuth2AuthorizationMethod } from '@aiqadam/qadams-framework';
-import { OAuth2GrantType } from '@aiqadam/shared';
+import { QadamAuth, OAuth2AuthorizationMethod, OAuth2GrantType } from '@aiqadam/qadams-framework';
 
 const markdown = `
 To obtain your Reddit API credentials:

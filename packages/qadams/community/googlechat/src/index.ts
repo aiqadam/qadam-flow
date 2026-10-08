@@ -1,4 +1,4 @@
-import { createQadam } from '@aiqadam/qadams-framework';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { googleChatApiAuth } from './lib/common/constants';
 import { newMessage } from './lib/triggers/new-message';
 import { newMention } from './lib/triggers/new-mention';
@@ -8,7 +8,6 @@ import { addASpaceMember } from './lib/actions/add-a-space-member';
 import { getMessageDetails } from './lib/actions/get-message';
 import { searchMessages } from './lib/actions/search-messages';
 import { findMember } from './lib/actions/find-member';
-import { QadamCategory } from '@aiqadam/shared';
 
 export const googlechat = createQadam({
   displayName: 'Google Chat',

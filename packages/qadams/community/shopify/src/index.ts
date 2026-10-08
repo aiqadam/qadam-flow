@@ -6,8 +6,9 @@ import {
   QadamAuth,
   Property,
   createQadam,
+  AppConnectionType,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { AppConnectionType, QadamCategory } from '@aiqadam/shared';
 import { adjustInventoryLevelAction } from './lib/actions/adjust-inventory-level';
 import { cancelOrderAction } from './lib/actions/cancel-order';
 import { closeOrderAction } from './lib/actions/close-order';

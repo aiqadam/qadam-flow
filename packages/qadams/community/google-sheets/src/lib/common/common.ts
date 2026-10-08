@@ -1,11 +1,10 @@
-import { AppConnectionValueForAuthProperty, QadamAuth, Property } from '@aiqadam/qadams-framework';
+import { AppConnectionValueForAuthProperty, QadamAuth, Property, AppConnectionType, isNil, isString } from '@aiqadam/qadams-framework';
 import {
 	httpClient,
 	HttpMethod,
 	AuthenticationType,
 	HttpRequest,
 } from '@aiqadam/qadams-common';
-import { AppConnectionType, isNil, isString } from '@aiqadam/shared';
 import { google } from 'googleapis';
 import { OAuth2Client } from 'googleapis-common';
 import { mapRowsToColumnLabels } from '../triggers/helpers';

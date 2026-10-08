@@ -1,8 +1,7 @@
-import { createAction, Property } from '@aiqadam/qadams-framework';
+import { createAction, Property, kebabCase } from '@aiqadam/qadams-framework';
 import { randomBytes } from 'node:crypto';
 import { httpClient, HttpMethod, HttpRequest } from '@aiqadam/qadams-common';
 import { stableDiffusionAuth } from '../auth';
-import { kebabCase } from '@aiqadam/shared';
 
 export const textToImage = createAction({
   name: 'textToImage',

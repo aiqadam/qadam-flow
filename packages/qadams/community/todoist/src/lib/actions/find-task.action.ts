@@ -1,8 +1,7 @@
 import { todoistAuth } from '../..';
-import { createAction, Property } from '@aiqadam/qadams-framework';
+import { createAction, Property, assertNotNullOrUndefined } from '@aiqadam/qadams-framework';
 import { todoistProjectIdDropdown } from '../common/props';
 import { todoistRestClient } from '../common/client/rest-client';
-import { assertNotNullOrUndefined } from '@aiqadam/shared';
 
 export const todoistFindTaskAction = createAction({
 	auth: todoistAuth,

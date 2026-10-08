@@ -1,5 +1,5 @@
 import { hubspotAuth } from '../auth';
-import { createAction, Property } from '@aiqadam/qadams-framework';
+import { createAction, Property, chunk } from '@aiqadam/qadams-framework';
 import {
     fromObjectTypeAssociationDropdown,
     associationTypeDropdown,
@@ -8,7 +8,6 @@ import {
 import { OBJECT_TYPE } from '../common/constants';
 import { Client } from '@hubspot/api-client';
 import { AssociationSpecAssociationCategoryEnum } from '../common/types';
-import { chunk } from '@aiqadam/shared';
 
 export const removeAssociationsAction = createAction({
     auth: hubspotAuth,

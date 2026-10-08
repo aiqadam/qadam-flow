@@ -1,6 +1,5 @@
-import { DropdownState, Property } from '@aiqadam/qadams-framework';
+import { DropdownState, Property, isEmpty, isNil } from '@aiqadam/qadams-framework';
 import { ContentfulAuth, PropertyKeys, makeClient } from '../common';
-import { isEmpty, isNil } from '@aiqadam/shared';
 
 const SelectFields = Property.MultiSelectDropdown({
   displayName: 'Return Fields', 

@@ -1,5 +1,4 @@
-import { createAction, Property } from '@aiqadam/qadams-framework';
-import { ExecutionType } from '@aiqadam/shared';
+import { createAction, Property, ExecutionType } from '@aiqadam/qadams-framework';
 import dayjs from 'dayjs';
 import { markdownDescription } from '../common';
 

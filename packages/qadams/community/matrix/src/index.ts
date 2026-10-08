@@ -3,8 +3,8 @@ import {
   QadamAuth,
   Property,
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { sendMessage } from './lib/actions/send-message';
 
 export const matrixAuth = QadamAuth.CustomAuth({

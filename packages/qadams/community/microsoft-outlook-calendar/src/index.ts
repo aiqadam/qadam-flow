@@ -4,8 +4,8 @@ import {
   createQadam,
   OAuth2PropertyValue,
   QadamAuth,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { createEventAction } from './lib/actions/create-event';
 import { deleteEventAction } from './lib/actions/delete-event';
 import { listEventsAction } from './lib/actions/list-events';

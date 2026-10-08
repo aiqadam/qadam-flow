@@ -3,8 +3,6 @@ import {
   Property,
   QadamAuth,
   ArraySubProps,
-} from '@aiqadam/qadams-framework';
-import {
   AgentOutputField,
   AgentQadamProps,
   AgentTaskStatus,
@@ -20,7 +18,7 @@ import {
   normalizeToolOutputToExecuteResponse,
   spreadIfDefined,
   getEffectiveProviderAndModel,
-} from '@aiqadam/shared';
+} from '@aiqadam/qadams-framework';
 import { hasToolCall, isStepCount, streamText } from 'ai';
 import { agentOutputBuilder } from './agent-output-builder';
 import { createAIModel, createEmbeddingModel } from '../../common/ai-sdk';

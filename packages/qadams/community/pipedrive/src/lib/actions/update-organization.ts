@@ -1,5 +1,5 @@
 import { pipedriveAuth } from '../auth';
-import { createAction, Property } from '@aiqadam/qadams-framework';
+import { createAction, Property, isEmpty } from '@aiqadam/qadams-framework';
 import { organizationCommonProps, organizationIdProp } from '../common/props';
 import {
 	pipedriveApiCall,
@@ -9,7 +9,6 @@ import {
 } from '../common';
 import { GetField, GetOrganizationResponse } from '../common/types';
 import { HttpMethod } from '@aiqadam/qadams-common';
-import { isEmpty } from '@aiqadam/shared';
 
 export const updateOrganizationAction = createAction({
 	auth: pipedriveAuth,

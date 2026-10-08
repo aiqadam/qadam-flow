@@ -4,8 +4,7 @@ import {
   AuthenticationType,
 } from '@aiqadam/qadams-common';
 import { getGraphBaseUrl } from './microsoft-cloud';
-import { OAuth2PropertyValue, Property } from '@aiqadam/qadams-framework';
-import { MarkdownVariant } from '@aiqadam/shared';
+import { OAuth2PropertyValue, Property, MarkdownVariant } from '@aiqadam/qadams-framework';
 import dayjs from 'dayjs';
 import { oneDriveAuth } from '../auth';
 

@@ -4,7 +4,7 @@ import {
   AuthenticationType,
   httpClient,
 } from '@aiqadam/qadams-common';
-import { isNotUndefined, pickBy } from '@aiqadam/shared';
+import { isNotUndefined, pickBy } from '@aiqadam/qadams-framework';
 import {
   TodoistCompletedTask,
   TodoistCreateTaskRequest,

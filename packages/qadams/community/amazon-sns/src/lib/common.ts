@@ -1,4 +1,4 @@
-import { isNil } from '@aiqadam/shared';
+import { isNil } from '@aiqadam/qadams-framework';
 import { SNSClient } from '@aws-sdk/client-sns';
 
 export function createSNS(auth: {

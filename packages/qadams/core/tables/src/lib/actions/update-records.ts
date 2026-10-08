@@ -1,8 +1,7 @@
-import { createAction, QadamAuth, Property } from '@aiqadam/qadams-framework';
+import { createAction, QadamAuth, Property, PopulatedRecord, UpdateRecordsRequest } from '@aiqadam/qadams-framework';
 import { tablesCommon } from '../common';
 import { columnUtils } from '../common/columns';
 import { AuthenticationType, httpClient, HttpMethod, propsValidation } from '@aiqadam/qadams-common';
-import { PopulatedRecord, UpdateRecordsRequest } from '@aiqadam/shared';
 
 // Namespaced because the sibling keys in this map are column externalIds, and an
 // externalId is caller-settable — a column called `record_id` would otherwise shadow

@@ -1,10 +1,9 @@
-import { Property, createTrigger } from '@aiqadam/qadams-framework';
+import { Property, createTrigger, MarkdownVariant, isNil } from '@aiqadam/qadams-framework';
 import { TriggerStrategy } from '@aiqadam/qadams-framework';
 import { DedupeStrategy, Polling, pollingHelper } from '@aiqadam/qadams-common';
 
 import { getDefaultPropertiesForObject, standardObjectPropertiesDropdown } from '../common/props';
 import dayjs from 'dayjs';
-import { MarkdownVariant, isNil } from '@aiqadam/shared';
 import { OBJECT_TYPE, MAX_SEARCH_PAGE_SIZE, MAX_SEARCH_TOTAL_RESULTS } from '../common/constants';
 import { hubspotAuth } from '../auth';
 import { Client } from '@hubspot/api-client';

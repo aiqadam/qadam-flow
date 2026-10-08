@@ -9,8 +9,8 @@ import {
   QadamAuth,
   Property,
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { createWordPressPage } from './lib/actions/create-page.action';
 import { createWordPressPost } from './lib/actions/create-post.action';
 import { getWordPressPost } from './lib/actions/get-post.action';

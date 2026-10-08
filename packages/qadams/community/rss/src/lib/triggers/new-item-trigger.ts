@@ -9,11 +9,11 @@ import {
   Store,
   TriggerStrategy,
   createTrigger,
+  isNil,
 } from '@aiqadam/qadams-framework';
 import { rssFeedUrl } from '../common/props';
 import FeedParser from 'feedparser';
 import axios from 'axios';
-import { isNil } from '@aiqadam/shared';
 import dayjs from 'dayjs';
 import { getId } from '../common/getId';
 import { sampleData } from '../common/sampleData';

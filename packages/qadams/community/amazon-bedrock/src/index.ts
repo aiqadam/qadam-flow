@@ -1,7 +1,7 @@
 import {
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { sendPrompt } from './lib/actions/send-prompt';
 import { generateContentFromImage } from './lib/actions/generate-content-from-image';
 import { generateImage } from './lib/actions/generate-image';

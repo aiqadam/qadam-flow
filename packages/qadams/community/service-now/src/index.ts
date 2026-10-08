@@ -1,6 +1,5 @@
-import { createQadam } from '@aiqadam/qadams-framework';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { QadamCategory } from '@aiqadam/shared';
 import { servicenowAuth } from './lib/common/props';
 import { createRecordAction } from './lib/actions/create-record';
 import { updateRecordAction } from './lib/actions/update-record';

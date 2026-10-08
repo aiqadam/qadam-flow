@@ -1,6 +1,5 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { createRecordAction } from './lib/actions/create-record';
 import { deleteRecordAction } from './lib/actions/delete-record';
 import { getRecordAction } from './lib/actions/get-record';

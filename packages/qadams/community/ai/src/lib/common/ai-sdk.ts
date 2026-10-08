@@ -8,7 +8,7 @@ import { createOpenRouter } from '@openrouter/ai-sdk-provider'
 import { EmbeddingModel, ImageModel, LanguageModel } from 'ai'
 import { ProviderOptions } from '@ai-sdk/provider-utils'
 import { httpClient, HttpMethod } from '@aiqadam/qadams-common'
-import { AIProviderName, AzureProviderConfig, BaseAIProviderAuthConfig, BedrockProviderAuthConfig, BedrockProviderConfig, CloudflareGatewayProviderConfig, GetProviderConfigResponse, INVALID_AWS_REGION_MESSAGE, INVALID_AZURE_RESOURCE_NAME_MESSAGE, isNil, isValidAwsRegion, isValidAzureResourceName, mergeOpenAICompatibleExtraBody, OpenAICompatibleProviderConfig, splitCloudflareGatewayModelId } from '@aiqadam/shared'
+import { AIProviderName, AzureProviderConfig, BaseAIProviderAuthConfig, BedrockProviderAuthConfig, BedrockProviderConfig, CloudflareGatewayProviderConfig, GetProviderConfigResponse, INVALID_AWS_REGION_MESSAGE, INVALID_AZURE_RESOURCE_NAME_MESSAGE, isNil, isValidAwsRegion, isValidAzureResourceName, mergeOpenAICompatibleExtraBody, OpenAICompatibleProviderConfig, splitCloudflareGatewayModelId } from '@aiqadam/qadams-framework'
 import { createAiGateway } from 'ai-gateway-provider';
 import { createAnthropic as createAnthropicGateway } from 'ai-gateway-provider/providers/anthropic';
 import { createGoogleGenerativeAI as createGoogleGateway } from 'ai-gateway-provider/providers/google';

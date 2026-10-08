@@ -1,5 +1,4 @@
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { createIndex } from './lib/actions/create-index';
 import { upsertVector } from './lib/actions/upsert-vector';
 import { updateVector } from './lib/actions/update-vector';

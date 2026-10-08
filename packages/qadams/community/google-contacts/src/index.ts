@@ -1,8 +1,8 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 import {
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { googleContactsAddContactAction } from './lib/action/create-contact';
 import { googleContactsUpdateContactAction } from './lib/action/update-contact';
 import { googleContactsSearchContactsAction } from './lib/action/search-contact';

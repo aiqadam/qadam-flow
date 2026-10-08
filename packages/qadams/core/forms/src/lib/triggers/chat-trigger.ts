@@ -2,11 +2,9 @@ import {
   Property,
   TriggerStrategy,
   createTrigger,
-} from '@aiqadam/qadams-framework';
-import {
   MarkdownVariant,
   ChatFormResponse,
-} from '@aiqadam/shared';
+} from '@aiqadam/qadams-framework';
 
 const responseMarkdown = `
 This trigger sets up a chat interface. Ensure that **Respond on UI** is used in your flow`;

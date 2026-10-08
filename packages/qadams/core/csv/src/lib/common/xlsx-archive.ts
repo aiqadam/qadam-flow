@@ -1,5 +1,5 @@
 import { inflateRawSync } from 'node:zlib';
-import { tryCatchSync } from '@aiqadam/shared';
+import { tryCatchSync } from '@aiqadam/qadams-framework';
 
 // Entries are inflated here, from the central directory, bounded per entry by the size it
 // declares and in total by the cap; what this returns is all the caller ever parses. Skipped

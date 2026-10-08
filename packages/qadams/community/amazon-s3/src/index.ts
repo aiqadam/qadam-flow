@@ -1,7 +1,7 @@
 import {
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { readFile } from './lib/actions/read-file';
 import { amazons3UploadFile } from './lib/actions/upload-file';
 import { newFile } from './lib/triggers/new-file';

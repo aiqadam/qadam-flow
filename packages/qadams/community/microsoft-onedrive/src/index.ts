@@ -2,8 +2,8 @@ import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 import {
   createQadam,
   OAuth2PropertyValue,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { downloadFile } from './lib/actions/download-file';
 import { listFiles } from './lib/actions/list-files';
 import { listFolders } from './lib/actions/list-folders';

@@ -70,7 +70,6 @@ function migrateQadam(qadamDir: string): void {
 
     const requiredDeps: Record<string, string> = {
       '@aiqadam/qadams-framework': 'workspace:*',
-      '@aiqadam/shared': 'workspace:*',
       'tslib': '2.6.2',
     };
 

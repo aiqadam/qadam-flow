@@ -5,6 +5,7 @@ import {
 	PiecePropValueSchema,
 	Property,
 	TriggerStrategy,
+	isNil,
 } from '@aiqadam/qadams-framework';
 import {
 	pipedriveApiCall,
@@ -15,7 +16,6 @@ import {
 import { pipedriveAuth } from '../auth';
 import { AuthenticationType, httpClient, HttpMethod } from '@aiqadam/qadams-common';
 import { FieldsResponse, GetField, RequestParams } from '../common/types';
-import { isNil } from '@aiqadam/shared';
 import { DEAL_OPTIONAL_FIELDS } from '../common/constants';
 
 interface PipedriveDealV2 {

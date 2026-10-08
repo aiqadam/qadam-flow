@@ -1,5 +1,4 @@
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { createChatCompletionAction } from './lib/actions/create-chat-completion.action';
 import { perplexityAiAuth } from './lib/auth';
 

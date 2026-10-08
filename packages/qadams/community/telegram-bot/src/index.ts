@@ -1,6 +1,5 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { telegramAnswerCallbackQueryAction } from './lib/action/answer-callback-query.action';
 import { telegramCreateInviteLinkAction } from './lib/action/create-invite-link';
 import { telegramDeleteMessageAction } from './lib/action/delete-message.action';

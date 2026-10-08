@@ -3,11 +3,12 @@ import {
 	createTrigger,
 	AppConnectionValueForAuthProperty,
 	TriggerStrategy,
+	chunk,
+	isNil,
 } from '@aiqadam/qadams-framework';
 import { standardObjectPropertiesDropdown } from '../common/props';
 import { OBJECT_TYPE, MAX_SEARCH_PAGE_SIZE, MAX_SEARCH_TOTAL_RESULTS } from '../common/constants';
 import { DedupeStrategy, Polling, pollingHelper } from '@aiqadam/qadams-common';
-import { chunk, isNil } from '@aiqadam/shared';
 
 import { Client } from '@hubspot/api-client';
 import dayjs from 'dayjs';

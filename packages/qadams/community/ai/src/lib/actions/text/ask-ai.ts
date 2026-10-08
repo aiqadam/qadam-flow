@@ -1,9 +1,11 @@
 import {
   createAction,
   Property,
+  AIProviderName,
+  getEffectiveProviderAndModel,
+  spreadIfDefined,
 } from '@aiqadam/qadams-framework';
 import { ModelMessage, generateText, isStepCount } from 'ai';
-import { AIProviderName, getEffectiveProviderAndModel, spreadIfDefined } from '@aiqadam/shared';
 import { aiProps } from '../../common/props';
 import { createAIModel } from '../../common/ai-sdk';
 import { buildWebSearchOptionsProperty, buildWebSearchConfig, WebSearchOptions } from '../../common/web-search';

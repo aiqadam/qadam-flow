@@ -1,4 +1,4 @@
-import { createQadam } from '@aiqadam/qadams-framework';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 
 import { createDocumentFromTemplate } from './lib/actions/create-document-from-template';
@@ -14,7 +14,6 @@ import { documentStateChanged } from './lib/triggers/document-state-changed';
 import { documentUpdated } from './lib/triggers/document-updated';
 
 import { pandadocAuth } from './lib/common';
-import { QadamCategory } from '@aiqadam/shared';
 
 export const pandadoc = createQadam({
   displayName: 'PandaDoc',

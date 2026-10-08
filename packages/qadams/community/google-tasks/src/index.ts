@@ -2,8 +2,8 @@ import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 import {
   OAuth2PropertyValue,
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { googleTasksAddNewTaskAction } from './lib/actions/new-task';
 import { googleTasksCommon } from './lib/common';
 import { newTaskTrigger } from './lib/triggers/new-task';

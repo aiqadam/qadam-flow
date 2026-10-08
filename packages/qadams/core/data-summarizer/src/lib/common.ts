@@ -1,5 +1,4 @@
-import { Property } from "@aiqadam/qadams-framework"
-import { isNil } from "@aiqadam/shared"
+import { Property, isNil } from "@aiqadam/qadams-framework"
 
 type ErrorInfo = {
     value: unknown | null,

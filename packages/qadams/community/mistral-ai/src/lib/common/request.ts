@@ -1,5 +1,4 @@
-import { AppConnectionValueForAuthProperty } from '@aiqadam/qadams-framework';
-import { AppConnectionType } from '@aiqadam/shared';
+import { AppConnectionValueForAuthProperty, AppConnectionType } from '@aiqadam/qadams-framework';
 import type { mistralAuth } from './auth';
 
 export type MistralAuthValue = AppConnectionValueForAuthProperty<typeof mistralAuth>;

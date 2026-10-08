@@ -3,6 +3,7 @@ import {
     OAuth2PropertyValue,
     Property,
     createTrigger,
+    isNil,
 } from '@aiqadam/qadams-framework';
 import { TriggerStrategy } from '@aiqadam/qadams-framework';
 import { excelCommon } from '../common/common';
@@ -13,7 +14,6 @@ import {
     Polling,
     pollingHelper,
 } from '@aiqadam/qadams-common';
-import { isNil } from '@aiqadam/shared';
 import { excelAuth } from '../auth';
 
 interface TableRow {
