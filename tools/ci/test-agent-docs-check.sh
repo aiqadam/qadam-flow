@@ -63,7 +63,7 @@ EOF
 }
 
 # A minimal but structurally faithful tree: two skills, one charter, two rules, one deep dive,
-# the three registries and the five mirrors.
+# the three registries, the five mirrors and an empty ADR index.
 new_root() {
   cleanup
   root="$(mktemp -d)"
@@ -117,11 +117,45 @@ EOF
 See [deep dive](.agents/docs/deep-dive.md).
 EOF
 
+  mkdir -p "$root/adr"
+  cat > "$root/adr/README.md" <<'EOF'
+# ADRs
+
+## Index
+
+| ADR | Title | Status |
+| --- | --- | --- |
+| — | No ADRs yet | — |
+EOF
+  echo '# template' > "$root/adr/TEMPLATE.md"
+
   ln -s ../.agents/skills "$root/.claude/skills"
   ln -s ../.agents/agents "$root/.claude/agents"
   ln -s ../.agents/rules "$root/.claude/rules"
   ln -s ../.agents/skills "$root/.cursor/skills"
   ln -s ../.agents/rules "$root/.cursor/rules"
+}
+
+write_adr() {
+  # $1 = file name, $2 = status, $3 = deciders (YAML), $4 = superseded-by, $5 = supersedes
+  cat > "$root/adr/$1" <<EOF
+---
+status: $2            # proposed | accepted | rejected | superseded | deprecated
+date: 2026-10-08
+deciders: ${3:-[]}
+issue: "#1"
+supersedes: ${5:-null}
+superseded-by: ${4:-null}
+---
+
+# Demo decision
+EOF
+}
+
+list_adr() {
+  # $1 = number, $2 = status. The real index drops the placeholder row once an ADR exists.
+  grep -v 'No ADRs yet' "$root/adr/README.md" > "$root/index.tmp" && mv "$root/index.tmp" "$root/adr/README.md"
+  printf '| [`%s`](%s-demo.md) | Demo decision | `%s` |\n' "$1" "$1" "$2" >> "$root/adr/README.md"
 }
 
 run_check() {
@@ -360,6 +394,398 @@ rm "$root/AGENTS.md"
 run_check
 expect_status 1 "AGENTS.md is the entry point every harness reads first"
 expect_not_contains "OK —" "a tree with no root doc is never a pass"
+
+echo "== a listed ADR in a valid state passes =="
+new_root
+write_adr 0001-demo.md accepted '[binalirustamov]'
+list_adr 0001 accepted
+run_check
+expect_status 0 "a decided, indexed ADR is the normal case"
+
+echo "== an ADR missing from the index fails =="
+new_root
+write_adr 0001-demo.md proposed
+run_check
+expect_status 1 "an unindexed ADR is a decision nobody is pointed at"
+expect_contains 'ADR "0001" exists on disk but is missing from adr/README.md' "names the ADR and the index"
+
+echo "== an index row with no ADR behind it fails =="
+new_root
+list_adr 0002 proposed
+run_check
+expect_status 1 "a phantom row points at a decision that is not there"
+expect_contains 'lists ADR "0002"' "names the phantom"
+
+echo "== an index row with the wrong status fails =="
+new_root
+write_adr 0001-demo.md accepted '[binalirustamov]'
+list_adr 0001 proposed
+run_check
+expect_status 1 "the index must not misreport where a decision stands"
+expect_contains 'shows status "proposed", but the file says `accepted`' "names both sides of the mismatch"
+
+echo "== an index row linking to the wrong file fails =="
+new_root
+write_adr 0001-demo.md proposed
+list_adr 0001 proposed
+sed -i.bak 's/(0001-demo.md)/(0001-renamed.md)/' "$root/adr/README.md" && rm "$root/adr/README.md.bak"
+run_check
+expect_status 1 "a stale link in the index is rot the number check cannot see"
+expect_contains 'links to "0001-renamed.md", but the file is 0001-demo.md' "names both sides of the mismatch"
+
+echo "== a quoted status with a trailing comment is read as the status =="
+new_root
+write_adr 0001-demo.md '"proposed"'
+list_adr 0001 proposed
+run_check
+expect_status 0 "the template's comments must not change what a value means"
+
+echo "== supporting files beside the ADRs are not mistaken for ADRs =="
+new_root
+mkdir -p "$root/adr/assets"
+echo 'png' > "$root/adr/assets/diagram.png"
+echo 'png' > "$root/adr/0001-diagram.png"
+run_check
+expect_status 0 "an ADR may link a diagram kept next to it"
+
+echo "== an unknown ADR status fails =="
+new_root
+write_adr 0001-demo.md approved
+list_adr 0001 approved
+run_check
+expect_status 1 "only the documented lifecycle states are valid"
+expect_contains 'status "approved" is not one of' "names the bad status"
+
+echo "== an accepted ADR with no deciders fails =="
+new_root
+write_adr 0001-demo.md accepted
+list_adr 0001 accepted
+run_check
+expect_status 1 "a decision must record who made it"
+expect_contains '"deciders" is empty' "says which field is missing"
+
+echo "== a superseded ADR that names no successor fails =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]'
+list_adr 0001 superseded
+run_check
+expect_status 1 "a superseded decision must point at its replacement"
+expect_contains '"superseded-by" names no ADR' "says which field is missing"
+
+echo "== a superseded ADR that points at its successor passes =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0002"'
+write_adr 0002-demo.md accepted '[binalirustamov]' null '"0001"'
+list_adr 0001 superseded
+list_adr 0002 accepted
+run_check
+expect_status 0 "superseding is the normal way a decision changes"
+
+echo "== a superseded ADR that points at a missing ADR fails =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0009"'
+list_adr 0001 superseded
+run_check
+expect_status 1 "a successor that does not exist leaves the decision with no current answer"
+expect_contains 'names ADR 0009, which does not exist' "names the missing successor"
+
+echo "== an ADR superseded by itself fails =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0001"'
+list_adr 0001 superseded
+run_check
+expect_status 1 "a decision cannot replace itself"
+expect_contains '"superseded-by" names the ADR itself' "says what is wrong"
+
+echo "== an ADR superseded by one that is not accepted yet fails =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0002"'
+write_adr 0002-demo.md proposed '[]' null '"0001"'
+list_adr 0001 superseded
+list_adr 0002 proposed
+run_check
+expect_status 1 "the old decision stands until the new one is accepted"
+expect_contains 'which is proposed' "says why"
+
+echo "== a successor that does not point back fails =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0002"'
+write_adr 0002-demo.md accepted '[binalirustamov]'
+list_adr 0001 superseded
+list_adr 0002 accepted
+run_check
+expect_status 1 "supersession is recorded on both sides"
+expect_contains 'whose "supersedes" does not name 0001' "names both ADRs"
+
+echo "== deciders written as an empty list with a space fails =="
+new_root
+write_adr 0001-demo.md accepted '[ ]'
+list_adr 0001 accepted
+run_check
+expect_status 1 "[ ] names nobody"
+expect_contains '"deciders" is empty' "says which field is empty"
+
+echo "== an ADR listed twice in the index fails =="
+new_root
+write_adr 0001-demo.md proposed
+list_adr 0001 proposed
+list_adr 0001 proposed
+run_check
+expect_status 1 "two rows for one decision will drift apart"
+expect_contains 'ADR 0001 has more than one row' "names the duplicate"
+
+echo "== the placeholder row left beside a real ADR fails =="
+new_root
+write_adr 0001-demo.md proposed
+printf '| [`0001`](0001-demo.md) | Demo decision | `proposed` |\n' >> "$root/adr/README.md"
+run_check
+expect_status 1 "the first real ADR PR is where this is forgotten"
+expect_contains 'row without an ADR number' "points at the placeholder"
+
+echo "== a chain of supersessions passes =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0002"'
+write_adr 0002-demo.md superseded '[binalirustamov]' '"0003"' '"0001"'
+write_adr 0003-demo.md accepted '[binalirustamov]' null '"0002"'
+list_adr 0001 superseded
+list_adr 0002 superseded
+list_adr 0003 accepted
+run_check
+expect_status 0 "a decision replaced twice is normal, and the middle one must not turn CI red"
+
+echo "== a successor that was later deprecated passes =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0002"'
+write_adr 0002-demo.md deprecated '[binalirustamov]' null '"0001"'
+list_adr 0001 superseded
+list_adr 0002 deprecated
+run_check
+expect_status 0 "deprecating the successor does not un-replace the original"
+
+echo "== one ADR replacing two passes =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0003"'
+write_adr 0002-demo.md superseded '[binalirustamov]' '"0003"'
+write_adr 0003-demo.md accepted '[binalirustamov]' null '["0001", "0002"]'
+list_adr 0001 superseded
+list_adr 0002 superseded
+list_adr 0003 accepted
+run_check
+expect_status 0 "consolidating two decisions into one is a real case"
+
+echo "== an accepted ADR whose predecessor was never retired fails =="
+new_root
+write_adr 0001-demo.md accepted '[binalirustamov]'
+write_adr 0002-demo.md accepted '[binalirustamov]' null '"0001"'
+list_adr 0001 accepted
+list_adr 0002 accepted
+run_check
+expect_status 1 "two contradictory decisions must not both be binding"
+expect_contains 'supersedes ADR 0001, which is still accepted' "names the predecessor and its status"
+
+echo "== a proposed ADR may name a predecessor that is still accepted =="
+new_root
+write_adr 0001-demo.md accepted '[binalirustamov]'
+write_adr 0002-demo.md proposed '[]' null '"0001"'
+list_adr 0001 accepted
+list_adr 0002 proposed
+run_check
+expect_status 0 "the old decision stands until the new one is accepted"
+
+echo "== supersedes naming a missing ADR fails =="
+new_root
+write_adr 0001-demo.md proposed '[]' null '"0009"'
+list_adr 0001 proposed
+run_check
+expect_status 1 "a predecessor that does not exist is a typo"
+expect_contains '"supersedes" names ADR 0009, which does not exist' "names the missing ADR"
+
+echo "== deciders written as a list of one empty string fails =="
+new_root
+write_adr 0001-demo.md accepted '[""]'
+list_adr 0001 accepted
+run_check
+expect_status 1 "[\"\"] names nobody"
+expect_contains '"deciders" is empty' "says which field is empty"
+
+echo "== a renamed header row is still a header =="
+new_root
+write_adr 0001-demo.md proposed
+list_adr 0001 proposed
+sed -i.bak 's/^| ADR | Title | Status |$/| Number | Title | Status |/' "$root/adr/README.md" && rm "$root/adr/README.md.bak"
+run_check
+expect_status 0 "the header is whatever sits above the separator"
+
+echo "== a table under a later heading is not read as the index =="
+new_root
+printf '\n## Elsewhere\n\n| ADR | Note |\n| --- | --- |\n| [`0009`](0009-x.md) | `proposed` |\n' >> "$root/adr/README.md"
+run_check
+expect_status 0 "only the first table under the index heading is the index"
+
+echo "== a successor with an invalid status is reported, not crashed on =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0002"'
+write_adr 0002-demo.md acepted '[binalirustamov]' null '"0001"'
+list_adr 0001 superseded
+list_adr 0002 acepted
+run_check
+expect_status 1 "the typo is the finding"
+expect_contains 'status "acepted" is not one of' "names the typo"
+expect_not_contains 'TypeError' "a finding, not a stack trace"
+
+echo "== a predecessor retired in favour of a different ADR fails =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0003"'
+write_adr 0002-demo.md accepted '[binalirustamov]' null '"0001"'
+write_adr 0003-demo.md accepted '[binalirustamov]' null '"0001"'
+list_adr 0001 superseded
+list_adr 0002 accepted
+list_adr 0003 accepted
+run_check
+expect_status 1 "two ADRs cannot both have replaced the same one"
+expect_contains 'whose "superseded-by" names 0003 instead' "names the ADR the predecessor agrees with"
+
+echo "== a supersession cycle fails =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0002"' '"0002"'
+write_adr 0002-demo.md superseded '[binalirustamov]' '"0001"' '"0001"'
+list_adr 0001 superseded
+list_adr 0002 superseded
+run_check
+expect_status 1 "a loop leaves no decision standing"
+expect_contains 'leads back to this ADR' "says what is wrong"
+
+echo "== an ADR that supersedes itself fails =="
+new_root
+write_adr 0001-demo.md accepted '[binalirustamov]' null '"0001"'
+list_adr 0001 accepted
+run_check
+expect_status 1 "a decision cannot replace itself"
+expect_contains '"supersedes" names the ADR itself' "says what is wrong"
+
+echo "== an ADR superseded by a rejected one fails =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0002"'
+write_adr 0002-demo.md rejected '[binalirustamov]' null '"0001"'
+list_adr 0001 superseded
+list_adr 0002 rejected
+run_check
+expect_status 1 "a proposal that lost replaced nothing"
+expect_contains 'which is rejected' "says why"
+
+echo "== reopening a rejected ADR passes without flipping it =="
+new_root
+write_adr 0001-demo.md rejected '[binalirustamov]'
+write_adr 0002-demo.md accepted '[binalirustamov]' null '"0001"'
+list_adr 0001 rejected
+list_adr 0002 accepted
+run_check
+expect_status 0 "the rejected record stays as it was"
+
+echo "== superseded-by on an ADR that is not superseded fails =="
+new_root
+write_adr 0001-demo.md accepted '[binalirustamov]' '"0002"'
+write_adr 0002-demo.md accepted '[binalirustamov]'
+list_adr 0001 accepted
+list_adr 0002 accepted
+run_check
+expect_status 1 "the two fields must agree"
+expect_contains '"superseded-by" is set but the status is "accepted"' "names the status"
+
+echo "== an index heading with no table does not borrow a later one =="
+new_root
+write_adr 0001-demo.md accepted '[binalirustamov]'
+cat > "$root/adr/README.md" <<'EOF'
+# ADRs
+
+## Index
+
+Nothing here yet.
+
+## Elsewhere
+
+| ADR | Title | Status |
+| --- | --- | --- |
+| [`0001`](0001-demo.md) | Demo decision | `proposed` |
+EOF
+run_check
+expect_status 1 "an index with no table is a finding"
+expect_contains 'no table found under a heading containing "Index"' "says the index is missing"
+expect_not_contains 'shows status' "a table under another heading is not read as the index"
+
+echo "== reopening a deprecated ADR passes without flipping it =="
+new_root
+write_adr 0001-demo.md deprecated '[binalirustamov]'
+write_adr 0002-demo.md accepted '[binalirustamov]' null '"0001"'
+list_adr 0001 deprecated
+list_adr 0002 accepted
+run_check
+expect_status 0 "the deprecated record stays as it was"
+
+echo "== a predecessor with an invalid status gets only its own finding =="
+new_root
+write_adr 0001-demo.md acepted '[binalirustamov]'
+write_adr 0002-demo.md accepted '[binalirustamov]' null '"0001"'
+list_adr 0001 acepted
+list_adr 0002 accepted
+run_check
+expect_status 1 "the typo is the finding"
+expect_contains 'status "acepted" is not one of' "names the typo"
+expect_not_contains 'which is still' "no second, garbled finding about the same ADR"
+
+echo "== an accepted ADR superseding a proposed one fails =="
+new_root
+write_adr 0001-demo.md proposed
+write_adr 0002-demo.md accepted '[binalirustamov]' null '"0001"'
+list_adr 0001 proposed
+list_adr 0002 accepted
+run_check
+expect_status 1 "a proposal never in force is rejected, not superseded"
+expect_contains 'which is still proposed — reject it' "says what to do instead"
+
+echo "== superseded-by naming two ADRs fails =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '["0002", "0003"]'
+write_adr 0002-demo.md accepted '[binalirustamov]' null '"0001"'
+write_adr 0003-demo.md accepted '[binalirustamov]' null '"0001"'
+list_adr 0001 superseded
+list_adr 0002 accepted
+list_adr 0003 accepted
+run_check
+expect_status 1 "one decision replaces another"
+expect_contains '"superseded-by" names 2 ADRs' "says how many"
+
+echo "== a self superseded-by is reported once =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0001"'
+list_adr 0001 superseded
+run_check
+expect_status 1 "a decision cannot replace itself"
+expect_not_contains 'leads back to this ADR' "the self-reference finding is enough"
+
+echo "== a misnamed file under adr/ fails =="
+new_root
+echo 'notes' > "$root/adr/notes.md"
+run_check
+expect_status 1 "stray files in adr/ escape the index"
+expect_contains 'adr/notes.md: not an ADR file name' "names the file"
+
+echo "== two ADRs with the same number fail =="
+new_root
+write_adr 0001-demo.md proposed
+write_adr 0001-other.md proposed
+list_adr 0001 proposed
+run_check
+expect_status 1 "numbers are never reused"
+expect_contains 'ADR number 0001 is already taken' "names the duplicate"
+
+echo "== an adr/ directory that moved away is never reported as clean =="
+new_root
+rm -rf "$root/adr"
+run_check
+expect_status 1 "scanning no ADR directory must fail loudly"
+expect_contains 'adr/ does not exist' "a deliberate finding, not a crash"
+expect_not_contains "OK —" "a missing ADR directory is never a pass"
 
 echo
 echo "passed: ${pass}   failed: ${fail}"

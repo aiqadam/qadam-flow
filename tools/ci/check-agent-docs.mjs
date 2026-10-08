@@ -28,7 +28,11 @@
 //      routing tables are the whole point of the change and would otherwise sit outside the
 //      gate, going stale on the first rename;
 //   8. `.claude/` and `.cursor/` are still symlink mirrors into `.agents/`, not copies
-//      somebody edited by hand.
+//      somebody edited by hand;
+//   9. every ADR under `adr/` is named `NNNN-title.md` with a unique number, carries a valid
+//      `status` (and the `deciders` / existing `superseded-by` that status implies), and is listed in
+//      the index in `adr/README.md` with that same status, in both directions. The review
+//      tooling skips Markdown, so without this nothing would stop the index rotting.
 //
 // It cannot check that an agent actually opened a skill it should have. That part is on the
 // agent, and on the wording of `.agents/rules/skill-usage.md`. What it can guarantee is that
@@ -56,6 +60,21 @@ const AGENT_REGISTRY = '.agents/rules/agent-delegation.md'
 const AGENT_REGISTRY_HEADING = 'When: the delegation matrix'
 const ROOT_DOC = 'AGENTS.md'
 const RULES_INDEX_HEADING = 'Every rule, and what it stops you doing'
+const ADR_DIR = 'adr'
+const ADR_INDEX = 'adr/README.md'
+const ADR_INDEX_HEADING = 'Index'
+// README.md is the standard and the index, TEMPLATE.md the starting point; neither is an ADR.
+const ADR_FIXED_FILES = new Set(['README.md', 'TEMPLATE.md'])
+const ADR_FILE_PATTERN = /^(\d{4})-[a-z0-9]+(?:-[a-z0-9]+)*\.md$/
+const ADR_STATUSES = ['proposed', 'accepted', 'rejected', 'superseded', 'deprecated']
+// Every status past `proposed` is a decision somebody made, so it must say who.
+const ADR_DECIDED_STATUSES = new Set(['accepted', 'rejected', 'superseded', 'deprecated'])
+// A proposal that is still open, or one that lost, has replaced nothing.
+const ADR_UNDECIDED_STATUSES = new Set(['proposed', 'rejected'])
+// A new ADR may reopen one of these without flipping it: its own record stays as it was.
+const ADR_REOPENABLE_STATUSES = new Set(['rejected', 'deprecated'])
+// What an unset frontmatter scalar looks like once its comment is stripped.
+const ADR_EMPTY_VALUES = new Set(['', 'null', '~'])
 
 // A description is the only thing a harness reads when deciding whether to load a skill. Two
 // failures make it useless, and both shipped here: too short to say anything (a derived H1),
@@ -103,10 +122,11 @@ const main = () => {
     ...checkDocsLinked({ root }),
     ...checkRoutingReferences({ root }),
     ...checkMirrors({ root }),
+    ...checkAdrs({ root }),
   ]
 
   if (problems.length === 0) {
-    console.log('[check-agent-docs] OK — skills, charters, rules and mirrors are all wired up.')
+    console.log('[check-agent-docs] OK — skills, charters, rules, mirrors and ADRs are all wired up.')
     return
   }
 
@@ -343,6 +363,223 @@ const checkMirrors = ({ root }) => {
     }
   }
   return problems
+}
+
+const checkAdrs = ({ root }) => {
+  const dir = path.join(root, ADR_DIR)
+  if (!isDirectory(dir)) {
+    return [`${ADR_DIR}/ does not exist (root: ${root}) — did the directory move?`]
+  }
+  const index = readFileOrNull(path.join(root, ADR_INDEX))
+  if (index === null) {
+    return [`${ADR_INDEX}: missing — it is the ADR standard and index.`]
+  }
+
+  const problems = []
+  const files = new Map()
+  const statuses = new Map()
+  const supersedes = new Map()
+  const supersededBy = new Map()
+  // Supporting files an ADR links to (a diagram, an assets/ folder) may sit beside it; only
+  // Markdown at the top level is an ADR or the standard.
+  const entries = fs.readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.md') && !ADR_FIXED_FILES.has(entry.name))
+    .map((entry) => entry.name)
+    .sort()
+  for (const fileName of entries) {
+    const relative = `${ADR_DIR}/${fileName}`
+    const named = fileName.match(ADR_FILE_PATTERN)
+    if (named === null) {
+      problems.push(`${relative}: not an ADR file name — use NNNN-kebab-case-title.md (see ${ADR_INDEX}).`)
+      continue
+    }
+    const number = named[1]
+    if (files.has(number)) {
+      problems.push(`${relative}: ADR number ${number} is already taken — numbers are never reused.`)
+      continue
+    }
+    files.set(number, fileName)
+
+    const frontmatter = parseFrontmatter({ content: readFileOrNull(path.join(dir, fileName)) ?? '' })
+    if (frontmatter === null) {
+      problems.push(`${relative}: no YAML frontmatter — copy it from ${ADR_DIR}/TEMPLATE.md.`)
+      continue
+    }
+    const status = adrField({ frontmatter, key: 'status' })
+    if (!ADR_STATUSES.includes(status)) {
+      problems.push(`${relative}: status "${status}" is not one of ${ADR_STATUSES.join(', ')}.`)
+      continue
+    }
+    statuses.set(number, status)
+    supersedes.set(number, adrList({ value: adrField({ frontmatter, key: 'supersedes' }) }))
+    if (ADR_DECIDED_STATUSES.has(status) && isEmptyAdrList({ value: adrField({ frontmatter, key: 'deciders' }) })) {
+      problems.push(`${relative}: status is "${status}" but "deciders" is empty — a decision records who made it.`)
+    }
+    supersededBy.set(number, adrList({ value: adrField({ frontmatter, key: 'superseded-by' }) }))
+    if (status === 'superseded' && supersededBy.get(number).length === 0) {
+      problems.push(`${relative}: status is "superseded" but "superseded-by" names no ADR.`)
+    }
+    if (supersededBy.get(number).length > 1) {
+      problems.push(`${relative}: "superseded-by" names ${supersededBy.get(number).length} ADRs — one decision replaces it; that one may replace several.`)
+    }
+    if (status !== 'superseded' && supersededBy.get(number).length > 0) {
+      problems.push(`${relative}: "superseded-by" is set but the status is "${status}".`)
+    }
+  }
+  problems.push(...checkSupersession({ files, statuses, supersedes, supersededBy }))
+
+  problems.push(...checkRegistryParity({
+    root,
+    registry: ADR_INDEX,
+    heading: ADR_INDEX_HEADING,
+    onDisk: [...files.keys()],
+    label: 'ADR',
+    fixHint: 'add a row to the index',
+  }))
+
+  // Parity says the row exists; this says it is not lying about the file or the status.
+  const rows = collectAdrIndexRows({ content: index })
+  const listedNumbers = rows.map(({ number }) => number).filter((number) => number !== null)
+  for (const number of new Set(listedNumbers.filter((number, position) => listedNumbers.indexOf(number) !== position))) {
+    problems.push(`${ADR_INDEX}: ADR ${number} has more than one row in the index.`)
+  }
+  if (files.size > 0 && rows.some(({ number }) => number === null)) {
+    problems.push(`${ADR_INDEX}: the index still has a row without an ADR number (the "No ADRs yet" placeholder?) — remove it once an ADR exists.`)
+  }
+  for (const { number, link, status } of rows.filter(({ number }) => number !== null)) {
+    if (files.has(number) && link !== files.get(number)) {
+      problems.push(`${ADR_INDEX}: the row for ADR ${number} links to "${link}", but the file is ${files.get(number)}.`)
+    }
+    if (statuses.has(number) && status !== statuses.get(number)) {
+      problems.push(`${ADR_INDEX}: the row for ADR ${number} shows status "${status}", but the file says \`${statuses.get(number)}\` — update the index.`)
+    }
+  }
+
+  return problems
+}
+
+// `supersedes: "0001"` and `supersedes: ["0001", "0002"]` both read as a list of numbers.
+const adrList = ({ value }) => ADR_EMPTY_VALUES.has(value)
+  ? []
+  : value.replace(/^\[|\]$/g, '').split(',').map((item) => unquote(item)).filter((item) => item !== '')
+
+// `deciders: []`, `[ ]` and `[""]` all name nobody.
+const isEmptyAdrList = ({ value }) => adrList({ value }).length === 0
+
+// Supersession is recorded on both sides (`superseded-by` on the old ADR, `supersedes` on the new),
+// only a decided ADR can have replaced anything, and following `superseded-by` never loops — so
+// from any superseded ADR there is a path to a decision that still stands or was deprecated.
+// ADRs whose own status is invalid are skipped here; they already carry their own finding.
+const checkSupersession = ({ files, statuses, supersedes, supersededBy }) => {
+  const problems = []
+  for (const [number, status] of statuses) {
+    const relative = `${ADR_DIR}/${files.get(number)}`
+    for (const successor of supersededBy.get(number)) {
+      if (successor === number) {
+        problems.push(`${relative}: "superseded-by" names the ADR itself.`)
+      }
+      else if (!files.has(successor)) {
+        problems.push(`${relative}: "superseded-by" names ADR ${successor}, which does not exist.`)
+      }
+      else if (!statuses.has(successor)) {
+        continue
+      }
+      // A successor may itself be superseded or deprecated later; only one that was never
+      // accepted cannot have replaced anything.
+      else if (ADR_UNDECIDED_STATUSES.has(statuses.get(successor))) {
+        problems.push(`${relative}: superseded by ADR ${successor}, which is ${statuses.get(successor)} — flip this one only when its successor is accepted.`)
+      }
+      else if (!supersedes.get(successor).includes(number)) {
+        problems.push(`${relative}: superseded by ADR ${successor}, whose "supersedes" does not name ${number}.`)
+      }
+    }
+    for (const predecessor of supersedes.get(number)) {
+      if (predecessor === number) {
+        problems.push(`${relative}: "supersedes" names the ADR itself.`)
+      }
+      else if (!files.has(predecessor)) {
+        problems.push(`${relative}: "supersedes" names ADR ${predecessor}, which does not exist.`)
+      }
+      // A proposal leaves its predecessor standing until it is accepted, and reopening a rejected
+      // or deprecated ADR does not change what that one says about itself.
+      else if (!statuses.has(predecessor) || ADR_UNDECIDED_STATUSES.has(status) || ADR_REOPENABLE_STATUSES.has(statuses.get(predecessor))) {
+        continue
+      }
+      else if (statuses.get(predecessor) === 'proposed') {
+        problems.push(`${relative}: supersedes ADR ${predecessor}, which is still proposed — reject it, or drop it from "supersedes".`)
+      }
+      else if (statuses.get(predecessor) !== 'superseded') {
+        problems.push(`${relative}: supersedes ADR ${predecessor}, which is still ${statuses.get(predecessor)} — flip it to superseded in the PR that accepts this one.`)
+      }
+      // An empty `superseded-by` already carries its own finding on the predecessor.
+      else if (supersededBy.get(predecessor).length > 0 && !supersededBy.get(predecessor).includes(number)) {
+        problems.push(`${relative}: supersedes ADR ${predecessor}, whose "superseded-by" names ${supersededBy.get(predecessor).join(', ')} instead.`)
+      }
+    }
+  }
+  for (const start of statuses.keys()) {
+    if (isInSupersessionCycle({ start, supersededBy })) {
+      problems.push(`${ADR_DIR}/${files.get(start)}: "superseded-by" leads back to this ADR — some decision in the chain must still stand.`)
+    }
+  }
+  return problems
+}
+
+// `superseded-by` holds at most one ADR (a longer list is its own finding), so following the first
+// entry is following the chain. A self-reference is reported on its own, not as a cycle.
+const isInSupersessionCycle = ({ start, supersededBy }) => {
+  const seen = new Set()
+  let current = supersededBy.get(start)?.[0]
+  if (current === start) {
+    return false
+  }
+  while (current !== undefined && !seen.has(current)) {
+    if (current === start) {
+      return true
+    }
+    seen.add(current)
+    current = supersededBy.get(current)?.[0]
+  }
+  return false
+}
+
+// The template documents the allowed values in trailing comments; drop the comment first so a
+// quoted value with a comment after it is still unquoted.
+const adrField = ({ frontmatter, key }) => unquote((frontmatter[key] ?? '').replace(/\s+#.*$/, ''))
+
+// Rows of the first table under the index heading: the backticked number and link target from
+// the first cell (number is null for a row that has none, e.g. a placeholder), and the backticked
+// status from the last. Like collectTableKeys it gives up at the next heading, so the two agree
+// about which table is the index.
+const collectAdrIndexRows = ({ content }) => {
+  const lines = content.split('\n')
+  const headingIndex = lines.findIndex((line) => line.startsWith('#') && line.includes(ADR_INDEX_HEADING))
+  if (headingIndex === -1) {
+    return []
+  }
+  const rows = []
+  let inTable = false
+  let pastHeader = false
+  for (const line of lines.slice(headingIndex + 1)) {
+    if (!line.trimStart().startsWith('|')) {
+      if (inTable || line.startsWith('#')) {
+        break
+      }
+      continue
+    }
+    inTable = true
+    const cells = line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim())
+    if (!pastHeader) {
+      pastHeader = cells.every((cell) => /^:?-+:?$/.test(cell))
+      continue
+    }
+    rows.push({
+      number: cells[0].match(/`(\d{4})`/)?.[1] ?? null,
+      link: cells[0].match(/\]\(([^)]+)\)/)?.[1] ?? '',
+      status: cells[cells.length - 1].match(/^`([^`]+)`$/)?.[1] ?? cells[cells.length - 1],
+    })
+  }
+  return rows
 }
 
 const checkRegistryParity = ({ root, registry, heading, onDisk, label, fixHint }) => {

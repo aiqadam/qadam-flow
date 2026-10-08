@@ -20,3 +20,4 @@ Closes #
 - [ ] PR title follows Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`, `test:`, …).
 - [ ] Tests added/updated where it makes sense; lint and build pass locally.
 - [ ] Docs / translations updated if behaviour changed.
+- [ ] If this implements an ADR, or adds or supersedes one, the ADR is linked (`ADR-NNNN`, see [`adr/README.md`](../adr/README.md)); implementation merges only once that ADR is `accepted`.

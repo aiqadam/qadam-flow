@@ -45,7 +45,8 @@ the whole session.
 
 ## Agent knowledge map — single source: `.agents/`
 
-All agent-facing knowledge lives under `.agents/`. `.claude/{skills,agents,rules}` and
+All agent-facing knowledge lives under `.agents/` — the one exception is `adr/`, which records
+decisions for humans and agents alike and is binding on both. `.claude/{skills,agents,rules}` and
 `.cursor/{skills,rules}` are git symlinks into it, so each harness's auto-discovery keeps
 working — never edit a mirror, and never replace one with a real directory; add content
 under `.agents/` only. `npm run check-agent-docs` fails on either.
@@ -58,6 +59,7 @@ under `.agents/` only. `npm run check-agent-docs` fails on either.
 | `.agents/skills/*/SKILL.md` | 12–1100 lines each | **Before the first line of code**, whenever the task matches a skill's trigger | 13 step-by-step workflows. Trigger registry: [`skill-usage.md`](.agents/rules/skill-usage.md) |
 | `.agents/agents/*.md` | 25–80 lines each | **Before you report a code change complete** | 5 subagent charters. Delegation matrix: [`agent-delegation.md`](.agents/rules/agent-delegation.md) |
 | `.agents/docs/*.md` | deep dives | On trigger (see [Verification](#verification)) | Verification pitfalls, CI node_modules cache, dependency updates |
+| `adr/*.md` | one decision each | **Before a change that meets an ADR trigger** (listed in [`adr/README.md`](adr/README.md)) | Architecture Decision Records — accepted decisions are binding. Standard, triggers and index: [`adr/README.md`](adr/README.md) |
 
 ### Every rule, and what it stops you doing
 
@@ -66,6 +68,7 @@ is in force in every session:
 
 | Rule | What it stops you doing |
 | --- | --- |
+| [`adr.md`](.agents/rules/adr.md) | Contradicting an accepted architecture decision, or making a new one without an ADR |
 | [`agent-delegation.md`](.agents/rules/agent-delegation.md) | Shipping code no second agent read, or briefing a subagent from memory |
 | [`bun-install.md`](.agents/rules/bun-install.md) | Running `npm install` |
 | [`data-isolation.md`](.agents/rules/data-isolation.md) | A query that does not filter by `projectId` / `platformId` |
@@ -226,10 +229,12 @@ When running in `--mode=cloud`, do not use OAuth2 connections — the OAuth prov
 ## Verification
 
 - Always run `npm run lint-dev` as part of any verification step before considering a task complete.
-- Touched anything under `.agents/`, `.claude/`, `.cursor/` or any `AGENTS.md`? Run `npm run check-agent-docs` —
+- Touched anything under `.agents/`, `.claude/`, `.cursor/`, `adr/` or any `AGENTS.md`? Run `npm run check-agent-docs` —
   it fails on a skill missing from the trigger registry, a charter missing from the delegation matrix, a rule
   missing from the rules index, a `SKILL.md` without usable frontmatter, an `AGENTS.md` routing to a skill or
-  charter that no longer exists, or a mirror symlink someone replaced with a real directory.
+  charter that no longer exists, a mirror symlink someone replaced with a real directory, or an ADR that is
+  misnamed, has an invalid status or no `deciders`, records supersession on one side only, or disagrees with
+  the index in `adr/README.md`.
 - After touching anything under `packages/web`, also run `npm run typecheck` — `vite build` does not
   type-check, so a type error there surfaces nowhere else until CI.
 - **Before trusting any verification output** — especially a command that returned clean — read
