@@ -37,7 +37,7 @@ Most findings here are violations of documented conventions, not exotic bugs.
      `PUT /v1/files/:fileId`)
    - new entities registered in `getEntities()`; migration imported and listed in `getMigrations()`
    - Zod user-facing messages must be i18n keys present in the web translation file
-   - any change to `packages/shared` needs a version bump in its `package.json`
+   - any change to `packages/shared` needs a changeset naming it (ADR-0001)
    - comments explain *why*, never *what*
 4. **Dead code & orphans** — removed feature leaving unused exports, enum members, types, props,
    env vars, translations, or UI routes behind. Also the reverse: something removed that another

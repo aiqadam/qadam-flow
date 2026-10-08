@@ -222,10 +222,9 @@ expect_contains "some-lib" "the error names the offending dependency, not the to
 # performing the unretractable action it protects against. In CI that 401s (no job here sets
 # NPM_TOKEN), but the script is deliberately kept usable by hand, and a maintainer with
 # NPM_TOKEN exported would publish for real. Same shape as the stub in
-# tools/ci/test-publish-packed-tarballs.sh; `timeout` because a regression would otherwise
-# spend ~3 minutes in getLatestPublishedVersion's retry backoff (2+8+32+128 s — it rethrows on
-# the fifth attempt before sleeping the last delay), and unbounded if the connection hangs,
-# since that axios call sets no timeout of its own.
+# tools/ci/test-publish-packed-tarballs.sh; `timeout` because a guard regression would otherwise
+# spend ~3 minutes in packagePrePublishChecks' retry backoff (2+8+32+128 s — it rethrows on the
+# fifth attempt before sleeping the last delay) before failing, stalling the suite that long.
 guard_stub="$(mktemp -d)"
 mkdir -p "$guard_stub/bin"
 cat > "$guard_stub/bin/npm" <<'GUARD_STUB'

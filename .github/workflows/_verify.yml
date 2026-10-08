@@ -15,6 +15,13 @@ name: Verify
 # is not the required context name.
 on:
   workflow_call:
+    inputs:
+      # The `semver-override` verdict for ADR-0001 gate 2, resolved by ci.yml's `semver-override`
+      # job (tools/ci/resolve-semver-override.sh). Only ci.yml passes it; the tag and dispatch
+      # callers have no PR and run no PR-only gate.
+      semver-override:
+        type: string
+        default: absent
 
 permissions:
   contents: read
@@ -99,6 +106,12 @@ jobs:
         timeout-minutes: 2
         run: tools/ci/assert-no-skipped-specs.test.sh
 
+      # Who applied `semver-override` decides whether ADR-0001 gate 2 honours it. Pure shell
+      # against a stub `gh`.
+      - name: Test the semver-override resolver
+        timeout-minutes: 2
+        run: tools/ci/test-resolve-semver-override.sh
+
       - uses: actions/setup-node@v6
         id: node
         with:
@@ -114,6 +127,22 @@ jobs:
       - name: Test the release version/tag gate
         timeout-minutes: 2
         run: tools/ci/test-version-tag-gate.sh
+
+      # ADR-0001 gate 1 (a changed versioned package has a changeset), the PR-time half of gate 4
+      # (a platform major touches breaking-changes.mdx), no hand-edited versions outside the
+      # release PR, and root == packages/platform. Node builtins only, so it sits above the
+      # install and still reports when the install flakes. Replaces check-qadam-version-bumps.
+      - name: Test the changesets gate
+        timeout-minutes: 2
+        run: tools/ci/test-changesets-gate.sh
+
+      - name: Check changesets (ADR-0001 gates 1 and 4)
+        if: github.event_name == 'pull_request'
+        timeout-minutes: 2
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: npm run check-changesets
 
       # The agent-docs wiring gate: a skill or charter that is registered nowhere, or carries a
       # description no harness can trigger on, is one no agent is ever told to use — which is
@@ -366,21 +395,40 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: npm run check-required-prop-defaults
 
-      # A dependency change inside a published qadam must carry a bump of that qadam's own
-      # `version`, or `packagePrePublishChecks` skips the republish and the change (often a
-      # security fix) never reaches a consumer. Renovate cannot do that bump itself here — see
-      # tools/ci/check-qadam-version-bumps.mjs's header — so `qadam-version-bump.yml` applies it on
-      # Renovate's branches; this is the required floor for every other PR. Same
-      # PR_BASE_SHA/PR_HEAD_SHA shape as the two gates immediately above.
-      - name: Test the qadam version-bumps checker
-        run: tools/ci/test-qadam-version-bumps.sh
+      # ADR-0001 gate 2: the declared changeset level is not below the level computed from the
+      # qadam's actions/triggers/props diff (the SDK .d.ts half is not implemented yet — see the
+      # checker's header). The `semver-override` verdict comes from ci.yml's job of that name.
+      - name: Test the changeset-level gate
+        run: tools/ci/test-changeset-levels-gate.sh
 
-      - name: Check qadam version bumps
+      - name: Check changeset levels (ADR-0001 gate 2)
         if: github.event_name == 'pull_request'
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: npm run check-qadam-version-bumps
+          SEMVER_OVERRIDE: ${{ inputs.semver-override }}
+        run: npm run check-changeset-levels
+
+      # The release PR's version step, run through the real @changesets/cli on a miniature bun
+      # workspace: the platform major reaches the root package.json, workspace:* survives, the
+      # internal-dependency cascade is what it is, nothing is published or tagged.
+      - name: Test the release PR version step
+        run: tools/ci/test-changesets-version.sh
+
+      # ADR-0001 gate 6. Full tree, not a diff: the ESLint ban (packages/qadams/eslint.config.mjs,
+      # #786) can be silenced by a disable comment; this scan cannot.
+      - name: Test the qadam shared-imports checker
+        run: tools/ci/test-qadam-shared-imports-check.sh
+
+      - name: Check qadams do not import @aiqadam/shared (ADR-0001 gate 6)
+        run: npm run check-qadam-shared-imports
+
+      # ADR-0001 gate 7: every qadam's minimum/maximumSupportedRelease against the root version.
+      - name: Test the compatibility-floor checker
+        run: tools/ci/test-compat-floors-check.sh
+
+      - name: Check compatibility floors (ADR-0001 gate 7)
+        run: npm run check-compat-floors
 
       # Gate 8 of ADR-0002 (#801): the framework support table. A context shim may not leave the
       # engine while the table says its framework major is still supported, a framework major may
@@ -406,6 +454,12 @@ jobs:
       # rather than with the pure-shell suite above.
       - name: Test the publish-time workspace:* rewrite invariants
         run: tools/ci/test-publish-workspace-invariants.sh
+
+      # ADR-0001 gate 3: packagePrePublishChecks reads the registry's version list (not the
+      # `latest` dist-tag, not origin/main). Against a local stub registry, no network.
+      - name: Test the registry version-list gate
+        timeout-minutes: 3
+        run: tools/ci/test-registry-version-gate.sh
 
       # Unfiltered, deliberately. The enumerated `lint-core` / `lint-qadams`
       # scripts silently missed every package they did not name — `@aiqadam/cli`,

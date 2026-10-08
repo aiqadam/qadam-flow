@@ -1,9 +1,10 @@
 # @aiqadam/shared
 
-Types, DTOs, Zod schemas, utilities. Every change bumps this package's own version, by hand, until
-changesets land (#796) — the level is the `versioning` skill's call, the rule is
-[`.agents/rules/versioning.md`](../../.agents/rules/versioning.md). It is still published and pinned
-exactly by every published qadam until #799 makes it private.
+Types, DTOs, Zod schemas, utilities. Every change adds a changeset naming this package and its level
+— the level is the `versioning` skill's call, the rule is
+[`.agents/rules/versioning.md`](../../.agents/rules/versioning.md); only the release PR raises the
+version. It is still published and pinned exactly by every published qadam until #799 makes it
+private.
 
 ## Skills for this package
 

@@ -31,15 +31,16 @@ the language rules OCR already merges from its system layer.
   single exported `const` object; callers use `myUtils.fn1()`. React components
   are named exports instead.
 - **Published package versioning.** Every version is a semver promise to a named
-  consumer (ADR-0001; rule: `.agents/rules/versioning.md`). Until changesets land
-  (#796), any change under `@aiqadam/shared`, `@aiqadam/qadams-framework`,
-  `@aiqadam/qadams-common` or a qadam must raise that package's own `package.json`
-  version in the same branch. On `0.x` minor is the breaking slot and a new export is
-  minor; everything else is patch. From `1.0.0` (today only `qadam-assemblyai`) a break
-  is major, a new capability minor, a fix patch. For a qadam, a behaviour change an
-  existing step would notice is a break even with an unchanged schema. A diff without
-  a version bump, or at a level below what it changes, is a finding (the diff may put
-  the two files in different review groups — check the whole diff, not just this file).
+  consumer (ADR-0001; rule: `.agents/rules/versioning.md`). A change under
+  `@aiqadam/shared`, `@aiqadam/qadams-framework`, `@aiqadam/qadams-common` or a qadam
+  must be named by a `.changeset/*.md` added in the same PR; only the release PR raises
+  `version`, and a hand-edited version is a finding. On `0.x` minor is the breaking slot
+  and a new export is minor; everything else is patch. From `1.0.0` (today only
+  `qadam-assemblyai`) a break is major, a new capability minor, a fix patch. For a qadam,
+  a behaviour change an existing step would notice is a break even with an unchanged
+  schema. A diff without a changeset naming the changed package, or at a level below what
+  it changes, is a finding (the diff may put the changeset and the package in different
+  review groups — check the whole diff, not just this file).
 - **Agent knowledge lives in `.agents/`.** `.claude/` and `.cursor/` are
   git-symlink mirrors; editing a mirror instead of `.agents/` is a finding.
 <!-- repo-wide:end -->

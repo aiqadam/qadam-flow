@@ -920,6 +920,42 @@ else
     "expected 1 occurrence of 'ambiguous argument', got ${occurrences}"
 fi
 
+echo "== ADR-0001: the breaking slot declared in a changeset (no hand-edited version) counts too =="
+
+# build_changeset_case <name> <version> <level> — same new-required-no-default change, version
+# untouched (only the release PR raises it now), the slot declared in .changeset/demo.md instead.
+build_changeset_case() {
+  local name="$1" version="$2" level="$3" dir base_sha head_sha
+  dir="$(new_repo "$name")"
+  write_qadam "$dir" community demo-qadam "$version" "    mode: Property.ShortText({ displayName: 'Mode', required: false }),"
+  commit_all "$dir" 'feat: baseline'
+  base_sha="$(git -C "$dir" rev-parse HEAD)"
+  write_qadam "$dir" community demo-qadam "$version" "    mode: Property.ShortText({ displayName: 'Mode', required: false }),
+    execution_mode: Property.ShortText({ displayName: 'Execution Mode', required: true }),"
+  mkdir -p "$dir/.changeset"
+  printf -- '---\n"@aiqadam/qadam-demo-qadam": %s\n---\n\nNew required prop.\n' "$level" > "$dir/.changeset/demo.md"
+  commit_all "$dir" 'feat: change props'
+  head_sha="$(git -C "$dir" rev-parse HEAD)"
+  printf '%s %s %s\n' "$dir" "$base_sha" "$head_sha"
+}
+
+read -r dir base head <<< "$(build_changeset_case changeset-minor-0x 0.4.15 minor)"
+run_check "$dir" "$base" "$head"
+expect_status 0 "0.x qadam, changeset declares minor, version untouched -> PASS"
+
+read -r dir base head <<< "$(build_changeset_case changeset-patch-0x 0.4.15 patch)"
+run_check "$dir" "$base" "$head"
+expect_status 1 "0.x qadam, changeset declares only patch -> FAIL"
+expect_contains "declare the breaking slot for the qadam in a changeset" "the remedy names the changeset"
+
+read -r dir base head <<< "$(build_changeset_case changeset-minor-1x 1.1.6 minor)"
+run_check "$dir" "$base" "$head"
+expect_status 1 "1.x qadam, changeset declares minor -> FAIL (the slot is major from 1.0.0 on)"
+
+read -r dir base head <<< "$(build_changeset_case changeset-major-1x 1.1.6 major)"
+run_check "$dir" "$base" "$head"
+expect_status 0 "1.x qadam, changeset declares major -> PASS"
+
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -224,6 +224,17 @@ git -C "$d" tag release-1.2.0
 expect 2 'tag without a `v` prefix -> UNKNOWN' \
   "$d" release-1.2.0 "does not start with 'v'"
 
+# A previous tag whose major cannot be read. The old guard concatenated both majors before
+# checking, so '' + '3' looked all-digit, `[ 3 -gt '' ]` errored out and the platform-major
+# check was silently skipped (fail-open). Each component is validated separately now.
+d="$(new_repo unknown-prev-major)"
+commit "$d" 'src/a.txt' 'feat: baseline'
+git -C "$d" tag v.2.0
+commit "$d" 'src/b.txt' 'fix: ordinary'
+git -C "$d" tag v3.0.0
+expect 2 'a previous tag with an empty major -> UNKNOWN, not a skipped platform-major check' \
+  "$d" v3.0.0 'cannot read the major version of v.2.0'
+
 d="$(build_release unknown-doc-absent 'feat!: remove the thing' absent)"
 expect 2 'changelog file missing entirely -> UNKNOWN, not "nothing to check"' \
   "$d" v1.1.0 'does not exist at v1.1.0'
@@ -305,6 +316,38 @@ d="$(build_release override-not-from-commit 'feat!: remove the thing' untouched 
   'Release-Gate-Override: sneaking this in via a commit body')"
 expect 1 'override trailer in a commit body is NOT a release override -> FAIL' \
   "$d" v1.1.0 'FAIL'
+
+echo "== ADR-0001 gate 4: a platform MAJOR needs an entry even with no commit marker =="
+
+# No `!` and no footer anywhere: under changesets the major comes from a
+# `"@aiqadam/platform": major` changeset, which the release PR turns into the
+# root version. The version jump itself is the declaration.
+d="$(build_release major-undocumented - untouched)"
+commit "$d" 'src/z.txt' 'fix: after the last release'
+git -C "$d" tag v2.0.0
+expect 1 'v1.1.0 -> v2.0.0 with no markers and no entry -> FAIL' "$d" v2.0.0 '(platform major) v1.1.0 -> v2.0.0'
+
+d="$(build_release major-documented - untouched)"
+commit "$d" 'src/z.txt' 'fix: after the last release'
+write_doc "$d" '---' 'title: "Breaking Changes"' '---' '' '## 2.0.0' '' '- operators must set AP_FOO' '' '## 1.0.0' '' '- the old one' ''
+commit "$d" "$doc_path" 'docs: record 2.0.0'
+git -C "$d" tag v2.0.0
+expect 0 'v1.1.0 -> v2.0.0 with a `## 2.0.0` entry -> PASS' "$d" v2.0.0 'PASS'
+
+d="$(build_release major-rc-undocumented - untouched)"
+commit "$d" 'src/z.txt' 'fix: after the last release'
+git -C "$d" tag v2.0.0-rc.1
+expect 1 'a major rc (v2.0.0-rc.1) is a major too -> FAIL' "$d" v2.0.0-rc.1 '(platform major)'
+
+d="$(build_release minor-no-entry - untouched)"
+commit "$d" 'src/z.txt' 'fix: after the last release'
+git -C "$d" tag v1.2.0
+expect 0 'a minor with no markers needs no entry -> PASS' "$d" v1.2.0 'PASS'
+
+d="$(build_release major-override - untouched)"
+commit "$d" 'src/z.txt' 'fix: after the last release'
+git -C "$d" tag -a v2.0.0 -m 'Release-Gate-Override: entry lands in #999' >/dev/null
+expect 0 'a platform major can be overridden only by the annotated tag -> PASS' "$d" v2.0.0 'OVERRIDDEN'
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"

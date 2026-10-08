@@ -50,12 +50,12 @@ Every version number in this repository is a promise to someone: the platform ve
 - **Semver per package.** Major for a break, minor for a new capability, patch for a fix. For a qadam, a behaviour change an existing step would notice is a break even when no prop or output changed, and only you can answer that question, so answer it in the PR. A package still on `0.x` puts a break on minor. Authors' guide: [Qadam versioning](./docs/build-qadams/qadam-reference/qadam-versioning.mdx).
 - **The caret range is the promise.** A version inside `^` of a pin is a drop-in replacement. Nothing may move a pin past that range without a person choosing to.
 - **Framework support window.** From `qadams-framework@1.0.0`, Qadam Flow runs qadams built against the current and the previous framework major, and keeps the previous one for at least 12 months after the next is released, even if a third ships in that time. Retiring one is a breaking platform release. The table and the CI check that enforce this landed in #801 (PR #814).
-- **How a version moves today.** A change to `packages/shared`, `packages/qadams/framework`, `packages/qadams/common` or a qadam raises that package's own `version` in the same PR, by hand. Changesets (#796) and required CI gates (#797) will replace the hand edit; until they land, CI catches only part of a missed bump, so reviewers check it.
+- **How a version moves.** A change to `packages/shared`, `packages/qadams/framework`, `packages/qadams/common` or a qadam adds a changeset naming that package and its level ([ADR-0001](./adr/0001-everything-versioned-follows-semver-declared-with-changesets.md)); only the release PR raises `version`. The level is the `versioning` skill's call, and gates 1–7 check it.
 
 ## Pull request checklist
 - [ ] Linked to an issue (for non-trivial changes)
 - [ ] Commits signed off (`-s`)
-- [ ] Version raised for every changed package, and the behaviour question answered (see [Versioning](#versioning))
+- [ ] Changeset added for every changed package, and the behaviour question answered (see [Versioning](#versioning))
 - [ ] Tests added or updated where it makes sense
 - [ ] Lint and build pass locally
 - [ ] Docs / translations updated if behavior changed
