@@ -55,7 +55,7 @@ RUN --mount=type=cache,target=/root/.bun/install/cache \
 # NODE_PATH=/usr/src/node_modules and resolve the copy mounted into the box, which nothing else in
 # this image populates — install the same version there too (#712). Keep ISOLATED_VM_VERSION equal
 # to the engine's pin (the main Dockerfile checks the two against each other).
-ARG ISOLATED_VM_VERSION=7.0.0
+ARG ISOLATED_VM_VERSION=7.0.1
 RUN --mount=type=cache,target=/root/.bun/install/cache \
     cd /usr/src && bun install isolated-vm@${ISOLATED_VM_VERSION}
 
