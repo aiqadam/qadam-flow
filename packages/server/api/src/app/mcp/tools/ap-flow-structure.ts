@@ -49,6 +49,13 @@ type StepInfo = {
     frameworkVersionSupported?: false
 }
 
+// The two per-pin signals `ap_flow_structure` decorates steps with: whether each pin resolves
+// (#474), and which pins need a retired framework context version (#803).
+type PinSignals = {
+    qadamResolutions: Map<string, boolean | undefined>
+    unsupportedPins: Map<string, PinFrameworkSupport>
+}
+
 function getStepInput(step: Step): Record<string, unknown> | null {
     const settings = isObject(step.settings) ? step.settings : null
     const input = settings?.input
@@ -126,21 +133,34 @@ function qadamPinWarning(step: StepInfo): string {
     return ` ⚠️ ${label}: this step ${issue.message}`
 }
 
-// A pin-availability signal is a decoration on top of the structure this tool exists to return —
-// before this feature, `ap_flow_structure` needed only the flow row. The caller resolves the
-// platform under `tryCatch` (see `execute`) and passes it in: a platform-lookup failure degrades
-// to "no pin info" rather than failing the response, the way `ap_validate_flow`'s equivalent
-// unwrapped call is allowed to for a one-shot pre-publish gate.
-async function resolveQadamPinAvailability({ qadamSteps, platformId, log }: {
+// A pin signal is a decoration on top of the structure this tool exists to return — before this
+// feature, `ap_flow_structure` needed only the flow row. Both signals share one platform lookup,
+// and neither runs for a flow with no qadam steps: a flow with none must not cost a platform read.
+// `getPlatformId` throws when the project row carries no platform; this is a navigation read, so
+// that degrades to "no pin info" rather than failing the response, the way `ap_validate_flow`'s
+// equivalent unwrapped call is allowed to for a one-shot pre-publish gate.
+async function resolvePinSignals({ qadamSteps, projectId, log }: {
     qadamSteps: QadamPinnedStep[]
-    platformId: string
+    projectId: string
     log: FastifyBaseLogger
-}): Promise<Map<string, boolean | undefined>> {
-    return qadamPinUtil.resolvePins({
-        pins: qadamPinUtil.collectDistinctPins({ steps: qadamSteps }),
-        platformId,
-        log,
-    })
+}): Promise<PinSignals> {
+    const { data: platformId } = await tryCatch(() => projectService(log).getPlatformId(projectId))
+    if (isNil(platformId)) {
+        return emptyPinSignals()
+    }
+    const pins = qadamPinUtil.collectDistinctPins({ steps: qadamSteps })
+    const [qadamResolutions, unsupportedPins] = await Promise.all([
+        qadamPinUtil.resolvePins({ pins, platformId, log }),
+        frameworkCensusMarking(log).unsupportedPins({ qadamSteps, platformId }),
+    ])
+    return { qadamResolutions, unsupportedPins }
+}
+
+function emptyPinSignals(): PinSignals {
+    return {
+        qadamResolutions: new Map<string, boolean | undefined>(),
+        unsupportedPins: new Map<string, PinFrameworkSupport>(),
+    }
 }
 
 function hasSampleData(step: Step): boolean {
@@ -500,16 +520,9 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
                 // bundled (#474) — worth knowing before calling this tool in a hot loop over many
                 // distinct pins, though no worse than `ap_validate_flow` already accepts.
                 const qadamSteps = qadamPinUtil.getQadamSteps({ trigger: flow.version.trigger })
-                // `getPlatformId` throws when the project row carries no platform; this tool is a
-                // navigation read, so that degrades to "no pin info" (see above) rather than failing
-                // the response. Both signals below share the one lookup.
-                const { data: platformId } = await tryCatch(() => projectService(log).getPlatformId(mcp.projectId))
-                const qadamResolutions = !isNil(platformId) && qadamSteps.length > 0
-                    ? await resolveQadamPinAvailability({ qadamSteps, platformId, log })
-                    : new Map<string, boolean | undefined>()
-                const unsupportedPins = isNil(platformId)
-                    ? new Map<string, PinFrameworkSupport>()
-                    : await frameworkCensusMarking(log).unsupportedPins({ qadamSteps, platformId })
+                const { qadamResolutions, unsupportedPins } = qadamSteps.length === 0
+                    ? emptyPinSignals()
+                    : await resolvePinSignals({ qadamSteps, projectId: mcp.projectId, log })
                 const { structure, stepByName } = buildFlowStructure({ trigger: flow.version.trigger, qadamResolutions, unsupportedPins })
                 const positions = flowCanvasUtils.computeStepPositions(flow.version.trigger)
                 const localeSource = flow.version.localeSource ?? null
