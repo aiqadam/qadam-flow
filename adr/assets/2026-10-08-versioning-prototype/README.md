@@ -36,7 +36,7 @@ needed `xlsx@0.18.5`, which is no longer in the tree.
 All load `@aiqadam/*` from one built copy: a `node_modules/@aiqadam/{shared,qadams-framework,
 qadams-common}` symlinked to the worktree packages. Run with `node --expose-gc <script>`.
 
-Inputs the scripts expect: `tables/<version>/index.js` and `csv/<version>/index.js` bundles next to
+Inputs the scripts expect: `catalogue-metadata.js` reads the `own3p/` bundles; `tables/<version>/index.js` and `csv/<version>/index.js` bundles next to
 `load-versions.js` / `run-csv.js`; for `props-abi-diff.js`, `<qadam>/old.js` and `<qadam>/new.js` plus
 a `list.txt` of `<qadam> <oldVersion> <newVersion> <built:1|0>` lines; for `shared-copies.js`, two
 copies of `packages/shared/dist` (+ `package.json`, `node_modules` symlinked) in `s2/` and `s3/`, and

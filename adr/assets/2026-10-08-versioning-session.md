@@ -24,6 +24,7 @@ cite something outside themselves.
 | Already published packages that pin `shared` / `framework` / `common`? | Override them with the platform's libraries now; move to peer dependencies over time. |
 | When to fetch a missing version? | When a flow is published or imported — and also at start-up. |
 | Pin unavailable and unfetchable? | Move it automatically when compatible, with an audit record; otherwise "update this step". |
+| Pins older than the first npm publication (no metadata, so no compatibility check)? | Keep #424's caret fallback, adding a load check on the target and an audit record with revert (asked after the review of PR #790). |
 | Catalogue host | GitHub Pages under `flow.aiqadam.org`. |
 | Default registry | npmjs, with a configurable URL and token. |
 | Signature check | Mandatory for `@aiqadam/*`; a platform setting for custom qadams. |

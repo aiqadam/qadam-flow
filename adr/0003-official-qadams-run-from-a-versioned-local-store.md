@@ -34,23 +34,27 @@ qadam version.
 - **Catalogue.** Metadata for **every** version of every official qadam, with tarball integrity, is
   published as static JSON on GitHub Pages under `flow.aiqadam.org/catalog/v1/`. Releases append to
   it; slim images carry a snapshot; the URL is configurable for mirroring.
-- **Versions that were never published.** Official qadams were first published in early October
-  2026, current versions only (#476; e.g. `tables` has `0.5.1`, not `0.5.0` from 2026-09-29). Pins to
-  older versions — the #411 / #422 / #432 population — cannot be fetched and have no catalogue
-  entry. For them the platform keeps today's #424 behaviour: move to the image's version if it is
-  inside the pin's caret range, with an audit record; otherwise "update this step". The catalogue
-  covers every version published from then on.
+- **Versions that were never published.** Official qadams were first published between 2026-09-21
+  and 2026-10-07, about 25 a day (#583), current versions only (#476) — `tables` has `0.5.1`, not
+  `0.5.0` from 2026-09-29. Pins to older versions — the #411 / #422 / #432 population — cannot be
+  fetched and have no catalogue entry. For them the platform keeps #424's caret fallback, with two
+  additions it does not have today: the pin is moved only after the target version has loaded
+  successfully, and every move is written to an audit record and can be reverted. Otherwise the
+  step is marked "update this step". The catalogue covers every version published from then on.
 - **Unavailable version.** If a pinned version cannot be fetched, the step moves to the image's
   version only when that version is inside the pin's caret range (ADR-0001) and the catalogue shows
-  its props are compatible, with an audit record. Props compatibility does not prove the target
-  runs — upstream's register accepted an Oracle build that could not start (activepieces#15957) —
-  so the move stays inside the caret range and every move can be reverted from the audit record. Otherwise
+  its props are compatible, and the target version has loaded successfully, with an audit record.
+  The load check is there because neither props compatibility nor the caret range proves the
+  target runs — upstream moved Oracle pins within `^0.1.10` onto a build that could not start
+  (activepieces#15957). Every move can be reverted from the audit record. Otherwise
   the step is marked "version unavailable — update this step" in the builder, MCP and runs, and the
   flow is never disabled (#435).
 - **Qadams at `1.0.0`.** A qadam's `1.0.0` (ADR-0001) is the release that switches it to the
   bundle format; `0.x` versions are the legacy npm format.
 
-This answers #784 (every pinnable version stays resolvable, from the first published version on)
+This answers #784 (every pinnable version stays resolvable, from the first published version on;
+ADR-0001's snapshot prereleases keep `main` images from carrying unreleased code under a released
+number)
 and #785: a pin covers the qadam's own code and its third-party dependencies; the
 framework chain is the platform's, kept compatible by API discipline.
 
@@ -168,8 +172,8 @@ persistent volume, seeded by the image at start-up; custom qadams live in the sa
 per-platform namespace.
 
 **Harder / risks.**
-- Pins older than the first publication keep today's #424 caret fallback without a schema check,
-  because no metadata exists for them.
+- Pins older than the first publication keep #424's caret fallback without a schema check, because
+  no metadata exists for them; the load check and the audit record are what guard them.
 - Old qadam code runs on new libraries: a behaviour change in `framework` / `common` changes old
   qadams too. Mitigated by the API gate and ADR-0002.
 - Bundling has edge cases (`import.meta`, native modules: `crypto` failed to load, `sftp`, `duckdb`
@@ -223,5 +227,6 @@ per-version fixes `migrate-v24`, `-v25`, `-v27`).
   (replaces the metadata half of #778).
 - Images `:fat` and `:slim`, `:latest` = `:fat` with a deprecation entry; `run.sh` installs `:slim`
   and takes `QADAM_REGISTRY_URL` / `QADAM_REGISTRY_TOKEN` (fat absorbs #780's seed cache).
-- Unavailable-version fallback with a props-compatibility check and audit; "update this step" UX.
+- Unavailable-version fallback: caret range, props-compatibility check where metadata exists, load
+  check, audit record with revert; "update this step" UX.
 - Re-scope or close #477 and #478 against this ADR once accepted; answer #785 with a link.

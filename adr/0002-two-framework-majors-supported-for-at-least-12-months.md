@@ -31,12 +31,18 @@ The policy is enforced, not remembered:
   and the gate.
 
 Each instance makes a retirement safe locally with a **census**: from its own database it counts
-the steps pinned to qadam versions built against each major, reading each pinned version's context
-version from `qadam_metadata`. That needs a new column: `contextInfo` exists today only on the
-in-memory metadata type (`packages/qadams/framework/src/lib/qadam-metadata.ts:112-117` at `94dc9ae3`)
-and is not persisted (`packages/server/api/src/app/qadams/metadata/qadam-metadata-entity.ts` has no
-such column). A pin whose context version is unknown counts as "still needs the old contract", so
-the census errs towards keeping a shim. Before an upgrade a
+the steps pinned to qadam versions built against each major, and needs each pinned version's context version:
+- **Official qadams** never have rows in `qadam_metadata` (only custom installs write there, and
+  #503 refuses official names). Every official version built in this repository reports V2
+  (`LATEST_CONTEXT_VERSION` since `f611ac80`); from `1.0.0` on, an official version's framework major
+  is the major of `@aiqadam/qadams-framework` that its published `package.json` depends on.
+- **Custom and installed qadams** — the population the shims protect — need a new `qadam_metadata`
+  column: `contextInfo` exists today only on the in-memory metadata type
+  (`packages/qadams/framework/src/lib/qadam-metadata.ts:112-117` at `94dc9ae3`) and is not persisted
+  (`packages/server/api/src/app/qadams/metadata/qadam-metadata-entity.ts` has no such column). A
+  custom pin whose context version is unknown counts as "still needs the old contract", so the
+  census errs towards keeping a shim.
+ Before an upgrade a
 `doctor` command lists the steps a release will stop running; after it, affected steps are marked
 "framework version no longer supported — update this step" in the builder, MCP and runs, an
 operator banner and log line appear, and the release starts normally — it does not block, and no
@@ -94,7 +100,8 @@ fail at run time on someone's instance with no warning (#775).
 ### Option E — a pin migration per retirement (the `migrate-v24` … `v30` shape)
 
 Rejected. A hand-written file per change that silently moves published steps onto different code —
-the pattern this repository is moving away from (#411, #422, #432).
+the pattern whose own last instance says "the next republish after this one needs its own file
+too" (`packages/server/api/src/app/flows/flow-version/migrations/migrate-v30-ai-qadam-version-redo-4.ts`).
 
 ### Option F — block the upgrade until an operator confirms
 
@@ -117,7 +124,8 @@ than marked steps with a clear repair path.
 
 - `LATEST_CONTEXT_VERSION = ContextVersion.V2` at `f611ac80` and at `94dc9ae3`
   (`packages/qadams/framework/src/lib/context/versioning.ts:17`).
-- Prototype on `94dc9ae3`: `tables@0.3.1`, `@0.4.5` and `@0.5.1` all report `contextVersion=2`.
+- Prototype on `94dc9ae3`: `tables@0.3.1`, `@0.4.5` and `@0.5.1` all report `contextVersion=2`
+  (`adr/assets/2026-10-08-versioning-prototype/load-versions.js`).
 - `@aiqadam/qadams-framework` is at `0.35.0` on `94dc9ae3`; no 1.0.0 has been published.
 
 ## Follow-ups
@@ -125,8 +133,8 @@ than marked steps with a clear repair path.
 - Support table and the CI gate (removal, missing row, unsupported major), with fixture tests.
 - The support-window paragraph in `.agents/rules/versioning.md` and `CONTRIBUTING.md` (ADR-0001).
 - Replace the `Remove after 2026-10-12` comments with a reference to this ADR (#775).
-- Persist each qadam version's `contextInfo` in `qadam_metadata` (new column, backfilled from the
-  bundled builds).
-- Census: query over stored flow versions → pinned `name@version` → context version from
-  `qadam_metadata`; `doctor` command; admin and MCP surfaces; post-upgrade marking.
+- Persist `contextInfo` for custom and installed qadams in `qadam_metadata` (new column; existing
+  rows backfilled by loading the stored archive, unknown otherwise).
+- Census: query over stored flow versions → pinned `name@version` → context version (official:
+  V2 or the framework major in its `package.json`; custom: `qadam_metadata`); `doctor` command; admin and MCP surfaces; post-upgrade marking.
 - SDK docs: the support window for qadam authors.
