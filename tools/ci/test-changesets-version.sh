@@ -70,6 +70,16 @@ check 'root package.json follows the platform' "$(version_of "$d")" 3.0.0
 check 'no other package moved' "$(version_of "$d/packages/qadams/core/slack")" 1.2.0
 check 'the consumed changeset is deleted' "$(ls "$d/.changeset" | grep -c '\.md$')" 0
 
+echo "== #798: the root holds the last release, a pending major takes it to 2.0.0 =="
+d="$(new_repo realigned)"
+write "$d/package.json" '{ "name": "qadam-flow", "version": "1.1.0", "private": true, "workspaces": ["packages/platform", "packages/shared", "packages/qadams/framework", "packages/qadams/common", "packages/qadams/core/*"] }'
+write "$d/packages/platform/package.json" '{ "name": "@aiqadam/platform", "version": "1.1.0", "private": true }'
+write "$d/.changeset/platform-2-0-0.md" $'---\n"@aiqadam/platform": major\n---\n\nThe first release under ADR-0001.'
+git -C "$d" add -A && git -C "$d" commit -q -m realign
+run_version "$d"; check 'version script exits 0' "$?" 0
+check 'the first release PR raises the platform to 2.0.0' "$(version_of "$d/packages/platform")" 2.0.0
+check 'and the root with it, which v2.0.0 must then match' "$(version_of "$d")" 2.0.0
+
 echo "== a qadam patch leaves the platform alone =="
 d="$(new_repo qadam-patch)"
 write "$d/.changeset/fix.md" $'---\n"@aiqadam/qadam-slack": patch\n---\n\nFix.'

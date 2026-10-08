@@ -72,11 +72,14 @@ support table and gate 8, which fails a removal the table does not allow, landed
 
 A PR that changes a versioned package adds a `.changeset/*.md` naming each package, its level and
 one line on what changed. The release PR collects them, raises versions (dependents inside the repo
-included), writes changelogs and tags. Root `package.json` holds the last released version; images
-built from `main` report `<next>-main.<n>` (#798). How a `main` build versions *changed package* code
+included), writes changelogs and tags. Root `package.json` (and `@aiqadam/platform`) holds the last
+released version — `1.1.0` until the first release PR takes it to `2.0.0` with the pending platform
+`major` — and only the release PR moves it. Images built from `main` report `<next>-main.<n>`: the
+root raised by the pending platform changesets (at least a patch), with `<n>` the CI run number
+(`node tools/ci/compute-main-version.mjs --next` prints `<next>`, the release a change merged now
+ships in — e.g. a migration's `release`). How a `main` build versions *changed package* code
 is [ADR-0004](../../adr/0004-main-builds-give-changed-packages-their-own-prerelease-versions.md),
-still `proposed` and so not binding (snapshot `-main.<n>` versions, gate 9). Until #798 lands it reads `2.0.0` while the latest
-tag is `v1.1.0` (#326): leave it alone outside a release. `@aiqadam/shared` is private and bundled
+still `proposed` and so not binding (snapshot `-main.<n>` versions, gate 9). `@aiqadam/shared` is private and bundled
 into `qadams-framework` (#799). Gates 1–7 (#797) and gate 8 (#801, landed) are required; the maintainer-only
 `semver-override` label bypasses gate 2 alone, when CI over-estimates the level.
 

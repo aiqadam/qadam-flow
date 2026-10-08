@@ -58,6 +58,27 @@ describe('Qadam resolution and platform-scoped filtering', () => {
         })
     })
 
+    describe('GET /v1/qadams/registry — the release an image built from main reports (#798)', () => {
+        // The builder sends CURRENT_VERSION as `release`; on a main image that is `<next>-main.<n>`,
+        // which the query answered with 400 while it accepted only x.y.z.
+        it.each(['2.0.0-main.1234', '1.1.0'])('answers 200 for release=%s', async (release) => {
+            await qadamCache(mockLog).setup()
+
+            const ctx = await createTestContext(app!)
+            const response = await ctx.get('/v1/qadams/registry', { release })
+
+            expect(response.statusCode).toBe(StatusCodes.OK)
+            expect(Array.isArray(response.json())).toBe(true)
+        })
+
+        it('still answers 400 for a release that is not a version', async () => {
+            const ctx = await createTestContext(app!)
+            const response = await ctx.get('/v1/qadams/registry', { release: 'latest' })
+
+            expect(response.statusCode).toBe(StatusCodes.BAD_REQUEST)
+        })
+    })
+
     describe('GET /v1/qadams/:scope/:name — specific qadam lookup', () => {
         it('returns the bundled qadam by scoped name', async () => {
             await qadamCache(mockLog).setup()

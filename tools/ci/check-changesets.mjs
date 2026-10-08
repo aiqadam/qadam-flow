@@ -10,7 +10,8 @@
 //      names one that changesets is configured never to version;
 //   3. a versioned package's `version` (or the root `package.json`'s) was edited by hand — only the
 //      release PR (`changeset-release/*`, opened by .github/workflows/changesets.yml) raises
-//      versions, otherwise a hand bump plus a changeset raises the version twice;
+//      versions, otherwise a hand bump plus a changeset raises the version twice. One edit is not a
+//      bump and passes: a REALIGNMENT of the platform (see "REALIGNING THE PLATFORM" below);
 //   4. a changeset declares a platform major (`"@aiqadam/platform": major`) and
 //      `docs/install/configuration/breaking-changes.mdx` was not modified in the same PR (gate 4;
 //      the tag-time half is in check-breaking-change-changelog.sh);
@@ -54,6 +55,22 @@
 // section. Dropping it from the framework or `common` changes what they ship and is not exempt.
 //
 // ---------------------------------------------------------------------------
+// REALIGNING THE PLATFORM TO THE LAST RELEASE
+// ---------------------------------------------------------------------------
+// ADR-0001: the root `package.json` (and `@aiqadam/platform`, which the release PR copies into it)
+// holds the LAST RELEASED version. A tree can drift from that — #326 raised both to 2.0.0 by hand
+// while the newest tag stayed v1.1.0 — and the only way back is a hand edit. That edit is allowed
+// when all of these hold, and is reported as a realignment instead of a hand bump:
+//   - the file is the root `package.json` or `packages/platform/package.json`;
+//   - the new version is exactly the newest `vX.Y.Z` tag (prerelease tags ignored) reachable from the
+//     PR's head — the version the ADR says the file must hold, and nothing else;
+//   - the changesets pending at head (every `.changeset/*.md`, not only this PR's) take the platform
+//     from that version back to at least the version the base held, so no release number the tree
+//     already claimed is handed out again lower (2.0.0 -> 1.1.0 needs a pending platform `major`).
+// Once the root equals the newest tag there is nothing left to realign, so the rule cannot fire
+// twice; a tag that is missing locally (shallow clone) simply leaves the edit a failure.
+//
+// ---------------------------------------------------------------------------
 // A CHANGE TO `@aiqadam/shared` IS ALSO A CHANGE TO `qadams-framework`
 // ---------------------------------------------------------------------------
 // The framework's tarball vendors all of `shared`'s build and re-exports from it
@@ -78,6 +95,10 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 export const changesetGate = {
+  parseChangeset: (...args) => parseChangeset(...args),
+  pendingLevel: (...args) => pendingLevel(...args),
+  bumpVersion: (...args) => bumpVersion(...args),
+  parseReleaseVersion: (...args) => parseReleaseVersion(...args),
   loadWorkspace: (...args) => loadWorkspace(...args),
   readAddedChangesets: (...args) => readAddedChangesets(...args),
   declaredLevels: (...args) => declaredLevels(...args),
@@ -96,6 +117,8 @@ const PLATFORM_PACKAGE = '@aiqadam/platform'
 const PLATFORM_DIR = 'packages/platform'
 const BREAKING_CHANGES_DOC = 'docs/install/configuration/breaking-changes.mdx'
 const RELEASE_BRANCH_PREFIX = 'changeset-release/'
+const REALIGNABLE_FILES = ['package.json', `${PLATFORM_DIR}/package.json`]
+const RELEASE_TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 const CHANGESET_DIR = '.changeset'
 
 const main = () => {
@@ -142,11 +165,20 @@ const evaluate = ({ range }) => {
   const needs = new Map()
   const versionEdits = []
   const isReleaseBranch = (process.env.GITHUB_HEAD_REF ?? '').startsWith(RELEASE_BRANCH_PREFIX)
+  const realignment = isReleaseBranch ? null : resolveRealignment({ range })
+  const realigned = []
+  const recordVersionEdit = ({ file }) => {
+    if (realignment?.allowed && REALIGNABLE_FILES.includes(file)) {
+      realigned.push(file)
+      return
+    }
+    versionEdits.push(file)
+  }
 
   for (const file of files) {
     if (file === 'package.json') {
       if (!isReleaseBranch && versionChanged({ range, file })) {
-        versionEdits.push(file)
+        recordVersionEdit({ file })
       }
       continue
     }
@@ -171,7 +203,7 @@ const evaluate = ({ range }) => {
         }
       }
       if (!isReleaseBranch && versionChanged({ range, file })) {
-        versionEdits.push(file)
+        recordVersionEdit({ file })
       }
     }
   }
@@ -181,7 +213,8 @@ const evaluate = ({ range }) => {
     failures.push(`${entry.pkg.name} (${entry.pkg.dir}) has no changeset in this PR — ${entry.reasons.join('; ')}`)
   }
   for (const file of versionEdits) {
-    failures.push(`${file}: "version" was edited by hand. Under ADR-0001 only the release PR raises versions — revert the edit and declare the level in a changeset instead`)
+    const why = REALIGNABLE_FILES.includes(file) && realignment !== null && !realignment.allowed ? ` (not a realignment: ${realignment.reason})` : ''
+    failures.push(`${file}: "version" was edited by hand${why}. Under ADR-0001 only the release PR raises versions — revert the edit and declare the level in a changeset instead`)
   }
 
   if (declared.get(PLATFORM_PACKAGE) === 'major' && !files.includes(BREAKING_CHANGES_DOC)) {
@@ -197,14 +230,17 @@ const evaluate = ({ range }) => {
     failures.push(`root package.json is ${rootVersion} but ${PLATFORM_DIR}/package.json is ${platformVersion} — they must agree (the release PR's version script keeps them in step)`)
   }
 
-  return { failures, needs: [...needs.values()], missing, declared, changesets, files }
+  return { failures, needs: [...needs.values()], missing, declared, changesets, files, realigned, realignment }
 }
 
 const printReport = ({ report, range }) => {
-  const { failures, needs, declared, changesets } = report
+  const { failures, needs, declared, changesets, realigned, realignment } = report
   console.log(`[check-changesets] range ${range.label}: ${changesets.length} changeset(s) added, ${needs.length} versioned package(s) changed`)
   for (const [name, level] of declared) {
     console.log(`  declared  ${name}: ${level}`)
+  }
+  for (const file of realigned) {
+    console.log(`  realigned ${file}: ${realignment.from} -> ${realignment.to}, the last release tag ${realignment.tag}; the pending platform changesets take the next release to ${realignment.next} (ADR-0001: the root holds the last released version)`)
   }
   if (failures.length === 0) {
     console.log('[check-changesets] OK — every changed versioned package has a changeset.')
@@ -375,6 +411,81 @@ const declaredLevels = ({ changesets }) => {
     }
   }
   return declared
+}
+
+// Highest level any of `changesets` declares for `name`; 'none' when none names it.
+const pendingLevel = ({ changesets, name }) => {
+  return changesets
+    .flatMap(({ releases }) => releases)
+    .filter((release) => release.name === name)
+    .reduce((highest, { level }) => (LEVEL_RANK[level] > LEVEL_RANK[highest] ? level : highest), 'none')
+}
+
+// `X.Y.Z` (no prerelease, no build metadata) as numbers, or null.
+const parseReleaseVersion = ({ version }) => {
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(version ?? '')
+  return match ? match.slice(1, 4).map(Number) : null
+}
+
+// What `changeset version` gives a release version for a level (no pre mode).
+const bumpVersion = ({ version, level }) => {
+  const parts = parseReleaseVersion({ version })
+  if (parts === null) {
+    throw new Error(`'${version}' is not an X.Y.Z release version`)
+  }
+  const [major, minor, patch] = parts
+  switch (level) {
+    case 'major': return `${major + 1}.0.0`
+    case 'minor': return `${major}.${minor + 1}.0`
+    case 'patch': return `${major}.${minor}.${patch + 1}`
+    case 'none': return version
+    default: throw new Error(`unknown level '${level}'`)
+  }
+}
+
+const compareReleaseVersions = ({ a, b }) => {
+  const [left, right] = [parseReleaseVersion({ version: a }), parseReleaseVersion({ version: b })]
+  const index = [0, 1, 2].find((i) => left[i] !== right[i])
+  return index === undefined ? 0 : Math.sign(left[index] - right[index])
+}
+
+// See "REALIGNING THE PLATFORM TO THE LAST RELEASE". `allowed: false` carries the reason, which the
+// hand-edit failure then quotes; null when the root version did not change at all.
+const resolveRealignment = ({ range }) => {
+  const from = readJsonAt({ sha: range.base, file: 'package.json' })?.version
+  const to = readJsonAt({ sha: range.head, file: 'package.json' })?.version
+  if (from === to) {
+    return null
+  }
+  const deny = (reason) => ({ allowed: false, reason })
+  const tags = (gitOrNull({ args: ['tag', '--merged', range.head, '--list', 'v*'] }) ?? '')
+    .split('\n')
+    .filter((tag) => RELEASE_TAG.test(tag))
+    .sort((a, b) => compareReleaseVersions({ a: b.slice(1), b: a.slice(1) }))
+  const tag = tags[0]
+  if (tag === undefined) {
+    return deny(`no vX.Y.Z release tag is reachable from ${range.head}`)
+  }
+  if (to !== tag.slice(1)) {
+    return deny(`${to} is not the last release tag ${tag}`)
+  }
+  if (parseReleaseVersion({ version: from }) === null) {
+    return deny(`the base version '${from}' is not an X.Y.Z release version`)
+  }
+  const level = pendingLevel({ changesets: readPendingChangesets({ sha: range.head }), name: PLATFORM_PACKAGE })
+  const next = bumpVersion({ version: to, level })
+  if (compareReleaseVersions({ a: next, b: from }) < 0) {
+    return deny(`the changesets pending at head take the platform from ${to} only to ${next}, below the ${from} the base held — add a "${PLATFORM_PACKAGE}" changeset that reaches it`)
+  }
+  return { allowed: true, from, to, tag, next }
+}
+
+// Every changeset present at `sha`, parsed; malformed ones count as declaring nothing.
+const readPendingChangesets = ({ sha }) => {
+  const out = gitOrNull({ args: ['ls-tree', '--name-only', `${sha}:${CHANGESET_DIR}`] }) ?? ''
+  return out.split('\n')
+    .filter((name) => name.endsWith('.md') && name.toLowerCase() !== 'readme.md')
+    .map((name) => parseChangeset({ text: readFileAt({ sha, file: `${CHANGESET_DIR}/${name}` }) ?? '' }))
 }
 
 const addReason = ({ needs, pkg, reason, dependencyChange = false, srcChange = false }) => {

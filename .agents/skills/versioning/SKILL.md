@@ -77,7 +77,11 @@ No gate checks this (ADR-0001); the line is how a reviewer checks it.
 1. Check what the branch already did: `git diff origin/main...HEAD -- .changeset/`. One changeset
    per package is enough; if it already declares the level you need, stop.
 2. Add the changeset (step 5). Never edit `version` in a package's own `package.json` (or the
-   root): only the release PR raises versions, and gate 1 fails a hand edit.
+   root): only the release PR raises versions, and gate 1 fails a hand edit. The one edit gate 1
+   accepts is a realignment of the root and `@aiqadam/platform` to the newest `vX.Y.Z` tag when
+   the tree has drifted from it, together with a pending platform changeset that brings the next
+   release back to at least the old number (#798 did it once: `2.0.0` → `1.1.0` plus a `major`).
+   The rule is in `tools/ci/check-changesets.mjs`, "REALIGNING THE PLATFORM".
 3. Changed a qadam's dependencies? Gate 1 requires the changeset. Changed a prop?
    `npm run check-required-prop-defaults` must pass — it accepts the breaking slot declared in a
    changeset (a hand-edited version fails gate 1 instead). On a Renovate branch

@@ -14,5 +14,10 @@ Changesets versions workspace packages only — a changeset naming the monorepo 
   then copies this package's version into the root `package.json`;
 - `tools/ci/check-changesets.mjs` fails any PR in which the two disagree.
 
+Both hold the **last released** version (ADR-0001), never the next one: `1.1.0` until the first
+release PR, which the pending `"@aiqadam/platform": major` (`.changeset/platform-2-0-0.md`) takes to
+`2.0.0`. Images built from `main` report `<next>-main.<n>` instead, computed from this version and
+the pending platform changesets by `tools/ci/compute-main-version.mjs` (#798).
+
 It is `private` and has no dependencies, so it is never published and no other package's release
 can cascade into it.

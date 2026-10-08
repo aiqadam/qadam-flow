@@ -882,6 +882,43 @@ jobs:
           echo "::error::mint produced no verdict — it did not complete. Treating as a failure."
           exit 1
 
+  # The platform version this build's image reports (ADR-0001 "The platform version", #798):
+  # `<next>-main.<n>`, where <next> is what the release PR would make of the root package.json given
+  # the pending `@aiqadam/platform` changesets, and <n> is `github.run_number` — monotonic across
+  # runs of this workflow, stable across re-runs of one, and the counter ADR-0004 reuses for package
+  # snapshots. The rules, and why there is no pending-platform case that reports the root itself,
+  # are in tools/ci/compute-main-version.mjs; tools/ci/test-main-version.sh pins them in `verify`.
+  #
+  # One job rather than a step in `image`, so both matrix legs and `image_publish` read the same
+  # string instead of computing it three times. Computed on every event, including PRs: a PR's
+  # build never pushes, but it is the only run of the Dockerfile's stamp step before a merge.
+  # Builtins-only node, no install, so it costs seconds and does not wait on `verify`.
+  platform-version:
+    name: Compute the platform version
+    needs: [changes]
+    if: needs.changes.outputs.docs_only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      # An assignment, not `echo "version=$(…)"`: bash's -e ignores a failing command substitution
+      # inside another command's arguments, which would publish an empty version.
+      - name: Compute <next>-main.<n>
+        id: version
+        run: |
+          version="$(node tools/ci/compute-main-version.mjs --counter "$GITHUB_RUN_NUMBER")"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Platform version of this build: \`${version}\`" >> "$GITHUB_STEP_SUMMARY"
+
   # Kept on PRs: it is the only place the Dockerfile path itself is built, including the
   # vite bundle and the engine's esbuild, which no other job exercises — `verify` type-checks
   # but does not bundle. Not a required status check, so a PR can be merged while it is still
@@ -900,7 +937,7 @@ jobs:
   # (native runner, so no slower than amd64's leg — matrix legs run in parallel).
   image:
     name: Docker Image (${{ matrix.platform }})
-    needs: [changes, verify]
+    needs: [changes, verify, platform-version]
     if: needs.changes.outputs.docs_only != 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -954,12 +991,22 @@ jobs:
         id: build_meta
         run: echo "timestamp=$(git show -s --format=%cI ${{ github.sha }})" >> "$GITHUB_OUTPUT"
 
+      # Tag scheme (ADR-0001): the exact version this image reports (`:2.0.0-main.1234`) plus the
+      # moving `:main` and the per-commit `:sha-<short>`. The version tag has the highest priority, so
+      # metadata-action also writes it to the `org.opencontainers.image.version` label, next to
+      # `org.opencontainers.image.revision` (the commit) — the `<n>` -> commit record ADR-0004 asks
+      # for. Must match `image_publish`'s list below, which is what actually gets pushed.
+      #
+      # Flavours (#807, ADR-0003) are not built yet. When they are, each tag here takes a
+      # `-<flavour>` suffix (`:<version>-<flavour>`, `:main-<flavour>`), e.g. via metadata-action's
+      # `flavor: suffix=-<flavour>` on a matrix over flavours.
       - name: Compute image tags and labels
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/aiqadam/qadam-flow
           tags: |
+            type=raw,value=${{ needs.platform-version.outputs.version }},priority=1000
             type=ref,event=branch
             type=sha,format=short,prefix=sha-
           labels: |
@@ -988,6 +1035,7 @@ jobs:
             TURBO_TEAM=${{ env.TURBO_TEAM }}
             COMMIT_SHA=${{ github.sha }}
             BUILD_TIMESTAMP=${{ steps.build_meta.outputs.timestamp }}
+            PLATFORM_VERSION=${{ needs.platform-version.outputs.version }}
 
       - name: Build and push by digest (main)
         id: build
@@ -1007,6 +1055,7 @@ jobs:
             TURBO_TEAM=${{ env.TURBO_TEAM }}
             COMMIT_SHA=${{ github.sha }}
             BUILD_TIMESTAMP=${{ steps.build_meta.outputs.timestamp }}
+            PLATFORM_VERSION=${{ needs.platform-version.outputs.version }}
           outputs: type=image,name=ghcr.io/aiqadam/qadam-flow,push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest
@@ -1034,7 +1083,7 @@ jobs:
   # default all-needs-succeeded gate.
   image_publish:
     name: Publish multi-arch manifest
-    needs: [image]
+    needs: [image, platform-version]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1058,12 +1107,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Same list as `image` above: `:<version>`, `:main`, `:sha-<short>`.
       - name: Compute image tags
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/aiqadam/qadam-flow
           tags: |
+            type=raw,value=${{ needs.platform-version.outputs.version }},priority=1000
             type=ref,event=branch
             type=sha,format=short,prefix=sha-
 
@@ -1103,7 +1154,7 @@ jobs:
     # `needs:` list defaults to requiring every needed job to have *succeeded*, which would
     # silently skip this job on every PR. The explicit `always() && ...` below is what tolerates
     # that skip instead of falling into it; do not simplify this back to a plain needs list.
-    needs: [changes, image, image_publish]
+    needs: [changes, platform-version, image, image_publish]
     # push and workflow_dispatch always run it. A pull_request only does when it touches the
     # suite or this workflow: the real trigger cannot be proven on the PR that adds it, and
     # ~10 min on every unrelated PR is not worth paying for a signal about `main`.
@@ -1257,6 +1308,24 @@ jobs:
       # is really a boot failure.
       - name: Wait for the API to answer
         run: tools/ci/wait-for-api.sh http://localhost:8080/api/v1/flags 300
+
+      # #798, end to end: the running app reports the version `platform-version` computed for this
+      # build — read back through the flags API, i.e. `apVersionUtil.getCurrentRelease()` inside the
+      # container, not the build argument that was passed in. Push only: on a PR or a dispatch this
+      # job boots the last published `:main`, whose version came from another run.
+      - name: Assert the image reports this build's platform version
+        if: github.event_name == 'push'
+        env:
+          EXPECTED: ${{ needs.platform-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          flags="$(curl -fsS http://localhost:8080/api/v1/flags)"
+          reported="$(jq -r '.CURRENT_VERSION // empty' <<< "$flags")"
+          if [ -z "$EXPECTED" ] || [ "$reported" != "$EXPECTED" ]; then
+            echo "::error::The app reports CURRENT_VERSION '${reported}', but this build's platform version is '${EXPECTED}'."
+            exit 1
+          fi
+          echo "The app reports ${reported}."
 
       # Phase 1 of 2: everything that does not need SMTP, against a fresh database.
       #

@@ -415,6 +415,13 @@ jobs:
       - name: Test the release PR version step
         run: tools/ci/test-changesets-version.sh
 
+      # The version an image built from `main` reports (#798): ci.yml's `platform-version` job
+      # computes `<next>-main.<n>` and the Dockerfile stamps it. A real build only ever walks one
+      # accept path through each, so the other levels and every reject/UNKNOWN case are pinned here.
+      # Below the install only because it checks the results' order with the repo's own `semver`.
+      - name: Test the main-build platform version
+        run: tools/ci/test-main-version.sh
+
       # ADR-0001 gate 6. Full tree, not a diff: the ESLint ban (packages/qadams/eslint.config.mjs,
       # #786) can be silenced by a disable comment; this scan cannot.
       - name: Test the qadam shared-imports checker
