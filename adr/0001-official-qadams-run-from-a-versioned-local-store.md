@@ -32,13 +32,15 @@ qadam version.
   published as static JSON on GitHub Pages under `flow.aiqadam.org/catalog/v1/`. Releases append to
   it; slim images carry a snapshot; the URL is configurable for mirroring.
 - **Unavailable version.** If a pinned version cannot be fetched, the step moves to the image's
-  version only when the catalogue shows its props are compatible, with an audit record. Otherwise
+  version only when that version is inside the pin's caret range (ADR-0003) and the catalogue shows
+  its props are compatible, with an audit record. Otherwise
   the step is marked "version unavailable — update this step" in the builder, MCP and runs, and the
   flow is never disabled (#435).
 - **The SDK.** The 104 symbols qadams import from `@aiqadam/shared` move into
   `@aiqadam/qadams-framework`, which re-exports them; qadams may no longer import `shared`.
   `qadams-framework@1.0.0` is cut when that move, the import ban and the API-diff gate are in
-  place; from then on the support policy in ADR-0002 applies.
+  place; from then on the support policy in ADR-0002 applies. `shared` itself stops being
+  published (ADR-0003). What each version number means, and how it is raised, is ADR-0003.
 
 This answers #785: a pin covers the qadam's own code and its third-party dependencies; the
 framework chain is the platform's, kept compatible by API discipline.
@@ -130,7 +132,7 @@ version.
 | Signature check | Mandatory for `@aiqadam/*`; setting for custom | Mandatory for everything: customers' private registries may not carry npm signatures |
 | Default image | `run.sh` → `:slim`; `:latest` = `:fat` | `:latest` = `:slim`: a plain `docker compose pull` would silently turn existing installs into slim ones that need a registry; dropping `:latest` breaks every existing install |
 | GC | Image-shipped versions never; others after 10 days unreferenced | One rule for all: the image would re-seed what GC just removed |
-| Already published 238 versions | Republish in the new format only when each qadam next changes; older versions installed from npm with `@aiqadam/*` overridden | Mass republish: a release of every qadam with no code change |
+| Already published 238 versions | Republish in the new format — as `1.0.0` (ADR-0003) — only when each qadam next changes; older versions installed from npm with `@aiqadam/*` overridden | Mass republish: a release of every qadam with no code change |
 | Registry at install | `QADAM_REGISTRY_URL` / `QADAM_REGISTRY_TOKEN` passed to `run.sh`, reachability checked, `:fat` suggested on failure | Configure later only: a slim install behind a proxy would look healthy and fail on first use; reading the host's `~/.npmrc`: host and container config differ and tokens would move silently |
 | `qadams-framework@1.0.0` | When the SDK move, import ban and API-diff gate are in place | Now: the first `shared` move would force 2.0 at once; at the first external author: too late for a contract |
 

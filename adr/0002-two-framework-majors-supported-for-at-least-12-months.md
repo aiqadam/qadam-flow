@@ -12,7 +12,7 @@ superseded-by: null         # set when a later ADR replaces this one
 ## Decision
 
 From `@aiqadam/qadams-framework@1.0.0` (cut as described in ADR-0001), the engine ↔ qadam contract
-follows semver on the framework: a new `context` version is a new **framework major**, and the
+follows semver on the framework as defined in ADR-0003: a new `context` version is a new **framework major**, and the
 platform runs qadams built against the **current and the previous major**. A previous major stays
 supported for **at least 12 months after the next major is released**, even if a third major
 ships in that time.
@@ -24,8 +24,9 @@ The policy is enforced, not remembered:
   says its major is still supported, when a framework major is released without a row, or when an
   official qadam is built against a major the engine no longer supports. The gate is monotonic:
   the passage of time can only allow a removal, never make existing code fail.
-- **A convention** in `.agents/rules/` (listed in the AGENTS.md rules index) and in
-  `CONTRIBUTING.md` states the rule for agents and humans and points at the table and the gate.
+- **A convention** in `.agents/rules/versioning.md` (ADR-0003's rule, listed in the AGENTS.md rules
+  index) and in `CONTRIBUTING.md` states the rule for agents and humans and points at the table
+  and the gate.
 
 Each instance makes a retirement safe locally with a **census**: from its own database and qadam
 store it counts the steps pinned to qadam versions built against each major. Before an upgrade a
@@ -111,7 +112,7 @@ than marked steps with a clear repair path.
 ## Follow-ups
 
 - Support table and the CI gate (removal, missing row, unsupported major), with fixture tests.
-- Convention rule in `.agents/rules/` + AGENTS.md index row; paragraph in `CONTRIBUTING.md`.
+- The support-window paragraph in `.agents/rules/versioning.md` and `CONTRIBUTING.md` (ADR-0003).
 - Replace the `Remove after 2026-10-12` comments with a reference to this ADR (#775).
 - Census: query over stored flow versions → pinned `name@version` → framework major from the store
   metadata (ADR-0001); `doctor` command; admin and MCP surfaces; post-upgrade marking.
