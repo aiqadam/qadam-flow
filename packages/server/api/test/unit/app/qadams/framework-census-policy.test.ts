@@ -1,9 +1,9 @@
-import { ContextVersion, FrameworkContextVersion, LATEST_CONTEXT_VERSION, PREDATES_CONTEXT_INFO } from '@aiqadam/qadams-framework'
+import { ContextVersion, LATEST_CONTEXT_VERSION, PREDATES_CONTEXT_INFO } from '@aiqadam/qadams-framework'
 import { FastifyBaseLogger } from 'fastify'
-import { MockInstance } from 'vitest'
 import { frameworkCensusMarking } from '../../../../src/app/qadams/census/framework-census-marking'
 import { frameworkCensusPolicy } from '../../../../src/app/qadams/census/framework-census-policy'
 import { UNRECOGNISED_CONTEXT_VERSION } from '../../../../src/app/qadams/metadata/qadam-context-version'
+import { withEngineContextVersions } from '../../../helpers/framework-census'
 
 describe('frameworkCensusPolicy (#803)', () => {
     it('reports no retirement while the engine runs every context version the table lists', () => {
@@ -12,9 +12,12 @@ describe('frameworkCensusPolicy (#803)', () => {
     })
 
     it('reports the context versions the table lists but the engine no longer runs', async () => {
-        await withEngineContextVersions([LATEST_CONTEXT_VERSION], () => {
-            expect(frameworkCensusPolicy.hasRetiredContextVersion()).toBe(true)
-            expect(frameworkCensusPolicy.retiredContextVersions()).toEqual([PREDATES_CONTEXT_INFO, ContextVersion.V1])
+        await withEngineContextVersions({
+            contextVersions: [LATEST_CONTEXT_VERSION],
+            run: () => {
+                expect(frameworkCensusPolicy.hasRetiredContextVersion()).toBe(true)
+                expect(frameworkCensusPolicy.retiredContextVersions()).toEqual([PREDATES_CONTEXT_INFO, ContextVersion.V1])
+            },
         })
     })
 
@@ -29,8 +32,11 @@ describe('frameworkCensusPolicy (#803)', () => {
 
     it('treats an unknown context version as legacy before the retirement and unsupported after it', async () => {
         expect(frameworkCensusPolicy.statusOf({ contextVersion: null })).toBe('legacy')
-        await withEngineContextVersions([LATEST_CONTEXT_VERSION], () => {
-            expect(frameworkCensusPolicy.statusOf({ contextVersion: null })).toBe('unsupported')
+        await withEngineContextVersions({
+            contextVersions: [LATEST_CONTEXT_VERSION],
+            run: () => {
+                expect(frameworkCensusPolicy.statusOf({ contextVersion: null })).toBe('unsupported')
+            },
         })
     })
 
@@ -39,9 +45,12 @@ describe('frameworkCensusPolicy (#803)', () => {
         expect(frameworkCensusPolicy.statusOf({ contextVersion: ContextVersion.V1 })).toBe('legacy')
         expect(frameworkCensusPolicy.statusOf({ contextVersion: PREDATES_CONTEXT_INFO })).toBe('legacy')
 
-        await withEngineContextVersions([LATEST_CONTEXT_VERSION], () => {
-            expect(frameworkCensusPolicy.statusOf({ contextVersion: ContextVersion.V1 })).toBe('unsupported')
-            expect(frameworkCensusPolicy.statusOf({ contextVersion: PREDATES_CONTEXT_INFO })).toBe('unsupported')
+        await withEngineContextVersions({
+            contextVersions: [LATEST_CONTEXT_VERSION],
+            run: () => {
+                expect(frameworkCensusPolicy.statusOf({ contextVersion: ContextVersion.V1 })).toBe('unsupported')
+                expect(frameworkCensusPolicy.statusOf({ contextVersion: PREDATES_CONTEXT_INFO })).toBe('unsupported')
+            },
         })
     })
 
@@ -55,19 +64,12 @@ describe('frameworkCensusPolicy (#803)', () => {
         frameworkCensusMarking(log).logRetirement()
         expect(log.warn).not.toHaveBeenCalled()
 
-        await withEngineContextVersions([LATEST_CONTEXT_VERSION], () => {
-            frameworkCensusMarking(log).logRetirement()
-            expect(log.warn).toHaveBeenCalledTimes(1)
+        await withEngineContextVersions({
+            contextVersions: [LATEST_CONTEXT_VERSION],
+            run: () => {
+                frameworkCensusMarking(log).logRetirement()
+                expect(log.warn).toHaveBeenCalledTimes(1)
+            },
         })
     })
 })
-
-async function withEngineContextVersions(contextVersions: FrameworkContextVersion[], run: () => void): Promise<void> {
-    const spy: MockInstance = vi.spyOn(frameworkCensusPolicy, 'engineContextVersions').mockReturnValue(contextVersions)
-    try {
-        run()
-    }
-    finally {
-        spy.mockRestore()
-    }
-}

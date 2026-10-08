@@ -138,7 +138,8 @@ function qadamPinWarning(step: StepInfo): string {
 // and neither runs for a flow with no qadam steps: a flow with none must not cost a platform read.
 // `getPlatformId` throws when the project row carries no platform; this is a navigation read, so
 // that degrades to "no pin info" rather than failing the response, the way `ap_validate_flow`'s
-// equivalent unwrapped call is allowed to for a one-shot pre-publish gate.
+// equivalent unwrapped call is allowed to for a one-shot pre-publish gate. A failed census lookup
+// degrades the same way, to no framework-version mark.
 async function resolvePinSignals({ qadamSteps, projectId, log }: {
     qadamSteps: QadamPinnedStep[]
     projectId: string
@@ -149,11 +150,14 @@ async function resolvePinSignals({ qadamSteps, projectId, log }: {
         return emptyPinSignals()
     }
     const pins = qadamPinUtil.collectDistinctPins({ steps: qadamSteps })
-    const [qadamResolutions, unsupportedPins] = await Promise.all([
+    const [qadamResolutions, census] = await Promise.all([
         qadamPinUtil.resolvePins({ pins, platformId, log }),
-        frameworkCensusMarking(log).unsupportedPins({ qadamSteps, platformId }),
+        tryCatch(() => frameworkCensusMarking(log).unsupportedPins({ qadamSteps, platformId })),
     ])
-    return { qadamResolutions, unsupportedPins }
+    if (!isNil(census.error)) {
+        log.warn({ error: census.error, projectId }, '[apFlowStructure] Framework census lookup failed; steps returned without the framework-version mark')
+    }
+    return { qadamResolutions, unsupportedPins: census.data ?? new Map<string, PinFrameworkSupport>() }
 }
 
 function emptyPinSignals(): PinSignals {

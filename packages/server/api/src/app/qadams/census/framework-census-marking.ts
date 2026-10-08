@@ -4,9 +4,10 @@ import { frameworkCensusPolicy } from './framework-census-policy'
 import { frameworkCensusService, PinFrameworkSupport } from './framework-census-service'
 
 // The per-request half of the ADR-0002 census: mark the steps a release has stopped running, in
-// the surfaces a person or an agent reads before a run. The expensive resolution only happens once
-// a shim has actually been retired — every release until then skips it entirely
-// (`hasRetiredContextVersion()`), so the surfaces keep their current cost.
+// the surfaces an agent reads before a run (the MCP tools; builder and runs marking are not built
+// yet). The expensive resolution only happens once a shim has actually been retired — every
+// release until then skips it entirely (`hasRetiredContextVersion()`), so the surfaces keep their
+// current cost.
 export const frameworkCensusMarking = (log: FastifyBaseLogger) => ({
     // The pins whose qadam needs a retired context version, keyed by pin. Empty while every
     // context version the support table lists is still run.
@@ -31,7 +32,7 @@ export const frameworkCensusMarking = (log: FastifyBaseLogger) => ({
         log.warn({
             retiredContextVersions: retired,
             engineContextVersions: frameworkCensusPolicy.engineContextVersions(),
-        }, '[frameworkCensus] This release no longer runs some framework context versions. Steps pinned to qadams built against them are marked "framework version no longer supported — update this step" in the builder, MCP and runs. Run the framework census (doctor) to list them; no flow is disabled.')
+        }, '[frameworkCensus] This release no longer runs some framework context versions. Steps pinned to qadams built against them are marked "framework version no longer supported — update this step" by the MCP tools ap_flow_structure and ap_validate_flow, and listed in the banner on the platform Health page. Run the framework census (doctor) to list them all; no flow is disabled.')
     },
 })
 

@@ -81,6 +81,14 @@ export const qadamMetadataService = (log: FastifyBaseLogger) => {
             }
             return qadam
         },
+        // The version `get` resolves a pin to, without reading the qadam row itself: the registry
+        // it resolves through selects named columns only, so it answers on a database whose
+        // `qadam_metadata` predates columns this release's entity declares — what the framework
+        // census `doctor` reads before an upgrade (ADR-0002).
+        async resolveVersion({ platformId, version, name }: ResolveVersionParams): Promise<string | undefined> {
+            const bestMatch = await findExactVersion(log, { name, version, platformId })
+            return bestMatch?.version
+        },
         async getOrThrow({ version, name, platformId, locale }: GetOrThrowParams): Promise<QadamMetadataModel> {
             const qadam = await this.get({ version, name, platformId })
             if (isNil(qadam)) {
@@ -556,6 +564,12 @@ type GetOrThrowParams = {
     projectId?: string
     platformId?: string
     locale?: LocalesEnum
+}
+
+type ResolveVersionParams = {
+    name: string
+    version: string
+    platformId: string | undefined
 }
 
 type CreateParams = {

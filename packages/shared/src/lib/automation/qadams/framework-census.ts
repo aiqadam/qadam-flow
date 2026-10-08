@@ -50,10 +50,18 @@ export const FrameworkCensusResponse = z.object({
     // The context versions the support table knows that this release no longer runs. Empty means
     // nothing can stop running yet.
     retiredContextVersions: z.array(z.string()),
+    // `false` while `retiredContextVersions` is empty: no step can be unsupported then, so the
+    // platform's flows are not walked and `summary`, `unreadableVersions` and `steps` are all
+    // empty. Listing what a coming release would stop running is the `doctor` command's job.
+    ran: z.boolean(),
     summary: FrameworkCensusSummary,
     // Flow versions whose step tree could not be walked; their steps are not in the counts.
     unreadableVersions: z.number(),
-    // `legacy` and `unsupported` steps only; `current` ones are counted in the summary.
+    // How many `legacy` and `unsupported` step occurrences the census found; `steps` may carry
+    // fewer.
+    totalSteps: z.number(),
+    // `legacy` and `unsupported` steps only, `unsupported` first and capped (see `totalSteps`);
+    // `current` ones are counted in the summary.
     steps: z.array(FrameworkCensusStep),
 })
 

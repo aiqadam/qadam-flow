@@ -1,7 +1,6 @@
-import { readFile } from 'node:fs/promises'
-import path from 'node:path'
 import { FrameworkContextVersion } from '@aiqadam/qadams-framework'
 import {
+    chunk,
     FlowActionType,
     FlowStatus,
     flowStructureUtil,
@@ -17,33 +16,42 @@ import {
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import semver from 'semver'
-import { IsNull } from 'typeorm'
-import { z } from 'zod'
+import { IsNull, QueryFailedError } from 'typeorm'
 import { flowRepo } from '../../flows/flow/flow.repo'
 import { flowVersionRepo } from '../../flows/flow-version/flow-version.service'
 import { platformRepo } from '../../platform/platform.service'
 import { QadamMetadataSchema } from '../metadata/qadam-metadata-entity'
-import { qadamRepos } from '../metadata/qadam-metadata-service'
+import { qadamMetadataService, qadamRepos } from '../metadata/qadam-metadata-service'
 import { qadamPinUtil } from '../metadata/qadam-pin-util'
 import { loadBundledQadams } from '../metadata/utils'
+import { frameworkBuildMajor } from './framework-build-major'
 import { frameworkCensusPolicy, FrameworkCensusStatus } from './framework-census-policy'
 
 const FLOW_BATCH_SIZE = 100
-const FRAMEWORK_PACKAGE = '@aiqadam/qadams-framework'
+// Distinct pins resolved concurrently: each one can cost a `qadam_metadata` read, and a platform
+// can pin hundreds, so they go in bounded batches rather than one unbounded `Promise.all`.
+const PIN_BATCH_SIZE = 20
+// Postgres `undefined_column`.
+const POSTGRES_UNDEFINED_COLUMN = '42703'
 
 // The framework-major census of ADR-0002: stored flow versions → pinned `name@version` → the
-// context version that qadam version needs → whether this release still runs it. Read-only by
-// construction: `doctor` runs it from a new image against a database that has not been migrated
-// yet, so it reads raw rows (never `flowVersionMigrationService`, which writes) and selects only
-// the columns it needs.
+// context version that qadam version needs → whether this release still runs it. It never writes,
+// and it reads only the columns it needs through raw rows (never `flowVersionMigrationService`,
+// which writes): the `doctor` runs it from a new image, through a connection that neither migrates
+// nor writes (`openReadOnlyDatabaseConnection`), against a database that may predate columns this
+// release's entities declare. A column that does not exist yet reads as unknown; any other read
+// failure is an error, never a step reported as unsupported.
 export const frameworkCensusService = (log: FastifyBaseLogger) => ({
     // Distinct pins only, each resolved once: a flow with twelve steps on one pin costs one lookup.
     async resolvePins({ pins, platformId }: { pins: string[], platformId: string }): Promise<Map<string, PinFrameworkSupport>> {
         const bundled = await loadBundledQadams(log)
-        const entries = await Promise.all(unique(pins).map(async (pin): Promise<[string, PinFrameworkSupport]> => {
-            const context = await resolvePinContext({ pin, platformId, bundled, log })
-            return [pin, { ...context, status: frameworkCensusPolicy.statusOf({ contextVersion: context.contextVersion }) }]
-        }))
+        const entries: [string, PinFrameworkSupport][] = []
+        for (const batch of chunk(unique(pins), PIN_BATCH_SIZE)) {
+            entries.push(...await Promise.all(batch.map(async (pin): Promise<[string, PinFrameworkSupport]> => {
+                const context = await resolvePinContext({ pin, platformId, bundled, log })
+                return [pin, { ...context, status: frameworkCensusPolicy.statusOf({ contextVersion: context.contextVersion }) }]
+            })))
+        }
         return new Map(entries)
     },
 
@@ -220,13 +228,13 @@ async function resolvePinContext({ pin, platformId, bundled, log }: ResolvePinCo
 // own `package.json`; a persisted official row (the registry install path) carries its context
 // version itself.
 async function resolveOfficialPin({ name, version, platformId, bundled, log }: ResolveOfficialPinParams): Promise<PinContext> {
-    const { data: resolvedVersion, error } = await tryCatch(() => qadamPinUtil.resolvePinVersion({ name, version, platformId, log }))
-    if (error !== null || isNil(resolvedVersion)) {
+    const resolvedVersion = await resolvePinVersion({ name, version, platformId, log })
+    if (isNil(resolvedVersion)) {
         return UNRESOLVED
     }
     const build = bundled.find((qadam) => qadam.name === name && qadam.version === resolvedVersion)
     if (!isNil(build)) {
-        const frameworkMajor = await frameworkMajorOfBuild({ directoryPath: build.directoryPath })
+        const frameworkMajor = await frameworkBuildMajor.ofBuild({ directoryPath: build.directoryPath })
         return {
             source: 'official',
             frameworkMajor,
@@ -242,8 +250,8 @@ async function resolveOfficialPin({ name, version, platformId, bundled, log }: R
 // builder pins exact) — and that row's `contextVersion` is the answer (ADR-0002). A pin nothing
 // resolves counts as unknown, and unknown counts as still needing the old contract.
 async function resolveCustomPin({ name, version, platformId, log }: ResolveCustomPinParams): Promise<PinContext> {
-    const { data: resolvedVersion, error } = await tryCatch(() => qadamPinUtil.resolvePinVersion({ name, version, platformId, log }))
-    if (error !== null || isNil(resolvedVersion)) {
+    const resolvedVersion = await resolvePinVersion({ name, version, platformId, log })
+    if (isNil(resolvedVersion)) {
         return UNRESOLVED
     }
     const stored = await readStoredContextVersion({ name, version: resolvedVersion, platformId, qadamType: QadamType.CUSTOM })
@@ -253,16 +261,31 @@ async function resolveCustomPin({ name, version, platformId, log }: ResolveCusto
     return { source: 'custom', frameworkMajor: null, contextVersion: stored.contextVersion }
 }
 
+// What `qadamMetadataService.get` resolves the pin to, through the registry's named columns only, so
+// it answers on a database that predates columns this release adds to `qadam_metadata`. A version
+// string no resolver can read is a pin that does not resolve; a failed read is an error, not a miss.
+async function resolvePinVersion({ name, version, platformId, log }: ResolvePinVersionParams): Promise<string | undefined> {
+    if (isNil(semver.valid(version.replace(/^[\^~]/, '')))) {
+        return undefined
+    }
+    return qadamMetadataService(log).resolveVersion({ name, version, platformId })
+}
+
 // Only the column the census needs: a database the doctor reads before an upgrade may predate
-// other `qadam_metadata` columns this release's entity declares. A failed read (for example a
-// database that predates `contextVersion`, #802) is unknown, never an error.
+// other `qadam_metadata` columns this release's entity declares. A database that predates
+// `contextVersion` itself (#802) reads as unknown. Any other failure — a timeout, a dropped
+// connection — is thrown: reading it as unknown would report a healthy step as one that stops
+// running.
 async function readStoredContextVersion({ name, version, platformId, qadamType }: ReadStoredContextVersionParams): Promise<StoredContextVersion> {
     const { data: row, error } = await tryCatch(() => qadamRepos().findOne({
         select: { id: true, contextVersion: true },
         where: { name, version, platformId: platformId ?? IsNull(), qadamType },
     }))
     if (error !== null) {
-        return { found: true, contextVersion: null }
+        if (isUndefinedColumn(error)) {
+            return { found: true, contextVersion: null }
+        }
+        throw error
     }
     if (isNil(row)) {
         return { found: false, contextVersion: null }
@@ -270,40 +293,15 @@ async function readStoredContextVersion({ name, version, platformId, qadamType }
     return { found: true, contextVersion: frameworkCensusPolicy.fromStoredContextVersion({ value: row.contextVersion }) }
 }
 
-// Bundled builds are compiled in this tree, so their `dist/package.json` names the framework as
-// `workspace:*`, which is the current major. A build layered in from elsewhere names a version.
-async function frameworkMajorOfBuild({ directoryPath }: { directoryPath: string | undefined }): Promise<number | null> {
-    if (isNil(directoryPath)) {
-        return frameworkCensusPolicy.currentFrameworkMajor()
+function isUndefinedColumn(error: unknown): boolean {
+    if (!(error instanceof QueryFailedError)) {
+        return false
     }
-    const cached = frameworkMajorByBuild.get(directoryPath)
-    if (!isNil(cached)) {
-        return cached
-    }
-    const { data: content } = await tryCatch(() => readFile(path.join(directoryPath, 'package.json'), 'utf-8'))
-    const major = readFrameworkMajor({ content })
-    frameworkMajorByBuild.set(directoryPath, major)
-    return major
-}
-
-function readFrameworkMajor({ content }: { content: string | null }): number | null {
-    if (isNil(content)) {
-        return null
-    }
-    const { data: json } = tryCatchSync(() => JSON.parse(content))
-    const parsed = buildPackageJson.safeParse(json)
-    if (!parsed.success) {
-        return null
-    }
-    const spec = parsed.data.dependencies?.[FRAMEWORK_PACKAGE] ?? parsed.data.peerDependencies?.[FRAMEWORK_PACKAGE]
-    if (isNil(spec)) {
-        return null
-    }
-    if (spec.startsWith('workspace:')) {
-        return frameworkCensusPolicy.currentFrameworkMajor()
-    }
-    const { data: minimum } = tryCatchSync(() => semver.minVersion(spec))
-    return minimum?.major ?? null
+    const driverError: unknown = error.driverError
+    return typeof driverError === 'object'
+        && driverError !== null
+        && 'code' in driverError
+        && driverError.code === POSTGRES_UNDEFINED_COLUMN
 }
 
 function summarize({ steps, currentSteps = 0 }: { steps: { status: FrameworkCensusStatus, flowId: string }[], currentSteps?: number }): FrameworkCensusSummary {
@@ -315,14 +313,7 @@ function summarize({ steps, currentSteps = 0 }: { steps: { status: FrameworkCens
     }
 }
 
-const frameworkMajorByBuild = new Map<string, number | null>()
-
 const UNRESOLVED: PinContext = { source: 'unresolved', frameworkMajor: null, contextVersion: null }
-
-const buildPackageJson = z.object({
-    dependencies: z.record(z.string(), z.string()).optional(),
-    peerDependencies: z.record(z.string(), z.string()).optional(),
-})
 
 // `unresolved`: no qadam version on this instance answers the pin, so its context version is
 // unknown and it counts as still needing the old contract (ADR-0002).
@@ -419,6 +410,13 @@ type ReadStoredContextVersionParams = {
     version: string
     platformId: string | null
     qadamType: QadamType
+}
+
+type ResolvePinVersionParams = {
+    name: string
+    version: string
+    platformId: string
+    log: FastifyBaseLogger
 }
 
 type ResolveCustomPinParams = {

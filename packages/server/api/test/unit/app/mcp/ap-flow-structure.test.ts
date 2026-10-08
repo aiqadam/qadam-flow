@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mockGetOnePopulated = vi.fn()
 const mockGetPlatformId = vi.fn()
 const mockGet = vi.fn()
+const mockUnsupportedPins = vi.fn()
 
 vi.mock('../../../../src/app/flows/flow/flow.service', () => ({
     flowService: vi.fn(() => ({
@@ -27,6 +28,12 @@ vi.mock('../../../../src/app/project/project-service', () => ({
 vi.mock('../../../../src/app/qadams/metadata/qadam-metadata-service', () => ({
     qadamMetadataService: vi.fn(() => ({
         get: mockGet,
+    })),
+}))
+
+vi.mock('../../../../src/app/qadams/census/framework-census-marking', () => ({
+    frameworkCensusMarking: vi.fn(() => ({
+        unsupportedPins: mockUnsupportedPins,
     })),
 }))
 
@@ -102,6 +109,7 @@ async function callTool(): Promise<McpToolResult> {
 describe('ap_flow_structure — pinned qadam version visibility (#474)', () => {
     beforeEach(() => {
         vi.clearAllMocks()
+        mockUnsupportedPins.mockResolvedValue(new Map())
         mockGetPlatformId.mockResolvedValue('platform-1')
         mockGet.mockImplementation(async ({ version }: { version: string }) =>
             version === HEALTHY_VERSION ? { name: '@aiqadam/qadam-test-email', version } : undefined)
@@ -187,6 +195,7 @@ describe('ap_flow_structure — pinned qadam version visibility (#474)', () => {
 describe('ap_flow_structure — flow-authored values cannot masquerade as tool instructions (#480)', () => {
     beforeEach(() => {
         vi.clearAllMocks()
+        mockUnsupportedPins.mockResolvedValue(new Map())
         mockGetPlatformId.mockResolvedValue('platform-1')
         mockGet.mockResolvedValue(undefined)
     })
@@ -232,6 +241,7 @@ describe('ap_flow_structure — flow-authored values cannot masquerade as tool i
 describe('ap_flow_structure — a step input preview containing a nested array stays valid JSON (#485)', () => {
     beforeEach(() => {
         vi.clearAllMocks()
+        mockUnsupportedPins.mockResolvedValue(new Map())
         mockGetPlatformId.mockResolvedValue('platform-1')
         mockGet.mockResolvedValue({ name: '@aiqadam/qadam-test-email', version: HEALTHY_VERSION })
     })
@@ -267,6 +277,7 @@ describe('ap_flow_structure — a step input preview containing a nested array s
 describe('ap_flow_structure — run-log opt-outs (#505)', () => {
     beforeEach(() => {
         vi.clearAllMocks()
+        mockUnsupportedPins.mockResolvedValue(new Map())
         mockGetPlatformId.mockResolvedValue('platform-1')
         mockGet.mockResolvedValue({ name: '@aiqadam/qadam-test-email', version: HEALTHY_VERSION })
     })
@@ -307,5 +318,41 @@ describe('ap_flow_structure — run-log opt-outs (#505)', () => {
         const text = (result.content?.[0] as { text: string }).text
         expect(text).not.toContain('LOG OFF')
         expect(JSON.stringify(result.structuredContent?.steps)).not.toContain('logOutput')
+    })
+})
+
+// ADR-0002 (#803): the framework-version mark is a decoration on the structure, like the pin
+// availability signal — a failed census lookup must cost the mark, never the response.
+describe('ap_flow_structure — framework version mark (#803)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks()
+        mockGetPlatformId.mockResolvedValue('platform-1')
+        mockGet.mockResolvedValue({ name: '@aiqadam/qadam-test-email', version: HEALTHY_VERSION })
+    })
+
+    it('marks a step whose pin needs a retired framework context version', async () => {
+        const pin = `@aiqadam/qadam-test-email@${HEALTHY_VERSION}`
+        mockUnsupportedPins.mockResolvedValue(new Map([[pin, { source: 'official', frameworkMajor: 0, contextVersion: '1', status: 'unsupported' }]]))
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: HEALTHY_VERSION }) }))
+
+        const result = await callTool()
+
+        const text = (result.content?.[0] as { text: string }).text
+        expect(text).toContain('FRAMEWORK VERSION NO LONGER SUPPORTED: update this step')
+        expect(JSON.stringify(result.structuredContent?.steps)).toContain('"frameworkVersionSupported":false')
+    })
+
+    it('still returns the structure, without the mark, when the census lookup fails', async () => {
+        mockUnsupportedPins.mockRejectedValue(new Error('connection terminated unexpectedly'))
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: HEALTHY_VERSION }) }))
+
+        const result = await callTool()
+
+        const text = (result.content?.[0] as { text: string }).text
+        expect(text).toContain('[TRIGGER]')
+        expect(text).toContain('step_1')
+        expect(text).not.toContain('FRAMEWORK VERSION NO LONGER SUPPORTED')
+        expect(JSON.stringify(result.structuredContent?.steps)).toContain('"qadamVersionResolvable":true')
+        expect(log.warn).toHaveBeenCalled()
     })
 })

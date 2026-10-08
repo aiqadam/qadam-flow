@@ -236,7 +236,8 @@ async function validatePinnedQadamVersions({ trigger, platformId, log }: {
 
 // ADR-0002 (#803): once a release retires a framework context version, a step pinned to a qadam
 // built against it stops running. The flow stays enabled and nothing disables it (#435) — this
-// category is the read-time signal, alongside `ap_flow_structure`'s per-step mark and the builder's.
+// category is the read-time signal, alongside `ap_flow_structure`'s per-step mark and the platform
+// Health page banner.
 // It is free until the first retirement: `unsupportedPins` skips the resolution entirely while the
 // support table's versions are all still run.
 async function validateFrameworkVersions({ trigger, platformId, log }: {

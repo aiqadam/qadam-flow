@@ -61,12 +61,12 @@ import { apUpsertVariableTool } from '../../../../src/app/mcp/tools/ap-upsert-va
 import { apValidateFlowTool } from '../../../../src/app/mcp/tools/ap-validate-flow'
 import { apValidateStepConfigTool } from '../../../../src/app/mcp/tools/ap-validate-step-config'
 import { mcpUtils } from '../../../../src/app/mcp/tools/mcp-utils'
-import { frameworkCensusPolicy } from '../../../../src/app/qadams/census/framework-census-policy'
 import { fieldService } from '../../../../src/app/tables/field/field.service'
 import { recordService } from '../../../../src/app/tables/record/record.service'
 import { tableService } from '../../../../src/app/tables/table/table.service'
 import { variableService } from '../../../../src/app/variable/variable.service'
 import { db } from '../../../helpers/db'
+import { withEngineContextVersions } from '../../../helpers/framework-census'
 import { createMockConnection, createMockProject, createMockQadamMetadata } from '../../../helpers/mocks'
 import { createTestContext } from '../../../helpers/test-context'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
@@ -3349,10 +3349,13 @@ describe('MCP Tools integration', () => {
             const before = await apFlowStructureTool(mcp, mockLog).execute({ flowId })
             expect(text(before)).not.toContain('FRAMEWORK VERSION NO LONGER SUPPORTED')
 
-            await withRetiredContextVersion([LATEST_CONTEXT_VERSION], async () => {
-                const after = await apFlowStructureTool(mcp, mockLog).execute({ flowId })
-                expect(text(after)).toContain('FRAMEWORK VERSION NO LONGER SUPPORTED: update this step')
-                expect(JSON.stringify(after.structuredContent?.steps)).toContain('"frameworkVersionSupported":false')
+            await withEngineContextVersions({
+                contextVersions: [LATEST_CONTEXT_VERSION],
+                run: async () => {
+                    const after = await apFlowStructureTool(mcp, mockLog).execute({ flowId })
+                    expect(text(after)).toContain('FRAMEWORK VERSION NO LONGER SUPPORTED: update this step')
+                    expect(JSON.stringify(after.structuredContent?.steps)).toContain('"frameworkVersionSupported":false')
+                },
             })
 
             // The retirement is a release property, not a stored one: without the stand-in the
@@ -3371,16 +3374,19 @@ describe('MCP Tools integration', () => {
             const currentFlowId = await createFlowAndGetId(mcp, 'Current Framework Flow')
             await pinTriggerToCustomQadam({ mcp, flowId: currentFlowId, qadamName: '@census/qadam-context-v2' })
 
-            await withRetiredContextVersion([LATEST_CONTEXT_VERSION], async () => {
-                const retired = await apValidateFlowTool(mcp, mockLog).execute({ flowId: retiredFlowId })
-                expect(text(retired)).toContain('Unsupported Framework Versions')
-                expect(text(retired)).toContain('update this step')
-                expect(retired.structuredContent?.valid).toBe(false)
-                expect(JSON.stringify(retired.structuredContent?.issues)).toContain('framework_version')
+            await withEngineContextVersions({
+                contextVersions: [LATEST_CONTEXT_VERSION],
+                run: async () => {
+                    const retired = await apValidateFlowTool(mcp, mockLog).execute({ flowId: retiredFlowId })
+                    expect(text(retired)).toContain('Unsupported Framework Versions')
+                    expect(text(retired)).toContain('update this step')
+                    expect(retired.structuredContent?.valid).toBe(false)
+                    expect(JSON.stringify(retired.structuredContent?.issues)).toContain('framework_version')
 
-                const current = await apValidateFlowTool(mcp, mockLog).execute({ flowId: currentFlowId })
-                expect(text(current)).not.toContain('Unsupported Framework Versions')
-                expect(current.structuredContent?.valid).toBe(true)
+                    const current = await apValidateFlowTool(mcp, mockLog).execute({ flowId: currentFlowId })
+                    expect(text(current)).not.toContain('Unsupported Framework Versions')
+                    expect(current.structuredContent?.valid).toBe(true)
+                },
             })
         })
     })
@@ -3413,18 +3419,6 @@ describe('MCP Tools integration', () => {
     async function pinTriggerToCustomQadam({ mcp, flowId, qadamName = '@census/qadam-context-v1' }: { mcp: ProjectScopedMcpServer, flowId: string, qadamName?: string }): Promise<void> {
         const result = await apUpdateTriggerTool(mcp, mockLog).execute({ flowId, qadamName, triggerName: 'new_item' })
         expect(text(result)).toContain('✅')
-    }
-
-    // A stand-in for a release that has retired shims: the surfaces read the engine's supported set
-    // through `engineContextVersions()` exactly so a test can drop one without touching the engine.
-    async function withRetiredContextVersion(contextVersions: ContextVersion[], run: () => Promise<void>): Promise<void> {
-        const spy = vi.spyOn(frameworkCensusPolicy, 'engineContextVersions').mockReturnValue(contextVersions)
-        try {
-            await run()
-        }
-        finally {
-            spy.mockRestore()
-        }
     }
 
     describe('ap_export_flow / ap_import_flow', () => {

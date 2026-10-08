@@ -1,4 +1,7 @@
-import { ContextVersion, FrameworkContextVersion, LATEST_CONTEXT_VERSION } from '@aiqadam/qadams-framework'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { ContextVersion, LATEST_CONTEXT_VERSION } from '@aiqadam/qadams-framework'
 import {
     FlowStatus,
     FlowTrigger,
@@ -12,15 +15,28 @@ import {
 } from '@aiqadam/shared'
 import { FastifyBaseLogger, FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
-import { MockInstance } from 'vitest'
+import { QueryFailedError } from 'typeorm'
 import { databaseConnection } from '../../../../src/app/database/database-connection'
 import { frameworkCensusPolicy } from '../../../../src/app/qadams/census/framework-census-policy'
 import { frameworkCensusService } from '../../../../src/app/qadams/census/framework-census-service'
+import { QadamMetadataSchema } from '../../../../src/app/qadams/metadata/qadam-metadata-entity'
 import { generateMockToken } from '../../../helpers/auth'
 import { db } from '../../../helpers/db'
+import { withEngineContextVersions } from '../../../helpers/framework-census'
 import { createMockFlow, createMockFlowVersion, createMockQadamMetadata, mockBasicUser } from '../../../helpers/mocks'
 import { createTestContext } from '../../../helpers/test-context'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
+
+// Builds a test adds to what the image bundles, for the official path that has no metadata row.
+const { extraBundled } = vi.hoisted(() => ({ extraBundled: [] as QadamMetadataSchema[] }))
+
+vi.mock('../../../../src/app/qadams/metadata/utils', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../../../src/app/qadams/metadata/utils')>()
+    return {
+        ...actual,
+        loadBundledQadams: async (...args: Parameters<typeof actual.loadBundledQadams>) => [...await actual.loadBundledQadams(...args), ...extraBundled],
+    }
+})
 
 let app: FastifyInstance | null = null
 let mockLog: FastifyBaseLogger
@@ -67,12 +83,15 @@ describe('framework-major census (#803)', () => {
             version: 'published',
         })
 
-        await withRetiredContextVersion([LATEST_CONTEXT_VERSION], async () => {
-            const after = await frameworkCensusService(mockLog).censusOfPlatform({ platformId: ctx.platform.id })
+        await withEngineContextVersions({
+            contextVersions: [LATEST_CONTEXT_VERSION],
+            run: async () => {
+                const after = await frameworkCensusService(mockLog).censusOfPlatform({ platformId: ctx.platform.id })
 
-            expect(after.summary).toMatchObject({ current: 0, legacy: 0, unsupported: 1, flowsWithUnsupportedSteps: 1 })
-            expect(after.steps).toHaveLength(1)
-            expect(after.steps[0]).toMatchObject({ pin: 'census-v1-custom@1.0.0', status: 'unsupported' })
+                expect(after.summary).toMatchObject({ current: 0, legacy: 0, unsupported: 1, flowsWithUnsupportedSteps: 1 })
+                expect(after.steps).toHaveLength(1)
+                expect(after.steps[0]).toMatchObject({ pin: 'census-v1-custom@1.0.0', status: 'unsupported' })
+            },
         })
 
         // The census never disables a flow (#435): it only reports.
@@ -104,9 +123,12 @@ describe('framework-major census (#803)', () => {
         expect(before.summary).toMatchObject({ legacy: 2, unsupported: 0 })
         expect(before.steps.map((step) => step.source).sort()).toEqual(['custom', 'unresolved'])
 
-        await withRetiredContextVersion([LATEST_CONTEXT_VERSION], async () => {
-            const after = await frameworkCensusService(mockLog).censusOfPlatform({ platformId: ctx.platform.id })
-            expect(after.summary).toMatchObject({ legacy: 0, unsupported: 2, flowsWithUnsupportedSteps: 2 })
+        await withEngineContextVersions({
+            contextVersions: [LATEST_CONTEXT_VERSION],
+            run: async () => {
+                const after = await frameworkCensusService(mockLog).censusOfPlatform({ platformId: ctx.platform.id })
+                expect(after.summary).toMatchObject({ legacy: 0, unsupported: 2, flowsWithUnsupportedSteps: 2 })
+            },
         })
     })
 
@@ -213,6 +235,111 @@ describe('framework-major census (#803)', () => {
         expect(census.steps[0].projectId).toBe(mine.project.id)
     })
 
+    // ADR-0002: an official qadam bundled in the image has no `qadam_metadata` row; its build's own
+    // `package.json` is the record of the framework it was compiled against.
+    it('resolves a bundled official pin from its build, with no qadam_metadata row', async () => {
+        const ctx = await createTestContext(app!)
+        const root = await mkdtemp(path.join(tmpdir(), 'census-bundled-'))
+        try {
+            extraBundled.push(
+                await bundledBuild({ root, name: '@aiqadam/qadam-census-bundled', version: '0.3.0', frameworkSpec: 'workspace:*' }),
+                await bundledBuild({ root, name: '@aiqadam/qadam-census-bundled-ahead', version: '0.1.0', frameworkSpec: '^99.0.0' }),
+            )
+            await saveFlowWithPinnedStep({ projectId: ctx.project.id, qadamName: '@aiqadam/qadam-census-bundled', qadamVersion: '0.3.0' })
+            await saveFlowWithPinnedStep({ projectId: ctx.project.id, qadamName: '@aiqadam/qadam-census-bundled-ahead', qadamVersion: '0.1.0' })
+
+            const census = await frameworkCensusService(mockLog).censusOfPlatform({ platformId: ctx.platform.id })
+
+            expect(await db.find('qadam_metadata', { name: '@aiqadam/qadam-census-bundled' })).toEqual([])
+            // Built in this tree: the current major, which before 1.0.0 means context V2.
+            expect(census.summary).toMatchObject({ current: 1, legacy: 1, unsupported: 0 })
+            // Built against a major the support table does not list: unknown, which counts as
+            // still needing the old contract.
+            expect(census.steps).toEqual([expect.objectContaining({
+                pin: '@aiqadam/qadam-census-bundled-ahead@0.1.0',
+                source: 'official',
+                frameworkMajor: 99,
+                contextVersion: null,
+                status: 'legacy',
+            })])
+        }
+        finally {
+            extraBundled.length = 0
+            await rm(root, { recursive: true, force: true })
+        }
+    })
+
+    // A flow batch is 100 flows; the keyset cursor must carry the census across batches.
+    it('counts every flow of a platform with more flows than one batch', async () => {
+        const ctx = await createTestContext(app!)
+        await saveQadamRow({
+            name: 'census-v1-custom',
+            version: '1.0.0',
+            platformId: ctx.platform.id,
+            qadamType: QadamType.CUSTOM,
+            contextVersion: ContextVersion.V1,
+        })
+        const flowIds = await saveDraftFlowsWithPinnedStep({ projectId: ctx.project.id, count: 205, qadamName: 'census-v1-custom', qadamVersion: '1.0.0' })
+
+        const census = await frameworkCensusService(mockLog).censusOfPlatform({ platformId: ctx.platform.id })
+
+        expect(census.summary).toMatchObject({ legacy: 205 })
+        expect(new Set(census.steps.map((step) => step.flowId))).toEqual(new Set(flowIds))
+    })
+
+    // The doctor reads a database before the upgrade migrates it: a `qadam_metadata` that predates
+    // `contextVersion` (#802) is an unknown context version, not an error.
+    it('reads a database that predates contextVersion as an unknown context version', async () => {
+        const ctx = await createTestContext(app!)
+        await saveQadamRow({
+            name: 'census-v1-custom',
+            version: '1.0.0',
+            platformId: ctx.platform.id,
+            qadamType: QadamType.CUSTOM,
+            contextVersion: ContextVersion.V1,
+        })
+        await saveFlowWithPinnedStep({ projectId: ctx.project.id, qadamName: 'census-v1-custom', qadamVersion: '1.0.0' })
+        const undefinedColumn = Object.assign(new Error('column QadamMetadataEntity.contextVersion does not exist'), { code: '42703' })
+        const spy = vi.spyOn(databaseConnection().getRepository('qadam_metadata'), 'findOne')
+            .mockRejectedValue(new QueryFailedError('SELECT', [], undefinedColumn))
+        try {
+            const census = await frameworkCensusService(mockLog).censusOfPlatform({ platformId: ctx.platform.id })
+
+            expect(census.steps).toEqual([expect.objectContaining({ source: 'custom', contextVersion: null, status: 'legacy' })])
+        }
+        finally {
+            spy.mockRestore()
+        }
+    })
+
+    // A timeout or a dropped connection is not "unknown": reading it as such would report a healthy
+    // step as one that stops running once a shim is retired.
+    it('fails on any other read error instead of reporting the step as unsupported', async () => {
+        const ctx = await createTestContext(app!)
+        await saveQadamRow({
+            name: 'census-v2-custom',
+            version: '1.0.0',
+            platformId: ctx.platform.id,
+            qadamType: QadamType.CUSTOM,
+            contextVersion: ContextVersion.V2,
+        })
+        await saveFlowWithPinnedStep({ projectId: ctx.project.id, qadamName: 'census-v2-custom', qadamVersion: '1.0.0' })
+        const spy = vi.spyOn(databaseConnection().getRepository('qadam_metadata'), 'findOne')
+            .mockRejectedValue(new Error('Connection terminated unexpectedly'))
+        try {
+            await withEngineContextVersions({
+                contextVersions: [LATEST_CONTEXT_VERSION],
+                run: async () => {
+                    await expect(frameworkCensusService(mockLog).censusOfPlatform({ platformId: ctx.platform.id }))
+                        .rejects.toThrow('Connection terminated unexpectedly')
+                },
+            })
+        }
+        finally {
+            spy.mockRestore()
+        }
+    })
+
     it('reports the engine\'s framework major and context versions in the instance census', async () => {
         const census = await frameworkCensusService(mockLog).censusOfInstance()
 
@@ -236,20 +363,29 @@ describe('framework-major census (#803)', () => {
                 qadamVersion: '1.0.0',
             })
 
+            // Nothing retired: no step can be unsupported, so the platform's flows are not walked —
+            // the legacy step is the doctor's to list, not this surface's.
             const before = await ctx.get('/v1/framework-census')
             expect(before.statusCode).toBe(StatusCodes.OK)
             const beforeBody = before.json<FrameworkCensusResponse>()
             expect(beforeBody.engine.contextVersions).toContain(LATEST_CONTEXT_VERSION)
             expect(beforeBody.retiredContextVersions).toEqual([])
-            expect(beforeBody.summary).toMatchObject({ legacy: 1, unsupported: 0 })
-            expect(beforeBody.steps).toHaveLength(1)
+            expect(beforeBody.ran).toBe(false)
+            expect(beforeBody.summary).toEqual({ current: 0, legacy: 0, unsupported: 0, flowsWithUnsupportedSteps: 0 })
+            expect(beforeBody.totalSteps).toBe(0)
+            expect(beforeBody.steps).toEqual([])
 
-            await withRetiredContextVersion([LATEST_CONTEXT_VERSION], async () => {
-                const after = await ctx.get('/v1/framework-census')
-                const afterBody = after.json<FrameworkCensusResponse>()
-                expect(afterBody.retiredContextVersions).toEqual(['none', '1'])
-                expect(afterBody.summary).toMatchObject({ legacy: 0, unsupported: 1, flowsWithUnsupportedSteps: 1 })
-                expect(afterBody.steps[0]).toMatchObject({ pin: 'census-v1-custom@1.0.0', status: 'unsupported' })
+            await withEngineContextVersions({
+                contextVersions: [LATEST_CONTEXT_VERSION],
+                run: async () => {
+                    const after = await ctx.get('/v1/framework-census')
+                    const afterBody = after.json<FrameworkCensusResponse>()
+                    expect(afterBody.ran).toBe(true)
+                    expect(afterBody.retiredContextVersions).toEqual(['none', '1'])
+                    expect(afterBody.summary).toMatchObject({ legacy: 0, unsupported: 1, flowsWithUnsupportedSteps: 1 })
+                    expect(afterBody.totalSteps).toBe(1)
+                    expect(afterBody.steps[0]).toMatchObject({ pin: 'census-v1-custom@1.0.0', status: 'unsupported' })
+                },
             })
         })
 
@@ -297,26 +433,43 @@ describe('framework-major census (#803)', () => {
                 qadamVersion: '1.0.0',
             })
 
-            const response = await mine.get('/v1/framework-census')
-            const body = response.json<FrameworkCensusResponse>()
+            await withEngineContextVersions({
+                contextVersions: [LATEST_CONTEXT_VERSION],
+                run: async () => {
+                    const response = await mine.get('/v1/framework-census')
+                    const body = response.json<FrameworkCensusResponse>()
 
-            expect(body.steps).toHaveLength(1)
-            expect(body.steps[0].projectId).toBe(mine.project.id)
+                    expect(body.steps).toHaveLength(1)
+                    expect(body.steps[0].projectId).toBe(mine.project.id)
+                },
+            })
+        })
+
+        it('caps the step list and reports the total', async () => {
+            const ctx = await createTestContext(app!)
+            await saveQadamRow({
+                name: 'census-v1-custom',
+                version: '1.0.0',
+                platformId: ctx.platform.id,
+                qadamType: QadamType.CUSTOM,
+                contextVersion: ContextVersion.V1,
+            })
+            await saveDraftFlowsWithPinnedStep({ projectId: ctx.project.id, count: 205, qadamName: 'census-v1-custom', qadamVersion: '1.0.0' })
+
+            await withEngineContextVersions({
+                contextVersions: [LATEST_CONTEXT_VERSION],
+                run: async () => {
+                    const body = (await ctx.get('/v1/framework-census')).json<FrameworkCensusResponse>()
+
+                    expect(body.summary).toMatchObject({ unsupported: 205, flowsWithUnsupportedSteps: 205 })
+                    expect(body.totalSteps).toBe(205)
+                    expect(body.steps).toHaveLength(200)
+                },
+            })
         })
     })
 })
 
-// A stand-in for a release that has retired shims: the census reads the engine's supported set
-// through `engineContextVersions()` exactly so a test can drop one without touching the engine.
-async function withRetiredContextVersion(contextVersions: FrameworkContextVersion[], run: () => Promise<void>): Promise<void> {
-    const spy: MockInstance = vi.spyOn(frameworkCensusPolicy, 'engineContextVersions').mockReturnValue(contextVersions)
-    try {
-        await run()
-    }
-    finally {
-        spy.mockRestore()
-    }
-}
 
 function pinnedTrigger({ qadamName, qadamVersion }: { qadamName: string, qadamVersion: string }): FlowTrigger {
     return {
@@ -370,4 +523,42 @@ async function saveQadamRow({ name, version, platformId, qadamType, contextVersi
         packageType: PackageType.REGISTRY,
     })
     await databaseConnection().getRepository('qadam_metadata').insert({ ...row, contextVersion })
+}
+
+// The flow → flow_version FK runs both ways, so the flows go in first, unpublished; each one's only
+// version is then its latest, counted as a draft.
+async function saveDraftFlowsWithPinnedStep({ projectId, count, qadamName, qadamVersion }: {
+    projectId: string
+    count: number
+    qadamName: string
+    qadamVersion: string
+}): Promise<string[]> {
+    const flows = Array.from({ length: count }, () => createMockFlow({ projectId, status: FlowStatus.DISABLED, publishedVersionId: null }))
+    await db.save('flow', flows)
+    await db.save('flow_version', flows.map((flow) => createMockFlowVersion({
+        flowId: flow.id,
+        created: '2026-01-01T00:00:00.000Z',
+        state: FlowVersionState.DRAFT,
+        trigger: pinnedTrigger({ qadamName, qadamVersion }),
+    })))
+    return flows.map((flow) => flow.id)
+}
+
+async function bundledBuild({ root, name, version, frameworkSpec }: {
+    root: string
+    name: string
+    version: string
+    frameworkSpec: string
+}): Promise<QadamMetadataSchema> {
+    const directoryPath = path.join(root, name.replace('/', '__'))
+    await mkdir(directoryPath, { recursive: true })
+    await writeFile(path.join(directoryPath, 'package.json'), JSON.stringify({
+        name,
+        version,
+        dependencies: { '@aiqadam/qadams-framework': frameworkSpec },
+    }))
+    return {
+        ...createMockQadamMetadata({ name, version, qadamType: QadamType.OFFICIAL, packageType: PackageType.REGISTRY, directoryPath }),
+        platformId: undefined,
+    }
 }

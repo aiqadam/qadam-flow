@@ -14,11 +14,7 @@ const MAX_LISTED_FLOWS = 5;
 export function FrameworkCensusBanner() {
   const { data } = frameworkCensusQueries.useCensus();
 
-  if (
-    !data ||
-    data.retiredContextVersions.length === 0 ||
-    data.summary.unsupported === 0
-  ) {
+  if (!data || !data.ran || data.summary.unsupported === 0) {
     return null;
   }
 
@@ -30,7 +26,8 @@ export function FrameworkCensusBanner() {
     ).values(),
   ];
   const listed = affectedFlows.slice(0, MAX_LISTED_FLOWS);
-  const remaining = affectedFlows.length - listed.length;
+  // The response caps its step list, so the count of the rest comes from the summary.
+  const remaining = data.summary.flowsWithUnsupportedSteps - listed.length;
 
   return (
     <Alert variant="warning">

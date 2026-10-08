@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 import { isNil } from '@aiqadam/shared'
-import { databaseConnection } from '../app/database/database-connection'
+import { openReadOnlyDatabaseConnection } from '../app/database/database-connection'
 import { system } from '../app/helper/system/system'
 import { frameworkCensusPolicy } from '../app/qadams/census/framework-census-policy'
 import { frameworkCensusService, FrameworkCensusStep, InstanceFrameworkCensus } from '../app/qadams/census/framework-census-service'
@@ -10,14 +10,16 @@ import { frameworkCensusService, FrameworkCensusStep, InstanceFrameworkCensus } 
 //
 //   docker compose run --rm --entrypoint node app packages/server/api/dist/src/scripts/framework-census-doctor.js
 //
-// It never runs migrations and never writes: a database that predates `contextVersion` (#802)
-// reads as unknown, and unknown counts as still needing the old contract. It does not block
-// anything by itself — the release starts normally and no flow is disabled (#435). Pass
-// `--fail-on-findings` to exit 1 when a step will stop running, for an operator that wants an
-// automated gate.
+// It never runs migrations and never writes: its connection (`openReadOnlyDatabaseConnection`)
+// does not migrate on start-up, unlike the application's, and Postgres refuses every write on it.
+// A database that predates `contextVersion` (#802) reads as unknown, and unknown counts as still
+// needing the old contract. It does not block anything by itself — the release starts normally
+// and no flow is disabled (#435). Pass `--fail-on-findings` to exit 1 when a step will stop
+// running, for an operator that wants an automated gate. A database error ends the command with
+// exit 1 rather than reporting a step it could not read as one that stops running.
 async function main(): Promise<void> {
     const failOnFindings = process.argv.includes('--fail-on-findings')
-    const dataSource = databaseConnection()
+    const dataSource = openReadOnlyDatabaseConnection()
     await dataSource.initialize()
     try {
         const census = await frameworkCensusService(system.globalLogger()).censusOfInstance()
