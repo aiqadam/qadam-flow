@@ -105,9 +105,10 @@ export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag, pack
   //
   // Two independent guards, because this one flag removes the only decision about what gets
   // uploaded. packagePrePublishChecks is what stops a second publish of an already-published
-  // version and what throws when a changed package was not bumped; since #486 split the
-  // pipeline, nothing downstream re-checks either — tools/ci/publish-packed-tarballs.sh
-  // publishes every manifest line it is handed.
+  // version (ADR-0001 gate 3: it reads the registry's version list); since #486 split the
+  // pipeline, nothing downstream re-checks it — tools/ci/publish-packed-tarballs.sh publishes
+  // every manifest line it is handed. The changed-package-without-a-changeset question belongs
+  // to the PR (gate 1), not to the publish path.
   //
   // The first guard, here, stops this call from publishing. Note what it does NOT stop, and why
   // the second one below exists: `packDestination` no longer means "this run stops short of the
@@ -117,7 +118,7 @@ export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag, pack
   // publish — the case packagePrePublishChecks exists for — would 403 on the first already-
   // published package and abort before the ones that still needed publishing.
   if (skipRegistryCheck && !packDestination && !dryRun) {
-    throw new Error('[publishPackage] skipRegistryCheck is only valid with packDestination or dryRun — refusing to publish with the already-published and version-bump guards disabled.')
+    throw new Error('[publishPackage] skipRegistryCheck is only valid with packDestination or dryRun — refusing to publish with the already-published guard disabled.')
   }
 
   const outputPath = `${path}/dist`
@@ -246,7 +247,7 @@ export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag, pack
     if (skipRegistryCheck) {
       writeFileSync(
         join(destination, SKIP_REGISTRY_CHECK_MARKER),
-        'Packed with --skip-registry-check: the already-published and version-bump guards were\ndisabled, so these tarballs are a build smoke test and must never be published.\n',
+        'Packed with --skip-registry-check: the already-published guard was disabled, so these\ntarballs are a build smoke test and must never be published.\n',
       )
     }
 

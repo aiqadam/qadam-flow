@@ -29,8 +29,10 @@ concurrency:
 jobs:
   changeset:
     name: Write the dependency changeset
-    # Renovate's own branches only. `github.head_ref` is the branch, not a SHA.
-    if: startsWith(github.head_ref, 'renovate/')
+    # Renovate's own branches only. `github.head_ref` is the branch, not a SHA. The head-repo check
+    # keeps this off forks: a fork's PR branch could be named `renovate/...`, and this job pushes
+    # with the PAT.
+    if: startsWith(github.head_ref, 'renovate/') && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -76,7 +78,7 @@ jobs:
           TOKEN: ${{ secrets.CHANGESETS_TOKEN }}
           HEAD_REF: ${{ github.head_ref }}
         run: |
-          set -uo pipefail
+          set -euo pipefail
           if [ -z "$(git status --porcelain -- .changeset)" ]; then
             echo "Nothing to write."
             exit 0

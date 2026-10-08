@@ -23,11 +23,13 @@
 // - Output shape. Qadams declare no static output schema, so a changed output is invisible.
 // - Behaviour. ADR-0001 says so: a behaviour change with an unchanged schema is a question in the
 //   PR template and an obligation of the author, not a gate.
-// - Props it cannot resolve statically are skipped, never guessed: a prop built by a helper call
-//   (`telegramCommons.chatIdProp()`), a config object with a spread or a `required`/`defaultValue`
-//   shorthand, a non-literal `required:`, or a `props:` that is not an object literal (then the
-//   whole action's props are skipped). Same doctrine and same measured blind spots as
-//   tools/ci/check-required-prop-defaults.mjs, whose header lists them.
+// - A prop it cannot resolve statically is never compared, so a change to one is invisible: a prop
+//   built by a helper call (`telegramCommons.chatIdProp()`), a config object with a spread or a
+//   `required`/`defaultValue` shorthand, a non-literal `required:`, or a `props:` that is not an
+//   object literal (then the whole action's props are skipped). The one asymmetry: an ADDED prop
+//   that cannot be resolved is still reported as a feature — whether it is required with no default
+//   cannot be checked, and silently ignoring it would demand too little. Same doctrine and same
+//   measured blind spots as tools/ci/check-required-prop-defaults.mjs, whose header lists them.
 // - An action or trigger is identified by its literal `name:`, or else by its enclosing
 //   `const`/`function` name. One with neither is skipped. If the identity itself moves between
 //   the two forms, the gate sees a removal plus an addition and over-estimates (breaking) — the

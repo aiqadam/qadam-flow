@@ -58,6 +58,8 @@ expect 1 'floor above ceiling' "$(tree inverted 1.4.5 "  minimumSupportedRelease
 expect 1 'a floor that is not semver' "$(tree not-semver 2.0.0 "  minimumSupportedRelease: 'latest',")" "'latest' is not a valid semver version"
 expect 1 'a floor that is not a literal cannot be audited' "$(tree not-literal 2.0.0 "  minimumSupportedRelease: MIN_RELEASE,")" 'is not a string literal'
 expect 1 'a shorthand floor cannot be audited' "$(tree shorthand 2.0.0 "  minimumSupportedRelease,")" 'is not a string literal'
+expect 1 'a quoted floor key is read, not skipped' "$(tree quoted-key 2.0.0 "  'minimumSupportedRelease': '2.1.0',")" 'effective minimumSupportedRelease 2.1.0 (declared) is above the platform version 2.0.0'
+expect 1 'a quoted key with an invalid value is reported, not skipped' "$(tree quoted-invalid 2.0.0 "  'minimumSupportedRelease': 'latest',")" "'latest' is not a valid semver version"
 
 echo "== the EFFECTIVE floor: the framework clamps anything below its constant up to it =="
 expect 0 "a declared 0.0.0 is the framework's 0.82.0, under platform 2.0.0" "$(tree clamp-ok 2.0.0 "  minimumSupportedRelease: '0.0.0',")" 'raises any floor below 0.82.0 to 0.82.0'
@@ -74,6 +76,13 @@ d="$(tree no-version 2.0.0 '')"; printf '{ "name": "qadam-flow" }\n' > "$d/packa
 expect 2 'root package.json without a version' "$d" 'UNKNOWN'
 d="$(tree empty 2.0.0 '')"; rm -rf "$d/packages/qadams/community"
 expect 2 'no qadams at all' "$d" 'UNKNOWN'
+bare_root_out="$(timeout 60 node "$checker" --root 2>&1)"; bare_root_rc=$?
+if [ "$bare_root_rc" -eq 2 ] && printf '%s' "$bare_root_out" | grep -qF 'UNKNOWN'; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1)); printf 'FAIL  a bare --root -> UNKNOWN, not a crash (want 2, got %s)\n' "$bare_root_rc"
+  printf '%s\n' "$bare_root_out" | sed 's/^/        | /'
+fi
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"

@@ -45,7 +45,13 @@ const FIELDS = ['minimumSupportedRelease', 'maximumSupportedRelease']
 
 const main = () => {
   const rootArg = process.argv.indexOf('--root')
-  const root = rootArg === -1 ? process.cwd() : path.resolve(process.argv[rootArg + 1])
+  const rootValue = rootArg === -1 ? null : process.argv[rootArg + 1]
+  if (rootValue !== null && (!rootValue || rootValue.startsWith('--'))) {
+    console.error('[check-compat-floors] UNKNOWN — --root needs a directory argument (a bare --root or one followed by another flag cannot be measured).')
+    process.exitCode = 2
+    return
+  }
+  const root = rootValue === null ? process.cwd() : path.resolve(rootValue)
   const platform = readPlatformVersion({ root })
   if (platform === null) {
     console.error(`[check-compat-floors] UNKNOWN — the root package.json in ${root} has no valid semver "version".`)
@@ -146,6 +152,11 @@ const walk = ({ dir }) => {
   })
 }
 
+// A property name as written, not as printed: `minimumSupportedRelease`, `'minimumSupportedRelease'`
+// and `"minimumSupportedRelease"` are the same key, and reading only the source text would silently
+// skip the quoted spellings (the shape that made a 9.9.9 floor pass gate 7).
+const propertyKey = ({ name }) => (ts.isStringLiteralLike(name) || ts.isIdentifier(name) || ts.isNumericLiteral(name) ? name.text : name.getText())
+
 // Every `createQadam({ ... })` in the qadam's src. A floor declared in more than one call (or a
 // call whose config is not an object literal) is reported rather than resolved by guessing.
 const readFloors = ({ dir }) => {
@@ -161,7 +172,7 @@ const readFloors = ({ dir }) => {
         }
         else {
           for (const field of FIELDS) {
-            const property = config.properties.find((p) => (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) && p.name?.getText() === field)
+            const property = config.properties.find((p) => (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) && p.name && propertyKey({ name: p.name }) === field)
             if (!property) {
               continue
             }

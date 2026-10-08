@@ -55,15 +55,12 @@ import { pathToFileURL } from 'node:url'
 
 export const changesetGate = {
   loadWorkspace: (...args) => loadWorkspace(...args),
-  parseChangeset: (...args) => parseChangeset(...args),
   readAddedChangesets: (...args) => readAddedChangesets(...args),
   declaredLevels: (...args) => declaredLevels(...args),
   resolveRange: (...args) => resolveRange(...args),
   changedFiles: (...args) => changedFiles(...args),
   owningPackage: (...args) => owningPackage(...args),
   readFileAt: (...args) => readFileAt(...args),
-  LEVELS: ['none', 'patch', 'minor', 'major'],
-  PLATFORM_PACKAGE: '@aiqadam/platform',
 }
 
 const LEVEL_RANK = { none: 0, patch: 1, minor: 2, major: 3 }
@@ -347,13 +344,12 @@ const declaredLevels = ({ changesets }) => {
 
 const addReason = ({ needs, pkg, reason, dependencyChange = false }) => {
   const entry = needs.get(pkg.name) ?? { pkg, reasons: [], dependencyChange: false }
-  if (entry.reasons.length < 3) {
-    entry.reasons.push(reason)
-  }
-  else if (entry.reasons.length === 3) {
-    entry.reasons.push('…')
-  }
-  needs.set(pkg.name, { ...entry, dependencyChange: entry.dependencyChange || dependencyChange })
+  const reasons = entry.reasons.length < 3
+    ? [...entry.reasons, reason]
+    : entry.reasons.length === 3
+      ? [...entry.reasons, '…']
+      : entry.reasons
+  needs.set(pkg.name, { ...entry, reasons, dependencyChange: entry.dependencyChange || dependencyChange })
 }
 
 const existedAtBase = ({ range, file }) => readFileAt({ sha: range.base, file }) !== null

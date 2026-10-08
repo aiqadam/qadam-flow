@@ -72,6 +72,13 @@ expect 0 'the framework re-export is the sanctioned path' "$(tree framework-impo
 echo "== UNKNOWN =="
 mkdir -p "$tmp/empty/packages"
 expect 2 'no qadam sources at all -> UNKNOWN, never a clean pass' "$tmp/empty" 'UNKNOWN'
+bare_root_out="$(timeout 60 node "$checker" --root 2>&1)"; bare_root_rc=$?
+if [ "$bare_root_rc" -eq 2 ] && printf '%s' "$bare_root_out" | grep -qF 'UNKNOWN'; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1)); printf 'FAIL  a bare --root -> UNKNOWN, not a crash (want 2, got %s)\n' "$bare_root_rc"
+  printf '%s\n' "$bare_root_out" | sed 's/^/        | /'
+fi
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"

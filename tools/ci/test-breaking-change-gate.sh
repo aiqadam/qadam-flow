@@ -224,6 +224,17 @@ git -C "$d" tag release-1.2.0
 expect 2 'tag without a `v` prefix -> UNKNOWN' \
   "$d" release-1.2.0 "does not start with 'v'"
 
+# A previous tag whose major cannot be read. The old guard concatenated both majors before
+# checking, so '' + '3' looked all-digit, `[ 3 -gt '' ]` errored out and the platform-major
+# check was silently skipped (fail-open). Each component is validated separately now.
+d="$(new_repo unknown-prev-major)"
+commit "$d" 'src/a.txt' 'feat: baseline'
+git -C "$d" tag v.2.0
+commit "$d" 'src/b.txt' 'fix: ordinary'
+git -C "$d" tag v3.0.0
+expect 2 'a previous tag with an empty major -> UNKNOWN, not a skipped platform-major check' \
+  "$d" v3.0.0 'cannot read the major version of v.2.0'
+
 d="$(build_release unknown-doc-absent 'feat!: remove the thing' absent)"
 expect 2 'changelog file missing entirely -> UNKNOWN, not "nothing to check"' \
   "$d" v1.1.0 'does not exist at v1.1.0'

@@ -312,9 +312,10 @@ main() {
   if [ "$first_release" != true ]; then
     prev_major="$(printf '%s' "${prev#v}" | cut -d. -f1)"
     version_major="$(printf '%s' "$base_version" | cut -d. -f1)"
-    case "${prev_major}${version_major}" in
-      *[!0-9]*|'') die_unknown "cannot read the major version of ${prev} or ${tag}" ;;
-    esac
+    # Each component separately: a concatenated check lets a single empty major through ('' + '2'
+    # looks all-digit), and the -gt below would then error out and silently skip this gate.
+    case "$prev_major" in ''|*[!0-9]*) die_unknown "cannot read the major version of ${prev}" ;; esac
+    case "$version_major" in ''|*[!0-9]*) die_unknown "cannot read the major version of ${tag}" ;; esac
     if [ "$version_major" -gt "$prev_major" ]; then
       say "platform major: ${prev} -> ${tag} (ADR-0001 gate 4 — a major always needs an entry)"
       say ''

@@ -40,7 +40,13 @@ const SOURCE_FILE = /\.(ts|tsx|mts|cts|js|mjs|cjs)$/
 
 const main = () => {
   const rootArg = process.argv.indexOf('--root')
-  const root = rootArg === -1 ? process.cwd() : path.resolve(process.argv[rootArg + 1])
+  const rootValue = rootArg === -1 ? null : process.argv[rootArg + 1]
+  if (rootValue !== null && (!rootValue || rootValue.startsWith('--'))) {
+    console.error('[check-qadam-shared-imports] UNKNOWN — --root needs a directory argument (a bare --root or one followed by another flag cannot be measured).')
+    process.exitCode = 2
+    return
+  }
+  const root = rootValue === null ? process.cwd() : path.resolve(rootValue)
   const files = QADAM_ROOTS.flatMap((qadamRoot) => listQadamSources({ dir: path.join(root, qadamRoot) }))
   if (files.length === 0) {
     console.error(`[check-qadam-shared-imports] UNKNOWN — no qadam source files under ${QADAM_ROOTS.join(', ')} in ${root}. The scan target moved; refusing to report a clean tree.`)

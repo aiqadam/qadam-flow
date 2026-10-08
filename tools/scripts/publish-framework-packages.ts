@@ -30,10 +30,10 @@ const FRAMEWORK_PACKAGE_PATHS = [
 const PUBLISH_ORDER_FILENAME = 'publish-order.txt'
 
 // Step 1b (#476) adds 238 more packages behind `--include-qadams`, and every one of them costs a
-// serial `registry.npmjs.org/<pkg>/latest` round trip in packagePrePublishChecks before it can be
-// packed. Serially that is the dominant cost of the pack job; unbounded it is 238 concurrent
-// requests, which invites the 429 that `getLatestPublishedVersion`'s 4^n backoff turns into
-// minutes of sleeping. 16 is chosen to keep the registry leg busy without looking like a burst —
+// serial version-list round trip (`registry.npmjs.org/<pkg>`) in packagePrePublishChecks before
+// it can be packed. Serially that is the dominant cost of the pack job; unbounded it is 238
+// concurrent requests, which invites the 429 that the fetch's 4^n backoff turns into minutes of
+// sleeping. 16 is chosen to keep the registry leg busy without looking like a burst —
 // the pre-#486 script this replaces used 30-wide chunks with a 5s sleep between them, which is
 // the same trade made less precisely.
 //
