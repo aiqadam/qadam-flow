@@ -232,7 +232,9 @@ export const getQadamPackageWithoutArchive = async (
     }
 }
 
-export function toQadamMetadataModelSummary<T extends QadamMetadataSchema | QadamMetadataModel>(
+// The backfill's attempt bookkeeping is internal; the summary carries `contextVersion` (it comes
+// along with the stored row) but not the two counters.
+export function toQadamMetadataModelSummary<T extends QadamMetadataSchema>(
     qadamMetadataEntityList: T[],
     originalMetadataList: T[],
     suggestionType?: SuggestionType,
@@ -240,8 +242,9 @@ export function toQadamMetadataModelSummary<T extends QadamMetadataSchema | Qada
     return qadamMetadataEntityList.map((qadamMetadataEntity) => {
         const originalMetadata = originalMetadataList.find((p) => p.name === qadamMetadataEntity.name)
         assertNotNullOrUndefined(originalMetadata, `Original metadata not found for ${qadamMetadataEntity.name}`)
+        const { contextVersionAttempts: _contextVersionAttempts, contextVersionLastAttemptAt: _contextVersionLastAttemptAt, ...summary } = qadamMetadataEntity
         return {
-            ...qadamMetadataEntity,
+            ...summary,
             actions: Object.keys(originalMetadata.actions).length,
             triggers: Object.keys(originalMetadata.triggers).length,
             suggestedActions: suggestionType === SuggestionType.ACTION || suggestionType === SuggestionType.ACTION_AND_TRIGGER ?
