@@ -183,7 +183,12 @@ describe('qadamContextVersionBackfill (#802)', () => {
 
     it('dispatches nothing and records nothing when no worker is online', async () => {
         const { platformId } = await setup()
-        await workerMachineCache().delete([FAKE_WORKER_ID])
+        // A worker suite earlier in the same serial run leaves its registration behind for up to
+        // WORKER_MACHINE_TTL_SECONDS (60 s), because disconnect never clears it (#825), and this case
+        // would read it as "a worker is online". Clear the whole index, not only this file's fake
+        // worker, so the case does not depend on which file ran before it.
+        const liveWorkers = await workerMachineCache().find()
+        await workerMachineCache().delete(liveWorkers.map((machine) => machine.id))
         await saveRow({ name: 'v1-archive', platformId, archiveId: await saveArchive(platformId) })
 
         expect(await qadamContextVersionBackfill(mockLog).run()).toEqual({ resolved: 0, failed: 0, stoppedEarly: true })
