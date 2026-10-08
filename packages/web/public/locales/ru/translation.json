@@ -2257,5 +2257,8 @@
   "You cannot change your own membership": "Вы не можете изменить своё участие",
   "The project owner cannot be changed here": "Владельца проекта нельзя изменить здесь",
   "This member is managed by your directory": "Этот участник управляется вашей директорией",
-  "The last admin cannot be removed or demoted": "Последнего администратора нельзя удалить или понизить"
+  "The last admin cannot be removed or demoted": "Последнего администратора нельзя удалить или понизить",
+  "Framework version retirement": "Прекращение поддержки версии фреймворка",
+  "This release no longer runs context versions {versions}. Affected steps: {unsupported}. Affected flows: {flows}. Update each step to a qadam version built against a supported framework version.": "Этот релиз больше не поддерживает версии контекста {versions}. Затронуто шагов: {unsupported}. Затронуто потоков: {flows}. Обновите каждый шаг до версии qadam, собранной против поддерживаемой версии фреймворка.",
+  "and {remaining} more": "и ещё {remaining}"
 }

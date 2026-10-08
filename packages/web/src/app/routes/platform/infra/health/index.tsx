@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
+import { FrameworkCensusBanner } from './components/framework-census-banner';
 import { QueueTab } from './components/queue-tab';
 import { RunsTab } from './components/runs-tab';
 import { SystemHealthTab } from './components/system-health-tab';
@@ -91,6 +92,8 @@ export default function SettingsHealthPage() {
           </Select>
         )}
       </DashboardPageHeader>
+
+      <FrameworkCensusBanner />
 
       <Tabs
         value={activeTab}

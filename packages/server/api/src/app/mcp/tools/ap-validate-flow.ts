@@ -22,6 +22,7 @@ import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
 import { flowService } from '../../flows/flow/flow.service'
 import { projectService } from '../../project/project-service'
+import { frameworkCensusMarking } from '../../qadams/census/framework-census-marking'
 import { qadamMetadataService } from '../../qadams/metadata/qadam-metadata-service'
 import { qadamPinUtil } from '../../qadams/metadata/qadam-pin-util'
 import { translationService } from '../../translation/translation.service'
@@ -45,7 +46,7 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
 
                 const structural = validateFlow({ trigger: flow.version.trigger })
                 const platformId = await projectService(log).getPlatformId(mcp.projectId)
-                const [callFlowIssues, qadamVersionIssues, concurrentLoopIssues, translationIssues] = await Promise.all([
+                const [callFlowIssues, qadamVersionIssues, frameworkVersionIssues, concurrentLoopIssues, translationIssues] = await Promise.all([
                     validateCallFlowSteps({
                         trigger: flow.version.trigger,
                         projectId: mcp.projectId,
@@ -53,6 +54,11 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                         log,
                     }),
                     validatePinnedQadamVersions({
+                        trigger: flow.version.trigger,
+                        platformId,
+                        log,
+                    }),
+                    validateFrameworkVersions({
                         trigger: flow.version.trigger,
                         platformId,
                         log,
@@ -71,7 +77,7 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                         log,
                     }),
                 ])
-                const allIssues = [...structural.issues, ...qadamVersionIssues, ...callFlowIssues, ...concurrentLoopIssues, ...translationIssues]
+                const allIssues = [...structural.issues, ...qadamVersionIssues, ...frameworkVersionIssues, ...callFlowIssues, ...concurrentLoopIssues, ...translationIssues]
                 const result = { ...structural, issues: allIssues }
                 // A warning is reported in the output but never blocks `valid` or counts toward
                 // "invalid" in the summary — today that is exactly (and only) the translation
@@ -228,8 +234,39 @@ async function validatePinnedQadamVersions({ trigger, platformId, log }: {
     })
 }
 
-// `ap_validate_flow` is the only pre-publish gate an automated flow builder has, and until now it
-// could not see the two ways a `callFlow` step fails at run time while reading as configured: an
+// ADR-0002 (#803): once a release retires a framework context version, a step pinned to a qadam
+// built against it stops running. The flow stays enabled and nothing disables it (#435) — this
+// category is the read-time signal, alongside `ap_flow_structure`'s per-step mark and the platform
+// Health page banner.
+// It is free until the first retirement: `unsupportedPins` skips the resolution entirely while the
+// support table's versions are all still run.
+async function validateFrameworkVersions({ trigger, platformId, log }: {
+    trigger: Step
+    platformId: string
+    log: FastifyBaseLogger
+}): Promise<ValidationIssue[]> {
+    const qadamSteps = qadamPinUtil.getQadamSteps({ trigger })
+    const unsupportedPins = await frameworkCensusMarking(log).unsupportedPins({ qadamSteps, platformId })
+
+    return qadamSteps.flatMap((step): ValidationIssue[] => {
+        const pin = qadamPinUtil.pinOf({ step })
+        const support = unsupportedPins.get(pin)
+        if (isNil(support)) {
+            return []
+        }
+        const context = isNil(support.contextVersion)
+            ? 'an unknown context version'
+            : `framework context version ${support.contextVersion}`
+        return [{
+            category: 'framework_version' as const,
+            stepName: step.name,
+            message: `${mcpUtils.wrapUntrustedValue(step.displayName)} uses a framework version no longer supported — update this step. Its pinned qadam ${mcpUtils.wrapUntrustedValue(pin)} needs ${context}, which this release no longer runs.`,
+        }]
+    })
+}
+
+// `ap_validate_flow` is the only pre-publish gate an automated flow builder has, and until now
+// it could not see the two ways a `callFlow` step fails at run time while reading as configured: an
 // empty argument set, and an inline child that pauses. Both are decidable statically — the payload
 // is right there in the step, and the call graph is already stored on the server (#391).
 async function validateCallFlowSteps({ trigger, projectId, platformId, log }: {
@@ -891,10 +928,11 @@ const CONDITIONAL_PAUSE_EVALUATORS: Record<string, (step: QadamStep) => string |
     [`${ASSEMBLYAI_QADAM}:${ASSEMBLYAI_TRANSCRIBE_ACTION}`]: readTranscribePauseReason,
 }
 
-const CATEGORY_ORDER: ValidationIssue['category'][] = ['step_validity', 'qadam_version', 'template_reference', 'translation_key', 'translation_default_locale', 'translation_locale', 'empty_branch', 'subflow_payload', 'inline_pause', 'concurrent_pause']
+const CATEGORY_ORDER: ValidationIssue['category'][] = ['step_validity', 'qadam_version', 'framework_version', 'template_reference', 'translation_key', 'translation_default_locale', 'translation_locale', 'empty_branch', 'subflow_payload', 'inline_pause', 'concurrent_pause']
 const CATEGORY_LABELS: Record<ValidationIssue['category'], string> = {
     step_validity: 'Step Validity',
     qadam_version: 'Unavailable Qadam Versions',
+    framework_version: 'Unsupported Framework Versions',
     template_reference: 'Template References',
     translation_key: 'Unknown Translation Keys',
     translation_default_locale: 'Translations Missing The Default Locale',
@@ -973,7 +1011,7 @@ function formatIssueGroups(issues: ValidationIssue[]): string[] {
 }
 
 type ValidationIssue = {
-    category: 'step_validity' | 'qadam_version' | 'template_reference' | 'translation_key' | 'translation_locale' | 'translation_default_locale' | 'empty_branch' | 'subflow_payload' | 'inline_pause' | 'concurrent_pause'
+    category: 'step_validity' | 'qadam_version' | 'framework_version' | 'template_reference' | 'translation_key' | 'translation_locale' | 'translation_default_locale' | 'empty_branch' | 'subflow_payload' | 'inline_pause' | 'concurrent_pause'
     stepName: string
     message: string
     // Omitted (or 'error') blocks `structuredContent.valid` and counts toward "invalid" in the

@@ -53,7 +53,7 @@ The qadams feature manages the metadata catalog of automation integrations (call
 | maximumSupportedRelease | string | semver |
 | projectUsage | number | usage counter |
 | i18n | json (nullable) | translation map |
-| contextVersion | string (nullable) | context version the qadam reports through `getContextInfo()` (ADR-0002, #802), for the census (#803). `1` / `2` = that `ContextVersion`; `NONE` = loaded, reports no version (predates `getContextInfo`, oldest shim); `UNRECOGNISED` = loaded, reported something no shim here matches; NULL = not measured yet, or the qadam could not be loaded. The census counts **every value except `2`** as still needing the old contract. Mapping: `qadams/metadata/qadam-context-version.ts`. Written by `create` from the extracted metadata (install never writes NULL) |
+| contextVersion | string (nullable) | context version the qadam reports through `getContextInfo()` (ADR-0002, #802), for the census (#803). `1` / `2` = that `ContextVersion`; `NONE` = loaded, reports no version (predates `getContextInfo`, oldest shim); `UNRECOGNISED` = loaded, reported something no shim here matches; NULL = not measured yet, or the qadam could not be loaded. The census counts **every value except `2`** as still needing the old contract. Mapping: `qadams/metadata/qadam-context-version.ts`. Written by `create` from the extracted metadata (install never writes NULL). See [framework-census.md](./framework-census.md) |
 | contextVersionAttempts | number (default 0) | failed backfill loads of this row |
 | contextVersionLastAttemptAt | timestamptz (nullable) | when the backfill last failed to load this row |
 

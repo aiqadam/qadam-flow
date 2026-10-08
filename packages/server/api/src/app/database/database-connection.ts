@@ -53,7 +53,7 @@ import { UserEntity } from '../user/user-entity'
 import { UserInvitationEntity } from '../user-invitations/user-invitation.entity'
 import { VariableEntity } from '../variable/variable.entity'
 import { DatabaseType } from './database-type'
-import { createPostgresDataSource } from './postgres-connection'
+import { createPostgresDataSource, DataSourceAccess } from './postgres-connection'
 
 const databaseType = system.get(AppSystemProp.DB_TYPE)?.trim()
 
@@ -134,11 +134,11 @@ function isSupportedDatabaseType(value: string | undefined): boolean {
     return isNil(value) || value === '' || value.toUpperCase() === DatabaseType.POSTGRES
 }
 
-const createDataSource = (): DataSource => {
+const createDataSource = ({ access }: { access: DataSourceAccess }): DataSource => {
     if (!isSupportedDatabaseType(databaseType)) {
         throw new Error(`Unsupported AP_DB_TYPE "${databaseType}". PGLite support has been removed — POSTGRES is the only supported database type. Set AP_DB_TYPE=POSTGRES, or remove the variable to use the default. There is no automated migration from a PGLite data directory to PostgreSQL; see https://flow.aiqadam.org/docs/install/configuration/breaking-changes for details.`)
     }
-    return createPostgresDataSource()
+    return createPostgresDataSource({ access })
 }
 
 export const databaseConnection = (): DataSource => {
@@ -146,7 +146,21 @@ export const databaseConnection = (): DataSource => {
     if (!isNil(existing)) {
         return existing
     }
-    const ds = createDataSource()
+    const ds = createDataSource({ access: 'read-write' })
+    setPersistedConnection(ds)
+    return ds
+}
+
+// For an operator command that reports on a database this image may not have migrated yet — the
+// framework census `doctor` (ADR-0002) runs from a new image against the live database before the
+// upgrade. The application's connection would migrate that database on `initialize()`; this one
+// never migrates and Postgres refuses its writes. It becomes the process's connection so the
+// repositories read through it, and it refuses to replace a connection that already exists.
+export function openReadOnlyDatabaseConnection(): DataSource {
+    if (!isNil(getPersistedConnection())) {
+        throw new Error('A database connection already exists in this process; a read-only connection must be the first and only one.')
+    }
+    const ds = createDataSource({ access: 'read-only' })
     setPersistedConnection(ds)
     return ds
 }

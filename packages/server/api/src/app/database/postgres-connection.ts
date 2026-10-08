@@ -78,13 +78,24 @@ export const getMigrations = (): (new () => Migration)[] => {
     ]
 }
 
-export const createPostgresDataSource = (): DataSource => {
-    const migrationConfig: MigrationConfig = {
-        migrationsRun: true,
-        migrationsTransactionMode: 'each',
-        migrations: getMigrations(),
-        synchronize: false,
-    }
+export const createPostgresDataSource = ({ access }: { access: DataSourceAccess } = { access: 'read-write' }): DataSource => {
+    const readOnly = access === 'read-only'
+    // TypeORM runs every pending migration inside `initialize()` when `migrationsRun` is set, so a
+    // read-only DataSource must not set it — and knows no migrations at all, so nothing can run
+    // them through it by accident.
+    const migrationConfig: MigrationConfig = readOnly
+        ? { migrationsRun: false, migrations: [], synchronize: false }
+        : {
+            migrationsRun: true,
+            migrationsTransactionMode: 'each',
+            migrations: getMigrations(),
+            synchronize: false,
+        }
+    // `default_transaction_read_only` makes Postgres itself refuse every write on these sessions, so
+    // read-only does not rest on the caller's code paths. `installExtensions: false` stops TypeORM's
+    // `CREATE EXTENSION IF NOT EXISTS` on connect, which is a write.
+    const readOnlyConfig = readOnly ? { installExtensions: false } : {}
+    const readOnlyExtra = readOnly ? { options: '-c default_transaction_read_only=on' } : {}
 
     const url = system.get(AppSystemProp.POSTGRES_URL)
 
@@ -95,7 +106,9 @@ export const createPostgresDataSource = (): DataSource => {
             ssl: getSslConfig(),
             ...spreadIfDefined('poolSize', system.get(AppSystemProp.POSTGRES_POOL_SIZE)),
             ...migrationConfig,
+            ...readOnlyConfig,
             ...commonProperties,
+            extra: readOnlyExtra,
         })
     }
 
@@ -118,11 +131,18 @@ export const createPostgresDataSource = (): DataSource => {
         ...spreadIfDefined('poolSize', system.get(AppSystemProp.POSTGRES_POOL_SIZE)),
         ...commonProperties,
         ...migrationConfig,
+        ...readOnlyConfig,
         extra: {
             idleTimeoutMillis,
+            ...readOnlyExtra,
         },
     })
 }
+
+// `read-write` is the application's connection: it migrates on `initialize()`. `read-only` is for
+// operator commands that report on a database this image may not have migrated yet (the framework
+// census `doctor`, ADR-0002): it never migrates and Postgres rejects every write it attempts.
+export type DataSourceAccess = 'read-write' | 'read-only'
 
 type MigrationConfig = {
     migrationsRun?: boolean
