@@ -1,0 +1,90 @@
+name: Renovate changesets
+
+# A dependency change inside a versioned package (a qadam, the SDK) needs a changeset naming that
+# package — ADR-0001 gate 1, enforced for every PR by tools/ci/check-changesets.mjs in _verify.yml.
+# Renovate cannot write one, so on Renovate's own branches this workflow does: a `patch` changeset
+# for every versioned package whose dependency sections moved and that no changeset names yet.
+# A reviewer can raise the level; gate 2 still checks it against the computed one.
+#
+# Replaces qadam-version-bump.yml (#796), which committed a hand bump of each qadam's `version` —
+# under ADR-0001 only the release PR raises versions, and a hand bump now fails gate 1.
+#
+# A human PR does not get a silent commit on its branch; it gets the failing gate and its message.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'packages/**/package.json'
+
+# Read-only by default; the push below relies on the PAT in `CHANGESETS_TOKEN`, not on this token.
+permissions:
+  contents: read
+
+# One run per branch: two overlapping runs would both commit, and the second push is rejected as a
+# non-fast-forward.
+concurrency:
+  group: renovate-changeset-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  changeset:
+    name: Write the dependency changeset
+    # Renovate's own branches only. `github.head_ref` is the branch, not a SHA.
+    if: startsWith(github.head_ref, 'renovate/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # A PAT, never GITHUB_TOKEN: a push made with the repository's own token does not trigger CI,
+      # so the changeset commit would land with no required checks and the PR could never merge.
+      - name: Require a push token
+        env:
+          TOKEN: ${{ secrets.CHANGESETS_TOKEN }}
+        run: |
+          if [ -z "${TOKEN:-}" ]; then
+            echo "::error::CHANGESETS_TOKEN is not set. Add a fine-grained PAT (Contents: read and write on this repository) as a repository secret. A push with GITHUB_TOKEN would not re-trigger CI."
+            exit 1
+          fi
+
+      # No token in .git/config while code from the branch is around; the push supplies it one-shot.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.head_ref }}
+          # The checker diffs PR_BASE_SHA...PR_HEAD_SHA, so both ends must be reachable locally.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Write the changeset
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GITHUB_HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          # The TRUSTED copy from the base branch, never the branch's own: this step writes the tree
+          # the next step pushes with the PAT, so PR-controlled code must not execute here. The
+          # checker imports nothing but node builtins for exactly this reason. `-e` matters: a failed
+          # `git show` would otherwise leave an empty file, and node exits 0 on an empty module.
+          git show "${PR_BASE_SHA}:tools/ci/check-changesets.mjs" > /tmp/check-changesets.mjs
+          node /tmp/check-changesets.mjs --write-renovate-changeset
+
+      - name: Commit and push
+        env:
+          TOKEN: ${{ secrets.CHANGESETS_TOKEN }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -uo pipefail
+          if [ -z "$(git status --porcelain -- .changeset)" ]; then
+            echo "Nothing to write."
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .changeset
+          git commit -s -m 'chore(deps): add a changeset for the dependency update'
+          # One-shot credential, this step only. The ref goes through an env var and is quoted, so a
+          # branch name cannot inject shell syntax.
+          git push "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${HEAD_REF}"

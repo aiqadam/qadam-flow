@@ -42,12 +42,12 @@
   ],
   "packageRules": [
     {
-      "description": "Qadam packages are published on npm and carry a manual version contract (AGENTS.md, 'Published-package version bumps'). Routine dependency updates inside one are left to humans. Security/OSV alerts bypass this file-scoped disable; the version bump such a fix needs is applied by the `Qadam version bumps` workflow (tools/ci/check-qadam-version-bumps.mjs), not by a Renovate rule — Renovate cannot do it here (bumpVersion is npm-only, and the bun manager supersedes npm).",
+      "description": "Qadam packages are published on npm and carry a semver contract (ADR-0001). Routine dependency updates inside one are left to humans. Security/OSV alerts bypass this file-scoped disable; the changeset such a fix needs (ADR-0001 gate 1) is written by the `Renovate changesets` workflow (.github/workflows/renovate-changeset.yml, tools/ci/check-changesets.mjs --write-renovate-changeset), not by a Renovate rule — Renovate cannot write one.",
       "matchFileNames": ["packages/qadams/**"],
       "enabled": false
     },
     {
-      "description": "Internal @aiqadam/* packages are versioned by hand and pinned exactly by every published qadam. Do not propose updates for them.",
+      "description": "Internal @aiqadam/* packages are versioned by changesets (ADR-0001) and pinned exactly by every published qadam. Do not propose updates for them.",
       "matchPackageNames": ["@aiqadam/*"],
       "enabled": false
     },

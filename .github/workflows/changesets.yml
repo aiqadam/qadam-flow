@@ -1,0 +1,119 @@
+name: Release PR
+
+# ADR-0001 "Who raises versions: changesets" (#796). On every push to main that leaves changesets
+# pending, open or update ONE pull request — "chore(release): version packages", branch
+# `changeset-release/main` — that runs tools/scripts/changesets/version.mjs: raises every named
+# package (and its workspace dependents), writes the changelogs, and moves the root package.json
+# when the platform (`@aiqadam/platform`) is released.
+#
+# WHAT THIS WORKFLOW NEVER DOES: publish, tag or create a GitHub Release. changesets/action only
+# publishes or tags when it is given a `publish-script`, and none is given here — with changesets
+# pending it takes the version-PR branch, and with none pending it logs "Not publishing because
+# publish-script is not set" and exits (changesets/action@v2.1.2 src/index.ts, the
+# `!hasChangesets && !hasPublishScript` case). Publishing stays where it was: a maintainer pushes
+# `v<root version>` after merging the release PR, and release.yml (version-tag-gate,
+# breaking-change-gate, the `npm-publish` environment with required reviewers) takes it from there,
+# or publish-packages.yml on a dispatch. Merging the release PR on its own changes versions and
+# changelogs in git and nothing else.
+#
+# WHY A PAT AND NOT GITHUB_TOKEN. A pull request opened or pushed with the repository's own token
+# does not trigger workflows, so the release PR would never get its required checks and could never
+# be merged — the same reason qadam-version-bump.yml used one. `CHANGESETS_TOKEN`: a fine-grained
+# PAT on this repository with Contents and Pull requests read/write. Missing → a loud failure, not
+# a silent no-op, and only when there is something to release.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Two pushes in quick succession must not race on the same release branch; the newer one wins.
+concurrency:
+  group: release-pr
+  cancel-in-progress: true
+
+jobs:
+  release-pr:
+    name: Open or update the release PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # `persist-credentials: false`: the push below is done by the action with the PAT, and no
+      # credential should sit in .git/config while `bun install` runs third-party install scripts.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Any changesets pending?
+        id: pending
+        run: |
+          set -euo pipefail
+          count="$(find .changeset -maxdepth 1 -name '*.md' ! -iname 'README.md' | wc -l | tr -d ' ')"
+          echo "count=${count}" >> "$GITHUB_OUTPUT"
+          echo "${count} changeset(s) pending."
+
+      - name: Require the release-PR token
+        if: steps.pending.outputs.count != '0'
+        env:
+          TOKEN: ${{ secrets.CHANGESETS_TOKEN }}
+        run: |
+          if [ -z "${TOKEN:-}" ]; then
+            echo '::error::CHANGESETS_TOKEN is not set, so the release PR cannot be opened. Add a fine-grained PAT (Contents + Pull requests: read and write on this repository) as a repository secret. GITHUB_TOKEN would open a PR that never gets its required checks.'
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v6
+        if: steps.pending.outputs.count != '0'
+        id: node
+        with:
+          node-version: 24
+
+      - uses: oven-sh/setup-bun@v2
+        if: steps.pending.outputs.count != '0'
+        id: bun
+        with:
+          bun-version: 1.3.14
+
+      # Restore-only, the key _verify.yml writes. The version step needs only @changesets/cli, but
+      # the frozen install is what proves bun.lock still resolves.
+      - name: Restore built node_modules
+        if: steps.pending.outputs.count != '0'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            packages/*/*/node_modules
+            packages/*/*/*/node_modules
+          key: node-modules-${{ vars.NODE_MODULES_CACHE_EPOCH || 'v1' }}-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-bun${{ steps.bun.outputs.bun-version }}-${{ hashFiles('bun.lock', 'bunfig.toml', 'package.json', '.npmrc', 'tools/ci/install-deps.sh') }}
+
+      - name: Install dependencies
+        if: steps.pending.outputs.count != '0'
+        run: tools/ci/install-deps.sh
+
+      # The commit identity is set here, before the action, so the action keeps it (it only falls
+      # back to its own bot identity when none is configured) and the `Signed-off-by` trailer in
+      # `commit-message` below matches the author — the DCO job checks exactly that.
+      - name: Set the commit identity
+        if: steps.pending.outputs.count != '0'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+      # Pinned to the commit of v2.1.2: a third-party action that is handed a write token.
+      # `push-with-git-cli: true` so the commit is authored by the identity above; through the
+      # GitHub API it would be attributed to the PAT's owner and fail DCO.
+      - name: Open or update the release PR
+        if: steps.pending.outputs.count != '0'
+        uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+        with:
+          github-token: ${{ secrets.CHANGESETS_TOKEN }}
+          version-script: node tools/scripts/changesets/version.mjs
+          push-with-git-cli: true
+          pr-title: 'chore(release): version packages'
+          commit-message: |
+            chore(release): version packages
+
+            Signed-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
