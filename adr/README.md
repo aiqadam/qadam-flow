@@ -86,8 +86,8 @@ proposed ──► accepted ──► superseded (by NNNN)
 
 One row per ADR, in number order: ``| [`0001`](0001-title.md) | Title | `accepted` |``.
 `npm run check-agent-docs` fails when a file is missing from this table, a row has no file, a
-row shows a status other than the file's, a file name or status is invalid, or a decided ADR has
-no `deciders`. Immutability of accepted ADRs is checked in review.
+row shows a status other than the file's, a file name or status is invalid, a decided ADR has no
+`deciders`, or a superseded ADR names no existing successor. Immutability of accepted ADRs is checked in review.
 
 | ADR | Title | Status |
 | --- | --- | --- |

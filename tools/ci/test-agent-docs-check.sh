@@ -153,7 +153,8 @@ EOF
 }
 
 list_adr() {
-  # $1 = number, $2 = status
+  # $1 = number, $2 = status. The real index drops the placeholder row once an ADR exists.
+  grep -v 'No ADRs yet' "$root/adr/README.md" > "$root/index.tmp" && mv "$root/index.tmp" "$root/adr/README.md"
   printf '| [`%s`](%s-demo.md) | Demo decision | `%s` |\n' "$1" "$1" "$2" >> "$root/adr/README.md"
 }
 
@@ -421,7 +422,31 @@ write_adr 0001-demo.md accepted '[binalirustamov]'
 list_adr 0001 proposed
 run_check
 expect_status 1 "the index must not misreport where a decision stands"
-expect_contains 'does not show its status `accepted`' "names the expected status"
+expect_contains 'shows status "proposed", but the file says `accepted`' "names both sides of the mismatch"
+
+echo "== an index row linking to the wrong file fails =="
+new_root
+write_adr 0001-demo.md proposed
+list_adr 0001 proposed
+sed -i.bak 's/(0001-demo.md)/(0001-renamed.md)/' "$root/adr/README.md" && rm "$root/adr/README.md.bak"
+run_check
+expect_status 1 "a stale link in the index is rot the number check cannot see"
+expect_contains 'links to "0001-renamed.md", but the file is 0001-demo.md' "names both sides of the mismatch"
+
+echo "== a quoted status with a trailing comment is read as the status =="
+new_root
+write_adr 0001-demo.md '"proposed"'
+list_adr 0001 proposed
+run_check
+expect_status 0 "the template's comments must not change what a value means"
+
+echo "== supporting files beside the ADRs are not mistaken for ADRs =="
+new_root
+mkdir -p "$root/adr/assets"
+echo 'png' > "$root/adr/assets/diagram.png"
+echo 'png' > "$root/adr/0001-diagram.png"
+run_check
+expect_status 0 "an ADR may link a diagram kept next to it"
 
 echo "== an unknown ADR status fails =="
 new_root
@@ -447,6 +472,23 @@ run_check
 expect_status 1 "a superseded decision must point at its replacement"
 expect_contains '"superseded-by" names no ADR' "says which field is missing"
 
+echo "== a superseded ADR that points at its successor passes =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0002"'
+write_adr 0002-demo.md accepted '[binalirustamov]'
+list_adr 0001 superseded
+list_adr 0002 accepted
+run_check
+expect_status 0 "superseding is the normal way a decision changes"
+
+echo "== a superseded ADR that points at a missing ADR fails =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0009"'
+list_adr 0001 superseded
+run_check
+expect_status 1 "a successor that does not exist leaves the decision with no current answer"
+expect_contains 'names ADR 0009, which does not exist' "names the missing successor"
+
 echo "== a misnamed file under adr/ fails =="
 new_root
 echo 'notes' > "$root/adr/notes.md"
@@ -468,6 +510,7 @@ new_root
 rm -rf "$root/adr"
 run_check
 expect_status 1 "scanning no ADR directory must fail loudly"
+expect_contains 'adr/ does not exist' "a deliberate finding, not a crash"
 expect_not_contains "OK —" "a missing ADR directory is never a pass"
 
 echo
