@@ -46,17 +46,20 @@ ok() { pass=$((pass + 1)); }
 write() { mkdir -p "$(dirname "$1")"; printf '%s\n' "$2" > "$1"; }
 
 # new_repo <name> — a miniature of this monorepo: a root manifest whose version agrees with
-# packages/platform, shared, two qadams, an ignored private app, and a changesets config. The
+# packages/platform, shared, the framework that bundles it, two qadams, an ignored private app, and
+# a changesets config. The
 # base commit is tagged `base` so every case can diff base...HEAD like a pull request.
 new_repo() {
   local dir="${tmp}/$1"
   rm -rf "$dir"; mkdir -p "$dir"
   git -C "$dir" init -q -b main
   git -C "$dir" config commit.gpgsign false
-  write "$dir/package.json" '{ "name": "qadam-flow", "version": "2.0.0", "private": true, "workspaces": ["packages/shared", "packages/platform", "packages/web", "packages/qadams/core/*"] }'
+  write "$dir/package.json" '{ "name": "qadam-flow", "version": "2.0.0", "private": true, "workspaces": ["packages/shared", "packages/platform", "packages/web", "packages/qadams/framework", "packages/qadams/core/*"] }'
   write "$dir/packages/platform/package.json" '{ "name": "@aiqadam/platform", "version": "2.0.0", "private": true }'
   write "$dir/packages/shared/package.json" '{ "name": "@aiqadam/shared", "version": "0.1.0" }'
   write "$dir/packages/shared/src/index.ts" 'export const a = 1'
+  write "$dir/packages/qadams/framework/package.json" '{ "name": "@aiqadam/qadams-framework", "version": "0.36.0", "dependencies": { "@aiqadam/shared": "workspace:*", "zod": "4.0.0" } }'
+  write "$dir/packages/qadams/framework/src/index.ts" 'export const f = 1'
   write "$dir/packages/web/package.json" '{ "name": "web", "version": "0.0.1", "private": true }'
   write "$dir/packages/web/src/main.ts" 'export const w = 1'
   write "$dir/packages/qadams/core/tables/package.json" '{ "name": "@aiqadam/qadam-tables", "version": "0.5.1", "dependencies": { "@aiqadam/shared": "workspace:*", "dayjs": "1.11.0" } }'
@@ -131,7 +134,7 @@ expect 0 'an ignored package needs no changeset' "$d" 'OK'
 
 d="$(new_repo release-branch)"
 write "$d/packages/qadams/core/tables/package.json" '{ "name": "@aiqadam/qadam-tables", "version": "0.5.2", "dependencies": { "@aiqadam/shared": "workspace:*", "dayjs": "1.11.0" } }'
-write "$d/package.json" '{ "name": "qadam-flow", "version": "2.1.0", "private": true, "workspaces": ["packages/shared", "packages/platform", "packages/web", "packages/qadams/core/*"] }'
+write "$d/package.json" '{ "name": "qadam-flow", "version": "2.1.0", "private": true, "workspaces": ["packages/shared", "packages/platform", "packages/web", "packages/qadams/framework", "packages/qadams/core/*"] }'
 write "$d/packages/platform/package.json" '{ "name": "@aiqadam/platform", "version": "2.1.0", "private": true }'
 commit_all "$d"
 expect 0 'the release PR (changeset-release/*) may raise versions' "$d" 'OK' GITHUB_HEAD_REF=changeset-release/main
@@ -159,6 +162,18 @@ write "$d/packages/qadams/core/new/src/index.ts" 'export const n = 1'
 changeset "$d" new $'---\n"@aiqadam/qadam-new": patch\n---\n\nNew qadam.'
 commit_all "$d"
 expect 0 'a new package with a changeset -> PASS' "$d" 'OK'
+
+d="$(new_repo shared-src-with-framework-changeset)"
+write "$d/packages/shared/src/index.ts" 'export const a = 2'
+changeset "$d" shared $'---\n"@aiqadam/shared": patch\n"@aiqadam/qadams-framework": patch\n---\n\nFix a.'
+commit_all "$d"
+expect 0 'a shared src change naming shared and the framework that bundles it -> PASS' "$d" 'declared  @aiqadam/qadams-framework: patch'
+
+d="$(new_repo framework-src-alone)"
+write "$d/packages/qadams/framework/src/index.ts" 'export const f = 2'
+changeset "$d" framework $'---\n"@aiqadam/qadams-framework": patch\n---\n\nFix f.'
+commit_all "$d"
+expect 0 'a framework change does not demand a shared changeset (the mapping runs one way) -> PASS' "$d" 'OK'
 
 echo "== REJECT =="
 
@@ -205,6 +220,23 @@ write "$d/packages/qadams/core/tables/src/index.ts" 'export const t = 2'
 commit_all "$d"
 expect 1 'a src change still needs a changeset even when shared was also removed -> FAIL' "$d" 'src changed'
 
+d="$(new_repo shared-src-without-framework)"
+write "$d/packages/shared/src/index.ts" 'export const a = 2'
+changeset "$d" shared $'---\n"@aiqadam/shared": minor\n---\n\nChange a.'
+commit_all "$d"
+expect 1 'a shared src change with no framework changeset -> FAIL: the framework tarball vendors it' "$d" '@aiqadam/qadams-framework (packages/qadams/framework) has no changeset in this PR — bundles @aiqadam/shared, whose src changed'
+
+d="$(new_repo shared-dependency-without-framework)"
+write "$d/packages/shared/package.json" '{ "name": "@aiqadam/shared", "version": "0.1.0", "dependencies": { "dayjs": "1.11.13" } }'
+changeset "$d" shared $'---\n"@aiqadam/shared": patch\n---\n\nUpdate dayjs.'
+commit_all "$d"
+expect 1 'a shared dependency change with no framework changeset -> FAIL: the framework manifest carries it' "$d" 'bundles @aiqadam/shared, whose dependencies changed'
+
+d="$(new_repo shared-removal-from-framework)"
+write "$d/packages/qadams/framework/package.json" '{ "name": "@aiqadam/qadams-framework", "version": "0.36.0", "dependencies": { "zod": "4.0.0" } }'
+commit_all "$d"
+expect 1 'the shared-removal exemption covers qadams only: dropping it from the framework -> FAIL' "$d" '@aiqadam/qadams-framework (packages/qadams/framework) has no changeset in this PR — dependencies changed'
+
 d="$(new_repo new-package-no-changeset)"
 write "$d/packages/qadams/core/new/package.json" '{ "name": "@aiqadam/qadam-new", "version": "0.0.1" }'
 write "$d/packages/qadams/core/new/src/index.ts" 'export const n = 1'
@@ -224,7 +256,7 @@ commit_all "$d"
 expect 1 'the release-branch exemption is by branch, not by anything else -> FAIL' "$d" 'was edited by hand' GITHUB_HEAD_REF=feature/release
 
 d="$(new_repo root-hand-bump)"
-write "$d/package.json" '{ "name": "qadam-flow", "version": "2.1.0", "private": true, "workspaces": ["packages/shared", "packages/platform", "packages/web", "packages/qadams/core/*"] }'
+write "$d/package.json" '{ "name": "qadam-flow", "version": "2.1.0", "private": true, "workspaces": ["packages/shared", "packages/platform", "packages/web", "packages/qadams/framework", "packages/qadams/core/*"] }'
 write "$d/packages/platform/package.json" '{ "name": "@aiqadam/platform", "version": "2.1.0", "private": true }'
 commit_all "$d"
 expect 1 'a hand-edited root version -> FAIL' "$d" 'package.json: "version" was edited by hand'
@@ -314,6 +346,18 @@ if [ -z "$(ls "$d/.changeset" | grep -v -e config.json -e README.md)" ]; then
 else
   fail_case 'the writer never writes a changeset for the exempt shared removal' "$(ls "$d/.changeset")"
 fi
+
+d="$(new_repo renovate-shared-dependency)"
+write "$d/packages/shared/package.json" '{ "name": "@aiqadam/shared", "version": "0.1.0", "dependencies": { "dayjs": "1.11.13" } }'
+commit_all "$d"
+last_out="$(cd "$d" && PR_BASE_SHA=base PR_HEAD_SHA=HEAD GITHUB_HEAD_REF='renovate/shared-dayjs' node "$gate" --write-renovate-changeset 2>&1)"
+if grep -qF '"@aiqadam/shared": patch' "$d/.changeset/renovate-shared-dayjs.md" 2>/dev/null && grep -qF '"@aiqadam/qadams-framework": patch' "$d/.changeset/renovate-shared-dayjs.md"; then
+  ok
+else
+  fail_case 'a shared dependency bump gets a changeset naming the framework that ships it too' "$(cat "$d/.changeset/renovate-shared-dayjs.md" 2>&1)"
+fi
+commit_all "$d" 'chore(deps): changeset'
+expect 0 'and the gate then passes on that branch' "$d" 'OK'
 
 d="$(new_repo renovate-src)"
 write "$d/packages/qadams/core/tables/src/index.ts" 'export const t = 2'
