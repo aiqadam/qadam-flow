@@ -1,5 +1,4 @@
-import { createQadam } from "@aiqadam/qadams-framework";
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from "@aiqadam/qadams-framework";
 import { downloadView } from './lib/actions/download-view';
 import { runExtractRefreshTask } from './lib/actions/run-extract-refresh-task';
 import { refreshWorkbook } from './lib/actions/refresh-workbook';

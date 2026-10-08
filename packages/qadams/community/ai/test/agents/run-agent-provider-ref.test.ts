@@ -1,4 +1,4 @@
-import { AgentQadamProps, AIProviderName } from '@aiqadam/shared'
+import { AgentQadamProps, AIProviderName } from '@aiqadam/qadams-framework'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const createAIModel = vi.fn(async () => ({ modelId: 'stub-model' }))

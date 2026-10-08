@@ -1,9 +1,8 @@
-import { createQadam, QadamAuth } from '@aiqadam/qadams-framework';
+import { createQadam, QadamAuth, QadamCategory } from '@aiqadam/qadams-framework';
 import { calculateAverage } from './lib/actions/calculate-average';
 import { calculateSum } from './lib/actions/calculate-sum';
 import { countUniques } from './lib/actions/count-uniques';
 import { getMinMax } from './lib/actions/get-min-max';
-import { QadamCategory } from '@aiqadam/shared';
 
 export const dataSummarizer = createQadam({
   displayName: 'Data Summarizer',

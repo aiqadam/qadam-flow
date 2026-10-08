@@ -1,6 +1,5 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { addEventAuth } from './lib/auth';
 import { addEventCreateEventAction } from './lib/actions/create-event';
 import { addEventUpdateEventAction } from './lib/actions/update-event';

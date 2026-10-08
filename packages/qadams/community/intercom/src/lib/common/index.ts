@@ -3,8 +3,8 @@ import { IntercomClient } from 'intercom-client';
 import {
   AppConnectionValueForAuthProperty,
   Property,
+  AppConnectionType,
 } from '@aiqadam/qadams-framework';
-import { AppConnectionType } from '@aiqadam/shared';
 import { intercomAuth } from '../auth';
 
 export type IntercomAuthValue = AppConnectionValueForAuthProperty<

@@ -1,8 +1,8 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 import {
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { createIssueAction } from './lib/actions/create-issue-action';
 import { issuesEventTrigger } from './lib/trigger/issue-event';
 import { gitlabAuth } from './lib/auth';

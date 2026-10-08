@@ -1,5 +1,5 @@
 
-    import { createQadam } from "@aiqadam/qadams-framework";
+    import { createQadam, QadamCategory } from "@aiqadam/qadams-framework";
     import { netlifyAuth } from "./lib/common/auth";
     import { startDeploy } from "./lib/actions/start-deploy";
     import { getSite } from "./lib/actions/get-site";
@@ -9,7 +9,6 @@
     import { newDeploySucceeded } from "./lib/triggers/new-deploy-succeeded";
     import { newDeployFailed } from "./lib/triggers/new-deploy-failed";
     import { newFormSubmission } from "./lib/triggers/new-form-submission";
-import { QadamCategory } from "@aiqadam/shared";
 
     export const netlify = createQadam({
       displayName: "Netlify",

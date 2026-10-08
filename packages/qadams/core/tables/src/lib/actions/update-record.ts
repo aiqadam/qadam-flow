@@ -1,7 +1,6 @@
-import { createAction, QadamAuth, Property } from '@aiqadam/qadams-framework';
+import { createAction, QadamAuth, Property, PopulatedRecord, UpdateRecordRequest } from '@aiqadam/qadams-framework';
 import { tablesCommon } from '../common';
 import { AuthenticationType, httpClient, HttpMethod, propsValidation } from '@aiqadam/qadams-common';
-import { PopulatedRecord, UpdateRecordRequest } from '@aiqadam/shared';
 import { filterUtils } from '../common/filters';
 import { columnUtils } from '../common/columns';
 

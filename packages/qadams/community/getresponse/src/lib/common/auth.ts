@@ -1,5 +1,4 @@
-import { QadamAuth } from '@aiqadam/qadams-framework';
-import { AppConnectionType } from '@aiqadam/shared';
+import { QadamAuth, AppConnectionType } from '@aiqadam/qadams-framework';
 
 import { validateGetResponseAuth } from './client';
 

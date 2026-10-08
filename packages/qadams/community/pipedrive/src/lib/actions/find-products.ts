@@ -1,10 +1,9 @@
 import { pipedriveAuth } from '../auth';
-import { createAction, Property } from '@aiqadam/qadams-framework';
+import { createAction, Property, isNil } from '@aiqadam/qadams-framework';
 import {
 	pipedriveApiCall,
 } from '../common';
 import { HttpMethod, QueryParams } from '@aiqadam/qadams-common';
-import { isNil } from '@aiqadam/shared';
 
 export const findProductsAction = createAction({
 	auth: pipedriveAuth,

@@ -2,8 +2,8 @@ import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 import {
   OAuth2PropertyValue,
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { newContact } from './lib/triggers/new-contact';
 import { readFile } from './lib/actions/read-file';
 import { zohoCrmAuth } from './lib/auth';

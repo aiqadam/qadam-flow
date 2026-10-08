@@ -1,9 +1,8 @@
 import { microsoftTeamsAuth } from '../auth';
-import { createAction, Property } from '@aiqadam/qadams-framework';
+import { createAction, Property, isNil } from '@aiqadam/qadams-framework';
 import { microsoftTeamsCommon } from '../common';
 import { createGraphClient } from '../common/graph';
 import { getGraphBaseUrl } from '../common/microsoft-cloud';
-import { isNil } from '@aiqadam/shared';
 import { Chat } from '@microsoft/microsoft-graph-types';
 
 export const createChatAndSendMessageAction = createAction({

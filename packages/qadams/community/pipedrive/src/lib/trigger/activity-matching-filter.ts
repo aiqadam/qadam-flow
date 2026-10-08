@@ -1,10 +1,9 @@
 import { pipedriveAuth } from '../auth';
 import { HttpMethod } from '@aiqadam/qadams-common';
-import { createTrigger, TriggerStrategy } from '@aiqadam/qadams-framework';
+import { createTrigger, TriggerStrategy, isNil } from '@aiqadam/qadams-framework';
 import { filterIdProp } from '../common/props';
 import { pipedriveApiCall, pipedrivePaginatedV2ApiCall } from '../common';
 import { LeadListResponse } from '../common/types';
-import { isNil } from '@aiqadam/shared';
 
 export const activityMatchingFilterTrigger = createTrigger({
 	auth: pipedriveAuth,

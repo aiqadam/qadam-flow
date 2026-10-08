@@ -1,8 +1,7 @@
-import { createAction, QadamAuth } from '@aiqadam/qadams-framework';
+import { createAction, QadamAuth, GetRecordRequest, PopulatedRecord } from '@aiqadam/qadams-framework';
 import { tablesCommon } from '../common';
 import { columnUtils } from '../common/columns';
 import { AuthenticationType, httpClient, HttpMethod } from '@aiqadam/qadams-common';
-import { GetRecordRequest, PopulatedRecord } from '@aiqadam/shared';
 import qs from 'qs';
 
 export const getRecord = createAction({

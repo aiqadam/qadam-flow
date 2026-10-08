@@ -1,5 +1,4 @@
-import { AppConnectionValueForAuthProperty, QadamAuth, Property } from '@aiqadam/qadams-framework';
-import { AppConnectionType } from '@aiqadam/shared';
+import { AppConnectionValueForAuthProperty, QadamAuth, Property, AppConnectionType } from '@aiqadam/qadams-framework';
 
 export const sendgridCommon = {
   baseUrl: (residency = 'US'): string => {

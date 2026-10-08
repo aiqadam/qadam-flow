@@ -1,5 +1,4 @@
-import { createAction, QadamAuth, Property } from '@aiqadam/qadams-framework';
-import { ExecutionType, MarkdownVariant } from '@aiqadam/shared';
+import { createAction, QadamAuth, Property, ExecutionType, MarkdownVariant } from '@aiqadam/qadams-framework';
 
 export const waitForApprovalLink = createAction({
   auth: QadamAuth.None(),

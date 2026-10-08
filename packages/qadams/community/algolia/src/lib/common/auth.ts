@@ -1,5 +1,4 @@
-import { QadamAuth, Property } from '@aiqadam/qadams-framework';
-import { tryCatch } from '@aiqadam/shared';
+import { QadamAuth, Property, tryCatch } from '@aiqadam/qadams-framework';
 
 import { validateAlgoliaAuth } from './client';
 

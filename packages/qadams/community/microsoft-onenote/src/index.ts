@@ -1,5 +1,4 @@
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { appendNote } from './lib/actions/append-note';
 import { createImageNote } from './lib/actions/create-image-note';
 import { createNoteInSection } from './lib/actions/create-note-in-section';

@@ -1,5 +1,4 @@
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { flowParserAuth } from './lib/common/auth';
 import { uploadDocument } from './lib/actions/upload-document';
 import { newParsedDocumentByTemplate } from './lib/triggers/new-parsed-document-by-template';

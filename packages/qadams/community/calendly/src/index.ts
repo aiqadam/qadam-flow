@@ -1,6 +1,5 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { calendlyCommon } from './lib/common';
 import { calendlyInviteeCanceled } from './lib/trigger/invitee-canceled.trigger';
 import { calendlyInviteeCreated } from './lib/trigger/invitee-created.trigger';

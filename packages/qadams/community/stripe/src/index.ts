@@ -3,8 +3,7 @@ import {
   httpClient,
   HttpMethod,
 } from '@aiqadam/qadams-common';
-import { QadamAuth, createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { QadamAuth, createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { stripeCreateCustomer } from './lib/actions/create-customer';
 import { stripeCreateInvoice } from './lib/actions/create-invoice';
 import { stripeRetrieveCustomer } from './lib/actions/retrieve-customer';

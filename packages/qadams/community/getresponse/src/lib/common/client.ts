@@ -1,5 +1,5 @@
 import { httpClient, HttpMethod, HttpRequest } from '@aiqadam/qadams-common';
-import { AppConnectionType } from '@aiqadam/shared';
+import { AppConnectionType } from '@aiqadam/qadams-framework';
 
 import { GetResponseAuthValue } from './auth';
 

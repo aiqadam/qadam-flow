@@ -1,5 +1,5 @@
 import { httpClient } from '@aiqadam/qadams-common'
-import { AIProviderName } from '@aiqadam/shared'
+import { AIProviderName } from '@aiqadam/qadams-framework'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { aiProps } from '../../src/lib/common/props'
 

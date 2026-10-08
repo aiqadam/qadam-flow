@@ -1,9 +1,9 @@
 import {
 	createTrigger,
 	TriggerStrategy,
+	isNil,
 } from '@aiqadam/qadams-framework';
 import { DedupeStrategy, Polling, pollingHelper, HttpMethod } from '@aiqadam/qadams-common';
-import { isNil } from '@aiqadam/shared';
 import { confluenceAuth, confluenceAuthValue } from '../auth';
 import { confluenceApiCall, PaginatedResponse } from '../common';
 import { spaceIdProp } from '../common/props';

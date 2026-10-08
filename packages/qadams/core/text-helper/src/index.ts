@@ -1,5 +1,8 @@
-import { QadamAuth, createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import {
+  QadamAuth,
+  createQadam,
+  QadamCategory,
+} from '@aiqadam/qadams-framework';
 import { concat } from './lib/actions/concat';
 import { find } from './lib/actions/find';
 import { findAll } from './lib/actions/find-all';

@@ -1,6 +1,5 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { telnyxAuth } from './lib/auth';
 import { sendSmsAction } from './lib/actions/send-sms';
 import { makeCallAction } from './lib/actions/make-call';

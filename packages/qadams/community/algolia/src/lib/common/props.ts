@@ -1,5 +1,4 @@
-import { Property } from '@aiqadam/qadams-framework';
-import { tryCatch } from '@aiqadam/shared';
+import { Property, tryCatch } from '@aiqadam/qadams-framework';
 
 import { algoliaAuth } from './auth';
 import { listAlgoliaIndices } from './client';

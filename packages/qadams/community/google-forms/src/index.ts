@@ -1,8 +1,8 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 import {
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { newResponse } from './lib/triggers/new-form-response';
 import { googleFormsAuth, getAccessToken } from './lib/common/common';
 

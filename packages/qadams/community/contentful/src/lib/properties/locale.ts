@@ -1,6 +1,5 @@
-import { DropdownOption, Property } from '@aiqadam/qadams-framework';
+import { DropdownOption, Property, isEmpty } from '@aiqadam/qadams-framework';
 import { ContentfulAuth, makeClient } from '../common';
-import { isEmpty } from '@aiqadam/shared';
 
 const Locale = Property.Dropdown({
   auth: ContentfulAuth,

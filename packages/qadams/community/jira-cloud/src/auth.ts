@@ -2,12 +2,12 @@ import {
   AppConnectionValueForAuthProperty,
   QadamAuth,
   Property,
+  AppConnectionType,
 } from '@aiqadam/qadams-framework';
 import { sendJiraRequest } from './lib/common';
 import { HttpError, HttpMethod } from '@aiqadam/qadams-common';
 import { z } from 'zod';
 import { propsValidation } from '@aiqadam/qadams-common';
-import { AppConnectionType } from '@aiqadam/shared';
 
 export const jiraCloudAuth = QadamAuth.CustomAuth({
   description: `

@@ -3,8 +3,8 @@ import {
   QadamAuth,
   Property,
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { sendNotification } from './lib/actions/send-notification';
 
 export const ntfyAuth = QadamAuth.CustomAuth({

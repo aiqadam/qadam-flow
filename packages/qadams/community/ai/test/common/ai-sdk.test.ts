@@ -1,5 +1,5 @@
 import { httpClient } from '@aiqadam/qadams-common'
-import { AIProviderName, INVALID_AWS_REGION_MESSAGE, INVALID_AZURE_RESOURCE_NAME_MESSAGE } from '@aiqadam/shared'
+import { AIProviderName, INVALID_AWS_REGION_MESSAGE, INVALID_AZURE_RESOURCE_NAME_MESSAGE } from '@aiqadam/qadams-framework'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { generateText } from 'ai'
 import { createAIModel, createEmbeddingModel } from '../../src/lib/common/ai-sdk'

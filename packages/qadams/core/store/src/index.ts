@@ -1,5 +1,4 @@
-import { QadamAuth, createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { QadamAuth, createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { storageAddtoList } from './lib/actions/store-add-to-list';
 import { storageAppendAction } from './lib/actions/store-append-action';
 import { storageGetAction } from './lib/actions/store-get-action';

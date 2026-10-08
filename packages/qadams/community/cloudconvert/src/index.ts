@@ -1,7 +1,6 @@
 
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { cloudconvertAuth } from './lib/common/auth';
 import { newJob } from './lib/triggers/new-job';
 import { jobFinished } from './lib/triggers/job-finished';

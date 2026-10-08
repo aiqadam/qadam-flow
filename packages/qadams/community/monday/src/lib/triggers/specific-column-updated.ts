@@ -2,6 +2,7 @@ import {
   Property,
   TriggerStrategy,
   createTrigger,
+  WebhookHandshakeStrategy,
 } from '@aiqadam/qadams-framework';
 import { mondayAuth } from '../auth';
 import { makeClient, mondayCommon } from '../common';
@@ -10,7 +11,6 @@ import {
   MondayWebhookEventType,
 } from '../common/constants';
 import { WebhookInformation } from '../common/models';
-import { WebhookHandshakeStrategy } from '@aiqadam/shared';
 export const specificColumnValueUpdatedTrigger = createTrigger({
   auth: mondayAuth,
   name: 'monday_specific_column_updated',

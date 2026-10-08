@@ -1,7 +1,7 @@
 import {
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { createFile } from './lib/actions/create-file';
 import { uploadFileAction } from './lib/actions/upload-file';
 import { readFileContent } from './lib/actions/read-file';

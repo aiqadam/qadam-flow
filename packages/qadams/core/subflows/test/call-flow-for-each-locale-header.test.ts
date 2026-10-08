@@ -1,7 +1,7 @@
 /// <reference types="vitest/globals" />
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ExecutionType, FlowStatus, FlowTriggerType, JoinFailurePolicy, PARENT_RUN_LOCALE_HEADER, PopulatedFlow } from '@aiqadam/shared'
+import { ExecutionType, FlowStatus, FlowTriggerType, JoinFailurePolicy, PARENT_RUN_LOCALE_HEADER, PopulatedFlow } from '@aiqadam/qadams-framework'
 
 const sendRequest = vi.fn()
 

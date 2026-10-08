@@ -1,8 +1,7 @@
 import { googleGeminiAuth } from '../auth';
-import { ApFile, DynamicPropsValue, Property, createAction } from '@aiqadam/qadams-framework';
+import { ApFile, DynamicPropsValue, Property, createAction, isEmpty, MarkdownVariant } from '@aiqadam/qadams-framework';
 import { defaultLLM, getGeminiModelOptions } from '../common/common';
 import { GenerateContentParameters, GoogleGenAI } from '@google/genai';
-import { isEmpty, MarkdownVariant } from '@aiqadam/shared';
 import mime from 'mime-types';
 
 export const generateContentAction = createAction({

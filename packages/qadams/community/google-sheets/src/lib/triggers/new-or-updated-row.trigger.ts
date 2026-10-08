@@ -1,4 +1,3 @@
-import { isNil } from '@aiqadam/shared';
 import { googleSheetsAuth } from '../common/common';
 import { areSheetIdsValid, columnToLabel, labelToColumn } from '../common/common';
 import {
@@ -20,6 +19,7 @@ import {
 	WebhookRenewStrategy,
 	Property,
 	DropdownOption,
+	isNil,
 } from '@aiqadam/qadams-framework';
 
 import crypto from 'crypto';

@@ -2,6 +2,8 @@ import {
   createAction,
   DynamicPropsValue,
   Property,
+  isNil,
+  spreadIfDefined,
 } from '@aiqadam/qadams-framework';
 import Anthropic from '@anthropic-ai/sdk';
 import mime from 'mime-types';
@@ -9,7 +11,6 @@ import { claudeAuth } from '../auth';
 import { TextBlock } from '@anthropic-ai/sdk/resources';
 import { z } from 'zod';
 import { propsValidation } from '@aiqadam/qadams-common';
-import { isNil, spreadIfDefined } from '@aiqadam/shared';
 import { billingIssueMessage, modelDropdown, unauthorizedMessage } from '../common/common';
 const DEFAULT_TOKENS_FOR_THINKING_MODE = 1024;
 export const askClaude = createAction({

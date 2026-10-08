@@ -1,6 +1,5 @@
-import { createAction, Property } from '@aiqadam/qadams-framework';
+import { createAction, Property, isNil } from '@aiqadam/qadams-framework';
 import { common } from '../common';
-import { isNil } from '@aiqadam/shared';
 
 export const countUniques = createAction({
   name: 'countUniques',

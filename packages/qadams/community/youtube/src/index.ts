@@ -1,8 +1,8 @@
 import {
   createQadam,
   OAuth2PropertyValue,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { youtubeNewVideoTrigger } from './lib/triggers/new-video.trigger';
 import { youtubeAuth } from './lib/common/auth';
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';

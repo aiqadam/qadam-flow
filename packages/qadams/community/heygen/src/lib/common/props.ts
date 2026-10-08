@@ -1,7 +1,6 @@
 import { HttpMethod } from '@aiqadam/qadams-common';
-import { DynamicPropsValue, Property } from '@aiqadam/qadams-framework';
+import { DynamicPropsValue, Property, isNil } from '@aiqadam/qadams-framework';
 import { heygenApiCall } from './client';
-import { isNil } from '@aiqadam/shared';
 import { heygenAuth } from './auth';
 
 export const folderDropdown = Property.Dropdown({

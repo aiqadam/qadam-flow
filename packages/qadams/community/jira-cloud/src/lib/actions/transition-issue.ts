@@ -1,6 +1,5 @@
-import { createAction } from '@aiqadam/qadams-framework';
+import { createAction, isNil } from '@aiqadam/qadams-framework';
 import { HttpMethod } from '@aiqadam/qadams-common';
-import { isNil } from '@aiqadam/shared';
 import { jiraCloudAuth } from '../../auth';
 import { jiraApiCall } from '../common';
 import {

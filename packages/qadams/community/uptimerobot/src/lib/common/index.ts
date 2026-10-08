@@ -1,6 +1,5 @@
 import { httpClient, HttpMethod } from '@aiqadam/qadams-common';
-import { Property } from '@aiqadam/qadams-framework';
-import { tryCatch } from '@aiqadam/shared';
+import { Property, tryCatch } from '@aiqadam/qadams-framework';
 import { uptimeRobotAuth } from '../auth';
 import { toFormUrlEncoded } from './form';
 

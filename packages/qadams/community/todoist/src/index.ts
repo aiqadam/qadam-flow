@@ -1,6 +1,5 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { QadamAuth, createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { QadamAuth, createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { todoistCreateTaskAction } from './lib/actions/create-task-action';
 import { todoistTaskCompletedTrigger } from './lib/triggers/task-completed-trigger';
 import { todoistUpdateTaskAction } from './lib/actions/update-task.action';

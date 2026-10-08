@@ -6,9 +6,9 @@ import {
 	PiecePropValueSchema,
 	Property,
 	TriggerStrategy,
+	MarkdownVariant,
 } from '@aiqadam/qadams-framework';
 import { Client } from '@hubspot/api-client';
-import { MarkdownVariant } from '@aiqadam/shared';
 import { getDefaultPropertiesForObject, standardObjectPropertiesDropdown } from '../common/props';
 import { OBJECT_TYPE } from '../common/constants';
 import dayjs from 'dayjs';

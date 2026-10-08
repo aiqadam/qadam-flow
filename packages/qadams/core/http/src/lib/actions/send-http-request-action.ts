@@ -13,8 +13,9 @@ import {
   DynamicPropsValue,
   QadamAuth,
   Property,
+  assertNotNullOrUndefined,
+  isEmpty,
 } from '@aiqadam/qadams-framework';
-import { assertNotNullOrUndefined, isEmpty } from '@aiqadam/shared';
 import FormData from 'form-data';
 import { httpMethodDropdown } from '../common/props';
 import { HttpsProxyAgent } from 'https-proxy-agent';

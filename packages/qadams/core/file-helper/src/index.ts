@@ -1,5 +1,4 @@
-import { createQadam, QadamAuth } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamAuth, QadamCategory } from '@aiqadam/qadams-framework';
 import { readFileAction } from './lib/actions/read-file';
 import { createFile } from './lib/actions/create-file';
 import { changeFileEncoding } from './lib/actions/change-file-encoding';

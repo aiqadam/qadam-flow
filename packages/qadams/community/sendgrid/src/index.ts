@@ -1,6 +1,5 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { sendDynamicTemplate } from './lib/actions/send-dynamic-template';
 import { sendEmail } from './lib/actions/send-email';
 import { getApiKey, getBaseUrl, sendgridAuth, SendgridAuthValue } from './lib/common';

@@ -1,4 +1,4 @@
-import { createQadam } from '@aiqadam/qadams-framework';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 import {
   constructDatadogBaseHeaders,
@@ -6,7 +6,6 @@ import {
 } from './lib/common/helpers';
 import { sendMultipleLogs } from './lib/actions/send-multiple-logs';
 import { sendOneLog } from './lib/actions/send-one-log';
-import { QadamCategory } from '@aiqadam/shared';
 import { datadogAuth } from './lib/common/auth';
 
 export const datadog = createQadam({

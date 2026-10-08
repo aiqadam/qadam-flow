@@ -3,8 +3,8 @@ import {
   AppConnectionValueForAuthProperty,
   Property,
   DynamicPropsValue,
+  AppConnectionType,
 } from '@aiqadam/qadams-framework';
-import { AppConnectionType } from '@aiqadam/shared';
 import { Client } from '@notionhq/client';
 import { NotionFieldMapping } from './models';
 import { notionAuth } from '../auth';

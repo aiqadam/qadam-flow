@@ -1,6 +1,5 @@
 import { isUtf8 } from 'node:buffer';
-import { createAction, Property } from '@aiqadam/qadams-framework';
-import { isNil, tryCatchSync } from '@aiqadam/shared';
+import { createAction, Property, isNil, tryCatchSync } from '@aiqadam/qadams-framework';
 import { conversionErrors } from '../common/conversion-errors';
 import { conversionWorker } from '../common/conversion-worker';
 import { xlsxArchive, XlsxArchiveError } from '../common/xlsx-archive';

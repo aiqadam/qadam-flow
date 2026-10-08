@@ -1,7 +1,6 @@
-import { createQadam, QadamAuth } from '@aiqadam/qadams-framework';
+import { createQadam, QadamAuth, QadamCategory } from '@aiqadam/qadams-framework';
 
 import { createAndQueryDB } from './lib/actions/create-and-query-db';
-import { QadamCategory } from '@aiqadam/shared';
 
 export const duckdb = createQadam({
   displayName: 'DuckDB',

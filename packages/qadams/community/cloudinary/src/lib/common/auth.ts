@@ -1,7 +1,6 @@
 import { HttpMethod } from '@aiqadam/qadams-common';
-import { QadamAuth, Property } from '@aiqadam/qadams-framework';
+import { QadamAuth, Property, AppConnectionType } from '@aiqadam/qadams-framework';
 import { makeRequest } from './client';
-import { AppConnectionType } from '@aiqadam/shared';
 
 export const cloudinaryAuth = QadamAuth.CustomAuth({
     required: true,

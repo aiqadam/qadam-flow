@@ -1,6 +1,5 @@
-import { createQadam, QadamAuth, Property } from '@aiqadam/qadams-framework';
+import { createQadam, QadamAuth, Property, QadamCategory } from '@aiqadam/qadams-framework';
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { QadamCategory } from '@aiqadam/shared';
 import { Buffer } from 'buffer';
 import { createTicket } from './lib/actions/create-ticket';
 import { addNoteToTicket } from './lib/actions/add-note-to-ticket';

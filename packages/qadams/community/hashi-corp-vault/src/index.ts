@@ -1,7 +1,7 @@
 import {
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { httpClient, HttpMethod, createCustomApiCallAction } from '@aiqadam/qadams-common';
 import { readSecret } from './lib/actions/read-secret';
 import { writeSecret } from './lib/actions/write-secret';

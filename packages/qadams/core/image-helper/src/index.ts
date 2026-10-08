@@ -1,5 +1,4 @@
-import { createQadam, QadamAuth } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamAuth, QadamCategory } from '@aiqadam/qadams-framework';
 import { imageToBase64 } from './lib/actions/image-to-base64.action';
 import { getMetaData } from './lib/actions/get-metadata.action';
 import { cropImage } from './lib/actions/crop-image.action';

@@ -1,8 +1,8 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 import {
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { createClickupTaskComment } from './lib/actions/comments/create-task-comment';
 import { getClickupTaskComments } from './lib/actions/comments/get-task-comments';
 import { getClickupAccessibleCustomFields } from './lib/actions/custom-fields/get-accessible-custom-fields';

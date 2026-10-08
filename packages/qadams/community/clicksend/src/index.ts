@@ -2,8 +2,7 @@ import {
   createCustomApiCallAction,
   HttpMethod,
 } from '@aiqadam/qadams-common';
-import { QadamAuth, createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { QadamAuth, createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { clicksendSendSmsAction } from './lib/action/send-sms';
 import { clicksendSendMms } from './lib/action/send-mms';
 import { clicksendCreateContactAction } from './lib/action/create-contact';

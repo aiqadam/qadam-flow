@@ -1,5 +1,4 @@
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { uploadPhoto } from './lib/actions/upload-photo';
 import { uploadReel } from './lib/actions/upload-reel';
 import { instagramCommon } from './lib/common';

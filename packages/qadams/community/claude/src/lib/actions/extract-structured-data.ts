@@ -1,6 +1,5 @@
 import { claudeAuth } from '../auth';
-import { createAction, Property } from '@aiqadam/qadams-framework';
-import { isNil } from '@aiqadam/shared';
+import { createAction, Property, isNil } from '@aiqadam/qadams-framework';
 import Anthropic from '@anthropic-ai/sdk';
 import { TextBlock, ToolUseBlock } from '@anthropic-ai/sdk/resources';
 import Ajv from 'ajv';

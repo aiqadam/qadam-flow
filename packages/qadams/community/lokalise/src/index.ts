@@ -1,6 +1,5 @@
-import { createQadam } from '@aiqadam/qadams-framework';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { lokaliseAuth } from './lib/common/auth';
-import { QadamCategory } from '@aiqadam/shared';
 import { createComment } from './lib/actions/create-comment';
 import { createProject } from './lib/actions/create-project';
 import { createKey } from './lib/actions/create-key';

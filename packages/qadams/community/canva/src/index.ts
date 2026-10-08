@@ -2,8 +2,8 @@ import {
   OAuth2PropertyValue,
   QadamAuth,
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { createCustomApiCallAction, httpClient, HttpMethod } from '@aiqadam/qadams-common';
 import { canvaCommon } from './lib/common';
 import { createDesign } from './lib/actions/create-design';

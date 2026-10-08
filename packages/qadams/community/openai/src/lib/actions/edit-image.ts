@@ -1,7 +1,6 @@
-import { Property, createAction } from '@aiqadam/qadams-framework';
+import { Property, createAction, kebabCase } from '@aiqadam/qadams-framework';
 import OpenAI, { toFile } from 'openai';
 import { randomBytes } from 'node:crypto';
-import { kebabCase } from '@aiqadam/shared';
 import mime from 'mime-types';
 import { openaiAuth } from '../auth';
 

@@ -13,7 +13,7 @@ import {
   ToolCallContentBlock,
   ToolCallStatus,
   ToolCallType,
-} from '@aiqadam/shared';
+} from '@aiqadam/qadams-framework';
 
 export const agentOutputBuilder = (prompt: string) => {
   let status: AgentTaskStatus = AgentTaskStatus.IN_PROGRESS;

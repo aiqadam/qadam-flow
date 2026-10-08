@@ -1,10 +1,9 @@
-import { createTrigger } from '@aiqadam/qadams-framework';
+import { createTrigger, isNil } from '@aiqadam/qadams-framework';
 import { TriggerStrategy } from '@aiqadam/qadams-framework';
 import { pipedriveApiCall, pipedriveCommon } from '../common';
 import { pipedriveAuth } from '../auth';
 import { HttpMethod } from '@aiqadam/qadams-common';
 import { LeadListResponse } from '../common/types';
-import { isNil } from '@aiqadam/shared';
 
 interface PipedriveActivityV2 {
 	id: number;

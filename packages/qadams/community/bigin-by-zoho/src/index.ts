@@ -1,7 +1,6 @@
 
-import { createQadam } from "@aiqadam/qadams-framework";
+import { createQadam, QadamCategory } from "@aiqadam/qadams-framework";
 import { newContactCreated } from "./lib/triggers/new-contact-created";
-import { QadamCategory } from "@aiqadam/shared";
 import { companyUpdated } from "./lib/triggers/company-updated";
 import { contactUpdated } from "./lib/triggers/contact-updated";
 import { newCallCreated } from "./lib/triggers/new-call-created";

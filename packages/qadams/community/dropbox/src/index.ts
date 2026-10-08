@@ -1,8 +1,8 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 import {
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { dropboxCopyFile } from './lib/actions/copy-file';
 import { dropboxCopyFolder } from './lib/actions/copy-folder';
 import { dropboxCreateNewFolder } from './lib/actions/create-new-folder';

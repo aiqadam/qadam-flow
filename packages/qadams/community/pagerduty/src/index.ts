@@ -1,6 +1,5 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { acknowledgeIncident } from './lib/actions/acknowledge-incident';
 import { createIncident } from './lib/actions/create-incident';
 import { getIncident } from './lib/actions/get-incident';

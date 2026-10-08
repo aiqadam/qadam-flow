@@ -10,8 +10,8 @@ import {
   DynamicPropsValue,
   QadamAuth,
   Property,
+  assertNotNullOrUndefined,
 } from '@aiqadam/qadams-framework';
-import { assertNotNullOrUndefined } from '@aiqadam/shared';
 import { httpMethodDropdown } from '../common/props';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import axios from 'axios';

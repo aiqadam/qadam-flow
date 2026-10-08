@@ -6,11 +6,10 @@ import {
 	jiraPaginatedApiCall,
 	sendJiraRequest,
 } from '.';
-import { DropdownOption, Property } from '@aiqadam/qadams-framework';
+import { DropdownOption, Property, isNil } from '@aiqadam/qadams-framework';
 import { JiraDataCenterAuth, jiraDataCenterAuth } from '../../auth';
 import { HttpMethod } from '@aiqadam/qadams-common';
 import { IssueFieldMetaData } from './types';
-import { isNil } from '@aiqadam/shared';
 import dayjs from 'dayjs';
 
 export function getProjectIdDropdown(data?: DropdownParams) {

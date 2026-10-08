@@ -2,8 +2,8 @@ import {
   QadamAuth,
   Property,
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { TwitterApi } from 'twitter-api-v2';
 import { createTweet } from './lib/actions/create-tweet';
 import { createReply } from './lib/actions/create-reply';

@@ -1,5 +1,4 @@
-import { createAction, Property } from '@aiqadam/qadams-framework';
-import { isEmpty } from '@aiqadam/shared';
+import { createAction, Property, isEmpty } from '@aiqadam/qadams-framework';
 
 export const defaultValue = createAction({
   // auth: check https://flow.aiqadam.org/docs/developers/qadam-reference/authentication,

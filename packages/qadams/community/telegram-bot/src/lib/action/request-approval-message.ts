@@ -1,11 +1,7 @@
-import { createAction, Property } from '@aiqadam/qadams-framework';
+import { createAction, Property, assertNotNullOrUndefined, ExecutionType } from '@aiqadam/qadams-framework';
 import { HttpMethod, httpClient } from '@aiqadam/qadams-common';
 import { telegramCommons } from '../common';
 import { telegramBotAuth } from '../auth';
-import {
-  assertNotNullOrUndefined,
-  ExecutionType,
-} from '@aiqadam/shared';
 
 export const telegramRequestApprovalMessageAction = createAction({
   auth: telegramBotAuth,

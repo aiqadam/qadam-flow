@@ -3,13 +3,14 @@ import {
 	createTrigger,
 	DynamicPropsValue,
 	TriggerStrategy,
+	chunk,
+	isNil,
 } from '@aiqadam/qadams-framework';
 import {
 	customObjectDropdown,
 	customObjectPropertiesDropdown,
 } from '../common/props';
 import { DedupeStrategy, Polling, pollingHelper } from '@aiqadam/qadams-common';
-import { chunk, isNil } from '@aiqadam/shared';
 
 import { Client } from '@hubspot/api-client';
 import dayjs from 'dayjs';

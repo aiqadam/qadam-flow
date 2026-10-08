@@ -1,5 +1,4 @@
-import { createAction, Property } from '@aiqadam/qadams-framework';
-import { isString } from '@aiqadam/shared';
+import { createAction, Property, isString } from '@aiqadam/qadams-framework';
 import {parse} from 'csv-parse/sync';
 
 export const csvToJsonAction = createAction({

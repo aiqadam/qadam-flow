@@ -1,6 +1,5 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { bitlyAuth } from './lib/common/auth';
 import { newBitlinkCreatedTrigger } from './lib/triggers/new-bitlink-created';
 import { archiveBitlinkAction } from './lib/actions/archive-bitlink';

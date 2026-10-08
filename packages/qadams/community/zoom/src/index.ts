@@ -3,8 +3,8 @@ import {
   OAuth2PropertyValue,
   QadamAuth,
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { zoomCreateMeeting } from './lib/actions/create-meeting';
 import { zoomCreateMeetingRegistrant } from './lib/actions/create-meeting-registrant';
 import { zoomFindMeeting } from './lib/actions/find-meeting';

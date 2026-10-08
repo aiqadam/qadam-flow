@@ -1,6 +1,5 @@
-import { createQadam, QadamAuth, Property } from '@aiqadam/qadams-framework';
+import { createQadam, QadamAuth, Property, AppConnectionType, QadamCategory } from '@aiqadam/qadams-framework';
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { AppConnectionType, QadamCategory } from '@aiqadam/shared';
 import { textToSpeech } from './lib/actions/text-to-speech-action';
 import {
   createClient,

@@ -1,6 +1,5 @@
 import { AuthenticationType, httpClient, HttpMethod } from "@aiqadam/qadams-common";
-import { DynamicPropsValue, QadamAuth, Property } from "@aiqadam/qadams-framework";
-import { assertNotNullOrUndefined, CreateTableWebhookRequest, Field, FieldType, MarkdownVariant, PopulatedRecord, SeekPage, StaticDropdownEmptyOption, SYNTHETIC_FLOW_RUN_IDS, Table, TableWebhookEventType, ListTablesRequest } from "@aiqadam/shared";
+import { DynamicPropsValue, QadamAuth, Property, assertNotNullOrUndefined, CreateTableWebhookRequest, Field, FieldType, MarkdownVariant, PopulatedRecord, SeekPage, StaticDropdownEmptyOption, SYNTHETIC_FLOW_RUN_IDS, Table, TableWebhookEventType, ListTablesRequest } from "@aiqadam/qadams-framework";
 import { z } from 'zod';
 import qs from 'qs';
 

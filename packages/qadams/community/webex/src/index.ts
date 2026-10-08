@@ -1,6 +1,7 @@
 import {
   createQadam,
   OAuth2PropertyValue,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
 import { createMessage } from './lib/actions/create-message';
 import { createRoom } from './lib/actions/create-room';
@@ -10,7 +11,6 @@ import { findRoom } from './lib/actions/find-room';
 import { webexAuth } from './lib/common/auth';
 import { newRoom } from './lib/triggers/new-room';
 import { newMeeting } from './lib/triggers/new-meeting';
-import { QadamCategory } from '@aiqadam/shared';
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 import { BASE_URL } from './lib/common/client';
 

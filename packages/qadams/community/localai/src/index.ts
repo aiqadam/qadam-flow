@@ -3,8 +3,8 @@ import {
   QadamAuth,
   Property,
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { askLocalAI } from './lib/actions/send-prompt';
 
 export const localaiAuth = QadamAuth.CustomAuth({

@@ -1,4 +1,4 @@
-import { Field, FieldType, FilterOperator } from '@aiqadam/shared';
+import { Field, FieldType, FilterOperator } from '@aiqadam/qadams-framework';
 import { describe, expect, it } from 'vitest';
 import { filterUtils } from '../src/lib/common/filters';
 

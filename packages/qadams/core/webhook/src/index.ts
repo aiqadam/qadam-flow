@@ -1,6 +1,5 @@
-import { createQadam, QadamAuth } from '@aiqadam/qadams-framework';
+import { createQadam, QadamAuth, QadamCategory } from '@aiqadam/qadams-framework';
 import { catchWebhook } from './lib/triggers/catch-hook';
-import { QadamCategory } from '@aiqadam/shared';
 import { returnResponse } from './lib/actions/return-response';
 import { returnResponseAndWaitForNextWebhook } from './lib/actions/return-response-and-wait-for-next-webhook';
 

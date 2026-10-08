@@ -1,4 +1,4 @@
-import { createAction } from '@aiqadam/qadams-framework';
+import { createAction, isNil } from '@aiqadam/qadams-framework';
 import { pipedriveAuth } from '../auth';
 import {
 	pipedriveApiCall,
@@ -7,7 +7,6 @@ import {
 } from '../common';
 import { GetField } from '../common/types';
 import { HttpMethod } from '@aiqadam/qadams-common';
-import { isNil } from '@aiqadam/shared';
 import { searchFieldProp, searchFieldValueProp } from '../common/props';
 import { PERSON_OPTIONAL_FIELDS } from '../common/constants';
 

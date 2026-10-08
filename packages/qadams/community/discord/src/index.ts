@@ -1,6 +1,5 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { discordAddRoleToMember } from './lib/actions/add-role-to-member';
 import { discordFindChannel } from './lib/actions/find-channel';
 import { discordFindGuildMemberByUsername } from './lib/actions/find-guild-member';

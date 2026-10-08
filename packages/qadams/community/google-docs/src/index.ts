@@ -1,7 +1,6 @@
-import { createQadam } from '@aiqadam/qadams-framework';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { QadamCategory } from '@aiqadam/shared';
 import { createDocument } from './lib/actions/create-document';
 import { createDocumentBasedOnTemplate } from './lib/actions/create-document-based-on-template.action';
 import { readDocument } from './lib/actions/read-document.action';

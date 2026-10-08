@@ -1,7 +1,6 @@
 
-    import { createQadam, QadamAuth } from "@aiqadam/qadams-framework";
+    import { createQadam, QadamAuth, QadamCategory } from "@aiqadam/qadams-framework";
 import { manualTrigger } from "./lib/triggers/manual-trigger";
-import { QadamCategory } from "@aiqadam/shared";
 
 export const manualTriggerPiece = createQadam({
       displayName: "Manual Trigger",

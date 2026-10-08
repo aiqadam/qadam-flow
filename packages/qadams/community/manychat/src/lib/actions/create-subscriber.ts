@@ -1,8 +1,7 @@
-import { createAction, Property } from '@aiqadam/qadams-framework';
+import { createAction, Property, isNil } from '@aiqadam/qadams-framework';
 import { AuthenticationType, httpClient, HttpMethod } from '@aiqadam/qadams-common';
 import { manychatAuth } from '../auth';
 import { BASE_URL } from '../common/props';
-import { isNil } from '@aiqadam/shared';
 
 export const createSubscriberAction = createAction({
 	auth: manychatAuth,

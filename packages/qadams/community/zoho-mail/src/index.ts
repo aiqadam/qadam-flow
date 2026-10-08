@@ -3,8 +3,8 @@ import {
 	createQadam,
 	OAuth2PropertyValue,
 	PiecePropValueSchema,
+	QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { getEmailDetailsAction } from './lib/actions/get-email-details';
 import { markEmailAsReadAction } from './lib/actions/mark-email-as-read';
 import { markEmailAsUnreadAction } from './lib/actions/mark-email-as-unread';

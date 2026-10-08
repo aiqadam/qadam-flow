@@ -1,5 +1,4 @@
-import { createAction, Property } from '@aiqadam/qadams-framework';
-import { assertNotNullOrUndefined } from '@aiqadam/shared';
+import { createAction, Property, assertNotNullOrUndefined } from '@aiqadam/qadams-framework';
 import { figmaCommon } from '../common';
 import { figmaGetRequest } from '../common/utils';
 import { figmaAuth } from '../auth';

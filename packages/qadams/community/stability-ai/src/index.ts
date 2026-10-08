@@ -3,8 +3,8 @@ import {
   QadamAuth,
   Property,
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { textToImage } from './lib/actions/text-to-image';
 
 export const stabilityAiAuth = QadamAuth.CustomAuth({

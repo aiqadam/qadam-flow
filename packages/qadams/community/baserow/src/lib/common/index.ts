@@ -2,8 +2,9 @@ import {
   DynamicPropsValue,
   DropdownState,
   Property,
+  tryCatch,
+  unique,
 } from '@aiqadam/qadams-framework';
-import { tryCatch, unique } from '@aiqadam/shared';
 import {
   baserowAuth,
   BaserowAuthValue,

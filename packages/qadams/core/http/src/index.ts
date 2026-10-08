@@ -1,5 +1,4 @@
-import { QadamAuth, createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { QadamAuth, createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { httpSendRequestAction } from './lib/actions/send-http-request-action';
 import { parseUrl } from './lib/actions/parse-url';
 

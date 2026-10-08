@@ -3,8 +3,8 @@ import {
   CreateWaitpointResult,
   createAction,
   Property,
+  ExecutionType,
 } from '@aiqadam/qadams-framework';
-import { ExecutionType } from '@aiqadam/shared';
 import { TranscriptParams } from 'assemblyai';
 import { assemblyaiAuth } from '../../auth';
 import { getAssemblyAIClient } from '../../client';

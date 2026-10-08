@@ -1,6 +1,5 @@
 
-import { createQadam, QadamAuth } from "@aiqadam/qadams-framework";
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamAuth, QadamCategory } from "@aiqadam/qadams-framework";
 import { askAI } from './lib/actions/text/ask-ai';
 import { summarizeText } from './lib/actions/text/summarize-text';
 import { generateImageAction } from "./lib/actions/image/generate-image";

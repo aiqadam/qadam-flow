@@ -2,9 +2,9 @@ import {
   createTrigger,
   TriggerStrategy,
   Property,
+  WebhookHandshakeStrategy,
 } from '@aiqadam/qadams-framework';
 import { httpClient, HttpMethod } from '@aiqadam/qadams-common';
-import { WebhookHandshakeStrategy } from '@aiqadam/shared';
 import { pandadocAuth, pandadocClient } from '../common';
 
 export const documentCompleted = createTrigger({

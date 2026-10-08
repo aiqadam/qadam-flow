@@ -1,5 +1,4 @@
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { uptimeRobotAuth } from './lib/auth';
 import { getMonitorsAction } from './lib/actions/get-monitors';
 import { createMonitorAction } from './lib/actions/create-monitor';

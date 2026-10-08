@@ -1,4 +1,9 @@
-import { createAction, Property } from '@aiqadam/qadams-framework';
+import {
+  createAction,
+  Property,
+  assertNotNullOrUndefined,
+  ExecutionType,
+} from '@aiqadam/qadams-framework';
 import {
   gmailAuth,
   createGoogleClient,
@@ -8,7 +13,6 @@ import {
 import { google } from 'googleapis';
 import MailComposer from 'nodemailer/lib/mail-composer';
 import Mail from 'nodemailer/lib/mailer';
-import { assertNotNullOrUndefined, ExecutionType } from '@aiqadam/shared';
 
 export const requestApprovalInEmail = createAction({
   auth: gmailAuth,

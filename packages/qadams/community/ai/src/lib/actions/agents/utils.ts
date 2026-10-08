@@ -13,7 +13,7 @@ import {
   AgentFlowTool,
   mcpToolNameUtils,
   RAW_PAYLOAD_HEADER,
-} from '@aiqadam/shared';
+} from '@aiqadam/qadams-framework';
 import { z, ZodObject } from 'zod';
 import { AuthenticationType, httpClient, HttpMethod } from '@aiqadam/qadams-common';
 import { Tool } from 'ai';

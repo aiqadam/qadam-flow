@@ -1,6 +1,5 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { createVideoFromTemplateAction } from './lib/actions/create-a-video-from-template';
 import { retrieveTranslatedVideoStatus } from './lib/actions/retrieve-a-translated-video-status';
 import { retrieveVideoStatusAction } from './lib/actions/retrieve-a-video-status';

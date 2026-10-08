@@ -1,8 +1,7 @@
 import {
   createCustomApiCallAction,
 } from '@aiqadam/qadams-common';
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { askAssistant } from './lib/actions/ask-assistant';
 import { askOpenAI } from './lib/actions/send-prompt';
 import { classifyText } from './lib/actions/classify-text';

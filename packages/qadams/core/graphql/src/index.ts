@@ -1,7 +1,6 @@
 
-import { createQadam, QadamAuth } from "@aiqadam/qadams-framework";
+import { createQadam, QadamAuth, QadamCategory } from "@aiqadam/qadams-framework";
 import { query } from "./lib/actions/query";
-import { QadamCategory } from "@aiqadam/shared";
     
     export const graphql = createQadam({
       displayName: "GraphQL",

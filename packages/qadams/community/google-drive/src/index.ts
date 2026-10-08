@@ -1,9 +1,9 @@
 import {
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
 
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { QadamCategory } from '@aiqadam/shared';
 import { addPermission } from './lib/action/add-permission.action';
 import { googleDriveCreateNewFolder } from './lib/action/create-new-folder';
 import { googleDriveCreateNewTextFile } from './lib/action/create-new-text-file';

@@ -2,9 +2,9 @@ import {
   OAuth2PropertyValue,
   QadamAuth,
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
 
-import { QadamCategory } from '@aiqadam/shared';
 import { createCompanyUpdate } from './lib/actions/create-company-update';
 import { createShareUpdate } from './lib/actions/create-share-update';
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';

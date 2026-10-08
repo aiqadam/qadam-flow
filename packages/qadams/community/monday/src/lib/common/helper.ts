@@ -1,8 +1,8 @@
 import {
   DynamicPropsValue,
   Property,
+  isEmpty,
 } from '@aiqadam/qadams-framework';
-import { isEmpty } from '@aiqadam/shared';
 import dayjs from 'dayjs';
 import { MondayColumnType } from './constants';
 import { ColumnValue, MondayColumn } from './models';

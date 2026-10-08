@@ -3,8 +3,8 @@ import {
 } from '@aiqadam/qadams-common';
 import {
 	createQadam,
+	QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { getIntercomRegion, getIntercomToken, IntercomAuthValue } from './lib/common';
 import { sendMessageAction } from './lib/actions/send-message.action';
 import crypto from 'node:crypto';

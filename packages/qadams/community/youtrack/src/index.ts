@@ -2,9 +2,8 @@
 // YouTrack Piece - Main Entry Point
 // =============================================================================
 
-import { createQadam, QadamAuth, Property } from '@aiqadam/qadams-framework';
+import { createQadam, QadamAuth, Property, QadamCategory } from '@aiqadam/qadams-framework';
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { QadamCategory } from '@aiqadam/shared';
 
 import { createIssueAction } from './lib/actions/create-issue';
 import { getIssueAction } from './lib/actions/get-issue';

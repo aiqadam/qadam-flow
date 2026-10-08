@@ -1,8 +1,8 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 import {
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { createRowAction } from './lib/actions/create-row';
 import { deleteRowAction } from './lib/actions/delete-row';
 import { getRowAction } from './lib/actions/get-row';

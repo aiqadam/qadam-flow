@@ -1,4 +1,4 @@
-import { createTrigger } from '@aiqadam/qadams-framework';
+import { createTrigger, isNil } from '@aiqadam/qadams-framework';
 import { TriggerStrategy } from '@aiqadam/qadams-framework';
 import {
 	pipedriveApiCall,
@@ -9,7 +9,6 @@ import {
 import { pipedriveAuth } from '../auth';
 import { HttpMethod } from '@aiqadam/qadams-common';
 import { GetField } from '../common/types';
-import { isNil } from '@aiqadam/shared';
 import { DEAL_OPTIONAL_FIELDS } from '../common/constants';
 
 interface PipedriveDealV2 {

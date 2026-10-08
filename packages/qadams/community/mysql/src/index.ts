@@ -2,8 +2,8 @@ import {
   QadamAuth,
   Property,
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import actions from './lib/actions';
 
 export const mysqlAuth = QadamAuth.CustomAuth({

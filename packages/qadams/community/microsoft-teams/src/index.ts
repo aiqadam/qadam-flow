@@ -3,8 +3,8 @@ import { getGraphBaseUrl } from './lib/common/microsoft-cloud';
 import {
   createQadam,
   OAuth2PropertyValue,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { createChannelAction } from './lib/actions/create-channel';
 import { createChatAndSendMessageAction } from './lib/actions/create-chat-and-send-message';
 import { createPrivateChannelAction } from './lib/actions/create-private-channel';

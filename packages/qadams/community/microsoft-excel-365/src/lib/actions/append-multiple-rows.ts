@@ -1,5 +1,4 @@
-import { createAction, DynamicPropsValue, OAuth2PropertyValue, Property } from '@aiqadam/qadams-framework';
-import { MarkdownVariant } from '@aiqadam/shared';
+import { createAction, DynamicPropsValue, OAuth2PropertyValue, Property, MarkdownVariant } from '@aiqadam/qadams-framework';
 import { WorkbookRange } from '@microsoft/microsoft-graph-types';
 import {
 	createMSGraphClient,

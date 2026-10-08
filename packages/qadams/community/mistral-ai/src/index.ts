@@ -1,5 +1,4 @@
-import { createQadam } from "@aiqadam/qadams-framework";
-import { QadamCategory } from "@aiqadam/shared";
+import { createQadam, QadamCategory } from "@aiqadam/qadams-framework";
 import { createChatCompletion } from "./lib/actions/create-chat-completion";
 import { createEmbeddings } from "./lib/actions/create-embeddings";
 import { uploadFile } from "./lib/actions/upload-file";

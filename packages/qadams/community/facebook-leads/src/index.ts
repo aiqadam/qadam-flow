@@ -1,5 +1,4 @@
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { newLead } from './lib/triggers/new-lead';
 import { facebookLeadsAuth } from './lib/auth';
 import crypto from 'node:crypto';

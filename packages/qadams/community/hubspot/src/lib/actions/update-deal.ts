@@ -3,9 +3,9 @@ import { hubspotAuth } from '../auth';
 import {
 	Property,
 	createAction,
+	MarkdownVariant,
 } from '@aiqadam/qadams-framework';
 
-import { MarkdownVariant } from '@aiqadam/shared';
 import { OBJECT_TYPE } from '../common/constants';
 import {
 	getDefaultPropertiesForObject,

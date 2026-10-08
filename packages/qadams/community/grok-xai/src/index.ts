@@ -1,5 +1,4 @@
-import { createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { grokAuth } from './lib/common/auth';
 import { askGrok } from './lib/actions/ask-grok';
 import { extractDataFromText } from './lib/actions/extract-data';

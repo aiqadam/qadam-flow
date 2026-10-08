@@ -1,5 +1,4 @@
-import { createQadam, QadamAuth } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamAuth, QadamCategory } from '@aiqadam/qadams-framework';
 import { createCustomApiCallAction } from "@aiqadam/qadams-common";
 import { getDatasetItems } from './lib/actions/get-dataset-items';
 import { runActor } from './lib/actions/run-actor';

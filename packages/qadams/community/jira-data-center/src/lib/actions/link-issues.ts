@@ -1,7 +1,6 @@
-import { createAction } from '@aiqadam/qadams-framework';
+import { createAction, isNil } from '@aiqadam/qadams-framework';
 import { jiraDataCenterAuth } from '../../auth';
 import { issueIdOrKeyProp, issueLinkTypeIdProp } from '../common/props';
-import { isNil } from '@aiqadam/shared';
 import { HttpError, HttpMethod } from '@aiqadam/qadams-common';
 import { jiraApiCall } from '../common';
 

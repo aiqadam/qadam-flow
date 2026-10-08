@@ -1,5 +1,4 @@
-import { Property, createAction } from '@aiqadam/qadams-framework';
-import { FileResponseInterface, HumanInputFormResult, HumanInputFormResultTypes } from '@aiqadam/shared';
+import { Property, createAction, FileResponseInterface, HumanInputFormResult, HumanInputFormResultTypes } from '@aiqadam/qadams-framework';
 import { StatusCodes } from 'http-status-codes';
 import mime from 'mime-types';
 

@@ -8,6 +8,7 @@ import {
   DropdownState,
   DynamicPropsValue,
   Property,
+  isNil,
 } from '@aiqadam/qadams-framework';
 import Airtable from 'airtable';
 import {
@@ -23,7 +24,6 @@ import {
   AirtableTable,
   AirtableView,
 } from './models';
-import { isNil } from '@aiqadam/shared';
 import { airtableAuth } from '../auth';
 
 

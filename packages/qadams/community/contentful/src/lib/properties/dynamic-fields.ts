@@ -1,8 +1,7 @@
-import { DynamicPropsValue, Property } from '@aiqadam/qadams-framework';
+import { DynamicPropsValue, Property, isEmpty, isNil } from '@aiqadam/qadams-framework';
 import { ContentfulAuth, PropertyKeys, makeClient } from '../common';
 import { FieldTransformers } from './transformers';
 import { FieldType } from 'contentful-management';
-import { isEmpty, isNil } from '@aiqadam/shared';
 
 const DynamicFields = Property.DynamicProperties({
   auth: ContentfulAuth,

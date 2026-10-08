@@ -1,5 +1,4 @@
-import { piecePropertiesUtils } from '@aiqadam/qadams-framework'
-import { AIProviderName } from '@aiqadam/shared'
+import { piecePropertiesUtils, AIProviderName } from '@aiqadam/qadams-framework'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const createAIModel = vi.fn(async () => ({ modelId: 'stub-model' }))

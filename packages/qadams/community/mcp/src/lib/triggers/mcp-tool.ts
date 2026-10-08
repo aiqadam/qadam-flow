@@ -2,8 +2,10 @@ import {
     createTrigger,
     Property,
     TriggerStrategy,
+    isNil,
+    McpProperty,
+    McpPropertyType,
   } from '@aiqadam/qadams-framework';
-import { isNil, McpProperty, McpPropertyType } from '@aiqadam/shared';
 
 
 export const mcpTool = createTrigger({

@@ -1,5 +1,4 @@
-import { createQadam, QadamAuth } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamAuth, QadamCategory } from '@aiqadam/qadams-framework';
 import { addition } from './lib/actions/addition';
 import { division } from './lib/actions/division';
 import { generateRandom } from './lib/actions/generateRandom';

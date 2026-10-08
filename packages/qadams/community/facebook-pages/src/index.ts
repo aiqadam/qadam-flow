@@ -1,6 +1,5 @@
-import { QadamAuth, createQadam } from '@aiqadam/qadams-framework';
+import { QadamAuth, createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 
-import { QadamCategory } from '@aiqadam/shared';
 import { createPhotoPost } from './lib/actions/create-photo-post';
 import { createPost } from './lib/actions/create-post';
 import { createVideoPost } from './lib/actions/create-video-post';

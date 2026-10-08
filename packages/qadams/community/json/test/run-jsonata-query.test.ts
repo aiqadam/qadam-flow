@@ -1,5 +1,5 @@
 import { readFileSync } from 'fs';
-import { tryCatch } from '@aiqadam/shared';
+import { tryCatch } from '@aiqadam/qadams-framework';
 import { describe, expect, it } from 'vitest';
 import { runJsonataQuery } from '../src/lib/actions/run-jsonata-query';
 

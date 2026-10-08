@@ -2,12 +2,10 @@ import {
   Property,
   TriggerStrategy,
   createTrigger,
-} from '@aiqadam/qadams-framework';
-import {
   createKeyForFormInput,
   MarkdownVariant,
   USE_DRAFT_QUERY_PARAM_NAME,
-} from '@aiqadam/shared';
+} from '@aiqadam/qadams-framework';
 
 
 const markdown = `**Published Form URL:**

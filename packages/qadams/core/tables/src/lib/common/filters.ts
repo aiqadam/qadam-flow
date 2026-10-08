@@ -1,5 +1,4 @@
-import { Property } from '@aiqadam/qadams-framework';
-import { Field, FieldType, Filter, FilterOperator, tryCatchSync } from '@aiqadam/shared';
+import { Property, Field, FieldType, Filter, FilterOperator, tryCatchSync } from '@aiqadam/qadams-framework';
 import { columnUtils } from './columns';
 
 export const filterUtils = {

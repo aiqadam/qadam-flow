@@ -2,6 +2,8 @@ import {
 	Property,
 	TriggerStrategy,
 	createTrigger,
+	isNil,
+	MarkdownVariant,
 } from '@aiqadam/qadams-framework';
 
 import { DedupeStrategy, Polling, pollingHelper } from '@aiqadam/qadams-common';
@@ -17,7 +19,6 @@ import {
 	standardObjectPropertiesDropdown,
 } from '../common/props';
 import { OBJECT_TYPE, MAX_SEARCH_PAGE_SIZE, MAX_SEARCH_TOTAL_RESULTS } from '../common/constants';
-import { isNil, MarkdownVariant } from '@aiqadam/shared';
 import { Client } from '@hubspot/api-client';
 import { FilterOperatorEnum } from '../common/types';
 

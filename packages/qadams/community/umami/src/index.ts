@@ -1,6 +1,5 @@
-import { createQadam } from '@aiqadam/qadams-framework';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { QadamCategory } from '@aiqadam/shared';
 import { umamiAuth, UmamiAuthValue, getAuthHeaders, getBaseUrl } from './lib/auth';
 import { getWebsiteStats } from './lib/actions/get-website-stats';
 import { getWebsiteMetrics } from './lib/actions/get-website-metrics';

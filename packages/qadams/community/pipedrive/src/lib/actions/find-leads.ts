@@ -1,5 +1,4 @@
-import { createAction, Property } from '@aiqadam/qadams-framework';
-import { isNil } from '@aiqadam/shared';
+import { createAction, Property, isNil } from '@aiqadam/qadams-framework';
 import { pipedriveApiCall } from '../common';
 import { HttpMethod } from '@aiqadam/qadams-common';
 import { pipedriveAuth } from '../auth';

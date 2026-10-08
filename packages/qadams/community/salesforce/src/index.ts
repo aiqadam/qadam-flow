@@ -3,8 +3,8 @@ import {
 	Property,
 	createQadam,
 	OAuth2PropertyValue,
+	QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 
 import { addContactToCampaign } from './lib/action/add-contact-to-campaign';

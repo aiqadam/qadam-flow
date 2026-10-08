@@ -1,5 +1,5 @@
 import { hubspotAuth } from '../auth';
-import { createAction, Property } from '@aiqadam/qadams-framework';
+import { createAction, Property, MarkdownVariant } from '@aiqadam/qadams-framework';
 import {
     getDefaultPropertiesForObject,
     productDropdown,
@@ -7,7 +7,6 @@ import {
     standardObjectPropertiesDropdown,
 } from '../common/props';
 import { OBJECT_TYPE } from '../common/constants';
-import { MarkdownVariant } from '@aiqadam/shared';
 
 import { Client } from '@hubspot/api-client';
 

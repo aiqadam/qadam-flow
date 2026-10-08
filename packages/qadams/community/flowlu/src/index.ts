@@ -1,7 +1,7 @@
 import {
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { createContactAction } from './lib/actions/accounts/create-contact';
 import { createOrganizationAction } from './lib/actions/accounts/create-organization';
 import { deleteContactAction } from './lib/actions/accounts/delete-contact';

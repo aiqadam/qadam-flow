@@ -1,6 +1,5 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { createQadam } from '@aiqadam/qadams-framework';
-import { AppConnectionType, QadamCategory } from '@aiqadam/shared';
+import { createQadam, AppConnectionType, QadamCategory } from '@aiqadam/qadams-framework';
 
 import { createContactAction } from './lib/actions/create-contact';
 import { createNewsletterAction } from './lib/actions/create-newsletter';

@@ -2,8 +2,8 @@ import {
   createQadam,
   QadamAuth,
   Property,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { addPointsToCollection } from './lib/actions/add-points';
 import { deleteCollection } from './lib/actions/delete-collection';
 import { deletePoints } from './lib/actions/delete-points';

@@ -1,10 +1,10 @@
 import {
   AppConnectionValueForAuthProperty,
   QadamAuth,
+  AppConnectionType,
 } from '@aiqadam/qadams-framework';
 import { HttpMethod } from '@aiqadam/qadams-common';
 import { digitalOceanApiCall } from './client';
-import { AppConnectionType } from '@aiqadam/shared';
 
 export const digitalOceanAuth = [
   QadamAuth.OAuth2({

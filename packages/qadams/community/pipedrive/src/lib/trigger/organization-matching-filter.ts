@@ -1,6 +1,6 @@
 import { pipedriveAuth } from '../auth';
 import { HttpMethod } from '@aiqadam/qadams-common';
-import { createTrigger, TriggerStrategy } from '@aiqadam/qadams-framework';
+import { createTrigger, TriggerStrategy, isNil } from '@aiqadam/qadams-framework';
 import { filterIdProp } from '../common/props';
 import {
 	pipedriveApiCall,
@@ -9,7 +9,6 @@ import {
 	pipedriveTransformCustomFields,
 } from '../common';
 import { GetField } from '../common/types';
-import { isNil } from '@aiqadam/shared';
 import { ORGANIZATION_OPTIONAL_FIELDS } from '../common/constants';
 
 interface PipedriveOrganizationV2 {

@@ -1,8 +1,11 @@
-import { createTrigger, TriggerStrategy } from '@aiqadam/qadams-framework';
+import {
+  createTrigger,
+  TriggerStrategy,
+  isNil,
+} from '@aiqadam/qadams-framework';
 import { gmailAuth, createGoogleClient } from '../auth';
 import { google } from 'googleapis';
 import { getFirstFiveOrAll } from '../common/data';
-import { isNil } from '@aiqadam/shared';
 
 const TRIGGER_KEY = 'labels';
 

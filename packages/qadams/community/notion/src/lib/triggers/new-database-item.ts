@@ -3,12 +3,12 @@ import {
   createTrigger,
   TriggerStrategy,
   AppConnectionValueForAuthProperty,
+  isNil,
 } from '@aiqadam/qadams-framework';
 import dayjs from 'dayjs';
 import { getNotionToken, NotionAuthValue, notionCommon } from '../common';
 import { Client } from '@notionhq/client';
 import { notionAuth } from '../auth';
-import { isNil } from '@aiqadam/shared';
 
 export const newDatabaseItem = createTrigger({
   auth: notionAuth,

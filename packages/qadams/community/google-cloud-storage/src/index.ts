@@ -1,6 +1,5 @@
 
-import { createQadam } from "@aiqadam/qadams-framework";
-import { QadamCategory } from "@aiqadam/shared";
+import { createQadam, QadamCategory } from "@aiqadam/qadams-framework";
 import { googleCloudStorageAuth } from "./lib/common/auth";
 import { createBucket } from "./lib/actions/create-bucket";
 import { deleteEmptyBucket } from "./lib/actions/delete-empty-bucket";

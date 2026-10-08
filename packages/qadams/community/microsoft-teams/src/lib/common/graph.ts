@@ -1,5 +1,5 @@
 import { Client, PageCollection } from '@microsoft/microsoft-graph-client';
-import { tryCatch } from '@aiqadam/shared';
+import { tryCatch } from '@aiqadam/qadams-framework';
 import { getGraphBaseUrl } from './microsoft-cloud';
 
 type GraphRetryOptions = {

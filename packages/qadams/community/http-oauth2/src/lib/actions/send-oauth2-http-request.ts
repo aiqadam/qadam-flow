@@ -14,8 +14,8 @@ import {
   createAction,
   DynamicPropsValue,
   Property,
+  assertNotNullOrUndefined,
 } from '@aiqadam/qadams-framework';
-import { assertNotNullOrUndefined } from '@aiqadam/shared';
 import FormData from 'form-data';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import axios from 'axios';

@@ -2,8 +2,8 @@ import {
   QadamAuth,
   Property,
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { publishToTopic } from './lib/action/publish-to-topic';
 import { common } from './lib/common';
 import { newMessageInTopic } from './lib/trigger/new-message-in-topic';

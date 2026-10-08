@@ -1,4 +1,4 @@
-import { QadamAuth, createQadam } from '@aiqadam/qadams-framework';
+import { QadamAuth, createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { addMemberToList } from './lib/actions/add-member-to-list';
 import { addNoteToSubscriber } from './lib/actions/add-note-to-subscriber';
 import { removeSubscriberFromTag } from './lib/actions/remove-subscriber-from-tag';
@@ -14,7 +14,6 @@ import { findCustomer } from './lib/actions/find-customer';
 import { findTag } from './lib/actions/find-tag';
 import { findSubscriber } from './lib/actions/find-subscriber';
 
-import { QadamCategory } from '@aiqadam/shared';
 import { mailChimpSubscribeTrigger } from './lib/triggers/subscribe-trigger';
 import { mailChimpUnsubscriberTrigger } from './lib/triggers/unsubscribe-trigger';
 import { mailChimpNewCampaignTrigger } from './lib/triggers/new-campaign-trigger';

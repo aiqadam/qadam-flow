@@ -1,5 +1,4 @@
-import { createQadam, QadamAuth } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { createQadam, QadamAuth, QadamCategory } from '@aiqadam/qadams-framework';
 import { generatePassword } from './lib/actions/generate-password';
 import { hashText } from './lib/actions/hash-text';
 import { hmacSignature } from './lib/actions/hmac-signature';

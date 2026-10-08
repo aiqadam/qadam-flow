@@ -2,8 +2,8 @@ import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 import {
   createQadam,
   OAuth2PropertyValue,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { createRecordAction } from './lib/actions/create-record.action';
 import { deleteRecordAction } from './lib/actions/delete-record.action';
 import { getRecordAction } from './lib/actions/get-record.action';

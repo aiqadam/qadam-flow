@@ -1,6 +1,5 @@
-import { createAction, Property } from '@aiqadam/qadams-framework';
+import { createAction, Property, MarkdownVariant } from '@aiqadam/qadams-framework';
 import { PDFDocument } from 'pdf-lib';
-import { MarkdownVariant } from '@aiqadam/shared';
 
 export function pageRangeToIndexes(
   startPage: number,

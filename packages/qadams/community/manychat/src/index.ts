@@ -1,4 +1,4 @@
-import { createQadam } from '@aiqadam/qadams-framework';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { findUserByCustomFieldAction } from './lib/actions/find-user-by-custom-field';
 import { createSubscriberAction } from './lib/actions/create-subscriber';
 import { sendContentToUserAction } from './lib/actions/send-content-to-user';
@@ -6,7 +6,6 @@ import { setCustomFieldAction } from './lib/actions/set-custom-fields';
 import { removeTagFromUserAction } from './lib/actions/remove-tag-from-user';
 import { addTagToUserAction } from './lib/actions/add-tag-to-user';
 import { findUserByNameAction } from './lib/actions/find-user-by-name';
-import { QadamCategory } from '@aiqadam/shared';
 import { manychatAuth } from './lib/auth';
 
 export const manychat = createQadam({

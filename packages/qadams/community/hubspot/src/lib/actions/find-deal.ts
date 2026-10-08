@@ -1,8 +1,7 @@
 import { hubspotAuth } from '../auth';
-import { createAction, Property } from '@aiqadam/qadams-framework';
+import { createAction, Property, MarkdownVariant } from '@aiqadam/qadams-framework';
 import { getDefaultPropertiesForObject, standardObjectPropertiesDropdown } from '../common/props';
 import { OBJECT_TYPE, MAX_SEARCH_PAGE_SIZE } from '../common/constants';
-import { MarkdownVariant } from '@aiqadam/shared';
 import { FilterOperatorEnum } from '../common/types';
 import { Client } from '@hubspot/api-client';
 

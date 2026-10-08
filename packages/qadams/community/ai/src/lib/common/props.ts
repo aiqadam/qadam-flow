@@ -1,11 +1,5 @@
-import { QadamAuth, Property } from '@aiqadam/qadams-framework';
+import { QadamAuth, Property, isNil, AIProviderModel, AIProviderWithoutSensitiveData, OpenAICompatibleProviderConfig } from '@aiqadam/qadams-framework';
 import { httpClient, HttpMethod } from '@aiqadam/qadams-common';
-import {
-  isNil,
-  AIProviderModel,
-  AIProviderWithoutSensitiveData,
-  OpenAICompatibleProviderConfig,
-} from '@aiqadam/shared';
 import { resolveProviderRef } from './ai-sdk';
 
 export const aiProps = <T extends AIModelType>({ modelType }: AIPropsParams<T>) => ({

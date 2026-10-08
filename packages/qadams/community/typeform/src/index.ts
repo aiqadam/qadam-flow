@@ -2,8 +2,8 @@ import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 import {
   QadamAuth,
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { typeformNewSubmission } from './lib/trigger/new-submission';
 
 export const typeformAuth = QadamAuth.OAuth2({

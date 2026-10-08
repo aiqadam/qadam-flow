@@ -6,8 +6,7 @@ import {
   HttpResponse,
   QueryParams,
 } from '@aiqadam/qadams-common';
-import { Property } from '@aiqadam/qadams-framework';
-import { isNil } from '@aiqadam/shared';
+import { Property, isNil } from '@aiqadam/qadams-framework';
 import { githubAuth } from '../auth';
 import { githubAuthHelpers, GithubAuthValue, isAppAuth } from './auth-helpers';
 

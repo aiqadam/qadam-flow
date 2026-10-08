@@ -1,9 +1,8 @@
 import { sftpAuth } from '../auth';
 import { endClient, getClient, getProtocolBackwardCompatibility } from '../common';
-import { Property, createAction } from '@aiqadam/qadams-framework';
+import { Property, createAction, MarkdownVariant } from '@aiqadam/qadams-framework';
 import Client from 'ssh2-sftp-client';
 import { Client as FTPClient, FTPError } from 'basic-ftp';
-import { MarkdownVariant } from '@aiqadam/shared';
 import { getSftpError } from './common';
 
 async function renameFTP(client: FTPClient, oldPath: string, newPath: string) {

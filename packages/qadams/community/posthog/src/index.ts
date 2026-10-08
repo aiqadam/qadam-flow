@@ -4,8 +4,7 @@ import {
   HttpMethod,
   AuthenticationType,
 } from '@aiqadam/qadams-common';
-import { QadamAuth, Property, createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { QadamAuth, Property, createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { posthogCreateEvent } from './lib/actions/create-event';
 import { posthogCreateProject } from './lib/actions/create-project';
 import { posthogGetFeatureFlags } from './lib/actions/get-feature-flags';

@@ -1,8 +1,8 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 import {
   createQadam,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { addUsersToGroup } from './lib/actions/add-users-to-group.action';
 import { changeUserTrustLevel } from './lib/actions/change-trust-level.action';
 import { createPost } from './lib/actions/create-post.action';

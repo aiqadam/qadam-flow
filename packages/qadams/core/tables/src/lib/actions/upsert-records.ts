@@ -1,8 +1,7 @@
-import { createAction, QadamAuth, Property } from '@aiqadam/qadams-framework';
+import { createAction, QadamAuth, Property, UpsertAction, UpsertRecordsRequest } from '@aiqadam/qadams-framework';
 import { tablesCommon } from '../common';
 import { columnUtils } from '../common/columns';
 import { AuthenticationType, httpClient, HttpMethod, propsValidation } from '@aiqadam/qadams-common';
-import { UpsertAction, UpsertRecordsRequest } from '@aiqadam/shared';
 
 // Namespaced because the sibling keys are column externalIds, which are caller-settable;
 // per row because Values are per row (#506).

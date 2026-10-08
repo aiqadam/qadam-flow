@@ -1,5 +1,4 @@
-import { createAction, Property } from '@aiqadam/qadams-framework';
-import { MarkdownVariant } from '@aiqadam/shared';
+import { createAction, Property, MarkdownVariant } from '@aiqadam/qadams-framework';
 import { hubspotAuth } from '../auth';
 import {
 	customObjectDropdown,

@@ -1,7 +1,6 @@
-import { DynamicPropsValue, QadamAuth, Property, StoreScope, createAction } from '@aiqadam/qadams-framework';
+import { DynamicPropsValue, QadamAuth, Property, StoreScope, createAction, isNil } from '@aiqadam/qadams-framework';
 import { callableFlowKey, CallableFlowResponse, MOCK_CALLBACK_IN_TEST_FLOW_URL } from '../common';
 import { httpClient, HttpMethod } from '@aiqadam/qadams-common';
-import { isNil } from '@aiqadam/shared';
 
 export const response = createAction({
   name: 'returnResponse',

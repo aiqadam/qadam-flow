@@ -1,5 +1,4 @@
-import { OAuth2GrantType } from '@aiqadam/shared';
-import { QadamAuth, Property } from '@aiqadam/qadams-framework';
+import { QadamAuth, Property, OAuth2GrantType } from '@aiqadam/qadams-framework';
 
 export const cloudconvertAuth = QadamAuth.OAuth2({
     description: 'Connect your CloudConvert account using OAuth2',

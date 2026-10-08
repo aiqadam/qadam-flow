@@ -4,8 +4,7 @@ import {
   createCustomApiCallAction,
   httpClient,
 } from '@aiqadam/qadams-common';
-import { QadamAuth, createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { QadamAuth, createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { createCard } from './lib/actions/card/create-card';
 import { getCard } from './lib/actions/card/get-card';
 import { updateCard } from './lib/actions/card/update-card';

@@ -5,6 +5,7 @@ import {
 	PiecePropValueSchema,
 	Property,
 	TriggerStrategy,
+	isNil,
 } from '@aiqadam/qadams-framework';
 import {
 	pipedriveApiCall,
@@ -14,7 +15,6 @@ import {
 } from '../common';
 import { GetField, RequestParams, WebhookCreateResponse } from '../common/types';
 import { HttpMethod } from '@aiqadam/qadams-common';
-import { isNil } from '@aiqadam/shared';
 import { DEAL_OPTIONAL_FIELDS } from '../common/constants';
 
 interface PipedriveDealV2 {

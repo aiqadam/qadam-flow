@@ -1,9 +1,8 @@
-import { createAction, QadamAuth, Property } from '@aiqadam/qadams-framework';
+import { createAction, QadamAuth, Property, FilterOperator, isNil, ListRecordsRequest, PopulatedRecord, SeekPage } from '@aiqadam/qadams-framework';
 import { tablesCommon } from '../common';
 import { columnUtils } from '../common/columns';
 import { filterUtils } from '../common/filters';
 import { AuthenticationType, httpClient, HttpMethod } from '@aiqadam/qadams-common';
-import { FilterOperator, isNil, ListRecordsRequest, PopulatedRecord, SeekPage } from '@aiqadam/shared';
 import qs from 'qs';
 
 const NO_LIMIT = 999999999;

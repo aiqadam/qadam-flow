@@ -1,6 +1,5 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { OAuth2PropertyValue, createQadam } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
+import { OAuth2PropertyValue, createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { newActivity } from './lib/trigger/new-activity';
 import { newDeal } from './lib/trigger/new-deal';
 import { newPerson } from './lib/trigger/new-person';

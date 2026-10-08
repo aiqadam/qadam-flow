@@ -1,6 +1,5 @@
-import { createQadam } from '@aiqadam/qadams-framework';
+import { createQadam, QadamCategory } from '@aiqadam/qadams-framework';
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { QadamCategory } from '@aiqadam/shared';
 import { twentyAuth } from './lib/auth';
 import { createContact } from './lib/actions/create-contact';
 import { createCompany } from './lib/actions/create-company';

@@ -1,7 +1,6 @@
 import { googleSheetsAuth } from '../common/common';
-import { createTrigger, TriggerStrategy } from '@aiqadam/qadams-framework';
+import { createTrigger, TriggerStrategy, isNil } from '@aiqadam/qadams-framework';
 import { google } from 'googleapis';
-import { isNil } from '@aiqadam/shared';
 import { includeTeamDrivesProp, spreadsheetIdProp } from '../common/props';
 import { createGoogleClient } from '../common/common';
 

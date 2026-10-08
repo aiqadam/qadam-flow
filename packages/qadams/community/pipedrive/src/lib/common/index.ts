@@ -7,7 +7,7 @@ import {
 	HttpRequest,
 } from '@aiqadam/qadams-common';
 import { GetField, PaginatedV2Response, PaginatedV1Response, RequestParams } from './types';
-import { isEmpty, isNil } from '@aiqadam/shared';
+import { isEmpty, isNil } from '@aiqadam/qadams-framework';
 import dayjs from 'dayjs';
 
 type FlexibleQueryParams = Record<

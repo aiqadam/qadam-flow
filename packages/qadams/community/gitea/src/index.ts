@@ -2,8 +2,8 @@ import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 import {
   createQadam,
   OAuth2PropertyValue,
+  QadamCategory,
 } from '@aiqadam/qadams-framework';
-import { QadamCategory } from '@aiqadam/shared';
 import { giteaAuth } from './lib/auth';
 import { newCommit } from './lib/triggers/new-commit';
 import { newIssue } from './lib/triggers/new-issue';

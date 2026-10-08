@@ -1,5 +1,4 @@
-import { Property, createAction } from '@aiqadam/qadams-framework';
-import { MarkdownVariant } from '@aiqadam/shared';
+import { Property, createAction, MarkdownVariant } from '@aiqadam/qadams-framework';
 import { jiraCloudAuth } from '../../auth';
 import { searchIssuesByJql, mapFieldNames } from '../common';
 import { z } from 'zod';

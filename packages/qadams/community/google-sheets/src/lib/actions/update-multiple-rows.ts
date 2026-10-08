@@ -3,6 +3,8 @@ import {
   createAction,
   DynamicPropsValue,
   Property,
+  isString,
+  MarkdownVariant,
 } from '@aiqadam/qadams-framework';
 import {
   areSheetIdsValid,
@@ -13,7 +15,6 @@ import {
   objectToArray,
   ValueInputOption,
 } from '../common/common';
-import { isString, MarkdownVariant } from '@aiqadam/shared';
 import { getWorkSheetName } from '../triggers/helpers';
 import { google, sheets_v4 } from 'googleapis';
 import { commonProps } from '../common/props';
