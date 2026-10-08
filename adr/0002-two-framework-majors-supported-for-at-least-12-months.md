@@ -33,17 +33,18 @@ The policy is enforced, not remembered:
 Each instance makes a retirement safe locally with a **census**: from its own database it counts
 the steps pinned to qadam versions built against each major, and needs each pinned version's context version:
 - **Official qadams** never have rows in `qadam_metadata` (only custom installs write there, and
-  #503 refuses official names). Every official version built in this repository reports V2
+  #503 refuses official names). Every official version built in this repository reports context V2
   (`LATEST_CONTEXT_VERSION` since `f611ac80`); from `1.0.0` on, an official version's framework major
-  is the major of `@aiqadam/qadams-framework` that its published `package.json` depends on.
+  — and with it the context version — is the major of `@aiqadam/qadams-framework` that its published
+  `package.json` depends on.
 - **Custom and installed qadams** — the population the shims protect — need a new `qadam_metadata`
   column: `contextInfo` exists today only on the in-memory metadata type
   (`packages/qadams/framework/src/lib/qadam-metadata.ts:112-117` at `94dc9ae3`) and is not persisted
   (`packages/server/api/src/app/qadams/metadata/qadam-metadata-entity.ts` has no such column). A
   custom pin whose context version is unknown counts as "still needs the old contract", so the
   census errs towards keeping a shim.
- Before an upgrade a
-`doctor` command lists the steps a release will stop running; after it, affected steps are marked
+
+Before an upgrade a `doctor` command lists the steps a release will stop running; after it, affected steps are marked
 "framework version no longer supported — update this step" in the builder, MCP and runs, an
 operator banner and log line appear, and the release starts normally — it does not block, and no
 flow is disabled (#435). The `Remove after 2026-10-12` date on the current shims is withdrawn.
@@ -136,5 +137,5 @@ than marked steps with a clear repair path.
 - Persist `contextInfo` for custom and installed qadams in `qadam_metadata` (new column; existing
   rows backfilled by loading the stored archive, unknown otherwise).
 - Census: query over stored flow versions → pinned `name@version` → context version (official:
-  V2 or the framework major in its `package.json`; custom: `qadam_metadata`); `doctor` command; admin and MCP surfaces; post-upgrade marking.
+  context V2 before `1.0.0`, then the framework major in its `package.json`; custom: `qadam_metadata`); `doctor` command; admin and MCP surfaces; post-upgrade marking.
 - SDK docs: the support window for qadam authors.

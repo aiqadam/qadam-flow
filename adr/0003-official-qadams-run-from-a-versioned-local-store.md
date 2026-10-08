@@ -37,25 +37,28 @@ qadam version.
 - **Versions that were never published.** Official qadams were first published between 2026-09-21
   and 2026-10-07, about 25 a day (#583), current versions only (#476) — `tables` has `0.5.1`, not
   `0.5.0` from 2026-09-29. Pins to older versions — the #411 / #422 / #432 population — cannot be
-  fetched and have no catalogue entry. For them the platform keeps #424's caret fallback, with two
-  additions it does not have today: the pin is moved only after the target version has loaded
-  successfully, and every move is written to an audit record and can be reverted. Otherwise the
+  fetched and have no catalogue entry. For them the platform extends #424's caret fallback. #424
+  re-resolves the pin on every lookup and only logs a warning; here the pin is rewritten to the
+  image's version inside the caret range, only after that version has loaded successfully, and the
+  move is written to an audit record and can be reverted. Otherwise the
   step is marked "update this step". The catalogue covers every version published from then on.
 - **Unavailable version.** If a pinned version cannot be fetched, the step moves to the image's
   version only when that version is inside the pin's caret range (ADR-0001) and the catalogue shows
   its props are compatible, and the target version has loaded successfully, with an audit record.
-  The load check is there because neither props compatibility nor the caret range proves the
-  target runs — upstream moved Oracle pins within `^0.1.10` onto a build that could not start
-  (activepieces#15957). Every move can be reverted from the audit record. Otherwise
+  The load check catches a target that cannot be loaded at all — the prototype's `crypto` bundle
+  failed exactly that way (`import.meta` in CJS). It does not catch a target that loads but fails
+  when an action runs: upstream moved Oracle pins within `^0.1.10` onto a build whose metadata and
+  loading were fine but which lacked a file it forks at execution time (activepieces#15957). No check
+  made before a move catches that; the audit record and revert are the answer to it. Otherwise
   the step is marked "version unavailable — update this step" in the builder, MCP and runs, and the
   flow is never disabled (#435).
 - **Qadams at `1.0.0`.** A qadam's `1.0.0` (ADR-0001) is the release that switches it to the
   bundle format; `0.x` versions are the legacy npm format.
 
-This answers #784 (every pinnable version stays resolvable, from the first published version on;
-ADR-0001's snapshot prereleases keep `main` images from carrying unreleased code under a released
-number)
-and #785: a pin covers the qadam's own code and its third-party dependencies; the
+This answers #784 for released versions: every version published from the first publication on
+stays resolvable. It leaves open the other half of #784 — images built from `main` carry unreleased
+qadam code under the last released number — which needs its own decision (for example snapshot
+prereleases for changed packages in `main` builds). And it answers #785: a pin covers the qadam's own code and its third-party dependencies; the
 framework chain is the platform's, kept compatible by API discipline.
 
 ## Context
@@ -173,7 +176,8 @@ per-platform namespace.
 
 **Harder / risks.**
 - Pins older than the first publication keep #424's caret fallback without a schema check, because
-  no metadata exists for them; the load check and the audit record are what guard them.
+  no metadata exists for them; the load check guards against a target that does not load, and only the audit record and revert
+  guard against one that loads but fails at run time.
 - Old qadam code runs on new libraries: a behaviour change in `framework` / `common` changes old
   qadams too. Mitigated by the API gate and ADR-0002.
 - Bundling has edge cases (`import.meta`, native modules: `crypto` failed to load, `sftp`, `duckdb`
@@ -229,4 +233,5 @@ per-version fixes `migrate-v24`, `-v25`, `-v27`).
   and takes `QADAM_REGISTRY_URL` / `QADAM_REGISTRY_TOKEN` (fat absorbs #780's seed cache).
 - Unavailable-version fallback: caret range, props-compatibility check where metadata exists, load
   check, audit record with revert; "update this step" UX.
+- Decide how `main`-built images version unreleased qadam code (#784's second half).
 - Re-scope or close #477 and #478 against this ADR once accepted; answer #785 with a link.

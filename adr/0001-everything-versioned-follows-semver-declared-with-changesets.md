@@ -42,9 +42,7 @@ anything that moves a pin automatically may move it only inside that range.
 **The platform version.** Root `package.json` holds the **last released** version. A release PR
 raises it together with the tag (`version-tag-gate` keeps them equal). Images built from `main` report
 a prerelease computed at build time (`2.1.0-main.<n>`), which semver orders below the release, so a
-canary never claims a release it is not. The same applies to every package with pending changesets:
-a `main` build stamps it with a snapshot prerelease (`1.4.0-main.<n>`), so an image never carries
-unreleased qadam or SDK code under a released number. The first release under this scheme is `2.0.0`. Image tags
+canary never claims a release it is not. The first release under this scheme is `2.0.0`. Image tags
 carry the exact version (`:<version>`, with a `-<flavour>` suffix where images come in flavours)
 plus moving tags; builds from `main` are tagged `:main` (`:main-<flavour>` where images come in
 flavours).
