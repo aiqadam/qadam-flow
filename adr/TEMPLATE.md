@@ -9,6 +9,8 @@ superseded-by: null         # set when a later ADR replaces this one
 
 # NNNN. Title stated as the decision, not the topic
 
+Builds on: ADR-NNNN (what this one relies on). <!-- delete the line if it relies on none -->
+
 <!-- "Official qadams are installed from a versioned local store", not "Qadam versioning". -->
 
 ## Decision

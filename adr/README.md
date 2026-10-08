@@ -37,6 +37,9 @@ the new decision is an ADR, and the feature doc links to it.
 - Start from [`TEMPLATE.md`](./TEMPLATE.md). Keep its frontmatter and section order.
 - One decision per file. A decision with independent parts that could be accepted or rejected
   separately is two ADRs.
+- **Number order is dependency order.** An ADR that relies on others says so under its title
+  (`Builds on: ADR-NNNN`) and references only lower numbers; the one relied on is numbered, read
+  and accepted first. While proposed, ADRs may be renumbered to keep this true.
 - English, like the rest of the repo.
 
 ## Status lifecycle
