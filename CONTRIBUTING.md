@@ -20,7 +20,7 @@ You don't have to write core code to matter here:
 
 Qadam Flow is a TypeScript monorepo built on the Activepieces engine. For a full architecture reference — module boundaries, coding conventions, entity registration rules, and key utilities — see [`AGENTS.md`](./AGENTS.md).
 
-Architectural decisions — what was decided, why, and what was rejected — are recorded as ADRs in [`adr/`](./adr/README.md). Read the accepted ones before changing a contract, how something is versioned or distributed, or anything costly to reverse; propose a new ADR rather than diverging from one.
+Architectural decisions — what was decided, why, and what was rejected — are recorded as ADRs in [`adr/`](./adr/README.md). Read the accepted ones before a change that meets one of the triggers listed there, and propose a new ADR rather than diverging from one.
 
 ## Development setup
 Prerequisites: Node.js (LTS), pnpm, PostgreSQL, Redis.

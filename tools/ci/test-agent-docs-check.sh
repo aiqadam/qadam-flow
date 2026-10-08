@@ -63,7 +63,7 @@ EOF
 }
 
 # A minimal but structurally faithful tree: two skills, one charter, two rules, one deep dive,
-# the three registries and the five mirrors.
+# the three registries, the five mirrors and an empty ADR index.
 new_root() {
   cleanup
   root="$(mktemp -d)"
@@ -117,11 +117,44 @@ EOF
 See [deep dive](.agents/docs/deep-dive.md).
 EOF
 
+  mkdir -p "$root/adr"
+  cat > "$root/adr/README.md" <<'EOF'
+# ADRs
+
+## Index
+
+| ADR | Title | Status |
+| --- | --- | --- |
+| — | No ADRs yet | — |
+EOF
+  echo '# template' > "$root/adr/TEMPLATE.md"
+
   ln -s ../.agents/skills "$root/.claude/skills"
   ln -s ../.agents/agents "$root/.claude/agents"
   ln -s ../.agents/rules "$root/.claude/rules"
   ln -s ../.agents/skills "$root/.cursor/skills"
   ln -s ../.agents/rules "$root/.cursor/rules"
+}
+
+write_adr() {
+  # $1 = file name, $2 = status, $3 = deciders (YAML), $4 = superseded-by
+  cat > "$root/adr/$1" <<EOF
+---
+status: $2            # proposed | accepted | rejected | superseded | deprecated
+date: 2026-10-08
+deciders: ${3:-[]}
+issue: "#1"
+supersedes: null
+superseded-by: ${4:-null}
+---
+
+# Demo decision
+EOF
+}
+
+list_adr() {
+  # $1 = number, $2 = status
+  printf '| [`%s`](%s-demo.md) | Demo decision | `%s` |\n' "$1" "$1" "$2" >> "$root/adr/README.md"
 }
 
 run_check() {
@@ -360,6 +393,82 @@ rm "$root/AGENTS.md"
 run_check
 expect_status 1 "AGENTS.md is the entry point every harness reads first"
 expect_not_contains "OK —" "a tree with no root doc is never a pass"
+
+echo "== a listed ADR in a valid state passes =="
+new_root
+write_adr 0001-demo.md accepted '[binalirustamov]'
+list_adr 0001 accepted
+run_check
+expect_status 0 "a decided, indexed ADR is the normal case"
+
+echo "== an ADR missing from the index fails =="
+new_root
+write_adr 0001-demo.md proposed
+run_check
+expect_status 1 "an unindexed ADR is a decision nobody is pointed at"
+expect_contains 'ADR "0001" exists on disk but is missing from adr/README.md' "names the ADR and the index"
+
+echo "== an index row with no ADR behind it fails =="
+new_root
+list_adr 0002 proposed
+run_check
+expect_status 1 "a phantom row points at a decision that is not there"
+expect_contains 'lists ADR "0002"' "names the phantom"
+
+echo "== an index row with the wrong status fails =="
+new_root
+write_adr 0001-demo.md accepted '[binalirustamov]'
+list_adr 0001 proposed
+run_check
+expect_status 1 "the index must not misreport where a decision stands"
+expect_contains 'does not show its status `accepted`' "names the expected status"
+
+echo "== an unknown ADR status fails =="
+new_root
+write_adr 0001-demo.md approved
+list_adr 0001 approved
+run_check
+expect_status 1 "only the documented lifecycle states are valid"
+expect_contains 'status "approved" is not one of' "names the bad status"
+
+echo "== an accepted ADR with no deciders fails =="
+new_root
+write_adr 0001-demo.md accepted
+list_adr 0001 accepted
+run_check
+expect_status 1 "a decision must record who made it"
+expect_contains '"deciders" is empty' "says which field is missing"
+
+echo "== a superseded ADR that names no successor fails =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]'
+list_adr 0001 superseded
+run_check
+expect_status 1 "a superseded decision must point at its replacement"
+expect_contains '"superseded-by" names no ADR' "says which field is missing"
+
+echo "== a misnamed file under adr/ fails =="
+new_root
+echo 'notes' > "$root/adr/notes.md"
+run_check
+expect_status 1 "stray files in adr/ escape the index"
+expect_contains 'adr/notes.md: not an ADR file name' "names the file"
+
+echo "== two ADRs with the same number fail =="
+new_root
+write_adr 0001-demo.md proposed
+write_adr 0001-other.md proposed
+list_adr 0001 proposed
+run_check
+expect_status 1 "numbers are never reused"
+expect_contains 'ADR number 0001 is already taken' "names the duplicate"
+
+echo "== an adr/ directory that moved away is never reported as clean =="
+new_root
+rm -rf "$root/adr"
+run_check
+expect_status 1 "scanning no ADR directory must fail loudly"
+expect_not_contains "OK —" "a missing ADR directory is never a pass"
 
 echo
 echo "passed: ${pass}   failed: ${fail}"

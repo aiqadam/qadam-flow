@@ -45,7 +45,8 @@ the whole session.
 
 ## Agent knowledge map — single source: `.agents/`
 
-All agent-facing knowledge lives under `.agents/`. `.claude/{skills,agents,rules}` and
+All agent-facing knowledge lives under `.agents/` — the one exception is `adr/`, which records
+decisions for humans and agents alike and is binding on both. `.claude/{skills,agents,rules}` and
 `.cursor/{skills,rules}` are git symlinks into it, so each harness's auto-discovery keeps
 working — never edit a mirror, and never replace one with a real directory; add content
 under `.agents/` only. `npm run check-agent-docs` fails on either.
@@ -58,7 +59,7 @@ under `.agents/` only. `npm run check-agent-docs` fails on either.
 | `.agents/skills/*/SKILL.md` | 12–1100 lines each | **Before the first line of code**, whenever the task matches a skill's trigger | 13 step-by-step workflows. Trigger registry: [`skill-usage.md`](.agents/rules/skill-usage.md) |
 | `.agents/agents/*.md` | 25–80 lines each | **Before you report a code change complete** | 5 subagent charters. Delegation matrix: [`agent-delegation.md`](.agents/rules/agent-delegation.md) |
 | `.agents/docs/*.md` | deep dives | On trigger (see [Verification](#verification)) | Verification pitfalls, CI node_modules cache, dependency updates |
-| `adr/*.md` | one decision each | **Before changing a contract, versioning/distribution, an external runtime dependency, or anything costly to reverse** | Architecture Decision Records — accepted decisions are binding. Standard, triggers and index: [`adr/README.md`](adr/README.md) |
+| `adr/*.md` | one decision each | **Before a change that meets an ADR trigger** (listed in [`adr/README.md`](adr/README.md)) | Architecture Decision Records — accepted decisions are binding. Standard, triggers and index: [`adr/README.md`](adr/README.md) |
 
 ### Every rule, and what it stops you doing
 

@@ -28,7 +28,11 @@
 //      routing tables are the whole point of the change and would otherwise sit outside the
 //      gate, going stale on the first rename;
 //   8. `.claude/` and `.cursor/` are still symlink mirrors into `.agents/`, not copies
-//      somebody edited by hand.
+//      somebody edited by hand;
+//   9. every ADR under `adr/` is named `NNNN-title.md` with a unique number, carries a valid
+//      `status` (and the `deciders` / `superseded-by` that status implies), and is listed in
+//      the index in `adr/README.md` with that same status, in both directions. The review
+//      tooling skips Markdown, so without this nothing would stop the index rotting.
 //
 // It cannot check that an agent actually opened a skill it should have. That part is on the
 // agent, and on the wording of `.agents/rules/skill-usage.md`. What it can guarantee is that
@@ -56,6 +60,15 @@ const AGENT_REGISTRY = '.agents/rules/agent-delegation.md'
 const AGENT_REGISTRY_HEADING = 'When: the delegation matrix'
 const ROOT_DOC = 'AGENTS.md'
 const RULES_INDEX_HEADING = 'Every rule, and what it stops you doing'
+const ADR_DIR = 'adr'
+const ADR_INDEX = 'adr/README.md'
+const ADR_INDEX_HEADING = 'Index'
+// README.md is the standard and the index, TEMPLATE.md the starting point; neither is an ADR.
+const ADR_FIXED_FILES = new Set(['README.md', 'TEMPLATE.md'])
+const ADR_FILE_PATTERN = /^(\d{4})-[a-z0-9]+(?:-[a-z0-9]+)*\.md$/
+const ADR_STATUSES = ['proposed', 'accepted', 'rejected', 'superseded', 'deprecated']
+// Every status past `proposed` is a decision somebody made, so it must say who.
+const ADR_DECIDED_STATUSES = new Set(['accepted', 'rejected', 'superseded', 'deprecated'])
 
 // A description is the only thing a harness reads when deciding whether to load a skill. Two
 // failures make it useless, and both shipped here: too short to say anything (a derived H1),
@@ -103,10 +116,11 @@ const main = () => {
     ...checkDocsLinked({ root }),
     ...checkRoutingReferences({ root }),
     ...checkMirrors({ root }),
+    ...checkAdrs({ root }),
   ]
 
   if (problems.length === 0) {
-    console.log('[check-agent-docs] OK — skills, charters, rules and mirrors are all wired up.')
+    console.log('[check-agent-docs] OK — skills, charters, rules, mirrors and ADRs are all wired up.')
     return
   }
 
@@ -342,6 +356,82 @@ const checkMirrors = ({ root }) => {
       problems.push(`${link}: points at ${path.relative(root, resolved)}, expected ${target}.`)
     }
   }
+  return problems
+}
+
+const checkAdrs = ({ root }) => {
+  const dir = path.join(root, ADR_DIR)
+  if (!isDirectory(dir)) {
+    return [`${ADR_DIR}/ does not exist (root: ${root}) — did the directory move?`]
+  }
+  const index = readFileOrNull(path.join(root, ADR_INDEX))
+  if (index === null) {
+    return [`${ADR_INDEX}: missing — it is the ADR standard and index.`]
+  }
+
+  const problems = []
+  const numbers = []
+  const statuses = new Map()
+  for (const fileName of fs.readdirSync(dir).sort()) {
+    if (ADR_FIXED_FILES.has(fileName)) {
+      continue
+    }
+    const relative = `${ADR_DIR}/${fileName}`
+    const named = fileName.match(ADR_FILE_PATTERN)
+    if (named === null) {
+      problems.push(`${relative}: not an ADR file name — use NNNN-kebab-case-title.md (see ${ADR_INDEX}).`)
+      continue
+    }
+    const number = named[1]
+    if (numbers.includes(number)) {
+      problems.push(`${relative}: ADR number ${number} is already taken — numbers are never reused.`)
+      continue
+    }
+    numbers.push(number)
+
+    const frontmatter = parseFrontmatter({ content: readFileOrNull(path.join(dir, fileName)) ?? '' })
+    if (frontmatter === null) {
+      problems.push(`${relative}: no YAML frontmatter — copy it from ${ADR_DIR}/TEMPLATE.md.`)
+      continue
+    }
+    // The template documents the allowed values in trailing comments; drop them before comparing.
+    const field = (key) => (frontmatter[key] ?? '').replace(/\s+#.*$/, '').trim()
+    const status = field('status')
+    if (!ADR_STATUSES.includes(status)) {
+      problems.push(`${relative}: status "${status}" is not one of ${ADR_STATUSES.join(', ')}.`)
+      continue
+    }
+    statuses.set(number, status)
+    if (ADR_DECIDED_STATUSES.has(status) && ['', '[]', 'null'].includes(field('deciders'))) {
+      problems.push(`${relative}: status is "${status}" but "deciders" is empty — a decision records who made it.`)
+    }
+    if (status === 'superseded' && ['', 'null'].includes(field('superseded-by'))) {
+      problems.push(`${relative}: status is "superseded" but "superseded-by" names no ADR.`)
+    }
+  }
+
+  problems.push(...checkRegistryParity({
+    root,
+    registry: ADR_INDEX,
+    heading: ADR_INDEX_HEADING,
+    onDisk: numbers,
+    label: 'ADR',
+    fixHint: 'add a row to the index',
+  }))
+
+  // Parity says the row exists; this says it is not lying about where the decision stands.
+  for (const line of index.split('\n')) {
+    const listed = line.trim().replace(/^\|/, '').split('|')
+    const number = (listed[0] ?? '').match(/`(\d{4})`/)?.[1]
+    if (number === undefined || !statuses.has(number)) {
+      continue
+    }
+    const status = statuses.get(number)
+    if (!listed.slice(1).some((cell) => cell.includes(`\`${status}\``))) {
+      problems.push(`${ADR_INDEX}: the row for ADR ${number} does not show its status \`${status}\` — update the index.`)
+    }
+  }
+
   return problems
 }
 

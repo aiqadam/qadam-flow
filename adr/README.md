@@ -25,10 +25,15 @@ Write one when a change meets **any** of these:
 Not required: bug fixes, refactors inside one module, and features that follow an existing ADR.
 Rule of thumb — if a future contributor would need to know *why* before changing it, it is an ADR.
 
+Some `.agents/features/*.md` files carry an "Architecture Decisions" section written before this
+directory existed. They stay as module documentation. When one of those decisions is revisited,
+the new decision is an ADR, and the feature doc links to it.
+
 ## Files
 
-- `adr/NNNN-kebab-case-title.md` — four digits, sequential, never reused, never renumbered.
-  Next number: one above the highest file in this directory.
+- `adr/NNNN-kebab-case-title.md` — four digits, sequential, never reused, never renumbered once
+  merged. Next number: one above the highest file on `main`. If another PR merges that number
+  first, renumber yours on rebase.
 - Start from [`TEMPLATE.md`](./TEMPLATE.md). Keep its frontmatter and section order.
 - One decision per file. A decision with independent parts that could be accepted or rejected
   separately is two ADRs.
@@ -73,10 +78,16 @@ proposed ──► accepted ──► superseded (by NNNN)
   same debate from restarting.
 - **Consequences include the costs.** What gets harder, what new obligations appear (API
   stability, migrations, docs), and what is now irreversible.
-- **Agents propose, maintainers accept.** An agent may draft an ADR and open the PR; it never sets
-  `accepted` on its own.
+- **Agents propose, maintainers decide.** An agent may draft an ADR and open the PR. It sets
+  `accepted` or `rejected` only after a maintainer has decided and told it to, and records them in
+  `deciders`.
 
 ## Index
+
+One row per ADR, in number order: ``| [`0001`](0001-title.md) | Title | `accepted` |``.
+`npm run check-agent-docs` fails when a file is missing from this table, a row has no file, a
+row shows a status other than the file's, a file name or status is invalid, or a decided ADR has
+no `deciders`. Immutability of accepted ADRs is checked in review.
 
 | ADR | Title | Status |
 | --- | --- | --- |
