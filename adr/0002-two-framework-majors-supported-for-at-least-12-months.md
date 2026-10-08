@@ -1,7 +1,7 @@
 ---
-status: proposed            # proposed | accepted | rejected | superseded | deprecated
+status: accepted            # proposed | accepted | rejected | superseded | deprecated
 date: 2026-10-08            # date of the decision; the draft date while proposed
-deciders: []                # GitHub handles of the maintainers who decided
+deciders: [binalirustamov]  # GitHub handles of the maintainers who decided
 issue: "#775"               # where the discussion happened
 supersedes: null            # "NNNN" (or ["NNNN", "NNNN"]) if this replaces earlier ADRs
 superseded-by: null         # set when a later ADR replaces this one
