@@ -101,4 +101,4 @@ Immutability of accepted ADRs is checked in review.
 | ADR | Title | Status |
 | --- | --- | --- |
 | [`0001`](0001-official-qadams-run-from-a-versioned-local-store.md) | Official qadams run from a versioned local store, on libraries the platform provides | `proposed` |
-| [`0002`](0002-qadam-context-versions-are-retired-by-policy-with-a-local-census.md) | Qadam context versions are retired by published policy, made safe by a local census | `proposed` |
+| [`0002`](0002-two-framework-majors-supported-for-at-least-12-months.md) | The platform supports two framework majors for at least 12 months, enforced by a CI gate | `proposed` |
