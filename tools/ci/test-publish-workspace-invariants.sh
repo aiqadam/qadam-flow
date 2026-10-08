@@ -87,7 +87,9 @@ new_workspace_fixture() {
 
 run_harness() {
   # $1 = mode, $2 = arg, $3 = optional extra arg (stage: the bundled-private-dependencies map as JSON)
-  out="$(cd "$root" && "$ts_node_bin" --project "$ts_project" "$harness" "$@" 2>&1)"
+  # TMPDIR inside the fixture, so the suite can see whether a staging directory outlived its run.
+  mkdir -p "$root/tmp"
+  out="$(cd "$root" && TMPDIR="$root/tmp" "$ts_node_bin" --project "$ts_project" "$harness" "$@" 2>&1)"
   status=$?
 }
 
@@ -243,6 +245,12 @@ new_bundling_fixture() {
 }
 
 staged_dir() { printf '%s\n' "$out" | sed -n 's/^STAGED //p'; }
+inspect_dir() { printf '%s\n' "$out" | sed -n 's/^INSPECT //p'; }
+
+expect_no_staging_left() {
+  # $1 = description
+  if [ -z "$(find "$root/tmp" -maxdepth 1 -name 'qadam-flow-publish-stage-*' 2>/dev/null)" ]; then ok; else bad "$1 — a staging directory was left behind: $(ls "$root/tmp")"; fi
+}
 
 expect_file_contains() {
   # $1 = file, $2 = needle, $3 = description
@@ -254,6 +262,9 @@ run_harness stage "$root/pkg-b/dist" '{"pkg-b":["pkg-a"]}'
 expect_status 0 "a configured private dependency is bundled"
 staged="$(staged_dir)"
 if [ -n "$staged" ] && [ "$staged" != "$root/pkg-b/dist" ]; then ok; else bad "expected a staging directory distinct from dist, got '$staged'"; fi
+if [ -n "$staged" ] && [ ! -e "$staged" ]; then ok; else bad "the staging directory '$staged' still exists after it was packed"; fi
+expect_no_staging_left "a successful stage removes its staging directory"
+staged="$(inspect_dir)"
 if [ -z "$(json_field "$staged/package.json" "dependencies.pkg-a")" ]; then ok; else bad "the staged manifest still depends on the private pkg-a"; fi
 if [ "$(json_field "$staged/package.json" "dependencies.some-lib")" = "1.0.0" ]; then ok; else bad "the bundled code's own dependency some-lib@1.0.0 was not carried over"; fi
 if [ "$(json_field "$staged/package.json" "dependencies.other-lib")" = "1.2.3" ]; then ok; else bad "pkg-b's own dependency was lost"; fi
@@ -290,6 +301,7 @@ printf '%s\n' 'require("ghost-lib");' >> "$root/pkg-a/dist/src/lib/a.js"
 run_harness stage "$root/pkg-b/dist" '{"pkg-b":["pkg-a"]}'
 expect_status 1 "bundled code that needs a dependency its package does not declare is refused"
 expect_contains "ghost-lib" "the error names the undeclared dependency"
+expect_no_staging_left "a stage that fails after copying still removes its staging directory"
 
 new_bundling_fixture
 printf '%s\n' 'const deep = require("pkg-a/lib/a");' >> "$root/pkg-b/dist/src/index.js"
@@ -308,8 +320,99 @@ write_json "$root/pkg-b/dist/package.json" '{ "name": "pkg-b", "version": "1.0.0
 rm "$root/pkg-b/dist/src/index.js" "$root/pkg-b/dist/src/lib/types.d.ts"
 run_harness stage "$root/pkg-b/dist"
 expect_status 0 "a devDependency on a private package does not block the publish"
+if [ "$(staged_dir)" = "$root/pkg-b/dist" ] && [ -d "$root/pkg-b/dist" ]; then ok; else bad "a package that bundles nothing is packed from dist itself, and dist is never removed — got '$(staged_dir)'"; fi
 if [ -z "$(json_field "$root/pkg-b/dist/package.json" "devDependencies.pkg-a")" ]; then ok; else bad "the published manifest still names the private package as a devDependency"; fi
 if [ "$(json_field "$root/pkg-b/dist/package.json" "devDependencies.vitest")" = "4.1.11" ]; then ok; else bad "other devDependencies were dropped"; fi
+
+new_bundling_fixture
+printf '%s\n' 'const apiPath = "pkg-a/v2";' '// see "pkg-a/lib/a" for the shape' >> "$root/pkg-b/dist/src/index.js"
+run_harness stage "$root/pkg-b/dist" '{"pkg-b":["pkg-a"]}'
+expect_status 0 "a string literal or comment naming a subpath of the bundled package is not a subpath import"
+expect_not_contains "subpath" "the subpath guard reads import specifiers, not every quoted string"
+
+echo "== the private package's main/types must be files inside its own directory =="
+
+bundling_fixture_with_pkg_a_entry() {
+  # $1 = main, $2 = types (JSON values, so an absent field can be passed as null)
+  new_bundling_fixture
+  node -e "
+    const fs = require('fs');
+    const path = '$root/pkg-a/package.json';
+    const manifest = JSON.parse(fs.readFileSync(path));
+    const set = (key, value) => { if (value === null) { delete manifest[key]; } else { manifest[key] = value; } };
+    set('main', $1);
+    set('types', $2);
+    fs.writeFileSync(path, JSON.stringify(manifest));
+  "
+}
+
+bundling_fixture_with_pkg_a_entry null '"./dist/src/index.d.ts"'
+run_harness stage "$root/pkg-b/dist" '{"pkg-b":["pkg-a"]}'
+expect_status 1 "a private package with no main is refused"
+expect_contains 'declares no "main"' "the error names the missing field"
+expect_no_staging_left "a refused main leaves no staging directory"
+
+bundling_fixture_with_pkg_a_entry '"./dist/src/index.js"' '""'
+run_harness stage "$root/pkg-b/dist" '{"pkg-b":["pkg-a"]}'
+expect_status 1 "an empty types is refused, not read as the package directory itself"
+expect_contains 'declares no "types"' "the error names the empty field"
+
+bundling_fixture_with_pkg_a_entry '"../pkg-b/dist/src/index.js"' '"./dist/src/index.d.ts"'
+run_harness stage "$root/pkg-b/dist" '{"pkg-b":["pkg-a"]}'
+expect_status 1 "a main that resolves outside the private package's directory is refused"
+expect_contains "resolves outside its package directory" "the error names the reason"
+
+bundling_fixture_with_pkg_a_entry '"./dist/src"' '"./dist/src/index.d.ts"'
+run_harness stage "$root/pkg-b/dist" '{"pkg-b":["pkg-a"]}'
+expect_status 1 "a main that names a directory is refused"
+expect_contains "is not a file" "the error names the reason"
+
+bundling_fixture_with_pkg_a_entry '"./index.js"' '"./index.d.ts"'
+printf '%s\n' 'exports.A = "a";' > "$root/pkg-a/index.js"
+printf '%s\n' 'export declare const A = "a";' > "$root/pkg-a/index.d.ts"
+run_harness stage "$root/pkg-b/dist" '{"pkg-b":["pkg-a"]}'
+expect_status 1 "main/types at the private package's root are refused — vendoring it would ship its sources and manifest"
+expect_contains "package root" "the error names the reason"
+
+echo "== the workspace map is read from literal directories and <dir>/* only =="
+
+stage_with_workspaces() {
+  # $1 = the root manifest's "workspaces" value as JSON, or "absent"
+  new_bundling_fixture
+  if [ "$1" = absent ]; then
+    write_json "$root/package.json" '{ "name": "fixture-root" }'
+  else
+    write_json "$root/package.json" "{ \"name\": \"fixture-root\", \"workspaces\": $1 }"
+  fi
+  run_harness stage "$root/pkg-b/dist" '{"pkg-b":["pkg-a"]}'
+}
+
+stage_with_workspaces '["pkg-*"]'
+expect_status 1 "a glob that is not <dir>/* is refused, not read as a literal directory"
+expect_contains "pkg-*" "the error names the pattern"
+
+stage_with_workspaces '["pkg-a", "**/pkg-b"]'
+expect_status 1 "a ** pattern is refused"
+expect_contains "**/pkg-b" "the error names the pattern"
+
+stage_with_workspaces '["pkg-a", "pkg-b", "!pkg-c"]'
+expect_status 1 "a negated pattern is refused"
+expect_contains "!pkg-c" "the error names the pattern"
+
+stage_with_workspaces 'absent'
+expect_status 1 "a root manifest with no workspaces is refused — the private-package check would otherwise pass vacuously"
+expect_contains 'declares no "workspaces"' "the error names the reason"
+
+stage_with_workspaces '[]'
+expect_status 1 "an empty workspaces list is refused"
+expect_contains 'declares no "workspaces"' "the error names the reason"
+
+mkdir -p "$root/nested"
+mv "$root/pkg-a" "$root/nested/pkg-a"
+mv "$root/pkg-b" "$root/nested/pkg-b"
+write_json "$root/package.json" '{ "name": "fixture-root", "workspaces": ["nested/*"] }'
+run_harness stage "$root/nested/pkg-b/dist" '{"pkg-b":["pkg-a"]}'
+expect_status 0 "a <dir>/* pattern is expanded"
 
 # The refusal guard on --skip-registry-check. Driven through the real CLI entry point rather than
 # the harness, because the mistake it exists to stop is a human adding the flag to an invocation

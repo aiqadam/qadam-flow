@@ -1,9 +1,10 @@
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { builtinModules } from 'node:module'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 const VENDOR_DIRECTORY = 'vendor'
+const WORKSPACE_GLOB_CHARACTERS = /[*?[\]{}!]/
 const MODULE_FILE_SUFFIXES = ['.js', '.cjs', '.mjs', '.d.ts', '.d.cts', '.d.mts']
 const DEPENDENCY_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'] as const
 // The forms `tsc` emits: `require("x")` in CommonJS output; `import … from 'x'`, `export … from 'x'`,
@@ -29,17 +30,24 @@ export const BUNDLED_PRIVATE_DEPENDENCIES: Record<string, string[]> = {
   '@aiqadam/qadams-framework': ['@aiqadam/shared'],
 }
 
-// Returns the directory to pack. A package that bundles nothing is packed from `outputPath` as
-// before. One that bundles is copied to a temporary directory first, so the workspace's own
-// `dist` — which the API, engine and tests load — keeps requiring the workspace `shared` and never
-// gains a second copy of it.
-export const stagePackageForPublish = ({ outputPath, workspaceRoot, bundledPrivateDependencies = BUNDLED_PRIVATE_DEPENDENCIES }: StagePackageForPublishParams): string => {
+// Stages the package and hands `use` the directory to pack, returning what `use` returns. A
+// package that bundles nothing is packed from `outputPath` as before. One that bundles is copied to
+// a temporary directory first, so the workspace's own `dist` — which the API, engine and tests load
+// — keeps requiring the workspace `shared` and never gains a second copy of it. That directory is
+// removed once `use` returns or anything throws: a release packs every framework package and, with
+// `--include-qadams`, the catalogue, and each staged framework is a ~4.5 MB copy of `shared`.
+export const stagePackageForPublish = async <T>({ outputPath, workspaceRoot, bundledPrivateDependencies = BUNDLED_PRIVATE_DEPENDENCIES, use }: StagePackageForPublishParams<T>): Promise<T> => {
   const manifest = readJson(join(outputPath, 'package.json'))
   const privatePackages = findPrivateWorkspacePackages({ workspaceRoot })
   const toBundle = bundledPrivateDependencies[manifest.name] ?? []
 
-  const publishRoot = toBundle.length === 0 ? outputPath : mkdtempSync(join(tmpdir(), 'qadam-flow-publish-stage-'))
-  if (publishRoot !== outputPath) {
+  if (toBundle.length === 0) {
+    assertPublishable({ publishRoot: outputPath, privatePackages })
+    return use(outputPath)
+  }
+
+  const publishRoot = mkdtempSync(join(tmpdir(), 'qadam-flow-publish-stage-'))
+  try {
     cpSync(outputPath, publishRoot, {
       recursive: true,
       // `prepareQadamDistForPublish` symlinks `dist/node_modules` to the source tree's; npm would
@@ -51,11 +59,19 @@ export const stagePackageForPublish = ({ outputPath, workspaceRoot, bundledPriva
       manifest,
     )
     writeFileSync(join(publishRoot, 'package.json'), JSON.stringify(stagedManifest, null, 2))
+    assertPublishable({ publishRoot, privatePackages })
+    // Awaited here, not returned as a promise: the `finally` must not remove the directory while
+    // `npm pack` is still reading it.
+    return await use(publishRoot)
   }
+  finally {
+    rmSync(publishRoot, { recursive: true, force: true })
+  }
+}
 
+function assertPublishable({ publishRoot, privatePackages }: AssertNoPrivateDependenciesParams): void {
   dropPrivateDevDependencies({ publishRoot, privatePackages })
   assertNoPrivateDependencies({ publishRoot, privatePackages })
-  return publishRoot
 }
 
 function vendorPrivatePackage({ publishRoot, manifest, privatePackage, name }: VendorPrivatePackageParams): PackageManifest {
@@ -70,11 +86,14 @@ function vendorPrivatePackage({ publishRoot, manifest, privatePackage, name }: V
     throw new Error(`[stagePackageForPublish] ${name} has workspace or peer dependencies of its own (${ownWorkspaceDependencies.map(([dep]) => dep).join(', ')}); bundling it is not supported.`)
   }
 
-  const entry = join(privatePackage.directory, privatePackage.manifest.main ?? '')
-  const types = join(privatePackage.directory, privatePackage.manifest.types ?? '')
+  const entry = buildFile({ privatePackage, field: 'main', name })
+  const types = buildFile({ privatePackage, field: 'types', name })
   const buildRoot = dirname(entry)
-  if (!existsSync(entry) || !existsSync(types) || dirname(types) !== buildRoot) {
-    throw new Error(`[stagePackageForPublish] ${name} has no build output next to its main/types (${entry}, ${types}). Build it before packing ${manifest.name}.`)
+  if (dirname(types) !== buildRoot) {
+    throw new Error(`[stagePackageForPublish] ${name}'s main (${entry}) and types (${types}) are not in one directory; only that directory is vendored.`)
+  }
+  if (buildRoot === resolve(privatePackage.directory)) {
+    throw new Error(`[stagePackageForPublish] ${name}'s main and types sit at its package root; vendoring that directory would ship its sources, manifest and node_modules. Point them into the build output.`)
   }
 
   const vendorDirectory = join(publishRoot, VENDOR_DIRECTORY, unscopedName(name))
@@ -149,8 +168,28 @@ function isPrivateSpecifier({ specifier, privatePackages }: IsPrivateSpecifierPa
   return [...privatePackages.keys()].some((name) => specifier === name || specifier.startsWith(`${name}/`))
 }
 
+// `main` / `types` of the package to vendor, as an existing file inside its own directory: an empty
+// or missing field would resolve to the package directory itself, and `../` would reach outside it,
+// and either would vendor whatever sits there.
+function buildFile({ privatePackage, field, name }: BuildFileParams): string {
+  const value = privatePackage.manifest[field]
+  if (value === undefined || value.trim() === '') {
+    throw new Error(`[stagePackageForPublish] ${name} declares no "${field}"; the bundling package needs it to find ${name}'s build output.`)
+  }
+  const directory = resolve(privatePackage.directory)
+  const file = resolve(directory, value)
+  const fromPackage = relative(directory, file)
+  if (fromPackage === '' || fromPackage === '..' || fromPackage.startsWith(`..${sep}`) || isAbsolute(fromPackage)) {
+    throw new Error(`[stagePackageForPublish] ${name}'s "${field}" (${value}) resolves outside its package directory (${directory}).`)
+  }
+  if (!existsSync(file) || !statSync(file).isFile()) {
+    throw new Error(`[stagePackageForPublish] ${name}'s "${field}" (${file}) is not a file. Build ${name} before packing the package that bundles it.`)
+  }
+  return file
+}
+
 function rewriteSpecifiers({ source, name, replacement, file }: RewriteSpecifiersParams): string {
-  if (new RegExp(`["']${escapeRegExp(name)}/`).test(source)) {
+  if (specifiersIn({ source }).some((specifier) => specifier.startsWith(`${name}/`))) {
     throw new Error(`[stagePackageForPublish] ${file} imports a subpath of ${name}; only the package root can be bundled.`)
   }
   return source.replace(
@@ -173,13 +212,24 @@ function specifiersIn({ source }: { source: string }): string[] {
   return SPECIFIER_PATTERNS.flatMap((pattern) => [...source.matchAll(pattern)].map((match) => match[1]))
 }
 
+// Only the two pattern forms the root manifest uses, `<dir>` and `<dir>/*` (the same two
+// tools/ci/check-changesets.mjs expands). Anything else — `**`, a mid-path `*`, a negation, a brace —
+// is refused rather than read as a literal directory that does not exist: a private package missed
+// here is a private package the publish-time assertion never looks for.
 function findPrivateWorkspacePackages({ workspaceRoot }: { workspaceRoot: string }): Map<string, WorkspacePackage> {
-  const patterns: string[] = readJson(join(workspaceRoot, 'package.json')).workspaces ?? []
-  const directories = patterns.flatMap((pattern) => {
+  const { workspaces } = readJson(join(workspaceRoot, 'package.json'))
+  if (!isStringArray(workspaces) || workspaces.length === 0) {
+    throw new Error(`[stagePackageForPublish] ${join(workspaceRoot, 'package.json')} declares no "workspaces"; without them no private workspace package can be found, and the private-package check would pass vacuously.`)
+  }
+  const directories = workspaces.flatMap((pattern) => {
+    const literal = pattern.endsWith('/*') ? pattern.slice(0, -2) : pattern
+    if (literal === '' || WORKSPACE_GLOB_CHARACTERS.test(literal)) {
+      throw new Error(`[stagePackageForPublish] workspace pattern '${pattern}' is neither a directory nor <directory>/*; it is not expanded here.`)
+    }
     if (!pattern.endsWith('/*')) {
       return [join(workspaceRoot, pattern)]
     }
-    const parent = join(workspaceRoot, pattern.slice(0, -2))
+    const parent = join(workspaceRoot, literal)
     return existsSync(parent)
       ? readdirSync(parent, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => join(parent, entry.name))
       : []
@@ -189,6 +239,10 @@ function findPrivateWorkspacePackages({ workspaceRoot }: { workspaceRoot: string
     .map((directory) => ({ directory, manifest: readJson(join(directory, 'package.json')) }))
     .filter(({ manifest }) => manifest.private === true)
   return new Map(packages.map((workspacePackage) => [workspacePackage.manifest.name, workspacePackage]))
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string')
 }
 
 function listFiles(directory: string): string[] {
@@ -230,7 +284,7 @@ type PackageManifest = {
   private?: boolean
   main?: string
   types?: string
-  workspaces?: string[]
+  workspaces?: unknown
   dependencies?: Record<string, string>
   devDependencies?: Record<string, string>
   peerDependencies?: Record<string, string>
@@ -242,10 +296,11 @@ type WorkspacePackage = {
   manifest: PackageManifest
 }
 
-type StagePackageForPublishParams = {
+type StagePackageForPublishParams<T> = {
   outputPath: string
   workspaceRoot: string
   bundledPrivateDependencies?: Record<string, string[]>
+  use: (publishRoot: string) => T | Promise<T>
 }
 
 type VendorPrivatePackageParams = {
@@ -258,6 +313,12 @@ type VendorPrivatePackageParams = {
 type AssertNoPrivateDependenciesParams = {
   publishRoot: string
   privatePackages: Map<string, WorkspacePackage>
+}
+
+type BuildFileParams = {
+  privatePackage: WorkspacePackage
+  field: 'main' | 'types'
+  name: string
 }
 
 type IsPrivateSpecifierParams = {

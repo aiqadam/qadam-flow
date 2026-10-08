@@ -3,14 +3,16 @@
 // entry point is tools/scripts/publish-framework-packages.ts — this exists only because
 // prepareQadamDistForPublish/assertNoUnresolvedWorkspaceDeps/assertNoSemverRanges/
 // stagePackageForPublish have no CLI of their own to invoke against a fixture directory.
-import { prepareQadamDistForPublish } from '../../packages/cli/src/lib/utils/prepare-qadam-utils'
+import { cpSync } from 'node:fs'
+import { join } from 'node:path'
 import { cwd } from 'node:process'
+import { prepareQadamDistForPublish } from '../../packages/cli/src/lib/utils/prepare-qadam-utils'
 import { assertNoSemverRanges, assertNoUnresolvedWorkspaceDeps } from '../scripts/utils/publish-npm-package'
 import { stagePackageForPublish } from '../scripts/utils/stage-package-for-publish'
 
 const [, , mode, arg, bundled] = process.argv
 
-const run = (): void => {
+const run = async (): Promise<void> => {
   switch (mode) {
     case 'prepare':
       prepareQadamDistForPublish(arg)
@@ -21,19 +23,32 @@ const run = (): void => {
     case 'assert-no-semver-ranges':
       assertNoSemverRanges(arg)
       return
-    case 'stage':
-      // Prints the directory that would be packed, so the suite can inspect it.
-      console.log('STAGED ' + stagePackageForPublish({ outputPath: arg, workspaceRoot: cwd(), bundledPrivateDependencies: bundled === undefined ? {} : JSON.parse(bundled) }))
+    case 'stage': {
+      // The staging directory is removed once `use` returns, so its contents are copied out for the
+      // suite to inspect. STAGED names the directory that was packed, so the suite can check both
+      // that it was a separate copy and that it no longer exists.
+      const inspect = join(cwd(), 'staged-copy')
+      const staged = await stagePackageForPublish({
+        outputPath: arg,
+        workspaceRoot: cwd(),
+        bundledPrivateDependencies: bundled === undefined ? {} : JSON.parse(bundled),
+        use: (publishRoot) => {
+          cpSync(publishRoot, inspect, { recursive: true })
+          return publishRoot
+        },
+      })
+      console.log('STAGED ' + staged)
+      console.log('INSPECT ' + inspect)
       return
+    }
     default:
       throw new Error(`[publish-workspace-invariants-harness] unknown mode: ${mode}`)
   }
 }
 
-try {
-  run()
+run().then(() => {
   console.log('OK')
-} catch (err: unknown) {
+}).catch((err: unknown) => {
   console.error(`FAIL: ${err instanceof Error ? err.message : String(err)}`)
   process.exitCode = 1
-}
+})
