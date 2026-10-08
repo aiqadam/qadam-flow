@@ -71,6 +71,8 @@ const ADR_STATUSES = ['proposed', 'accepted', 'rejected', 'superseded', 'depreca
 const ADR_DECIDED_STATUSES = new Set(['accepted', 'rejected', 'superseded', 'deprecated'])
 // A proposal that is still open, or one that lost, has replaced nothing.
 const ADR_UNDECIDED_STATUSES = new Set(['proposed', 'rejected'])
+// A new ADR may reopen one of these without flipping it: its own record stays as it was.
+const ADR_REOPENABLE_STATUSES = new Set(['rejected', 'deprecated'])
 // What an unset frontmatter scalar looks like once its comment is stripped.
 const ADR_EMPTY_VALUES = new Set(['', 'null', '~'])
 
@@ -377,7 +379,7 @@ const checkAdrs = ({ root }) => {
   const files = new Map()
   const statuses = new Map()
   const supersedes = new Map()
-  const successors = []
+  const supersededBy = new Map()
   // Supporting files an ADR links to (a diagram, an assets/ folder) may sit beside it; only
   // Markdown at the top level is an ADR or the standard.
   const entries = fs.readdirSync(dir, { withFileTypes: true })
@@ -413,45 +415,15 @@ const checkAdrs = ({ root }) => {
     if (ADR_DECIDED_STATUSES.has(status) && isEmptyAdrList({ value: adrField({ frontmatter, key: 'deciders' }) })) {
       problems.push(`${relative}: status is "${status}" but "deciders" is empty — a decision records who made it.`)
     }
-    if (status === 'superseded') {
-      const successor = adrField({ frontmatter, key: 'superseded-by' })
-      if (isEmptyAdrList({ value: successor })) {
-        problems.push(`${relative}: status is "superseded" but "superseded-by" names no ADR.`)
-      }
-      else {
-        successors.push({ relative, number, successor })
-      }
+    supersededBy.set(number, adrList({ value: adrField({ frontmatter, key: 'superseded-by' }) }))
+    if (status === 'superseded' && supersededBy.get(number).length === 0) {
+      problems.push(`${relative}: status is "superseded" but "superseded-by" names no ADR.`)
+    }
+    if (status !== 'superseded' && supersededBy.get(number).length > 0) {
+      problems.push(`${relative}: "superseded-by" is set but the status is "${status}".`)
     }
   }
-  for (const { relative, number, successor } of successors) {
-    if (!files.has(successor)) {
-      problems.push(`${relative}: "superseded-by" names ADR ${successor}, which does not exist.`)
-    }
-    else if (successor === number) {
-      problems.push(`${relative}: "superseded-by" names the ADR itself.`)
-    }
-    // A successor may itself be superseded or deprecated later; only one that was never accepted
-    // cannot have replaced anything.
-    else if (ADR_UNDECIDED_STATUSES.has(statuses.get(successor))) {
-      problems.push(`${relative}: superseded by ADR ${successor}, which is ${statuses.get(successor)} — flip this one only when its successor is accepted.`)
-    }
-    else if (!supersedes.get(successor).includes(number)) {
-      problems.push(`${relative}: superseded by ADR ${successor}, whose "supersedes" does not name ${number}.`)
-    }
-  }
-  // The other side: a decided ADR that replaces another must have retired it, or two contradictory
-  // decisions are both binding.
-  for (const [number, replaced] of supersedes) {
-    const relative = `${ADR_DIR}/${files.get(number)}`
-    for (const predecessor of replaced) {
-      if (!files.has(predecessor) || predecessor === number) {
-        problems.push(`${relative}: "supersedes" names ADR ${predecessor}, which ${predecessor === number ? 'is this ADR' : 'does not exist'}.`)
-      }
-      else if (!ADR_UNDECIDED_STATUSES.has(statuses.get(number)) && statuses.get(predecessor) !== 'superseded') {
-        problems.push(`${relative}: supersedes ADR ${predecessor}, which is still ${statuses.get(predecessor)} — flip it to superseded in the PR that accepts this one.`)
-      }
-    }
-  }
+  problems.push(...checkSupersession({ files, statuses, supersedes, supersededBy }))
 
   problems.push(...checkRegistryParity({
     root,
@@ -490,6 +462,74 @@ const adrList = ({ value }) => ADR_EMPTY_VALUES.has(value)
 
 // `deciders: []`, `[ ]` and `[""]` all name nobody.
 const isEmptyAdrList = ({ value }) => adrList({ value }).length === 0
+
+// Supersession is recorded on both sides (`superseded-by` on the old ADR, `supersedes` on the new),
+// only a decided ADR can have replaced anything, and following `superseded-by` never loops — so
+// from any superseded ADR there is a path to a decision that still stands or was deprecated.
+// ADRs whose own status is invalid are skipped here; they already carry their own finding.
+const checkSupersession = ({ files, statuses, supersedes, supersededBy }) => {
+  const problems = []
+  for (const [number, status] of statuses) {
+    const relative = `${ADR_DIR}/${files.get(number)}`
+    for (const successor of supersededBy.get(number)) {
+      if (successor === number) {
+        problems.push(`${relative}: "superseded-by" names the ADR itself.`)
+      }
+      else if (!files.has(successor)) {
+        problems.push(`${relative}: "superseded-by" names ADR ${successor}, which does not exist.`)
+      }
+      else if (!statuses.has(successor)) {
+        continue
+      }
+      // A successor may itself be superseded or deprecated later; only one that was never
+      // accepted cannot have replaced anything.
+      else if (ADR_UNDECIDED_STATUSES.has(statuses.get(successor))) {
+        problems.push(`${relative}: superseded by ADR ${successor}, which is ${statuses.get(successor)} — flip this one only when its successor is accepted.`)
+      }
+      else if (!supersedes.get(successor).includes(number)) {
+        problems.push(`${relative}: superseded by ADR ${successor}, whose "supersedes" does not name ${number}.`)
+      }
+    }
+    for (const predecessor of supersedes.get(number)) {
+      if (predecessor === number) {
+        problems.push(`${relative}: "supersedes" names the ADR itself.`)
+      }
+      else if (!files.has(predecessor)) {
+        problems.push(`${relative}: "supersedes" names ADR ${predecessor}, which does not exist.`)
+      }
+      // A proposal leaves its predecessor standing until it is accepted, and reopening a rejected
+      // or deprecated ADR does not change what that one says about itself.
+      else if (!statuses.has(predecessor) || ADR_UNDECIDED_STATUSES.has(status) || ADR_REOPENABLE_STATUSES.has(statuses.get(predecessor))) {
+        continue
+      }
+      else if (statuses.get(predecessor) !== 'superseded') {
+        problems.push(`${relative}: supersedes ADR ${predecessor}, which is still ${statuses.get(predecessor)} — flip it to superseded in the PR that accepts this one.`)
+      }
+      else if (!supersededBy.get(predecessor).includes(number)) {
+        problems.push(`${relative}: supersedes ADR ${predecessor}, whose "superseded-by" names ${supersededBy.get(predecessor).join(', ')} instead.`)
+      }
+    }
+  }
+  for (const start of statuses.keys()) {
+    if (isInSupersessionCycle({ start, supersededBy })) {
+      problems.push(`${ADR_DIR}/${files.get(start)}: "superseded-by" leads back to this ADR — some decision in the chain must still stand.`)
+    }
+  }
+  return problems
+}
+
+const isInSupersessionCycle = ({ start, supersededBy }) => {
+  const seen = new Set()
+  let current = supersededBy.get(start)?.[0]
+  while (current !== undefined && !seen.has(current)) {
+    if (current === start) {
+      return true
+    }
+    seen.add(current)
+    current = supersededBy.get(current)?.[0]
+  }
+  return false
+}
 
 // The template documents the allowed values in trailing comments; drop the comment first so a
 // quoted value with a comment after it is still unquoted.

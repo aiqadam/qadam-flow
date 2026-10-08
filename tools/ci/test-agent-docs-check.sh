@@ -622,6 +622,97 @@ printf '\n## Elsewhere\n\n| ADR | Note |\n| --- | --- |\n| [`0009`](0009-x.md) |
 run_check
 expect_status 0 "only the first table under the index heading is the index"
 
+echo "== a successor with an invalid status is reported, not crashed on =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0002"'
+write_adr 0002-demo.md acepted '[binalirustamov]' null '"0001"'
+list_adr 0001 superseded
+list_adr 0002 acepted
+run_check
+expect_status 1 "the typo is the finding"
+expect_contains 'status "acepted" is not one of' "names the typo"
+expect_not_contains 'TypeError' "a finding, not a stack trace"
+
+echo "== a predecessor retired in favour of a different ADR fails =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0003"'
+write_adr 0002-demo.md accepted '[binalirustamov]' null '"0001"'
+write_adr 0003-demo.md accepted '[binalirustamov]' null '"0001"'
+list_adr 0001 superseded
+list_adr 0002 accepted
+list_adr 0003 accepted
+run_check
+expect_status 1 "two ADRs cannot both have replaced the same one"
+expect_contains 'whose "superseded-by" names 0003 instead' "names the ADR the predecessor agrees with"
+
+echo "== a supersession cycle fails =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0002"' '"0002"'
+write_adr 0002-demo.md superseded '[binalirustamov]' '"0001"' '"0001"'
+list_adr 0001 superseded
+list_adr 0002 superseded
+run_check
+expect_status 1 "a loop leaves no decision standing"
+expect_contains 'leads back to this ADR' "says what is wrong"
+
+echo "== an ADR that supersedes itself fails =="
+new_root
+write_adr 0001-demo.md accepted '[binalirustamov]' null '"0001"'
+list_adr 0001 accepted
+run_check
+expect_status 1 "a decision cannot replace itself"
+expect_contains '"supersedes" names the ADR itself' "says what is wrong"
+
+echo "== an ADR superseded by a rejected one fails =="
+new_root
+write_adr 0001-demo.md superseded '[binalirustamov]' '"0002"'
+write_adr 0002-demo.md rejected '[binalirustamov]' null '"0001"'
+list_adr 0001 superseded
+list_adr 0002 rejected
+run_check
+expect_status 1 "a proposal that lost replaced nothing"
+expect_contains 'which is rejected' "says why"
+
+echo "== reopening a rejected ADR passes without flipping it =="
+new_root
+write_adr 0001-demo.md rejected '[binalirustamov]'
+write_adr 0002-demo.md accepted '[binalirustamov]' null '"0001"'
+list_adr 0001 rejected
+list_adr 0002 accepted
+run_check
+expect_status 0 "the rejected record stays as it was"
+
+echo "== superseded-by on an ADR that is not superseded fails =="
+new_root
+write_adr 0001-demo.md accepted '[binalirustamov]' '"0002"'
+write_adr 0002-demo.md accepted '[binalirustamov]'
+list_adr 0001 accepted
+list_adr 0002 accepted
+run_check
+expect_status 1 "the two fields must agree"
+expect_contains '"superseded-by" is set but the status is "accepted"' "names the status"
+
+echo "== an index heading with no table does not borrow a later one =="
+new_root
+write_adr 0001-demo.md accepted '[binalirustamov]'
+cat > "$root/adr/README.md" <<'EOF'
+# ADRs
+
+## Index
+
+Nothing here yet.
+
+## Elsewhere
+
+| ADR | Title | Status |
+| --- | --- | --- |
+| [`0001`](0001-demo.md) | Demo decision | `proposed` |
+EOF
+run_check
+expect_status 1 "an index with no table is a finding"
+expect_contains 'no table found under a heading containing "Index"' "says the index is missing"
+expect_not_contains 'shows status' "a table under another heading is not read as the index"
+
 echo "== a misnamed file under adr/ fails =="
 new_root
 echo 'notes' > "$root/adr/notes.md"

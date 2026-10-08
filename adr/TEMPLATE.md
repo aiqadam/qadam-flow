@@ -3,7 +3,7 @@ status: proposed            # proposed | accepted | rejected | superseded | depr
 date: YYYY-MM-DD            # date of the decision; the draft date while proposed
 deciders: []                # GitHub handles of the maintainers who decided
 issue: "#NNN"               # where the discussion happened
-supersedes: null            # "NNNN" if this replaces an earlier ADR
+supersedes: null            # "NNNN" (or ["NNNN", "NNNN"]) if this replaces earlier ADRs
 superseded-by: null         # set when a later ADR replaces this one
 ---
 
