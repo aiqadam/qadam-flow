@@ -7,6 +7,7 @@ export * from './qadam-metadata';
 export * from './output-schema';
 export * from './i18n'
 export * from './context/versioning'
+export * from './context/framework-support'
 export * from './test'
 export * from './long-polling/event-puller'
 export * from './shared-reexports'
