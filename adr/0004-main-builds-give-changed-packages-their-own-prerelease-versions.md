@@ -52,9 +52,11 @@ Its weaker path, with no props check and only a load check, audit record and rev
 pins older than the first publication. A snapshot has no catalogue entry, so under ADR-0003 as
 written it could never move. **This ADR extends ADR-0003's no-metadata path to snapshot pins.** That
 is acceptable for three reasons:
-- snapshot pins exist only where our own `main` images ran;
-- the target is the release or a later build of the same changeset line, which gate 2 (ADR-0001)
-  checked against the same released base;
+- snapshot pins originate only on instances running our `main` images;
+- the target is inside the pin's caret range, the same bound ADR-0001 promises is a drop-in
+  replacement at the contract level. Every build on the way there passed gate 2's declared-level
+  check (ADR-0001), which is what ADR-0003 also relies on to move a step (ADR-0003, "New
+  obligations");
 - the alternative is a manual "update this step" on every imported QA flow.
 
 If no move is possible, the step is marked "update this step".
@@ -91,7 +93,7 @@ the store keys code by `name@version` and checks its integrity. So the version a
 a qadam is the version flows pin and the key the store files the code under.
 
 **Where `main` images run.** On every push to `main` that is not docs-only, `ci.yml` pushes `:main`
-and `:sha-<short>` (`.github/workflows/ci.yml:857-1046`). There were 229 first-parent commits on
+and `:sha-<short>` (`.github/workflows/ci.yml:857-1046`). There were 228 first-parent commits on
 `main` between 2026-09-08 and 2026-10-08. That is a mean of 7.4 a day; the median is 5 per calendar
 day, or 6 on days with any commit, and the busiest day had 30. According to #784, QA
 runs `:main` and is redeployed several times a day. The deployment lives outside this repository:
@@ -273,7 +275,8 @@ must keep reading them.
 `framework` / `common` changes it too.
 
 **Ordering.** Before changesets (#796), PRs raise versions themselves and this ADR changes nothing.
-It takes effect with the first changesets release PR, the same moment as ADR-0001's gates.
+It takes effect with the first changesets release PR, the same moment as ADR-0001's gates. The
+exception is gate 9's required status, which waits for the `0.x` clean-up (see Consequences).
 
 ## Evidence
 
@@ -288,7 +291,7 @@ All on `origin/main` @ `af659857`, 2026-10-08.
 - **Change volume.** `git log origin/main --first-parent --since=2026-09-08` over
   `packages/qadams/{core,community}/*/src/**`: 30 commits and 365 (qadam, commit) pairs, with 177 in
   `f6462939` and 142 in `bf7857ae`. Over all paths with
-  `--until=2026-10-08T23:59`, counted per calendar day over 31 days: 229 commits, mean 7.4, median
+  `--until=2026-10-08T23:59`, counted per calendar day over 31 days: 228 commits, mean 7.4, median
   5 (6 over the 28 days with commits), maximum 30.
 - **Semver behaviour.** With `semver` 7.6.0, the version the repository uses:
   - `satisfies('1.3.0', '^1.3.0-main.412')` and `satisfies('1.3.1', '^1.3.0-main.412')` are true;
