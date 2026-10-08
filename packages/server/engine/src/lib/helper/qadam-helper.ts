@@ -147,6 +147,12 @@ export const qadamHelper = {
             version: qadamVersion,
             authors: piece.authors,
             i18n,
+            // Read the way `qadam-executor.ts` picks the context shim, not from `metadata()`: that
+            // method belongs to the framework copy the qadam was built with, and the API persists
+            // this value as the context version the census (#803, ADR-0002) relies on. An old
+            // `metadata()` that predates the field must not report "no context info" for a qadam
+            // the executor would run as V1.
+            contextInfo: piece.getContextInfo?.(),
         }
     },
 }

@@ -27,6 +27,7 @@ import { EntityManager, In, IsNull } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
 import { qadamTagService } from '../tags/qadams/qadam-tag.service'
 import { isOfficialQadamsInstallEnabled, qadamCache, QadamRegistryEntry, shadowKey } from './qadam-cache'
+import { qadamContextVersion } from './qadam-context-version'
 import { QadamMetadataEntity, QadamMetadataSchema } from './qadam-metadata-entity'
 import { filterQadamBasedOnType, isNewerVersion, isSupportedRelease, lastVersionOfEachQadam, loadBundledQadams, qadamListUtils } from './utils'
 
@@ -168,6 +169,7 @@ export const qadamMetadataService = (log: FastifyBaseLogger) => {
                 platformId,
                 created: createdDate,
                 ...qadamMetadata,
+                contextVersion: qadamContextVersion.fromContextInfo(qadamMetadata.contextInfo),
             })
             if (publishCacheRefresh) {
                 await qadamCache(log).invalidate()

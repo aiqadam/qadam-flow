@@ -52,6 +52,7 @@ The qadams feature manages the metadata catalog of automation integrations (call
 | maximumSupportedRelease | string | semver |
 | projectUsage | number | usage counter |
 | i18n | json (nullable) | translation map |
+| contextVersion | string (nullable) | context version the qadam reports through `getContextInfo()` (ADR-0002, #802): a `ContextVersion` value, `NONE` for a qadam that predates `getContextInfo`, NULL for unknown. Written by `create` from the extracted metadata; rows that predate the column are filled by the `qadam-context-version-backfill` system job a few minutes after start-up, which loads each CUSTOM row on a worker and leaves it NULL when that fails (`qadams/qadam-context-version-backfill.ts`). The census (#803) counts NULL as still needing the old contract |
 
 Unique index on `(name, version, platformId)`.
 

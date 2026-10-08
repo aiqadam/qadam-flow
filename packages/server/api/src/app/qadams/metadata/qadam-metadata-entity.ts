@@ -9,8 +9,7 @@ import {
     BaseColumnSchemaPart,
     COLLATION,
 } from '../../database/database-common'
-
-export type QadamMetadataSchema = BaseModel<ApId> & QadamMetadataModel
+import { QadamContextVersion } from './qadam-context-version'
 
 export const QadamMetadataEntity =
     new EntitySchema<QadamMetadataSchema>({
@@ -95,6 +94,13 @@ export const QadamMetadataEntity =
                 type: 'json',
                 nullable: true,
             },
+            // The context version the qadam reports (`getContextInfo`), for the ADR-0002 census
+            // (#803). NULL means unknown — never determined, or the qadam could not be loaded —
+            // and the census counts it as still needing the old contract.
+            contextVersion: {
+                type: String,
+                nullable: true,
+            },
         },
         indices: [
             {
@@ -117,3 +123,8 @@ export const QadamMetadataEntity =
             },
         },
     })
+
+export type QadamMetadataSchema = BaseModel<ApId> & QadamMetadataModel & {
+    // Optional: `loadBundledQadams` types bundled qadams as this schema too, and they have no row.
+    contextVersion?: QadamContextVersion | null
+}

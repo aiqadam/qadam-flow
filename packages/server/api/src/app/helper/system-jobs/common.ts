@@ -37,6 +37,7 @@ export enum SystemJobName {
     JOIN_WAITPOINT_TIMEOUT = 'join-waitpoint-timeout',
     APPLY_DELIVERY_MODE_CHANGE = 'apply-delivery-mode-change',
     LDAP_RECONCILE = 'ldap-reconcile',
+    QADAM_CONTEXT_VERSION_BACKFILL = 'qadam-context-version-backfill',
 }
 
 type DeleteFlowDurableSystemJobData =  {
@@ -102,6 +103,7 @@ type SystemJobDataMap = {
     [SystemJobName.JOIN_WAITPOINT_TIMEOUT]: JoinWaitpointTimeoutSystemJobData
     [SystemJobName.APPLY_DELIVERY_MODE_CHANGE]: ApplyDeliveryModeChangeSystemJobData
     [SystemJobName.LDAP_RECONCILE]: Record<string, never>
+    [SystemJobName.QADAM_CONTEXT_VERSION_BACKFILL]: Record<string, never>
 }
 
 export type SystemJobData<T extends SystemJobName = SystemJobName> = T extends SystemJobName ? SystemJobDataMap[T] : never

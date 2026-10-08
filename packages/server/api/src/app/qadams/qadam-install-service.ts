@@ -81,6 +81,11 @@ export const qadamInstallService = (log: FastifyBaseLogger) => ({
             })
         }
     },
+    // Has the worker install the package and load it, exactly as an install does; the context
+    // version backfill (#802) reads the metadata of an already-registered qadam through it.
+    async extractQadamMetadata(request: ExecuteExtractQadamMetadata): Promise<QadamMetadata> {
+        return extractQadamInformation(request, log)
+    },
 })
 
 

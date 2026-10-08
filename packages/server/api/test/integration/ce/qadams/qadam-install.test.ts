@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { ContextVersion } from '@aiqadam/qadams-framework'
 import {
     DefaultProjectRole,
     EngineResponseStatus,
@@ -13,6 +14,7 @@ import { FastifyBaseLogger, FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { MockInstance } from 'vitest'
 import { databaseConnection } from '../../../../src/app/database/database-connection'
+import { NO_CONTEXT_INFO } from '../../../../src/app/qadams/metadata/qadam-context-version'
 import { qadamMetadataService } from '../../../../src/app/qadams/metadata/qadam-metadata-service'
 import { userInteractionWatcher } from '../../../../src/app/workers/user-interaction-watcher'
 import { createMemberContext, createTestContext } from '../../../helpers/test-context'
@@ -100,6 +102,45 @@ describe('POST /v1/pieces — private piece installation', () => {
         expect(saved.qadamType).toBe(QadamType.CUSTOM)
         expect(saved.packageType).toBe(PackageType.ARCHIVE)
         expect(saved.archiveId).toBeDefined()
+    })
+
+    // #802 / ADR-0002: the census reads the context version from the row, so install writes it.
+    it.each([
+        [{ version: ContextVersion.V1 }, ContextVersion.V1],
+        [{ version: ContextVersion.V2 }, ContextVersion.V2],
+        [undefined, NO_CONTEXT_INFO],
+    ])('should persist the context version the engine reports (%j)', async (contextInfo, expected) => {
+        const ctx = await createTestContext(app!)
+        interactionSpy.mockResolvedValue({
+            status: EngineResponseStatus.OK,
+            response: { ...mockQadamMetadata, contextInfo },
+            error: undefined,
+        })
+
+        const formData = new FormData()
+        formData.append(
+            'qadamArchive',
+            new Blob([tgzBuffer], { type: 'application/gzip' }),
+            'private-piece-test.tgz',
+        )
+        formData.append('qadamName', PIECE_NAME)
+        formData.append('qadamVersion', PIECE_VERSION)
+        formData.append('packageType', PackageType.ARCHIVE)
+        formData.append('scope', QadamScope.PLATFORM)
+
+        const response = await ctx.inject({
+            method: 'POST',
+            url: '/api/v1/qadams',
+            body: formData,
+        })
+
+        expect(response.statusCode).toBe(StatusCodes.CREATED)
+        const persisted = await databaseConnection().getRepository('qadam_metadata').findOneByOrFail({
+            name: PIECE_NAME,
+            version: PIECE_VERSION,
+            platformId: ctx.platform.id,
+        })
+        expect(persisted.contextVersion).toBe(expected)
     })
 
     // #503: in the default UNSANDBOXED mode a platform-scoped qadam installs into the workspace
