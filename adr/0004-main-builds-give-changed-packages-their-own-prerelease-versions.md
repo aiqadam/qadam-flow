@@ -16,8 +16,14 @@ catalogue, the unavailable-version fallback, GC).
 
 ## Decision
 
-A version number names exactly one artifact, in images built from `main` as in releases. In a
-build from `main`:
+A version number names exactly one artifact, in images built from `main` as in releases.
+
+**Terms.** A snapshot's **base** is its version without the prerelease: `1.3.0` for
+`1.3.0-main.412`. A **line** is an `x.y` minor line, such as `1.3.x`. A pin's **caret range** is `^`
+of the pin: the same major, or on `0.x` the same minor. So `^1.3.0-main.412` is
+`>=1.3.0-main.412 <2.0.0-0`, and with prereleases counted it also contains later snapshots.
+
+In a build from `main`:
 
 - **A package with a pending changeset** is built and versioned `<next>-main.<n>`. `<next>` is the
   version the release PR would give it if it were cut from that commit (changesets' release plan).
@@ -53,11 +59,11 @@ stays fail-closed (see Consequences).
 `x.y.z` or a snapshot `x.y.z-main.<n>`, and no other prerelease. One parser in `shared` decides this
 for the step-settings and request schemas, the alias, the store's coordinates and the engine, and
 replaces the patterns each of them carries today (see Context). The alias becomes `name@version`,
-split at the last `@`. Today it is `name-version`, split at the last hyphen, which a `-main.<n>` tail
-also contains. Flows do not store aliases: a step stores `qadamName` and `qadamVersion` apart. Aliases name directories in
-the worker's install workspace, so existing `name-version` directories get a compatibility read path,
-not a flow migration. The custom-qadam install schema keeps `x.y.z`: a `-main.<n>` number names an
-official snapshot only.
+split at the last `@`. Today it is `name-version`, split at the last hyphen, which a `-main.<n>`
+tail also contains. Flows do not store aliases: a step stores `qadamName` and `qadamVersion` apart.
+Aliases name directories in the worker's install workspace, so existing `name-version` directories
+get a compatibility read path, not a flow migration. The custom-qadam install schema keeps `x.y.z`:
+a `-main.<n>` number names an official snapshot only.
 
 **Storage.** A qadam snapshot is stored where the flows that pin it run. The image seeds it into the
 instance's store like any other version, and the store's GC already keeps every pinned version,
@@ -67,27 +73,36 @@ snapshot is the image that introduced it: `:sha-<commit>`, whose platform report
 the same `<n>`. With each snapshot the store records the framework version it was built against.
 
 **Snapshot pins stay on `-main` instances.** A `-main` instance is one whose platform version is a
-`-main.<n>` prerelease. An export that leaves the instance rewrites every snapshot pin to the newest
-**released** version at or above the snapshot's base and inside its caret, as the catalogue
-(ADR-0003) lists it. For `1.3.0-main.412` that is the newest release `>=1.3.0 <2.0.0`, for example
-`^1.3.2`. It is never a release below the base, such as `1.2.4`, so the rewrite stays inside the
-pin's own caret range, the bound ADR-0001 sets for anything that moves a pin automatically. The
-rewrite passes the props check of the fallback below: the snapshot's own `metadata.json` against the
-release's metadata in the catalogue. If nothing in that range is released yet, or the newest release
-lacks props the step uses, the step is exported pinned to its line's own release, `^1.3.0`. The importing instance resolves that pin only
-once the release exists; until then it marks the step "version unavailable — update this step". The
-export lists those steps to the person exporting. Keeping snapshot pins is an explicit opt-in on
-export, so a release instance receives one only when someone chose to send it. On import the caret
-is stripped, as for any imported pin today, so the step is pinned to that release exactly, and
-ADR-0003's rules apply to it as to any release pin.
+`-main.<n>` prerelease. In an export that leaves the instance, a snapshot pin is rewritten to the
+newest released version at or above its base, inside its caret range, that passes the props check;
+if none passes, it is exported as `^<base>` and flagged exported-unresolved, and the importer marks
+every exported-unresolved step "update this step", even when that release exists.
+
+Some details of that rule:
+- **Where the releases come from.** The released versions and their metadata come from the
+  catalogue (ADR-0003).
+- **What the props check compares.** It is the check of the fallback below: the snapshot's own
+  `metadata.json` against the release's metadata in the catalogue.
+- **An example.** For `1.3.0-main.412` the candidates are releases `>=1.3.0 <2.0.0`, for example
+  `1.3.2`.
+- **Never below the base.** A release below the base, such as `1.2.4`, is never a candidate. So the
+  rewrite stays inside the pin's own caret range, the bound ADR-0001 sets for anything that moves a
+  pin automatically.
+- **Why every flagged step is marked.** No release the exporting instance knew of passed the props
+  check. So even once the base release exists, nothing has checked it against the step.
+- **Telling the person exporting.** The export lists the flagged steps to them.
+
+Keeping snapshot pins is an explicit opt-in on export, so a release instance receives one only when
+someone chose to send it. On import the caret is stripped, as for any imported pin today, so the
+step is pinned to that release exactly, and ADR-0003's rules apply to it as to any release pin.
 
 The rewrite changes the exported file only; the source instance's pins stay as they are. Templates
 created and used on the same instance ("create template from flow", the share dialog) are not
 rewritten, because their flows never leave it. Today both kinds of caller fetch the same
-`GET /v1/flows/:id/template` with the same query, so the server cannot tell them apart (see Context).
-The query therefore gains an explicit parameter. When it is absent, the server rewrites, so a caller
-that does not say the template stays here gets release pins. The two same-instance template paths
-set the parameter.
+`GET /v1/flows/:id/template` with the same query schema, and the server cannot tell them apart (see
+Context). The query therefore gains an explicit parameter. When it is absent, the server rewrites,
+so a caller that does not say the template stays here gets release pins. The two same-instance
+template paths set the parameter.
 
 **Following `main`.** When an instance starts on a new image, the instance setting
 `AP_QADAM_SNAPSHOT_POLICY` decides what happens to pins whose version is available:
@@ -126,9 +141,9 @@ for the release-pin half of `follow`.
 
 **Where a snapshot is missing.** This covers an instance that imported a flow exported with
 snapshots kept, and this instance after losing its volume. The pin is an unavailable version under
-ADR-0003. Its caret range contains the release of the same line (`^1.3.0-main.412` contains `1.3.0`).
-Prereleases count inside the caret, so on a `-main` instance the target can also be the image's newer
-snapshot of a compatible line.
+ADR-0003. Its caret range contains its base release (`^1.3.0-main.412` contains `1.3.0`).
+Prereleases count inside the caret, so on a `-main` instance the target can also be a newer snapshot
+the image ships inside the caret range.
 
 ADR-0003 moves an unavailable pin only when the catalogue shows the target's props are compatible.
 A snapshot has no catalogue entry, so the props of the pinned snapshot come from its own
@@ -250,18 +265,22 @@ installed copies up under that alias (`qadam-loader.ts:322`, `:332`). Every flow
 one function, `flowService.getTemplate` (`packages/server/api/src/app/flows/flow/flow.service.ts:585-616`).
 Its callers are `GET /v1/flows/:id/template` (`flow.controller.ts:187-195`) and `ap_export_flow`
 (`packages/server/api/src/app/mcp/tools/ap-export-flow.ts:22`). Two kinds of web caller use that
-endpoint with the same query, `versionId` only
+endpoint, under the same query schema, `versionId` only
 (`packages/shared/src/lib/management/template/flow-template/flow-template.request.ts:4-6`):
-- **Exports that leave the instance as a file:** one flow or several
+- **Exports that leave the instance as a file:** one flow or several. They send no query
   (`packages/web/src/features/flows/utils/flows-utils.tsx:23-42`, called from
   `packages/web/src/features/flows/hooks/flow-hooks.tsx:155`, `:159`).
 - **Template creation on this instance:** `useCreateTemplateFromFlow` (`flow-hooks.tsx:298-328`) and
   the share dialog (`packages/web/src/features/flows/components/share-template-dialog.tsx:51-68`).
-  Both post the result to `templatesApi.create`. Import
-expands into add-step operations (`packages/shared/src/lib/automation/flows/operations/import-flow.ts:166-188`),
-each of which strips a leading `^` or `~` from the pin
-(`packages/shared/src/lib/automation/flows/operations/index.ts:388-391`, `:399-402`;
-`packages/shared/src/lib/automation/flows/util/flow-qadam-util.ts:6-11`).
+  Both send `{ versionId }` and post the result to `templatesApi.create`.
+
+The controller discards `versionId` (`flow.controller.ts:193` passes `versionId: undefined`). So
+"template from this version" returns the latest version (#849).
+
+Import expands into add-step operations
+(`packages/shared/src/lib/automation/flows/operations/import-flow.ts:166-188`). Each of them strips a
+leading `^` or `~` from the pin (`packages/shared/src/lib/automation/flows/operations/index.ts:388-391`,
+`:399-402`; `packages/shared/src/lib/automation/flows/util/flow-qadam-util.ts:6-11`).
 
 **Maintainer decisions (2026-10-10).** The 2026-10-08 draft listed its costs under Consequences.
 @binalirustamov decided eight of them on 2026-10-10, and this text carries the answers:
@@ -311,8 +330,8 @@ part of option 2 as UX. It wins on four counts:
    artifact or fail its integrity check.
 2. **It costs no npm publishes.**
 3. **Graduation falls out of semver.** `^1.3.0-main.412` contains `1.3.0`. So `follow` and
-   ADR-0003's fallback can carry a snapshot pin to its release, and an export can carry it to the
-   newest release of its line. This needs two changes:
+   ADR-0003's fallback can carry a snapshot pin to its base release or later. An export can carry it
+   to the newest release at or above its base that passes the props check. This needs two changes:
    - the fallback reads a snapshot's props from its own `metadata.json`, embedded in the export or
      held in the store, instead of the catalogue (see Decision);
    - the fetch skips registries for `-main.` pins (#806, #808).
@@ -390,9 +409,9 @@ Rejected.
 | Pin format | `x.y.z` or `x.y.z-main.<n>`, through one parser in `shared` | Any semver prerelease: no build produces one, and the fallback and `follow` rules model only `-main.<n>`. One pattern per consumer (today): they already disagree (Context) |
 | Alias | `name@version`, split at the last `@`; compatibility read for existing `name-version` workspace directories | `name-version` with a smarter split: a qadam name and a prerelease both contain hyphens, so the split has to guess where the version starts |
 | Storage | The instance store; the `:sha-*` image as the archive of record | npm (B), a separate registry (C) |
-| A snapshot pin in an export | Rewritten to the newest released version at or above the snapshot's base inside its caret, after the props check; the line's own release, marked on import, when nothing passes; snapshots and their metadata kept only on explicit opt-in; same-instance templates not rewritten | Keep snapshots by default: production instances would import pins they can never fetch. Always the line's own release (`^1.3.0`, the first round): it ignores a later release of the line (`1.3.2`, `1.4.0`) that the exporting instance knows of. The newest release of the whole bucket, below the base too (`1.2.4`): it leaves the pin's caret range, which ADR-0001 forbids for an automatic move, and drops what the snapshot added. Never keep snapshots: QA-to-QA copies need them, because `^1.3.0` does not contain `1.3.0-main.420`. Rewrite templates too: a template that stays on the instance would lose the code its flow was built on |
+| A snapshot pin in an export | In an export that leaves the instance, a snapshot pin is rewritten to the newest released version at or above its base, inside its caret range, that passes the props check; if none passes, it is exported as `^<base>` and flagged exported-unresolved, and the importer marks every exported-unresolved step "update this step", even when that release exists; snapshots and their metadata kept only on explicit opt-in; same-instance templates not rewritten | Keep snapshots by default: production instances would import pins they can never fetch. Always the base release (`^1.3.0`, the first round): it ignores a later release (`1.3.2`, `1.4.0`) that the exporting instance knows of. The newest release of the major, below the base too (`1.2.4`): it leaves the pin's caret range, which ADR-0001 forbids for an automatic move, and drops what the snapshot added. Never keep snapshots: QA-to-QA copies need them, because `^1.3.0` does not contain `1.3.0-main.420`. Rewrite templates too: a template that stays on the instance would lose the code its flow was built on |
 | Available pins on an instance that starts on a new image | `AP_QADAM_SNAPSHOT_POLICY`: `follow` (default on `-main` instances) moves any pin, release pins included on `-main` instances, to the newest version the image ships inside the caret, with ADR-0003's checks, an audit record and revert; a revert holds the step; `pin` (default on release instances) moves nothing | Always keep (the 2026-10-08 draft): QA stops exercising `main` unless someone updates every step. Always follow: an instance that imported snapshot pins on purpose, for example to reproduce a QA run on a release instance, would have them moved. Snapshot pins only (the first round): steps created on a release stay on it forever on QA. Moving release pins on release images: ADR-0003's rejected Option C. Re-following a reverted step: the next image would undo the person's revert |
-| A snapshot pin where it is missing | ADR-0003's fallback, prereleases counted inside the caret, props from the snapshot's own `metadata.json` (embedded in the export or in the store); without metadata, marked | Exact releases only: on a `-main` instance a missing snapshot could then never move to the image's newer snapshot of a compatible line. No props check (the 2026-10-08 draft): the one place this ADR loosened ADR-0003 |
+| A snapshot pin where it is missing | ADR-0003's fallback, prereleases counted inside the caret, props from the snapshot's own `metadata.json` (embedded in the export or in the store); without metadata, marked | Exact releases only: on a `-main` instance a missing snapshot could then never move to a newer snapshot inside its caret range. No props check (the 2026-10-08 draft): the one place this ADR loosened ADR-0003 |
 | Gate 9 | Measured first, advisory during the clean-up, required when the divergences reach zero; `v2.0.0` is tagged only after that | Required from day one: every `main` image build would be red until all divergent `0.x` qadams have changesets. Report-only for good: unenforced checks are how #783 happened (ADR-0001). ADR-0001 rejected advisory-first for gates 1–7, which a PR can satisfy at once; gate 9 cannot pass until the divergences are released, and it joins the required set before the first release under ADR-0001 all the same |
 | Store size | GC (#478), revert targets limited to the last N per step (default 3), a store-size metric and an operator warning above a configurable threshold | A hard size limit: the store would have to drop pinned versions or refuse an image's seed, and either breaks ADR-0003. Every revert target kept: under `follow` on QA, the store would keep every version each step ever ran |
 | Framework drift under a snapshot | Accepted; the store records the framework version each snapshot was built against, and audit records and the census show it | Freezing the framework per snapshot: the per-version library copies ADR-0003 rejected (its Option E) |
@@ -443,11 +462,11 @@ Rejected.
   Changesets that cannot be parsed still stop the build earlier: the platform's own version is
   fail-closed (`tools/ci/compute-main-version.mjs:32`, `:53-58`). So in practice the fallback covers
   the archive, and a release-plan step that cannot run.
-- **Exports depend on the catalogue.** The rewrite needs the released versions of each line and
-  their metadata, which the catalogue holds. Its reader exists but nothing calls it at run time yet
-  (`.agents/features/qadam-version-catalogue.md`, "Not wired yet"). *Answer:* a step whose line the
-  exporting instance's catalogue does not cover is exported pinned to its line's own release. The
-  importer marks it until that release exists.
+- **Exports depend on the catalogue.** The rewrite needs each qadam's released versions and their
+  metadata, which the catalogue holds. Its reader exists, but nothing calls it at run time yet
+  (`.agents/features/qadam-version-catalogue.md`, "Not wired yet"). *Answer:* where the exporting
+  instance's catalogue has no release that passes, the step is exported as `^<base>` and flagged
+  exported-unresolved, and the importer marks it "update this step".
 - **No wider exception in ADR-0003's fallback.** The 2026-10-08 draft extended ADR-0003's
   no-metadata path, load check only, to every future snapshot pin. *Answer:* withdrawn. A snapshot
   pin moves only after the props check, on metadata embedded in the export or held in the store.
@@ -542,8 +561,10 @@ citations are at `8ba81dfa` and say so.
 - **Snapshot versioning in the `main` build.** Compute `<next>` from changesets' release plan for
   packages with their own pending changeset, and take `<n>` from #798. Write the result into each
   built artifact's `package.json` and `metadata.json`, and record `<n>` → commit in an image label.
-  When the plan or the archive is unavailable, build every package as a snapshot with the next patch
-  as `<next>` and log a warning; a release build fails instead.
+  When the release archive is unavailable, packages with their own changeset keep the plan's
+  `<next>`, and every other package is built from the tree as a next-patch snapshot. When the
+  release plan is unavailable, every package is built as a next-patch snapshot. Both log a warning;
+  a release build fails instead.
 - **Image assembly.** Unchanged bundle-format qadams come from the release archive (#804), and `0.x`
   qadams are built from the tree.
 - **Gate 9** with fixtures (#797). Steps:
@@ -555,15 +576,17 @@ citations are at `8ba81dfa` and say so.
   **Fallback (#808).** Count prereleases inside the caret. Read a snapshot pin's props from its
   `metadata.json`, embedded in the imported flow or held in the store. Without it, mark the step and
   do not move it.
-- **Export and import.** In `flowService.getTemplate`, rewrite each snapshot pin to the newest
-  released version at or above the snapshot's base inside its caret, from the catalogue (#778, wired
-  at run time), after the props
-  check. When nothing passes, write the line's own release and list the step to the person
-  exporting. Add a parameter to `GetFlowTemplateRequestQuery` that the two same-instance template
-  paths set to skip the rewrite; without it, the server rewrites. Add an explicit opt-in that keeps
-  snapshots in the UI export and `ap_export_flow`, and embeds each kept snapshot's `metadata.json`.
-  That embedding is a new optional field in the exported template, and the importer validates it as
-  untrusted input.
+- **Export and import.** In `flowService.getTemplate`, for an export that leaves the instance, a
+  snapshot pin is rewritten to the newest released version at or above its base, inside its caret
+  range, that passes the props check; if none passes, it is exported as `^<base>` and flagged
+  exported-unresolved, and the importer marks every exported-unresolved step "update this step",
+  even when that release exists. The released versions and metadata come from the catalogue (#778,
+  wired at run time). The exported-unresolved flag is a new optional field in the exported template,
+  and the export lists the flagged steps to the person exporting. Add a parameter to
+  `GetFlowTemplateRequestQuery` that the two same-instance template paths set to skip the rewrite;
+  without it, the server rewrites. Add an explicit opt-in that keeps snapshots in the UI export and
+  `ap_export_flow`, and embeds each kept snapshot's `metadata.json`. That embedding is a new
+  optional field in the exported template, and the importer validates it as untrusted input.
 - **Snapshot policy.** `AP_QADAM_SNAPSHOT_POLICY` (`follow` | `pin`), defaulting by whether the
   platform version is a `-main.<n>` prerelease, and documented under `docs/install/configuration/`.
   `follow` runs when the instance starts on a new image and uses #808's checks, audit record and
