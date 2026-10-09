@@ -74,6 +74,36 @@ describe('classifyChatError (#265 DoD 3)', () => {
         expect(code).toBe(CHAT_ERROR_CODES.UNKNOWN)
     })
 
+    // #848: Google's "this model is no longer available, use X instead" is what tells the user which
+    // model to pick, so it is appended to the classified sentence rather than replaced by it.
+    it('appends the provider\'s own message when a model is not served', () => {
+        const { code, message } = classifyChatError({
+            name: 'AI_APICallError',
+            message: 'This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash.',
+            statusCode: 404,
+        })
+        expect(code).toBe(CHAT_ERROR_CODES.PROVIDER_MODEL_NOT_FOUND)
+        expect(message).toContain('does not know this model')
+        expect(message).toContain('models/gemini-3.8-flash')
+    })
+
+    it('bounds and single-lines the appended provider detail', () => {
+        const { message } = classifyChatError(new Error(`model "gone" not found\n${'x'.repeat(1_000)}`))
+        // Assert the detail is actually there first, or a regression that stopped appending it would
+        // leave `detail` empty and pass both checks below.
+        expect(message).toContain('\n\n')
+        const detail = message.split('\n\n')[1]
+        expect(detail).toBeDefined()
+        expect(detail).not.toContain('\n')
+        expect(detail?.length).toBeLessThanOrEqual(301)
+    })
+
+    it('keeps a fixed string for the classes whose provider message names no fix', () => {
+        const { code, message } = classifyChatError(new Error('connect ECONNREFUSED 127.0.0.1:11434'))
+        expect(code).toBe(CHAT_ERROR_CODES.PROVIDER_UNREACHABLE)
+        expect(message).not.toContain('ECONNREFUSED')
+    })
+
     it('keeps the generic message for anything else, with the UNKNOWN code', () => {
         const { code, message } = classifyChatError(new Error('provider exploded'))
         expect(code).toBe(CHAT_ERROR_CODES.UNKNOWN)

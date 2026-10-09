@@ -1,4 +1,4 @@
-import { AIProviderModel, AIProviderModelType, AnthropicProviderAuthConfig, AnthropicProviderConfig } from '@aiqadam/shared'
+import { AIProviderModel, AnthropicProviderAuthConfig, AnthropicProviderConfig, buildAIProviderModel } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { AIProviderStrategy } from './ai-provider'
 import { providerHttp } from './provider-http'
@@ -19,10 +19,12 @@ export const anthropicProvider: AIProviderStrategy<AnthropicProviderAuthConfig, 
             },
         })
 
-        return data.map((model: AnthropicModel) => ({
+        // Anthropic's catalogue is chat models only, and every one of them accepts images and calls
+        // tools.
+        return data.map((model: AnthropicModel) => buildAIProviderModel({
             id: model.id,
             name: model.display_name,
-            type: AIProviderModelType.TEXT,
+            capabilities: { inputModalities: ['text', 'image'], outputModalities: ['text'], chat: true, tools: true },
         }))
     },
 }

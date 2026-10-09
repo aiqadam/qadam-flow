@@ -1,4 +1,4 @@
-import { AIProviderModel, AIProviderModelType, MistralProviderAuthConfig, MistralProviderConfig, parseModelContextWindowTokens, spreadIfDefined } from '@aiqadam/shared'
+import { AIProviderModel, buildAIProviderModel, MistralProviderAuthConfig, MistralProviderConfig, parseModelContextWindowTokens } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { AIProviderStrategy } from './ai-provider'
 import { providerHttp } from './provider-http'
@@ -20,11 +20,16 @@ export const mistralProvider: AIProviderStrategy<MistralProviderAuthConfig, Mist
 
         return data
             .filter((model) => model.capabilities?.completion_chat)
-            .map((model) => ({
+            .map((model) => buildAIProviderModel({
                 id: model.id,
                 name: model.id,
-                type: AIProviderModelType.TEXT,
-                ...spreadIfDefined('contextWindowTokens', parseModelContextWindowTokens(model.max_context_length)),
+                capabilities: {
+                    inputModalities: model.capabilities?.vision ? ['text', 'image'] : ['text'],
+                    outputModalities: ['text'],
+                    chat: true,
+                    tools: model.capabilities?.function_calling === true,
+                },
+                contextWindowTokens: parseModelContextWindowTokens(model.max_context_length),
             }))
     },
 }
@@ -34,6 +39,8 @@ type MistralModel = {
     // Optional on Mistral's `BaseModelCard`.
     max_context_length?: number
     capabilities?: {
-        completion_chat: boolean
+        completion_chat?: boolean
+        function_calling?: boolean
+        vision?: boolean
     }
 }

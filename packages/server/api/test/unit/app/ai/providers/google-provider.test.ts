@@ -1,4 +1,4 @@
-import { AIProviderModelType, AIProviderName, ALLOWED_CHAT_MODELS_BY_PROVIDER } from '@aiqadam/shared'
+import { AIProviderModelType } from '@aiqadam/shared'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Stubs the SSRF-filtered client rather than `@aiqadam/qadams-common`'s `httpClient`: that import
@@ -28,9 +28,9 @@ describe('googleProvider.listModels', () => {
     it('strips the models/ prefix from every emitted model id', async () => {
         respondWith({
             models: [
-                { name: 'models/gemini-2.5-pro', displayName: 'Gemini 2.5 Pro' },
-                { name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash' },
-                { name: 'models/imagen-3.0-generate', displayName: 'Imagen 3' },
+                { name: 'models/gemini-2.5-pro', displayName: 'Gemini 2.5 Pro', supportedGenerationMethods: ['generateContent'] },
+                { name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash', supportedGenerationMethods: ['generateContent'] },
+                { name: 'models/imagen-3.0-generate', displayName: 'Imagen 3', supportedGenerationMethods: ['predict'] },
             ],
         })
 
@@ -41,37 +41,51 @@ describe('googleProvider.listModels', () => {
         }
     })
 
-    it('emits ids that intersect the Google chat allow-list so the picker populates', async () => {
+    // `supportedGenerationMethods` is what replaces the old hardcoded chat allow-list: a model
+    // Google adds or retires is offered or hidden the day Google reports it (#848).
+    it('reads a chat model from its generateContent method', async () => {
         respondWith({
             models: [
-                { name: 'models/gemini-2.5-pro', displayName: 'Gemini 2.5 Pro' },
-                { name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash' },
+                { name: 'models/gemini-3.8-flash', displayName: 'Gemini 3.8 Flash', supportedGenerationMethods: ['generateContent', 'countTokens'] },
             ],
         })
 
         const models = await googleProvider.listModels({ apiKey: 'test-key' }, {})
 
-        const allowedIds = ALLOWED_CHAT_MODELS_BY_PROVIDER[AIProviderName.GOOGLE] ?? []
-        const intersection = models.filter((model) => allowedIds.includes(model.id))
-
-        expect(intersection.map((model) => model.id)).toEqual(
-            expect.arrayContaining(['gemini-2.5-pro', 'gemini-2.5-flash']),
-        )
+        expect(models[0]).toMatchObject({
+            id: 'gemini-3.8-flash',
+            type: AIProviderModelType.TEXT,
+            capabilities: { outputModalities: ['text'], chat: true },
+        })
     })
 
-    it('still classifies image models by their name', async () => {
+    it('reads an image generator from its predict method', async () => {
         respondWith({
             models: [
-                { name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash' },
-                { name: 'models/imagen-3.0-generate-image', displayName: 'Imagen 3' },
+                // Deliberately free of the substring "image", so only the `predict` method can
+                // drive the IMAGE classification (imagen ids would match the name rule too).
+                { name: 'models/veo-3-generate', displayName: 'Veo 3', supportedGenerationMethods: ['predict'] },
             ],
         })
 
         const models = await googleProvider.listModels({ apiKey: 'test-key' }, {})
 
-        const imageModel = models.find((model) => model.id === 'imagen-3.0-generate-image')
-        const textModel = models.find((model) => model.id === 'gemini-2.5-flash')
-        expect(imageModel?.type).toBe(AIProviderModelType.IMAGE)
-        expect(textModel?.type).toBe(AIProviderModelType.TEXT)
+        expect(models[0]).toMatchObject({
+            type: AIProviderModelType.IMAGE,
+            capabilities: { outputModalities: ['image'], chat: false },
+        })
+    })
+
+    it('does not offer an embedding model to the chat', async () => {
+        respondWith({
+            models: [
+                { name: 'models/text-embedding-004', displayName: 'Text Embedding 004', supportedGenerationMethods: ['embedContent'] },
+            ],
+        })
+
+        const models = await googleProvider.listModels({ apiKey: 'test-key' }, {})
+
+        expect(models[0].capabilities.chat).toBe(false)
+        expect(models[0].capabilities.outputModalities).toEqual([])
     })
 })

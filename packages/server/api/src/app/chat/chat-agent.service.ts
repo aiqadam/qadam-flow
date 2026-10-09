@@ -407,8 +407,9 @@ async function runAttempt(params: RunAttemptParams): Promise<void> {
     }
     // Only the error's name, message and HTTP status are read, never the error object: an AI SDK
     // `APICallError` carries `requestBodyValues` and the response headers, which is where the
-    // provider API key lives. classifyChatError is deliberately pure and reads the same three, so
-    // the user-facing payload stays a fixed string per class (DoD 3 of #265).
+    // provider API key lives. classifyChatError is deliberately pure and reads the same three; for
+    // the two classes whose provider message names the fix it appends that message, bounded and
+    // single-lined, so the user is told which model or flag to change (#848, DoD 3 of #265).
     const { code, message } = classifyChatError(cause)
     const { name: errorName, message: errorMessage, statusCode: errorStatusCode } = describeChatError(cause)
     log.error({

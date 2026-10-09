@@ -38,7 +38,7 @@ function stubModelsRoute() {
     return vi.spyOn(httpClient, 'sendRequest').mockResolvedValue({
         status: 200,
         headers: {},
-        body: [{ id: 'gpt-4.1', name: 'GPT-4.1', type: 'text' }],
+        body: [{ id: 'gpt-4.1', name: 'GPT-4.1', type: 'text', capabilities: { inputModalities: ['text'], outputModalities: ['text'], chat: true, tools: true } }],
     } as never)
 }
 
@@ -321,13 +321,13 @@ describe('aiProps().model', () => {
         expect(spy).not.toHaveBeenCalled()
     })
 
-    it('filters the catalogue to the model type the action asks for', async () => {
+    it('filters the catalogue to the capability the action asks for', async () => {
         vi.spyOn(httpClient, 'sendRequest').mockResolvedValue({
             status: 200,
             headers: {},
             body: [
-                { id: 'gpt-4.1', name: 'GPT-4.1', type: 'text' },
-                { id: 'dall-e-3', name: 'DALL-E 3', type: 'image' },
+                { id: 'gpt-4.1', name: 'GPT-4.1', type: 'text', capabilities: { inputModalities: ['text'], outputModalities: ['text'], chat: true, tools: true } },
+                { id: 'dall-e-3', name: 'DALL-E 3', type: 'image', capabilities: { inputModalities: ['text'], outputModalities: ['image'], chat: false, tools: false } },
             ],
         } as never)
 

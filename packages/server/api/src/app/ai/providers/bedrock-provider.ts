@@ -1,9 +1,9 @@
 import { safeHttp } from '@aiqadam/server-utils'
 import {
     AIProviderModel,
-    AIProviderModelType,
     BedrockProviderAuthConfig,
     BedrockProviderConfig,
+    buildAIProviderModel,
     ErrorCode,
     INVALID_AWS_REGION_MESSAGE,
     isNil,
@@ -79,6 +79,7 @@ BedrockProviderConfig
             )
             .map((m) => {
                 const outputs = m.outputModalities ?? []
+                const inputs = m.inputModalities ?? []
                 const isImage = outputs.includes(ModelModality.IMAGE)
                 const isText = outputs.includes(ModelModality.TEXT)
 
@@ -87,28 +88,34 @@ BedrockProviderConfig
                 const invocationId = profileId ?? foundationId
                 const displayName = m.modelName ?? foundationId
 
-                if (isImage) {
-                    return {
-                        id: invocationId,
-                        name: displayName,
-                        type: AIProviderModelType.IMAGE,
-                    }
+                // A model is offered when it can draw an image or hold a streamed conversation;
+                // an embedding-only model has neither output modality and is skipped, as before.
+                const chat = isText && m.responseStreamingSupported === true
+                if (!isImage && !chat) {
+                    return null
                 }
 
-                if (isText && m.responseStreamingSupported === true) {
-                    return {
-                        id: invocationId,
-                        name: displayName,
-                        type: AIProviderModelType.TEXT,
-                    }
-                }
-
-                return null
+                return buildAIProviderModel({
+                    id: invocationId,
+                    name: displayName,
+                    capabilities: {
+                        inputModalities: inputs.map(toModalityName),
+                        outputModalities: outputs.map(toModalityName),
+                        chat,
+                        tools: chat,
+                    },
+                })
             })
             .filter((m) => !isNil(m)) as AIProviderModel[]
 
         return models
     },
+}
+
+// Bedrock reports modalities as the SDK's `ModelModality` enum (`'TEXT'`, `'IMAGE'`); the shared
+// capability arrays carry them lowercased so every provider's vocabulary is the same.
+function toModalityName(modality: ModelModality): string {
+    return modality.toLowerCase()
 }
 
 async function listSystemInferenceProfiles(client: BedrockClient): Promise<Map<string, string>> {

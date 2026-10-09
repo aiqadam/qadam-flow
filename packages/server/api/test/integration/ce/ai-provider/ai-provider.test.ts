@@ -827,7 +827,7 @@ describe('AI Providers API', () => {
 
             const models = await member.get(`/v1/ai-providers/${AIProviderName.CUSTOM}/models`)
             expect(models?.statusCode).toBe(StatusCodes.OK)
-            expect(models?.json()).toEqual([{ id: 'm', name: 'M', type: AIProviderModelType.TEXT }])
+            expect(models?.json()).toEqual([{ id: 'm', name: 'M', type: AIProviderModelType.TEXT, capabilities: { inputModalities: ['text'], outputModalities: ['text'], chat: true, tools: true } }])
         })
     })
 

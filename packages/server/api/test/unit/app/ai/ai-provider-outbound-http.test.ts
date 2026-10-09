@@ -112,9 +112,32 @@ describe('AI provider outbound HTTP goes through safeHttp', () => {
         expect(requestedUrls()).toEqual(['https://api.openai.com/v1/models'])
         expect(lastRequest().headers['Authorization']).toBe(`Bearer ${AUTH.apiKey}`)
         expect(models).toEqual([
-            { id: 'gpt-4.1', name: 'gpt-4.1', type: AIProviderModelType.TEXT },
-            { id: 'dall-e-3', name: 'dall-e-3', type: AIProviderModelType.IMAGE },
+            { id: 'gpt-4.1', name: 'gpt-4.1', type: AIProviderModelType.TEXT, capabilities: { inputModalities: ['text'], outputModalities: ['text'], chat: true, tools: true } },
+            { id: 'dall-e-3', name: 'dall-e-3', type: AIProviderModelType.IMAGE, capabilities: { inputModalities: ['text'], outputModalities: ['image'], chat: false, tools: false } },
         ])
+    })
+
+    // OpenAI reports no capability at all, so the classifier is the whole answer; pin the families
+    // it carves out (both by prefix and by the suffix a chat id carries) and the chat default.
+    it('openai classifies the catalogue by id, defaulting to chat', async () => {
+        respondWith({ data: [
+            { id: 'gpt-4o' },
+            { id: 'gpt-4o-mini-tts' },
+            { id: 'gpt-4o-transcribe' },
+            { id: 'gpt-4o-realtime-preview' },
+            { id: 'text-embedding-3-small' },
+            { id: 'whisper-1' },
+            { id: 'gpt-image-1' },
+        ] })
+
+        const models = await openaiProvider.listModels(AUTH, {})
+        const byId = new Map(models.map((model) => [model.id, model]))
+
+        expect(byId.get('gpt-4o')?.capabilities.chat).toBe(true)
+        for (const id of ['gpt-4o-mini-tts', 'gpt-4o-transcribe', 'gpt-4o-realtime-preview', 'text-embedding-3-small', 'whisper-1']) {
+            expect(byId.get(id)?.capabilities.chat).toBe(false)
+        }
+        expect(byId.get('gpt-image-1')?.type).toBe(AIProviderModelType.IMAGE)
     })
 
     it('anthropic lists models through the filtered client', async () => {
@@ -124,17 +147,17 @@ describe('AI provider outbound HTTP goes through safeHttp', () => {
 
         expect(requestedUrls()).toEqual(['https://api.anthropic.com/v1/models'])
         expect(lastRequest().headers['x-api-key']).toBe(AUTH.apiKey)
-        expect(models).toEqual([{ id: 'claude-opus-4-7', name: 'Claude Opus 4.7', type: AIProviderModelType.TEXT }])
+        expect(models).toEqual([{ id: 'claude-opus-4-7', name: 'Claude Opus 4.7', type: AIProviderModelType.TEXT, capabilities: { inputModalities: ['text', 'image'], outputModalities: ['text'], chat: true, tools: true } }])
     })
 
     it('google lists models through the filtered client', async () => {
-        respondWith({ models: [{ name: 'models/gemini-2.5-pro', displayName: 'Gemini 2.5 Pro' }] })
+        respondWith({ models: [{ name: 'models/gemini-2.5-pro', displayName: 'Gemini 2.5 Pro', supportedGenerationMethods: ['generateContent'] }] })
 
         const models = await googleProvider.listModels(AUTH, {})
 
         expect(requestedUrls()).toEqual(['https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000'])
         expect(lastRequest().headers['x-goog-api-key']).toBe(AUTH.apiKey)
-        expect(models).toEqual([{ id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', type: AIProviderModelType.TEXT }])
+        expect(models).toEqual([{ id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', type: AIProviderModelType.TEXT, capabilities: { inputModalities: ['text'], outputModalities: ['text'], chat: true, tools: true } }])
     })
 
     it('mistral lists models through the filtered client', async () => {
@@ -147,7 +170,7 @@ describe('AI provider outbound HTTP goes through safeHttp', () => {
 
         expect(requestedUrls()).toEqual(['https://api.mistral.ai/v1/models'])
         expect(lastRequest().headers['Authorization']).toBe(`Bearer ${AUTH.apiKey}`)
-        expect(models).toEqual([{ id: 'mistral-large', name: 'mistral-large', type: AIProviderModelType.TEXT }])
+        expect(models).toEqual([{ id: 'mistral-large', name: 'mistral-large', type: AIProviderModelType.TEXT, capabilities: { inputModalities: ['text'], outputModalities: ['text'], chat: true, tools: false } }])
     })
 
     it('openrouter lists models and validates the key through the filtered client', async () => {
@@ -161,7 +184,7 @@ describe('AI provider outbound HTTP goes through safeHttp', () => {
             'https://openrouter.ai/api/v1/auth/key',
         ])
         expect(lastRequest().headers['Authorization']).toBe(`Bearer ${AUTH.apiKey}`)
-        expect(models).toEqual([{ id: 'openai/gpt-4.1', name: 'GPT-4.1', type: AIProviderModelType.TEXT }])
+        expect(models).toEqual([{ id: 'openai/gpt-4.1', name: 'GPT-4.1', type: AIProviderModelType.TEXT, capabilities: { inputModalities: [], outputModalities: ['text'], chat: true, tools: false } }])
     })
 
     it('cloudflare gateway validates a compat model through the filtered client', async () => {
@@ -190,7 +213,7 @@ describe('AI provider outbound HTTP goes through safeHttp', () => {
         expect(axiosRequest).toHaveBeenCalledTimes(1)
         expect(new URL(lastRequest().url).host).toBe('my-resource.openai.azure.com')
         expect(lastRequest().headers['api-key']).toBe(AUTH.apiKey)
-        expect(models).toEqual([{ id: 'gpt-4o-deployment', name: 'gpt-4o-deployment', type: AIProviderModelType.TEXT }])
+        expect(models).toEqual([{ id: 'gpt-4o-deployment', name: 'gpt-4o-deployment', type: AIProviderModelType.TEXT, capabilities: { inputModalities: ['text'], outputModalities: ['text'], chat: true, tools: true } }])
     })
 })
 
@@ -267,7 +290,7 @@ describe('bedrock', () => {
         expect(nodeHttpHandlers[0].options.httpsAgent).toBeInstanceOf(RequestFilteringHttpsAgent)
         expect(nodeHttpHandlers[0].options.httpAgent).toBeInstanceOf(RequestFilteringHttpAgent)
         expect(bedrockClientConfigs[0].requestHandler).toBe(nodeHttpHandlers[0].handler)
-        expect(models).toEqual([{ id: 'anthropic.claude-sonnet-4', name: 'Claude Sonnet 4', type: AIProviderModelType.TEXT }])
+        expect(models).toEqual([{ id: 'anthropic.claude-sonnet-4', name: 'Claude Sonnet 4', type: AIProviderModelType.TEXT, capabilities: { inputModalities: [], outputModalities: ['text'], chat: true, tools: true } }])
     })
 })
 

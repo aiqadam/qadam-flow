@@ -1,4 +1,4 @@
-import { AIProviderModel, AIProviderModelType, AzureProviderAuthConfig, AzureProviderConfig, DEFAULT_AZURE_API_VERSION, ErrorCode, INVALID_AZURE_RESOURCE_NAME_MESSAGE, isValidAzureResourceName, QadamFlowError } from '@aiqadam/shared'
+import { AIProviderModel, AzureProviderAuthConfig, AzureProviderConfig, buildAIProviderModel, DEFAULT_AZURE_API_VERSION, ErrorCode, INVALID_AZURE_RESOURCE_NAME_MESSAGE, isValidAzureResourceName, QadamFlowError } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { AIProviderStrategy } from './ai-provider'
 import { providerHttp } from './provider-http'
@@ -37,10 +37,13 @@ export const azureProvider: AIProviderStrategy<AzureProviderAuthConfig, AzurePro
             },
         })
 
-        return data.map((deployment: AzureModel) => ({
+        // A deployment is whatever the operator deployed, and the deployments endpoint reports no
+        // capability at all. Assume a chat model, which is what every deployment the chat can use
+        // is; a deployment that is not one fails at request time with a named error.
+        return data.map((deployment: AzureModel) => buildAIProviderModel({
             id: deployment.name,
             name: deployment.name,
-            type: AIProviderModelType.TEXT,
+            capabilities: { inputModalities: ['text'], outputModalities: ['text'], chat: true, tools: true },
         }))
     },
 }

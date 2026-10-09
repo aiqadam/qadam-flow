@@ -122,7 +122,7 @@ export const aiProps = <T extends AIModelType>({ modelType }: AIPropsParams<T>) 
       return {
         placeholder: 'Select AI Model',
         disabled: false,
-        options: allModels.filter(model => model.type === modelType).map(model => ({
+        options: allModels.filter(model => modelMatchesModelType({ model, modelType })).map(model => ({
           label: model.name,
           value: model.id,
         })),
@@ -130,6 +130,21 @@ export const aiProps = <T extends AIModelType>({ modelType }: AIPropsParams<T>) 
     },
   }),
 });
+
+// The catalogue is described by capability, not by one type, so a model that both chats and draws
+// (OpenRouter's `output_modalities: ["image", "text"]`) is offered to the text and the image action
+// alike. The legacy `type` field cannot express that — it is IMAGE for such a model, which is why
+// the text actions used to lose it. `capabilities` is absent when this qadam runs against a platform
+// older than the field, so the legacy `type` is the fallback rather than an error.
+function modelMatchesModelType({ model, modelType }: { model: AIProviderModel, modelType: AIModelType }): boolean {
+  const capabilities = model.capabilities;
+  if (isNil(capabilities)) {
+    return model.type === modelType;
+  }
+  return modelType === 'image'
+    ? capabilities.outputModalities.includes('image')
+    : capabilities.chat;
+}
 
 async function listProviderRows(ctx: PropsServerContext): Promise<AIProviderWithoutSensitiveData[]> {
   const { body } = await httpClient.sendRequest<AIProviderWithoutSensitiveData[]>({

@@ -83,6 +83,7 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
             id: model.id,
             name: model.name,
             type: model.type,
+            capabilities: model.capabilities,
             ...spreadIfDefined('contextWindowTokens', model.contextWindowTokens),
         }))
         if (cacheable) {

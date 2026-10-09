@@ -33,8 +33,8 @@ export function ChatModelPicker({
     row: chatProvider,
   });
 
-  // The zero-config fallback (`chatModel.resolve`'s first-text-model pick) has to keep working for
-  // anyone who never opens this control, so there is never a wrong state to render here — only
+  // The zero-config fallback (`chatModel.resolve`'s `pickDefaultChatModel` pick) has to keep working
+  // for anyone who never opens this control, so there is never a wrong state to render here — only
   // "nothing to pick from yet", which is the same as not showing a picker at all.
   if (isNil(chatProvider) || models.length === 0) {
     return null;
@@ -60,9 +60,9 @@ export function ChatModelPicker({
         >
           <Cpu className="size-3.5 text-muted-foreground shrink-0" />
           <span className="max-w-32 truncate">
-            {/* A pinned `modelName` that this allow-listed dropdown doesn't carry (e.g. picked
-              before an allow-list change) is still the model the run actually uses — showing
-              "Auto" there would claim no explicit choice was made. */}
+            {/* A pinned `modelName` the provider no longer lists — or one this dropdown drops
+              because it is not a chat model — is still what the run actually uses; showing "Auto"
+              there would claim no explicit choice was made. */}
             {selectedModel ? selectedModel.name : (modelName ?? t('Auto'))}
           </span>
           <ChevronDown className="size-3 shrink-0 opacity-50" />

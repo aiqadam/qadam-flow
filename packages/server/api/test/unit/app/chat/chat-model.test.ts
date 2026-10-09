@@ -26,6 +26,9 @@ import { chatModel } from '../../../../src/app/chat/chat-model'
 
 const log = { error: vi.fn(), info: vi.fn() } as unknown as FastifyBaseLogger
 
+const CHAT_CAPABILITIES = { inputModalities: ['text'], outputModalities: ['text'], chat: true, tools: true }
+const IMAGE_CAPABILITIES = { inputModalities: ['text'], outputModalities: ['image'], chat: false, tools: false }
+
 function provider(config: Record<string, unknown>, name = AIProviderName.CUSTOM) {
     return { id: 'provider-row-id', provider: name, config, auth: { apiKey: 'k' }, platformId: 'plat' }
 }
@@ -54,8 +57,8 @@ describe('chatModel.resolve', () => {
     it('prefers the model the conversation pinned over anything else, once the provider vouches for it', async () => {
         getChatProvider.mockResolvedValue(provider({ models: [{ modelId: 'from-config', modelType: AIProviderModelType.TEXT }] }))
         listModels.mockResolvedValue([
-            { id: 'from-config', type: AIProviderModelType.TEXT },
-            { id: 'pinned-model', type: AIProviderModelType.TEXT },
+            { id: 'from-config', type: AIProviderModelType.TEXT, capabilities: CHAT_CAPABILITIES },
+            { id: 'pinned-model', type: AIProviderModelType.TEXT, capabilities: CHAT_CAPABILITIES },
         ])
 
         const resolved = await chatModel.resolve({ platformId: 'plat', modelName: 'pinned-model', log })
@@ -66,26 +69,47 @@ describe('chatModel.resolve', () => {
     // The gap #377's app-sec review caught: before this, any string reaching `resolve` as
     // `modelName` was trusted outright — a chat user could pin an arbitrary id, billed to
     // whichever model that string happened to name on the operator's provider. A pinned model
-    // must now be a real, TEXT-typed entry in this provider's own catalogue.
+    // must now be a real, chat-capable entry in this provider's own catalogue.
     it('refuses a pinned model that is not in the provider catalogue, rather than trusting the caller', async () => {
         getChatProvider.mockResolvedValue(provider({ resourceName: 'res' }, AIProviderName.AZURE))
-        listModels.mockResolvedValue([{ id: 'the-only-real-model', type: AIProviderModelType.TEXT }])
+        listModels.mockResolvedValue([{ id: 'the-only-real-model', type: AIProviderModelType.TEXT, capabilities: CHAT_CAPABILITIES }])
 
         const error = await resolveError('attacker-supplied-model-id')
 
         expect(error.error.code).toBe('AI_MODEL_NOT_SUPPORTED')
     })
 
-    it('refuses a pinned model that exists but is not a TEXT model', async () => {
+    it('refuses a pinned model that exists but is not a chat model', async () => {
         getChatProvider.mockResolvedValue(provider({ resourceName: 'res' }, AIProviderName.AZURE))
-        listModels.mockResolvedValue([{ id: 'an-image-model', type: AIProviderModelType.IMAGE }])
+        listModels.mockResolvedValue([{ id: 'an-image-model', type: AIProviderModelType.IMAGE, capabilities: IMAGE_CAPABILITIES }])
 
         const error = await resolveError('an-image-model')
 
         expect(error.error.code).toBe('AI_MODEL_NOT_SUPPORTED')
     })
 
-    it('takes the first text model from the stored catalogue without asking the provider', async () => {
+    // #848: the filter is the capability, not the legacy type. An embedding-style model derives as
+    // TEXT (it outputs no image) but cannot chat, so a type check would have let it through and a
+    // capability check must refuse it.
+    it('refuses a pinned model that is TEXT-typed but cannot chat', async () => {
+        getChatProvider.mockResolvedValue(provider({ resourceName: 'res' }, AIProviderName.AZURE))
+        listModels.mockResolvedValue([{ id: 'text-embedding-3-small', type: AIProviderModelType.TEXT, capabilities: { inputModalities: ['text'], outputModalities: [], chat: false, tools: false } }])
+
+        const error = await resolveError('text-embedding-3-small')
+
+        expect(error.error.code).toBe('AI_MODEL_NOT_SUPPORTED')
+    })
+
+    it('reports no model when the provider lists only a TEXT-typed model that cannot chat', async () => {
+        getChatProvider.mockResolvedValue(provider({ resourceName: 'res' }, AIProviderName.AZURE))
+        listModels.mockResolvedValue([{ id: 'text-embedding-3-small', type: AIProviderModelType.TEXT, capabilities: { inputModalities: ['text'], outputModalities: [], chat: false, tools: false } }])
+
+        const error = await resolveError(null)
+
+        expect(error.error.code).toBe('AI_MODEL_NOT_SUPPORTED')
+    })
+
+    it('takes the first chat model from the stored catalogue without asking the provider', async () => {
         getChatProvider.mockResolvedValue(provider({
             models: [
                 { modelId: 'an-image-model', modelType: AIProviderModelType.IMAGE },
@@ -112,8 +136,8 @@ describe('chatModel.resolve', () => {
     it('carries the context window the provider reported for a pinned model, and null when it reported none', async () => {
         getChatProvider.mockResolvedValue(provider({ resourceName: 'res' }, AIProviderName.AZURE))
         listModels.mockResolvedValue([
-            { id: 'sized', type: AIProviderModelType.TEXT, contextWindowTokens: 1_048_576 },
-            { id: 'unsized', type: AIProviderModelType.TEXT },
+            { id: 'sized', type: AIProviderModelType.TEXT, capabilities: CHAT_CAPABILITIES, contextWindowTokens: 1_048_576 },
+            { id: 'unsized', type: AIProviderModelType.TEXT, capabilities: CHAT_CAPABILITIES },
         ])
 
         const sized = await chatModel.resolve({ platformId: 'plat', modelName: 'sized', log })
@@ -128,8 +152,8 @@ describe('chatModel.resolve', () => {
     it('asks the provider for a model when the config carries no catalogue', async () => {
         getChatProvider.mockResolvedValue(provider({ resourceName: 'res' }, AIProviderName.AZURE))
         listModels.mockResolvedValue([
-            { id: 'an-image-model', type: AIProviderModelType.IMAGE },
-            { id: 'from-provider', type: AIProviderModelType.TEXT },
+            { id: 'an-image-model', type: AIProviderModelType.IMAGE, capabilities: IMAGE_CAPABILITIES },
+            { id: 'from-provider', type: AIProviderModelType.TEXT, capabilities: CHAT_CAPABILITIES },
         ])
 
         const resolved = await chatModel.resolve({ platformId: 'plat', modelName: null, log })
@@ -144,7 +168,7 @@ describe('chatModel.resolve', () => {
     // depends on the model id, and they stay off the `model` object the summariser also uses.
     it('builds the reasoning options from the row\'s setting and the model it resolved', async () => {
         getChatProvider.mockResolvedValue(provider({ reasoning: { enabled: true, budgetTokens: 2_048 } }, AIProviderName.ANTHROPIC))
-        listModels.mockResolvedValue([{ id: 'claude-sonnet-4-5', type: AIProviderModelType.TEXT }])
+        listModels.mockResolvedValue([{ id: 'claude-sonnet-4-5', type: AIProviderModelType.TEXT, capabilities: CHAT_CAPABILITIES }])
 
         const resolved = await chatModel.resolve({ platformId: 'plat', modelName: null, log })
 
@@ -154,16 +178,16 @@ describe('chatModel.resolve', () => {
 
     it('has no reasoning options for a row that did not opt in', async () => {
         getChatProvider.mockResolvedValue(provider({}, AIProviderName.ANTHROPIC))
-        listModels.mockResolvedValue([{ id: 'claude-sonnet-4-5', type: AIProviderModelType.TEXT }])
+        listModels.mockResolvedValue([{ id: 'claude-sonnet-4-5', type: AIProviderModelType.TEXT, capabilities: CHAT_CAPABILITIES }])
 
         const resolved = await chatModel.resolve({ platformId: 'plat', modelName: null, log })
 
         expect(resolved.reasoningProviderOptions).toBeNull()
     })
 
-    it('names the missing model when the provider reports no text model at all', async () => {
+    it('names the missing model when the provider reports no chat model at all', async () => {
         getChatProvider.mockResolvedValue(provider({ resourceName: 'res' }, AIProviderName.AZURE))
-        listModels.mockResolvedValue([{ id: 'an-image-model', type: AIProviderModelType.IMAGE }])
+        listModels.mockResolvedValue([{ id: 'an-image-model', type: AIProviderModelType.IMAGE, capabilities: IMAGE_CAPABILITIES }])
 
         const error = await resolveError(null)
 

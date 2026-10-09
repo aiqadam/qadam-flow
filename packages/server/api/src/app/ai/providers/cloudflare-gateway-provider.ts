@@ -1,6 +1,6 @@
 import { createGoogle } from '@ai-sdk/google'
 import { safeHttp } from '@aiqadam/server-utils'
-import { AIProviderModel, AIProviderModelType, CloudflareGatewayProviderAuthConfig, CloudflareGatewayProviderConfig, isNil, splitCloudflareGatewayModelId, spreadIfDefined } from '@aiqadam/shared'
+import { AIProviderModel, AIProviderModelType, buildAIProviderModel, capabilitiesFromModelType, CloudflareGatewayProviderAuthConfig, CloudflareGatewayProviderConfig, isNil, splitCloudflareGatewayModelId } from '@aiqadam/shared'
 import { generateText } from 'ai'
 import { FastifyBaseLogger } from 'fastify'
 import { AIProviderStrategy } from './ai-provider'
@@ -70,11 +70,11 @@ export const cloudflareGatewayProvider: AIProviderStrategy<CloudflareGatewayProv
         }
     },
     async listModels(_: CloudflareGatewayProviderAuthConfig, config: CloudflareGatewayProviderConfig): Promise<AIProviderModel[]> {
-        return config.models.map(m => ({
+        return config.models.map(m => buildAIProviderModel({
             id: m.modelId,
             name: m.modelName,
-            type: m.modelType,
-            ...spreadIfDefined('contextWindowTokens', m.contextWindowTokens),
+            capabilities: capabilitiesFromModelType({ modelType: m.modelType }),
+            contextWindowTokens: m.contextWindowTokens,
         }))
     },
 }

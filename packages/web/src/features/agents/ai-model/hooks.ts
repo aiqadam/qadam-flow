@@ -1,39 +1,21 @@
-import {
-  AIProviderModel,
-  AIProviderName,
-  ALLOWED_CHAT_MODELS_BY_PROVIDER,
-  isNil,
-} from '@aiqadam/shared';
+import { AIProviderModel, isChatModel, isNil } from '@aiqadam/shared';
 import { useQuery } from '@tanstack/react-query';
 
 import { aiProviderApi } from '@/features/platform-admin/api/ai-provider-api';
 
-type AIModelType = 'text' | 'image';
-
-function getAllowedModelsForProvider({
-  provider,
+// The chat and the agent step both offer exactly the models that can hold a conversation. The
+// capability comes from the provider's own catalogue, so a model added or retired after this code
+// shipped is offered or hidden the day the provider reports it — which is what the old hardcoded
+// allow-list got wrong (#848). The provider's own order is kept: it is the order the zero-config
+// default (`pickDefaultChatModel`) and the server both read, so the picker and the chat agree.
+function getChatModels({
   allModels,
-  modelType,
-}: GetAllowedModelsForProviderParams): AIProviderModel[] {
-  const allowedIds = ALLOWED_CHAT_MODELS_BY_PROVIDER[provider];
-
-  return allModels
-    .filter((model) => model.type === modelType)
-    .filter((model) => {
-      if (isNil(allowedIds)) {
-        return true;
-      }
-
-      return allowedIds.includes(model.id);
-    })
-    .sort((a, b) => {
-      if (isNil(allowedIds)) {
-        return a.name.localeCompare(b.name);
-      }
-      const aIndex = allowedIds.indexOf(a.id);
-      const bIndex = allowedIds.indexOf(b.id);
-      return aIndex - bIndex;
-    });
+}: {
+  allModels: AIProviderModel[];
+}): AIProviderModel[] {
+  return allModels.filter((model) =>
+    isChatModel({ capabilities: model.capabilities }),
+  );
 }
 
 export const aiModelHooks = {
@@ -45,14 +27,10 @@ export const aiModelHooks = {
   },
 
   /**
-   * Takes the whole row rather than its id and its type separately, because both halves are needed
-   * and neither can stand in for the other — and passing them apart invites a caller to supply one
-   * without the other, which is a state that cannot exist.
-   *
-   * The **id** addresses one row, so it is what the request is keyed and cached on: a platform may
-   * hold several custom rows, and keying on the provider *name* served the second one the first
-   * one's catalogue out of the query cache. The **type** is what `ALLOWED_CHAT_MODELS_BY_PROVIDER`
-   * is keyed on, and a row id could not answer that.
+   * Takes the whole row rather than just its id, because the request is keyed on the row id and a
+   * caller that already holds the row should not have to unpack it. The **id** addresses one row: a
+   * platform may hold several custom rows, and keying on the provider *name* served the second one
+   * the first one's catalogue out of the query cache.
    */
   useGetModelsForProvider: ({ row }: GetModelsForProviderParams) => {
     return useQuery({
@@ -63,22 +41,12 @@ export const aiModelHooks = {
 
         const allModels = await aiProviderApi.listModelsForProvider(row.id);
 
-        return getAllowedModelsForProvider({
-          provider: row.provider,
-          allModels,
-          modelType: 'text',
-        });
+        return getChatModels({ allModels });
       },
     });
   },
 };
 
 type GetModelsForProviderParams = {
-  row?: { id: string; provider: AIProviderName };
-};
-
-type GetAllowedModelsForProviderParams = {
-  provider: AIProviderName;
-  allModels: AIProviderModel[];
-  modelType: AIModelType;
+  row?: { id: string };
 };

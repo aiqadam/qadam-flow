@@ -55,6 +55,12 @@ const textModel = (id: string): AIProviderModel => ({
   id,
   name: id,
   type: AIProviderModelType.TEXT,
+  capabilities: {
+    inputModalities: ['text'],
+    outputModalities: ['text'],
+    chat: true,
+    tools: true,
+  },
 });
 
 // Keyed by row id only. The picker never sends a provider *name* to this endpoint — it resolves

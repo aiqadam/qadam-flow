@@ -38,8 +38,8 @@ describe('context window sizes in provider model lists', () => {
         const models = await openRouterProvider.listModels({ apiKey: 'test-key' }, {})
 
         expect(models).toEqual([
-            { id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4', type: AIProviderModelType.TEXT, contextWindowTokens: 200_000 },
-            { id: 'some/model', name: 'Unknown', type: AIProviderModelType.TEXT },
+            { id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4', type: AIProviderModelType.TEXT, capabilities: { inputModalities: [], outputModalities: ['text'], chat: true, tools: false }, contextWindowTokens: 200_000 },
+            { id: 'some/model', name: 'Unknown', type: AIProviderModelType.TEXT, capabilities: { inputModalities: [], outputModalities: ['text'], chat: true, tools: false } },
         ])
     })
 
