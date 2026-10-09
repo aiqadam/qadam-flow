@@ -109,6 +109,9 @@ describe('qadam version catalogue writer (#778)', () => {
         ['no metadata.json (built with --no-load-check)', { name: CSV, version: '1.0.0', withMetadata: false }, 'cannot read package/metadata.json'],
         ['metadata for another version', { name: CSV, version: '1.0.0', metadata: catalogueFixtures.metadata({ name: CSV, version: '0.9.9' }) }, 'not qadam metadata for this qadam version'],
         ['metadata without actions', { name: CSV, version: '1.0.0', metadata: catalogueFixtures.metadata({ name: CSV, version: '1.0.0', overrides: { actions: [] } }) }, 'not qadam metadata'],
+        // The index drops a `null` floor, so the entry would disagree with its own metadata file.
+        ['a null release floor', { name: CSV, version: '1.0.0', metadata: catalogueFixtures.metadata({ name: CSV, version: '1.0.0', overrides: { minimumSupportedRelease: null } }) }, 'not qadam metadata'],
+        ['a package.json over its size bound', { name: CSV, version: '1.0.0', packageJson: { name: CSV, version: '1.0.0', qadamArtifact: { formatVersion: 1, kind: 'bundle' }, padding: 'x'.repeat(1024 * 1024) } }, 'package/package.json is too large'],
     ])('refuses %s, and one bad artifact refuses the whole run', async (_label, artifact, reason) => {
         const archiveDir = path.join(root, 'archive')
         await catalogueFixtures.writeArchive({ archiveDir, artifacts: [{ name: TABLES, version: '0.5.1' }, artifact] })
@@ -166,12 +169,67 @@ describe('qadam version catalogue writer (#778)', () => {
         expect((await qadamVersionCatalogueWriter.append({ catalogueDir, archiveDir: next })).status).toBe('refused')
     })
 
-    it('refuses metadata files with no index rather than starting a new catalogue over them', async () => {
-        await mkdir(path.join(catalogueDir, 'qadams'), { recursive: true })
+    it('refuses a catalogue that lost its index rather than writing a new index over its metadata files', async () => {
         const archiveDir = path.join(root, 'archive')
         await catalogueFixtures.writeArchive({ archiveDir, artifacts: [{ name: CSV, version: '0.6.0' }] })
+        await qadamVersionCatalogueWriter.append({ catalogueDir, archiveDir })
+        await rm(path.join(catalogueDir, 'index.json'))
+        const next = path.join(root, 'archive-2')
+        await catalogueFixtures.writeArchive({ archiveDir: next, artifacts: [{ name: TABLES, version: '0.5.1' }] })
+        const before = await snapshotTree({ dir: catalogueDir })
 
-        expect(await qadamVersionCatalogueWriter.append({ catalogueDir, archiveDir })).toEqual({ status: 'refused', problems: [{ reason: 'the catalogue has metadata files but no index' }] })
+        expect(await qadamVersionCatalogueWriter.append({ catalogueDir, archiveDir: next })).toEqual({ status: 'refused', problems: [{
+            reason: `the catalogue has metadata files but no index, and this archive does not add qadams/${CSV}/0.6.0/metadata.json: restore index.json, or remove those files if this is meant to be a new catalogue`,
+        }] })
+        expect(await snapshotTree({ dir: catalogueDir })).toEqual(before)
+    })
+
+    it('finishes a first run that stopped after its metadata files and before its index', async () => {
+        const archiveDir = path.join(root, 'archive')
+        const [csv] = await catalogueFixtures.writeArchive({ archiveDir, artifacts: [{ name: CSV, version: '0.6.0' }, { name: TABLES, version: '0.5.1' }] })
+        const leftover = path.join(catalogueDir, 'qadams', CSV, '0.6.0', 'metadata.json')
+        await mkdir(path.dirname(leftover), { recursive: true })
+        await writeFile(leftover, csv.metadataBytes)
+
+        expect(await qadamVersionCatalogueWriter.append({ catalogueDir, archiveDir })).toEqual({ status: 'appended', added: [{ name: CSV, version: '0.6.0' }, { name: TABLES, version: '0.5.1' }], unchanged: [] })
+        expect(await qadamVersionCatalogueWriter.verify({ catalogueDir })).toEqual({ status: 'ok', qadams: 2, versions: 2 })
+    })
+
+    it('refuses a version listed again with the same bytes but another commit', async () => {
+        const archiveDir = path.join(root, 'archive')
+        const [csv] = await catalogueFixtures.writeArchive({ archiveDir, artifacts: [{ name: CSV, version: '0.6.0' }] })
+        await qadamVersionCatalogueWriter.append({ catalogueDir, archiveDir })
+        await writeFile(path.join(archiveDir, 'archive-index.json'), JSON.stringify({ formatVersion: 1, artifacts: [{ ...csv.indexEntry, commit: { sha: 'b'.repeat(40), dirtyQadams: false } }] }))
+        const before = await snapshotTree({ dir: catalogueDir })
+
+        expect(await qadamVersionCatalogueWriter.append({ catalogueDir, archiveDir })).toEqual({ status: 'refused', problems: [{ name: CSV, version: '0.6.0', reason: expect.stringContaining('never republished') }] })
+        expect(await snapshotTree({ dir: catalogueDir })).toEqual(before)
+    })
+
+    it('verify reports release floors in the index that differ from the metadata\'s', async () => {
+        const archiveDir = path.join(root, 'archive')
+        await catalogueFixtures.writeArchive({ archiveDir, artifacts: [{ name: CSV, version: '0.6.0' }] })
+        await qadamVersionCatalogueWriter.append({ catalogueDir, archiveDir })
+        const indexPath = path.join(catalogueDir, 'index.json')
+        const index = JSON.parse(await readFile(indexPath, 'utf8'))
+        index.qadams[CSV].versions['0.6.0'].minimumSupportedRelease = '0.90.0'
+        await writeFile(indexPath, JSON.stringify(index))
+
+        expect(await qadamVersionCatalogueWriter.verify({ catalogueDir })).toEqual({ status: 'invalid', problems: [{ name: CSV, version: '0.6.0', reason: 'the index\'s release floors differ from the metadata\'s' }] })
+    })
+
+    it('verify reports a metadata file that matches its integrity but is not qadam metadata', async () => {
+        const archiveDir = path.join(root, 'archive')
+        await catalogueFixtures.writeArchive({ archiveDir, artifacts: [{ name: CSV, version: '0.6.0' }] })
+        await qadamVersionCatalogueWriter.append({ catalogueDir, archiveDir })
+        const notMetadata = Buffer.from('{"tampered":true}')
+        await writeFile(path.join(catalogueDir, 'qadams', CSV, '0.6.0', 'metadata.json'), notMetadata)
+        const indexPath = path.join(catalogueDir, 'index.json')
+        const index = JSON.parse(await readFile(indexPath, 'utf8'))
+        index.qadams[CSV].versions['0.6.0'].metadata = { integrity: catalogueFixtures.sha512(notMetadata), size: notMetadata.length }
+        await writeFile(indexPath, JSON.stringify(index))
+
+        expect(await qadamVersionCatalogueWriter.verify({ catalogueDir })).toEqual({ status: 'invalid', problems: [{ name: CSV, version: '0.6.0', reason: 'metadata file is not qadam metadata for this qadam version' }] })
     })
 
     it('reuses a metadata file an interrupted run left behind, and refuses a different one', async () => {

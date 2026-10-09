@@ -1,10 +1,10 @@
-import { readFile, rm, writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { createServer, Server } from 'node:http'
 import path from 'node:path'
 import { safeHttp } from '@aiqadam/server-utils'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { QadamVersionCatalogue, qadamVersionCatalogue } from '../../../../src/app/qadams/catalogue/qadam-version-catalogue'
-import { QADAM_VERSION_CATALOGUE_DEFAULT_URL } from '../../../../src/app/qadams/catalogue/qadam-version-catalogue-format'
 import { QadamVersionCatalogueSource, qadamVersionCatalogueSource } from '../../../../src/app/qadams/catalogue/qadam-version-catalogue-source'
 import { qadamVersionCatalogueWriter } from '../../../../src/app/qadams/catalogue/qadam-version-catalogue-writer'
 import { catalogueFixtures } from './qadam-version-catalogue-fixtures'
@@ -101,6 +101,36 @@ describe('qadam version catalogue reader (#778)', () => {
 
             expect(await source.read({ relativePath: '../../outside.json', maxBytes: 1024 })).toEqual({ status: 'error', reason: 'path outside the catalogue root' })
             expect(await source.read({ relativePath: 'index.json', maxBytes: 16 })).toEqual({ status: 'error', reason: 'too large' })
+            const index = await readFile(path.join(catalogueDir, 'index.json'))
+            expect(await source.read({ relativePath: 'index.json', maxBytes: index.length })).toEqual({ status: 'ok', bytes: index })
+        })
+
+        it('refuses a symlink that leads out of the root, to a file or through a directory, and follows one that stays inside', async () => {
+            await writeFile(path.join(root, 'outside.json'), '{"outside":true}')
+            await symlink(path.join(root, 'outside.json'), path.join(catalogueDir, 'escape.json'))
+            await symlink(root, path.join(catalogueDir, 'escape-dir'))
+            await symlink(path.join(catalogueDir, 'index.json'), path.join(catalogueDir, 'alias.json'))
+            const source = qadamVersionCatalogueSource.directory({ root: catalogueDir })
+
+            expect(await source.read({ relativePath: 'escape.json', maxBytes: 1024 })).toEqual({ status: 'error', reason: 'path outside the catalogue root' })
+            expect(await source.read({ relativePath: 'escape-dir/outside.json', maxBytes: 1024 })).toEqual({ status: 'error', reason: 'path outside the catalogue root' })
+            expect((await source.read({ relativePath: 'alias.json', maxBytes: 1024 * 1024 })).status).toBe('ok')
+        })
+
+        it('refuses a FIFO without waiting for a writer', async () => {
+            execFileSync('mkfifo', [path.join(catalogueDir, 'fifo.json')])
+            const source = qadamVersionCatalogueSource.directory({ root: catalogueDir })
+
+            expect(await source.read({ relativePath: 'fifo.json', maxBytes: 1024 })).toEqual({ status: 'error', reason: 'not a regular file' })
+        }, 5_000)
+
+        it('reads from a root that is itself a symlink', async () => {
+            const linkedRoot = path.join(root, 'linked-catalogue')
+            await symlink(catalogueDir, linkedRoot)
+
+            const catalogue = await readOk({ source: qadamVersionCatalogueSource.directory({ root: linkedRoot }) })
+
+            expect((await catalogue.readMetadata({ name: CSV, version: '0.9.0' })).status).toBe('ok')
         })
     })
 
@@ -215,12 +245,9 @@ describe('qadam version catalogue reader (#778)', () => {
 
             const read = await source.read({ relativePath: 'index.json', maxBytes: 16 })
 
-            expect(read.status).toBe('error')
+            expect(read).toEqual({ status: 'error', reason: 'too large' })
+            expect(requests).toEqual(['/mirror/catalog/v1/index.json'])
         })
-    })
-
-    it('defaults to GitHub Pages under flow.aiqadam.org (ADR-0003)', () => {
-        expect(QADAM_VERSION_CATALOGUE_DEFAULT_URL).toBe('https://flow.aiqadam.org/catalog/v1/')
     })
 })
 

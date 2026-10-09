@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import { QadamMetadata } from '@aiqadam/qadams-framework'
-import { isNil, NPM_PACKAGE_NAME_REGEX } from '@aiqadam/shared'
+import { isNil, NPM_PACKAGE_NAME_REGEX, tryCatchSync } from '@aiqadam/shared'
 import semVer from 'semver'
 import { z } from 'zod'
 
@@ -26,6 +27,8 @@ export const QADAM_VERSION_CATALOGUE_DEFAULT_URL = 'https://flow.aiqadam.org/cat
 
 export const QADAM_VERSION_CATALOGUE_INDEX_FILE = 'index.json'
 
+export const QADAM_VERSION_CATALOGUE_METADATA_DIR = 'qadams'
+
 // Bounds for what a reader accepts from a source it does not control (a mirror). The index grows
 // by ~0.4 KB per released version; one version's metadata, i18n included, measured at most a few
 // hundred KB on the 238 current versions.
@@ -44,6 +47,13 @@ export const QadamVersionCatalogueArtifactKind = {
     BUNDLE: 'bundle',
     BUNDLE_WITH_NODE_MODULES: 'bundle-with-node-modules',
 } as const
+
+const OFFICIAL_QADAM_NAME_PREFIX = '@aiqadam/qadam-'
+
+// Only what this file and its callers rely on is checked; the rest is the qadam's own `metadata()`
+// output, the same shape the image's bundled manifest and `qadam_metadata` carry. `z.custom` rather
+// than `z.object`, because an object schema strips every key it does not list.
+const MetadataFile = z.custom<QadamMetadata>(hasMetadataShape)
 
 const Sha512Integrity = z.string().regex(/^sha512-[A-Za-z0-9+/]{86}==$/)
 const ByteSize = z.number().int().nonnegative()
@@ -110,13 +120,41 @@ export const qadamVersionCatalogueFormat = {
     // name is also a safe pair of path segments (`@aiqadam`, `qadam-<x>`).
     isCatalogueName: (name: string): boolean => NPM_PACKAGE_NAME_REGEX.test(name) && name.startsWith(OFFICIAL_QADAM_NAME_PREFIX),
 
-    // Canonical semver, no build metadata: `v1.0.0`, `1.0` and `1.0.0+x` are not versions here, and
-    // a version is a single safe path segment.
-    isCatalogueVersion: (version: string): boolean => semVer.valid(version) === version && !version.includes('+'),
+    // Canonical semver, no build metadata: `v1.0.0`, `1.0` and `1.0.0+x` are not versions here
+    // (`semver.valid` drops build metadata, so `1.0.0+x` does not come back unchanged), and a version
+    // is a single safe path segment.
+    isCatalogueVersion: (version: string): boolean => semVer.valid(version) === version,
 
-    metadataPath: ({ name, version }: Coordinates): string => `qadams/${name}/${version}/metadata.json`,
+    metadataPath: ({ name, version }: Coordinates): string => `${QADAM_VERSION_CATALOGUE_METADATA_DIR}/${name}/${version}/metadata.json`,
 
     integrityOf: (bytes: Buffer): string => `sha512-${createHash('sha512').update(bytes).digest('base64')}`,
+
+    // The one check of a metadata file, shared by the writer (on the artifact's own file, and again
+    // on the published one) and the reader: the bytes match `expected` when it is given, are JSON, are
+    // qadam metadata, and name this qadam and version. `file` is what an index entry records for them.
+    checkMetadataFile: ({ bytes, name, version, expected }: CheckMetadataFileParams): CheckMetadataFileResult => {
+        const file = { integrity: qadamVersionCatalogueFormat.integrityOf(bytes), size: bytes.length }
+        if (!isNil(expected) && (file.size !== expected.size || file.integrity !== expected.integrity)) {
+            return { status: 'integrity-mismatch' }
+        }
+        const { data: json, error } = tryCatchSync((): unknown => JSON.parse(bytes.toString('utf8')))
+        if (error) {
+            return { status: 'not-json' }
+        }
+        const metadata = MetadataFile.safeParse(json)
+        if (!metadata.success) {
+            return { status: 'not-qadam-metadata' }
+        }
+        if (metadata.data.name !== name || metadata.data.version !== version) {
+            return { status: 'other-version' }
+        }
+        return { status: 'ok', metadata: metadata.data, file }
+    },
+
+    // Two entries describe the same release only when every field agrees. Comparing the serialized
+    // form rather than a list of fields means a field added later cannot be forgotten here.
+    isSameEntry: ({ left, right }: { left: QadamVersionCatalogueEntry, right: QadamVersionCatalogueEntry }): boolean =>
+        isDeepStrictEqual(orderEntryFields({ entry: left }), orderEntryFields({ entry: right })),
 
     // For a reader: one bad entry is skipped and counted, never fatal, because it may be a format
     // or a field value a later release added. A wrong envelope or another schema version is.
@@ -162,25 +200,15 @@ export const qadamVersionCatalogueFormat = {
     // Deterministic: names sorted, versions in semver order, fields in a fixed order. A re-run that
     // adds nothing produces the same bytes, so the published file only changes when a version is added.
     serializeIndex: ({ qadams }: { qadams: CatalogueEntries }): string => {
-        const sortedNames = [...qadams.keys()].sort()
         const index = {
             schemaVersion: QADAM_VERSION_CATALOGUE_SCHEMA_VERSION,
-            qadams: Object.fromEntries(sortedNames.map((name) => {
-                const versions = qadams.get(name) ?? new Map<string, QadamVersionCatalogueEntry>()
-                const sortedVersions = [...versions.keys()].sort(semVer.compare)
-                return [name, { versions: Object.fromEntries(sortedVersions.map((version) => [version, orderEntryFields({ entry: versions.get(version) })])) }]
-            })),
+            qadams: Object.fromEntries([...qadams].sort(([a], [b]) => compareStrings({ a, b })).map(([name, versions]) => [name, {
+                versions: Object.fromEntries([...versions].sort(([a], [b]) => semVer.compare(a, b)).map(([version, entry]) => [version, orderEntryFields({ entry })])),
+            }])),
         }
         return JSON.stringify(index, null, 2) + '\n'
     },
 }
-
-// Only what this file and its callers rely on is checked; the rest is the qadam's own `metadata()`
-// output, the same shape the image's bundled manifest and `qadam_metadata` carry. `z.custom` rather
-// than `z.object`, because an object schema strips every key it does not list.
-export const QadamVersionCatalogueMetadataFile = z.custom<QadamMetadata>(hasMetadataShape)
-
-const OFFICIAL_QADAM_NAME_PREFIX = '@aiqadam/qadam-'
 
 function parseEntry({ name, version, rawEntry }: { name: string, version: string, rawEntry: unknown }): ParsedEntry | null {
     if (!qadamVersionCatalogueFormat.isCatalogueName(name) || !qadamVersionCatalogueFormat.isCatalogueVersion(version)) {
@@ -190,10 +218,7 @@ function parseEntry({ name, version, rawEntry }: { name: string, version: string
     return entry.success ? { name, version, entry: entry.data } : null
 }
 
-function orderEntryFields({ entry }: { entry: QadamVersionCatalogueEntry | undefined }): Record<string, unknown> {
-    if (isNil(entry)) {
-        return {}
-    }
+function orderEntryFields({ entry }: { entry: QadamVersionCatalogueEntry }): Record<string, unknown> {
     const artifact = entry.artifact.format === QadamVersionCatalogueArtifactFormat.BUNDLE
         ? { format: entry.artifact.format, kind: entry.artifact.kind, integrity: entry.artifact.integrity, size: entry.artifact.size }
         : { format: entry.artifact.format, integrity: entry.artifact.integrity, size: entry.artifact.size }
@@ -204,6 +229,13 @@ function orderEntryFields({ entry }: { entry: QadamVersionCatalogueEntry | undef
         ...(isNil(entry.maximumSupportedRelease) ? {} : { maximumSupportedRelease: entry.maximumSupportedRelease }),
         ...(isNil(entry.commit) ? {} : { commit: entry.commit }),
     }
+}
+
+function compareStrings({ a, b }: { a: string, b: string }): number {
+    if (a === b) {
+        return 0
+    }
+    return a < b ? -1 : 1
 }
 
 function hasMetadataShape(value: unknown): boolean {
@@ -224,8 +256,10 @@ function isPlainObject(value: unknown): boolean {
     return typeof value === 'object' && !isNil(value) && !Array.isArray(value)
 }
 
+// Absent or a string, never `null`: the index drops a `null` floor, so accepting one here would
+// produce an entry that disagrees with its own metadata file.
 function isOptionalString(value: unknown): boolean {
-    return isNil(value) || typeof value === 'string'
+    return value === undefined || typeof value === 'string'
 }
 
 type Coordinates = {
@@ -243,6 +277,23 @@ export type ParseIndexResult =
     | { status: 'ok', qadams: CatalogueEntries, skippedEntries: number }
     | { status: 'invalid' }
     | { status: 'unsupported', schemaVersion: number }
+
+type CheckMetadataFileParams = Coordinates & {
+    bytes: Buffer
+    expected?: MetadataFileIntegrity
+}
+
+type MetadataFileIntegrity = {
+    integrity: string
+    size: number
+}
+
+export type CheckMetadataFileResult =
+    | { status: 'ok', metadata: QadamMetadata, file: MetadataFileIntegrity }
+    | { status: 'integrity-mismatch' }
+    | { status: 'not-json' }
+    | { status: 'not-qadam-metadata' }
+    | { status: 'other-version' }
 
 export type ParseIndexStrictResult =
     | { status: 'ok', qadams: CatalogueEntries }

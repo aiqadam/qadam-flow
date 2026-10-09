@@ -1,7 +1,6 @@
-import { execFile } from 'node:child_process'
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { spawn } from 'node:child_process'
+import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { promisify } from 'node:util'
 import { isNil, tryCatch, tryCatchSync } from '@aiqadam/shared'
 import semVer from 'semver'
 import { z } from 'zod'
@@ -9,11 +8,11 @@ import {
     CatalogueEntries,
     QADAM_VERSION_CATALOGUE_INDEX_FILE,
     QADAM_VERSION_CATALOGUE_MAX_METADATA_BYTES,
+    QADAM_VERSION_CATALOGUE_METADATA_DIR,
     QadamVersionCatalogueArtifactFormat,
     QadamVersionCatalogueArtifactKind,
     QadamVersionCatalogueEntry,
     qadamVersionCatalogueFormat,
-    QadamVersionCatalogueMetadataFile,
 } from './qadam-version-catalogue-format'
 
 // Appends released qadam versions to a qadam version catalogue on disk (ADR-0003: "The release
@@ -33,8 +32,10 @@ import {
 // - nothing is ever removed;
 // - one bad artifact refuses the whole run before anything is written. Metadata files are written
 //   first and the index last, by rename, so an interrupted run leaves the published index as it was.
+//   A re-run of the same archive picks up where it stopped: a metadata file already in place with
+//   the same bytes is reused, also when the interrupted run was the first and wrote no index yet.
 export const qadamVersionCatalogueWriter = {
-    append: async ({ catalogueDir, archiveDir, readTarballFile = tarballFileReader }: AppendParams): Promise<AppendResult> => {
+    append: async ({ catalogueDir, archiveDir }: AppendParams): Promise<AppendResult> => {
         const existing = await loadExisting({ catalogueDir })
         if (existing.status === 'invalid') {
             return { status: 'refused', problems: existing.problems }
@@ -47,13 +48,19 @@ export const qadamVersionCatalogueWriter = {
         if (duplicates.length > 0) {
             return { status: 'refused', problems: duplicates.map((coordinates) => ({ ...coordinates, reason: 'listed twice in the archive index' })) }
         }
-        const prepared = await mapWithConcurrency({ items: archive.artifacts, fn: (artifact) => prepareArtifact({ artifact, archiveDir, readTarballFile }) })
+        const prepared = await mapWithConcurrency({ items: archive.artifacts, fn: (artifact) => prepareArtifact({ artifact, archiveDir }) })
         const planned = await mapWithConcurrency({ items: prepared, fn: (item) => planItem({ item, existing: existing.qadams, catalogueDir }) })
         const problems = planned.flatMap((plan) => plan.status === 'problem' ? [plan.problem] : [])
         if (problems.length > 0) {
             return { status: 'refused', problems }
         }
         const added = planned.flatMap((plan) => plan.status === 'add' ? [plan.version] : [])
+        if (!existing.hasIndex) {
+            const unaccounted = await findUnaccountedFiles({ catalogueDir, added })
+            if (unaccounted.length > 0) {
+                return { status: 'refused', problems: [{ reason: `the catalogue has metadata files but no index, and this archive does not add ${unaccounted.slice(0, 3).join(', ')}${unaccounted.length > 3 ? ', …' : ''}: restore index.json, or remove those files if this is meant to be a new catalogue` }] }
+            }
+        }
         const unchanged = planned.flatMap((plan) => plan.status === 'unchanged' ? [plan.version] : [])
         if (added.length === 0 && existing.hasIndex) {
             return { status: 'appended', added: [], unchanged: unchanged.map(toCoordinates) }
@@ -83,15 +90,11 @@ export const qadamVersionCatalogueWriter = {
         if (index.status !== 'ok') {
             return { status: 'invalid', problems: [{ reason: index.status === 'missing' ? 'no index' : index.reason }] }
         }
-        const entries = [...index.qadams].flatMap(([name, versions]) => [...versions].map(([version, entry]) => ({ name, version, entry })))
-        const checks = await mapWithConcurrency({ items: entries, fn: ({ name, version, entry }) => verifyEntry({ catalogueDir, name, version, entry }) })
-        const problems = checks.filter((problem): problem is Problem => !isNil(problem))
+        const problems = await verifyEntries({ catalogueDir, qadams: index.qadams })
         const versions = [...index.qadams.values()].reduce((count, versionsOfQadam) => count + versionsOfQadam.size, 0)
         return problems.length > 0 ? { status: 'invalid', problems } : { status: 'ok', qadams: index.qadams.size, versions }
     },
 }
-
-const execFileAsync = promisify(execFile)
 
 const ARCHIVE_INDEX_FILE = 'archive-index.json'
 const ARCHIVE_INDEX_FORMAT_VERSION = 1
@@ -131,31 +134,51 @@ const ArtifactPackageJson = z.object({
 const ArtifactKind = z.enum([QadamVersionCatalogueArtifactKind.BUNDLE, QadamVersionCatalogueArtifactKind.BUNDLE_WITH_NODE_MODULES])
 
 // `tar` rather than a parser in this package: this runs in the release pipeline on artifacts the same
-// pipeline built, never on input from a user. The path is absolute and the member a constant, so
-// neither can be read as an option.
-async function tarballFileReader({ tarballPath, member, maxBytes }: ReadTarballFileParams): Promise<ReadTarballFileResult> {
-    const { data, error } = await tryCatch(() => execFileAsync('tar', ['-xzOf', tarballPath, member], { encoding: 'buffer', maxBuffer: maxBytes }))
-    if (error) {
-        return { status: 'error', reason: `cannot read ${member} from the tarball` }
-    }
-    return { status: 'ok', bytes: data.stdout }
+// pipeline built, never on input from a user. The tarball goes in on stdin, so what is extracted is
+// exactly the buffer whose integrity was checked, not the file read again; the member is a constant,
+// so it cannot be read as an option. Output past `maxBytes` stops the extraction.
+function extractFromTarball({ tarball, member, maxBytes }: ExtractFromTarballParams): Promise<ExtractFromTarballResult> {
+    return new Promise((resolve) => {
+        const child = spawn('tar', ['-xzOf', '-', member], { stdio: ['pipe', 'pipe', 'ignore'] })
+        const chunks: Buffer[] = []
+        let length = 0
+        let tooLarge = false
+        child.stdout.on('data', (chunk: Buffer) => {
+            length += chunk.length
+            if (length > maxBytes) {
+                tooLarge = true
+                child.kill()
+                return
+            }
+            chunks.push(chunk)
+        })
+        // `tar` may exit before it has read all of stdin (a missing member, or killed above).
+        child.stdin.on('error', () => undefined)
+        child.on('error', () => resolve({ status: 'error', reason: `cannot read ${member} from the tarball` }))
+        child.on('close', (code) => {
+            if (tooLarge) {
+                resolve({ status: 'error', reason: `${member} is too large` })
+                return
+            }
+            resolve(code === 0 ? { status: 'ok', bytes: Buffer.concat(chunks) } : { status: 'error', reason: `cannot read ${member} from the tarball` })
+        })
+        child.stdin.end(tarball)
+    })
 }
 
 async function loadExisting({ catalogueDir }: { catalogueDir: string }): Promise<LoadExistingResult> {
     const index = await readStrictIndex({ catalogueDir })
     if (index.status === 'missing') {
-        // Metadata files with no index is a catalogue that lost its index, not a new one.
-        const hasQadamsDir = await stat(path.join(catalogueDir, 'qadams')).then(() => true, () => false)
-        return hasQadamsDir
-            ? { status: 'invalid', problems: [{ reason: 'the catalogue has metadata files but no index' }] }
-            : { status: 'ok', qadams: new Map(), hasIndex: false }
+        // A new catalogue, or a first run that stopped before its index. Files that no index and no
+        // version of this run account for are refused once the run is planned (`findUnaccountedFiles`).
+        return { status: 'ok', qadams: new Map(), hasIndex: false }
     }
     if (index.status === 'invalid') {
         return { status: 'invalid', problems: [{ reason: `the existing index cannot be appended to: ${index.reason}` }] }
     }
-    const verified = await qadamVersionCatalogueWriter.verify({ catalogueDir })
-    if (verified.status === 'invalid') {
-        return { status: 'invalid', problems: verified.problems }
+    const problems = await verifyEntries({ catalogueDir, qadams: index.qadams })
+    if (problems.length > 0) {
+        return { status: 'invalid', problems }
     }
     return { status: 'ok', qadams: index.qadams, hasIndex: true }
 }
@@ -185,7 +208,7 @@ async function readArchiveIndex({ archiveDir }: { archiveDir: string }): Promise
     return { status: 'ok', artifacts: parsed.data.artifacts }
 }
 
-async function prepareArtifact({ artifact, archiveDir, readTarballFile }: PrepareArtifactParams): Promise<PreparedArtifact> {
+async function prepareArtifact({ artifact, archiveDir }: PrepareArtifactParams): Promise<PreparedArtifact> {
     const { name, version } = artifact
     const problem = (reason: string): PreparedArtifact => ({ status: 'problem', problem: { name, version, reason } })
     if (!qadamVersionCatalogueFormat.isCatalogueName(name)) {
@@ -211,53 +234,41 @@ async function prepareArtifact({ artifact, archiveDir, readTarballFile }: Prepar
     if (path.basename(artifact.file) !== artifact.file || !artifact.file.endsWith('.tgz') || artifact.file.startsWith('.')) {
         return problem('the tarball is not a plain .tgz file name')
     }
-    const tarballPath = path.resolve(archiveDir, artifact.file)
-    const { data: tarball, error } = await tryCatch(() => readFile(tarballPath))
+    const { data: tarball, error } = await tryCatch(() => readFile(path.resolve(archiveDir, artifact.file)))
     if (error) {
         return problem('the tarball cannot be read')
     }
     if (tarball.length !== artifact.size || qadamVersionCatalogueFormat.integrityOf(tarball) !== artifact.integrity) {
         return problem('the tarball does not match the integrity and size in the archive index')
     }
-    const packageJson = await readJsonFromTarball({ readTarballFile, tarballPath, member: TARBALL_PACKAGE_JSON, maxBytes: MAX_PACKAGE_JSON_BYTES })
+    const packageJson = await extractFromTarball({ tarball, member: TARBALL_PACKAGE_JSON, maxBytes: MAX_PACKAGE_JSON_BYTES })
     if (packageJson.status === 'error') {
         return problem(packageJson.reason)
     }
-    const manifest = ArtifactPackageJson.safeParse(packageJson.json)
-    if (!manifest.success || manifest.data.name !== name || manifest.data.version !== version) {
+    const { data: packageJsonValue, error: packageJsonError } = tryCatchSync((): unknown => JSON.parse(packageJson.bytes.toString('utf8')))
+    const manifest = packageJsonError ? null : ArtifactPackageJson.safeParse(packageJsonValue)
+    if (isNil(manifest) || !manifest.success || manifest.data.name !== name || manifest.data.version !== version) {
         return problem('the tarball\'s package.json does not name this qadam version')
     }
     if (manifest.data.qadamArtifact.formatVersion !== ARTIFACT_FORMAT_VERSION || manifest.data.qadamArtifact.kind !== kind.data) {
         return problem('the tarball is not a format-1 artifact of the kind the archive index names')
     }
-    const metadata = await readJsonFromTarball({ readTarballFile, tarballPath, member: TARBALL_METADATA_JSON, maxBytes: QADAM_VERSION_CATALOGUE_MAX_METADATA_BYTES })
-    if (metadata.status === 'error') {
-        return problem(metadata.reason)
+    const metadataFile = await extractFromTarball({ tarball, member: TARBALL_METADATA_JSON, maxBytes: QADAM_VERSION_CATALOGUE_MAX_METADATA_BYTES })
+    if (metadataFile.status === 'error') {
+        return problem(metadataFile.reason)
     }
-    const parsedMetadata = QadamVersionCatalogueMetadataFile.safeParse(metadata.json)
-    if (!parsedMetadata.success || parsedMetadata.data.name !== name || parsedMetadata.data.version !== version) {
-        return problem('metadata.json is not qadam metadata for this qadam version')
+    const metadata = qadamVersionCatalogueFormat.checkMetadataFile({ bytes: metadataFile.bytes, name, version })
+    if (metadata.status !== 'ok') {
+        return problem(`metadata.json is not qadam metadata for this qadam version (${metadata.status})`)
     }
     const entry: QadamVersionCatalogueEntry = {
         artifact: { format: QadamVersionCatalogueArtifactFormat.BUNDLE, kind: kind.data, integrity: artifact.integrity, size: artifact.size },
-        metadata: { integrity: qadamVersionCatalogueFormat.integrityOf(metadata.bytes), size: metadata.bytes.length },
-        minimumSupportedRelease: parsedMetadata.data.minimumSupportedRelease,
-        maximumSupportedRelease: parsedMetadata.data.maximumSupportedRelease,
+        metadata: metadata.file,
+        minimumSupportedRelease: metadata.metadata.minimumSupportedRelease,
+        maximumSupportedRelease: metadata.metadata.maximumSupportedRelease,
         commit: artifact.commit.sha,
     }
-    return { status: 'ok', name, version, entry, metadataBytes: metadata.bytes }
-}
-
-async function readJsonFromTarball({ readTarballFile, tarballPath, member, maxBytes }: ReadTarballFileParams & { readTarballFile: ReadTarballFile }): Promise<ReadJsonFromTarballResult> {
-    const read = await readTarballFile({ tarballPath, member, maxBytes })
-    if (read.status === 'error') {
-        return read
-    }
-    if (read.bytes.length > maxBytes) {
-        return { status: 'error', reason: `${member} is too large` }
-    }
-    const { data: json, error } = tryCatchSync((): unknown => JSON.parse(read.bytes.toString('utf8')))
-    return error ? { status: 'error', reason: `${member} is not JSON` } : { status: 'ok', json, bytes: read.bytes }
+    return { status: 'ok', name, version, entry, metadataBytes: metadataFile.bytes }
 }
 
 async function planItem({ item, existing, catalogueDir }: PlanItemParams): Promise<Plan> {
@@ -267,7 +278,7 @@ async function planItem({ item, existing, catalogueDir }: PlanItemParams): Promi
     const { name, version, entry } = item
     const current = existing.get(name)?.get(version)
     if (!isNil(current)) {
-        return isSameRelease({ left: current, right: entry })
+        return qadamVersionCatalogueFormat.isSameEntry({ left: current, right: entry })
             ? { status: 'unchanged', version: item }
             : { status: 'problem', problem: { name, version, reason: 'already in the catalogue with a different artifact or metadata; a version is never republished' } }
     }
@@ -284,32 +295,50 @@ async function planItem({ item, existing, catalogueDir }: PlanItemParams): Promi
     return { status: 'add', version: { ...item, metadataFileExists: !isNil(onDisk) } }
 }
 
+async function verifyEntries({ catalogueDir, qadams }: { catalogueDir: string, qadams: CatalogueEntries }): Promise<Problem[]> {
+    const entries = [...qadams].flatMap(([name, versions]) => [...versions].map(([version, entry]) => ({ name, version, entry })))
+    const checks = await mapWithConcurrency({ items: entries, fn: ({ name, version, entry }) => verifyEntry({ catalogueDir, name, version, entry }) })
+    return checks.filter((problem): problem is Problem => !isNil(problem))
+}
+
 async function verifyEntry({ catalogueDir, name, version, entry }: VerifyEntryParams): Promise<Problem | null> {
     const problem = (reason: string): Problem => ({ name, version, reason })
     const { data: bytes, error } = await tryCatch(() => readFile(path.join(catalogueDir, qadamVersionCatalogueFormat.metadataPath({ name, version }))))
     if (error) {
         return problem(isFileNotFound(error) ? 'metadata file missing' : 'metadata file unreadable')
     }
-    if (bytes.length !== entry.metadata.size || qadamVersionCatalogueFormat.integrityOf(bytes) !== entry.metadata.integrity) {
-        return problem('metadata file does not match its integrity')
+    const metadata = qadamVersionCatalogueFormat.checkMetadataFile({ bytes, name, version, expected: entry.metadata })
+    switch (metadata.status) {
+        case 'integrity-mismatch':
+            return problem('metadata file does not match its integrity')
+        case 'not-json':
+        case 'not-qadam-metadata':
+        case 'other-version':
+            return problem('metadata file is not qadam metadata for this qadam version')
+        case 'ok':
+            break
     }
-    const { data: json, error: parseError } = tryCatchSync((): unknown => JSON.parse(bytes.toString('utf8')))
-    const metadata = parseError ? null : QadamVersionCatalogueMetadataFile.safeParse(json)
-    if (isNil(metadata) || !metadata.success || metadata.data.name !== name || metadata.data.version !== version) {
-        return problem('metadata file is not qadam metadata for this qadam version')
-    }
-    if (metadata.data.minimumSupportedRelease !== entry.minimumSupportedRelease || metadata.data.maximumSupportedRelease !== entry.maximumSupportedRelease) {
+    if (metadata.metadata.minimumSupportedRelease !== entry.minimumSupportedRelease || metadata.metadata.maximumSupportedRelease !== entry.maximumSupportedRelease) {
         return problem('the index\'s release floors differ from the metadata\'s')
     }
     return null
 }
 
-function isSameRelease({ left, right }: { left: QadamVersionCatalogueEntry, right: QadamVersionCatalogueEntry }): boolean {
-    return left.artifact.format === right.artifact.format
-        && left.artifact.integrity === right.artifact.integrity
-        && left.artifact.size === right.artifact.size
-        && left.metadata.integrity === right.metadata.integrity
-        && left.metadata.size === right.metadata.size
+// With no index, every file under the metadata directory must be one this run adds (`planItem` has
+// already checked that one in place has the same bytes): that is a first run that stopped before
+// its index. Anything else is a catalogue whose index was lost, and a new index written over it
+// would drop every version it listed.
+async function findUnaccountedFiles({ catalogueDir, added }: { catalogueDir: string, added: Coordinates[] }): Promise<string[]> {
+    const { data: dirents, error } = await tryCatch(() => readdir(path.join(catalogueDir, QADAM_VERSION_CATALOGUE_METADATA_DIR), { recursive: true, withFileTypes: true }))
+    if (error) {
+        return isFileNotFound(error) ? [] : [`${QADAM_VERSION_CATALOGUE_METADATA_DIR}/ (unreadable)`]
+    }
+    const expected = new Set(added.map((coordinates) => qadamVersionCatalogueFormat.metadataPath(coordinates)))
+    return dirents
+        .filter((dirent) => !dirent.isDirectory())
+        .map((dirent) => path.relative(catalogueDir, path.join(dirent.parentPath, dirent.name)).split(path.sep).join('/'))
+        .filter((relative) => !expected.has(relative))
+        .sort()
 }
 
 function findDuplicates({ artifacts }: { artifacts: ArchiveArtifact[] }): Coordinates[] {
@@ -361,20 +390,14 @@ type Problem = Partial<Coordinates> & {
 
 type ArchiveArtifact = z.infer<typeof ArchiveIndex>['artifacts'][number]
 
-type ReadTarballFileParams = {
-    tarballPath: string
+type ExtractFromTarballParams = {
+    tarball: Buffer
     member: string
     maxBytes: number
 }
 
-type ReadTarballFileResult =
+type ExtractFromTarballResult =
     | { status: 'ok', bytes: Buffer }
-    | { status: 'error', reason: string }
-
-export type ReadTarballFile = (params: ReadTarballFileParams) => Promise<ReadTarballFileResult>
-
-type ReadJsonFromTarballResult =
-    | { status: 'ok', json: unknown, bytes: Buffer }
     | { status: 'error', reason: string }
 
 type PreparedVersion = Coordinates & {
@@ -400,7 +423,6 @@ type PlanItemParams = {
 type PrepareArtifactParams = {
     artifact: ArchiveArtifact
     archiveDir: string
-    readTarballFile: ReadTarballFile
 }
 
 type VerifyEntryParams = Coordinates & {
@@ -424,7 +446,6 @@ type ReadArchiveIndexResult =
 type AppendParams = {
     catalogueDir: string
     archiveDir: string
-    readTarballFile?: ReadTarballFile
 }
 
 export type AppendResult =

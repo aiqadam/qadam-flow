@@ -66,13 +66,25 @@ Input is #804's `--pack` output — `archive-index.json` plus the npm tarballs, 
 and the same input #805's seeding reads. Per artifact it recomputes the tarball's sha512 and size
 against the archive index, reads `package/package.json` (must name the version and carry
 `qadamArtifact.formatVersion: 1` of the declared kind) and `package/metadata.json` from inside the
-tarball (`tar -xzOf`), and checks the metadata names the same qadam and version. It refuses:
+tarball (`tar -xzOf -`, fed the tarball buffer whose integrity was just checked, never the file
+again; each member is bounded, package.json at 1 MiB and metadata at 16 MiB), and checks the
+metadata names the same qadam and version and carries its release floors as strings or not at all
+(a `null` floor is refused: the index drops it, so the entry would disagree with its own file). It
+refuses:
 non-official names, non-canonical versions, **prerelease versions** (ADR-0004's `-main.<n>`
 snapshots are never in the catalogue, and no other qadam prerelease channel exists), builds from a
 dirty tree, unknown kinds, tarball names with a path, a version listed twice, and **a version already
-in the catalogue with a different artifact or metadata** (a version is never republished). One
-problem refuses the whole run and writes nothing; otherwise metadata files are written (`wx`) and the
-index last by rename. It verifies the existing catalogue before appending. Nothing is ever removed.
+in the catalogue with any field different** — artifact, kind, metadata or commit (a version is
+never republished). One problem refuses the whole run and writes nothing; otherwise metadata files
+are written (`wx`) and the index last by rename. It verifies the existing catalogue before appending.
+Nothing is ever removed.
+
+**Interrupted runs.** A re-run of the same archive finishes the job: a metadata file already in place
+with the same bytes is reused, a different one is refused. That includes a first run that stopped
+before writing any index. With no index, though, every file under `qadams/` must be one this run
+adds; anything else means a catalogue lost its index, and a fresh index would drop every version it
+listed, so the run is refused with the files named (restore `index.json`, or remove them if the
+directory is meant to be a new catalogue).
 
 ## Reader (API)
 
@@ -81,7 +93,11 @@ index last by rename. It verifies the existing catalogue before appending. Nothi
 `integrity-mismatch` / `invalid` (not metadata, or names another version). Bounds: index 32 MiB,
 metadata 16 MiB. The HTTP source goes through `safeHttp.axios` by default (a mirror on a private
 address needs `AP_SSRF_ALLOW_LIST`), at most 3 redirects, 30 s timeout, and never puts the URL in a
-reason (a mirror URL may hold credentials). Both sources refuse a path that leaves their root.
+reason (a mirror URL may hold credentials). Both sources refuse a path that leaves their root. The
+directory source checks that on real paths (`realpath` of root and target), so a symlink cannot lead
+out; it opens with `O_NOFOLLOW | O_NONBLOCK`, so a FIFO cannot hang it, reads only a regular file,
+and never reads past the size `fstat` reported (a file that changes while read is refused). An HTTP
+body over the bound is `too large`, as it is from a directory.
 
 **Trust model.** Metadata files are bound to the index by integrity. The index is trusted as far as
 its source: HTTPS to the configured host, or the image's own snapshot. It is not signed. For

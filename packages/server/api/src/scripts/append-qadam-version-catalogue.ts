@@ -1,7 +1,7 @@
 /* eslint-disable no-console */
 import path from 'node:path'
 import { parseArgs } from 'node:util'
-import { isNil, tryCatch } from '@aiqadam/shared'
+import { isNil, tryCatch, tryCatchSync } from '@aiqadam/shared'
 import { qadamVersionCatalogueWriter } from '../app/qadams/catalogue/qadam-version-catalogue-writer'
 
 // The release pipeline's half of the qadam version catalogue (ADR-0003, #778). Two modes:
@@ -14,9 +14,12 @@ import { qadamVersionCatalogueWriter } from '../app/qadams/catalogue/qadam-versi
 //   append-qadam-version-catalogue.js --verify --catalogue <dir>
 //       Checks the catalogue: every entry parses, every metadata file matches its integrity.
 //
+// A run that stopped part-way (metadata files written, index not yet) is re-run with the same
+// archive: files already in place with the same bytes are reused.
+//
 // Prints one JSON line with the result. Exit codes: 0 done, 1 refused or invalid, 2 usage.
 async function main(): Promise<void> {
-    const { data: args, error: argsError } = await tryCatch(async () => parseArgs({
+    const { data: args, error: argsError } = tryCatchSync(() => parseArgs({
         options: {
             archive: { type: 'string' },
             catalogue: { type: 'string' },
@@ -24,6 +27,9 @@ async function main(): Promise<void> {
         },
     }).values)
     if (argsError || isNil(args.catalogue) || (!args.verify && isNil(args.archive)) || (args.verify && !isNil(args.archive))) {
+        if (argsError) {
+            console.error(argsError.message)
+        }
         console.error('usage: append-qadam-version-catalogue.js (--archive <dir> --catalogue <dir> | --verify --catalogue <dir>)')
         process.exit(2)
     }

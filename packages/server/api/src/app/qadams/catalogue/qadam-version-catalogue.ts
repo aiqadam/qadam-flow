@@ -8,7 +8,6 @@ import {
     QADAM_VERSION_CATALOGUE_MAX_METADATA_BYTES,
     QadamVersionCatalogueEntry,
     qadamVersionCatalogueFormat,
-    QadamVersionCatalogueMetadataFile,
 } from './qadam-version-catalogue-format'
 import { QadamVersionCatalogueSource } from './qadam-version-catalogue-source'
 
@@ -65,21 +64,19 @@ function buildCatalogue({ source, qadams }: { source: QadamVersionCatalogueSourc
             if (fetched.status !== 'ok') {
                 return { status: 'unavailable', reason: fetched.status === 'not-found' ? 'no metadata file' : fetched.reason }
             }
-            if (fetched.bytes.length !== found.metadata.size || qadamVersionCatalogueFormat.integrityOf(fetched.bytes) !== found.metadata.integrity) {
-                return { status: 'integrity-mismatch' }
+            const checked = qadamVersionCatalogueFormat.checkMetadataFile({ bytes: fetched.bytes, name, version, expected: found.metadata })
+            switch (checked.status) {
+                case 'ok':
+                    return { status: 'ok', metadata: checked.metadata }
+                case 'integrity-mismatch':
+                    return { status: 'integrity-mismatch' }
+                case 'not-json':
+                    return { status: 'invalid', reason: 'metadata is not JSON' }
+                case 'not-qadam-metadata':
+                    return { status: 'invalid', reason: 'not qadam metadata' }
+                case 'other-version':
+                    return { status: 'invalid', reason: 'metadata names another qadam version' }
             }
-            const { data: json, error } = tryCatchSync((): unknown => JSON.parse(fetched.bytes.toString('utf8')))
-            if (error) {
-                return { status: 'invalid', reason: 'metadata is not JSON' }
-            }
-            const metadata = QadamVersionCatalogueMetadataFile.safeParse(json)
-            if (!metadata.success) {
-                return { status: 'invalid', reason: 'not qadam metadata' }
-            }
-            if (metadata.data.name !== name || metadata.data.version !== version) {
-                return { status: 'invalid', reason: 'metadata names another qadam version' }
-            }
-            return { status: 'ok', metadata: metadata.data }
         },
     }
 }
