@@ -161,12 +161,13 @@ jobs:
   #
   # Since #799 (ADR-0001) `@aiqadam/shared` is private and no longer packed or published:
   # `qadams-framework`'s tarball carries all of it (code and `.d.ts`), see
-  # tools/scripts/utils/stage-package-for-publish.ts. The packages here are framework and common.
+  # tools/scripts/utils/stage-package-for-publish.ts. The packages here are framework and
+  # common.
   #
   # Packing lives in _pack-framework-packages.yml, not here, because a `v*` tag is no
   # longer the only way to reach them (#496): that tag IS the engine release — it moves the
   # Docker `:latest` every `run.sh` install resolves to and cuts a GitHub Release — and
-  # requiring one in order to publish a `0.135.0` library was backwards. publish-packages.yml
+  # requiring one in order to publish a `0.x` library was backwards. publish-packages.yml
   # calls the same workflow on `workflow_dispatch`. Read that file for what packing and
   # publishing do, why they are two jobs, and what a caller has to supply. What stays here is
   # only what is true of the TAG path.
@@ -188,11 +189,11 @@ jobs:
   # WHY A PRERELEASE TAG SKIPS THE CALL ENTIRELY rather than publishing under the npm `next`
   # dist-tag — the `!contains(github.ref_name, '-')` below, mirroring the Docker `publish`
   # job's own `enable=${{ !contains(github.ref_name, '-') }}`. Cut `v2.1.0-rc.1` while
-  # `qadams-framework` is at `0.36.0` (`packages/qadams/framework/package.json`) and it would
-  # publish `0.36.0` to `next`; cut the real `v2.1.0` later with the framework still at
-  # `0.36.0` (normal, since the two version independently of the tag) and
+  # `qadams-framework` is at some `X.Y.Z` (see `packages/qadams/framework/package.json`) and
+  # it would publish `X.Y.Z` to `next`; cut the real `v2.1.0` later with the framework still
+  # at `X.Y.Z` (normal, since the two version independently of the tag) and
   # `packagePrePublishChecks` reports "already published" and skips — `latest`
-  # never advances to `0.36.0`, silently, in a green job, and once #476 lands every qadam
+  # never advances to `X.Y.Z`, silently, in a green job, and once #476 lands every qadam
   # install resolves through `latest`. Nothing consumes these two yet, so an RC of Qadam
   # Flow being unable to publish an RC of them costs nothing; the next stable tag publishes
   # whatever version is current at that point, same as always. The alternative — on "already

@@ -9,7 +9,9 @@ call, the rule is [`.agents/rules/versioning.md`](../../.agents/rules/versioning
 release PR raises the version. It is private since #799: `qadams-framework` vendors all of its
 build at publish and re-exports from it, so no `shared` version is published again — and such a
 change also needs a changeset naming `@aiqadam/qadams-framework`, at the level the change has for
-a qadam author (gate 1 enforces it; the `versioning` skill says how to choose).
+a qadam author. Gate 1 enforces that line for `src/` and dependency changes only; for any other
+change that alters the tarball the obligation is ADR-0001's and a reviewer checks it. The
+`versioning` skill says how to choose the level.
 
 ## Skills for this package
 

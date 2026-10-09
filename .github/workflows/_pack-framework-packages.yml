@@ -71,13 +71,13 @@ permissions:
   contents: read
 
 jobs:
-  # Step 1a of the version-model decision in #433 (#475): publish the three framework
+  # Step 1a of the version-model decision in #433 (#475): publish the two framework
   # packages every qadam depends on through the bun workspace protocol —
-  # `@aiqadam/shared`, `@aiqadam/qadams-framework`, `@aiqadam/qadams-common` — to npmjs
+  # `@aiqadam/qadams-framework` and `@aiqadam/qadams-common` — to npmjs
   # under the `@aiqadam` scope. #476 (step 1b, publishing the 238 qadams themselves) is
   # blocked on this landing first and is NOT wired here.
   #
-  # Since #799 (ADR-0001) `@aiqadam/shared` is private and is no longer packed: what
+  # Since #799 (ADR-0001) `@aiqadam/shared` is private and is no longer packed:
   # `qadams-framework` carries all of it inside the framework tarball (code and `.d.ts`,
   # vendored under `vendor/shared`), and every packed package is refused if its manifest or
   # emitted code still names a private workspace package — see
