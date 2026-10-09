@@ -71,18 +71,17 @@ permissions:
   contents: read
 
 jobs:
-  # Step 1a of the version-model decision in #433 (#475): publish the three framework
+  # Step 1a of the version-model decision in #433 (#475): publish the two framework
   # packages every qadam depends on through the bun workspace protocol —
-  # `@aiqadam/shared`, `@aiqadam/qadams-framework`, `@aiqadam/qadams-common` — to npmjs
+  # `@aiqadam/qadams-framework` and `@aiqadam/qadams-common` — to npmjs
   # under the `@aiqadam` scope. #476 (step 1b, publishing the 238 qadams themselves) is
   # blocked on this landing first and is NOT wired here.
   #
-  # Since #799 (ADR-0001) `@aiqadam/shared` is private and is no longer packed: what
-  # `qadams-framework` uses from it travels inside the framework tarball (code and `.d.ts`,
+  # Since #799 (ADR-0001) `@aiqadam/shared` is private and is no longer packed:
+  # `qadams-framework` carries all of it inside the framework tarball (code and `.d.ts`,
   # vendored under `vendor/shared`), and every packed package is refused if its manifest or
   # emitted code still names a private workspace package — see
-  # tools/scripts/utils/stage-package-for-publish.ts. "The three framework packages" below now
-  # means framework and common.
+  # tools/scripts/utils/stage-package-for-publish.ts.
   #
   # WHY NOT bun's OWN `workspace:*` rewrite. `bun publish` / `bun pm pack` do rewrite a
   # `workspace:*` dependency to a real version, but they read that version from bun.lock's
@@ -106,11 +105,11 @@ jobs:
   # dist-tag. Read those before reordering anything here — the second in particular
   # documents a silent `latest`-starvation trap.
   #
-  # WHAT THIS WORKFLOW DOES NOT CATCH. It has no opinion on whether these three packages
+  # WHAT THIS WORKFLOW DOES NOT CATCH. It has no opinion on whether these two packages
   # should be republished on a given run at all — `packagePrePublishChecks` makes a no-op
-  # publish safe, but nothing here asserts any of the three was actually bumped. They
+  # publish safe, but nothing here asserts either of them was actually bumped. They
   # version independently of anything a caller knows about (`vX.Y.Z` on the Docker image
-  # says nothing about `packages/shared/package.json`'s own version), so "we published
+  # says nothing about `packages/qadams/framework/package.json`'s own version), so "we published
   # nothing" and "we published both" are both a green run with identical logs apart
   # from the per-package skip lines — read those lines, not the job conclusion, to know what
   # actually shipped. That is also why re-running after a transient failure is safe, and why
@@ -281,7 +280,7 @@ jobs:
       #
       # A package already published at its current version produces no tarball and no manifest
       # line, which is how a re-run after a partial failure stays safe.
-      # `--include-qadams` adds the 238 official qadams to the same manifest, AFTER the three
+      # `--include-qadams` adds the 238 official qadams to the same manifest, AFTER the two
       # framework packages (#476, step 1b). One manifest and one artifact rather than a second
       # pack/publish pair, because the publishing job is duplicated across release.yml and
       # publish-packages.yml on purpose (#498) and a third copy of it would be pinned by nothing

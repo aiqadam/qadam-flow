@@ -8,11 +8,10 @@ name: Publish packages
 # publish off the same event — which is what #475 originally specified — made the two
 # inseparable, so `@aiqadam/shared` could not reach the registry without shipping a product
 # release nobody asked for. `version-tag-gate` sharpens it: it pins the tag to the root
-# package.json version, currently `2.0.0`, while the three packages version independently
-# (`shared` 0.135.0, `qadams-framework` 0.32.1, `qadams-common` 0.14.1) — so publishing a
-# 0.135.0 library would have meant declaring a 2.0.0 product release. release.yml's own
-# header already called the image and the packages "independent artifacts for independent
-# consumers"; that had been applied to the failure direction only, never to the trigger.
+# package.json version, while the framework packages version independently of it — so
+# publishing a `0.x` library would have meant declaring a product release to match.
+# release.yml's own header already called the image and the packages "independent artifacts for
+# independent consumers"; that had been applied to the failure direction only, never to the trigger.
 #
 # WHAT THIS IS NOT. Not a second copy of the pipeline: both entry points call the same
 # _pack-framework-packages.yml, for the same reason _verify.yml exists (#64). The publishing
@@ -33,8 +32,8 @@ name: Publish packages
 # own comment gives.
 #
 # Since #799 (ADR-0001) `@aiqadam/shared` is private and no longer published; `qadams-framework`
-# carries the part of it it uses. The history above predates that and is kept as the reason this
-# file exists.
+# carries all of it (its whole build, code and `.d.ts`). The history above predates that and is
+# kept as the reason this file exists.
 #
 # `verify` here is a strict subset of what a PR gets: two of its steps (the new-migration
 # metadata check and check-required-prop-defaults) carry `if: github.event_name ==
