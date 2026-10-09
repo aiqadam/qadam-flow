@@ -311,11 +311,14 @@ function createStore({ root, log, limits }: CreateStoreParams): QadamVersionStor
     }
 
     // A damaged version moves aside rather than being deleted in place, so no reader ever sees it
-    // half removed. What was moved is read again: if another writer replaced the damaged version
-    // between this writer's read and its move, the move took that writer's good version, which is
-    // put back and kept.
+    // half removed. What was moved is read again, because another writer may have replaced the
+    // damaged version between this writer's read and its move: anything that is not DAMAGED — a good
+    // version, or one another release or host wrote and this one cannot use — is put back and kept.
+    // Only a moved version that is still DAMAGED is deleted; one that cannot be put back stays in
+    // `.trash/` until the stale-leftover cleanup, rather than being deleted now.
     const replaceDamaged = async ({ stagingDir, dir, coordinates, record, attempt, reason }: ReplaceDamagedParams): Promise<QadamVersionPutResult> => {
-        log.warn({ qadam: `${coordinates.name}@${coordinates.version}`, platformId: coordinates.platformId, reason }, '[qadamVersionStore] Replacing a damaged version')
+        const qadam = `${coordinates.name}@${coordinates.version}`
+        log.warn({ qadam, platformId: coordinates.platformId, reason }, '[qadamVersionStore] Replacing a damaged version')
         const aside = path.join(trashRoot, `${Date.now()}-${randomUUID()}`)
         const moved = await tryCatch(() => rename(dir, aside))
         if (moved.error !== null) {
@@ -326,19 +329,22 @@ function createStore({ root, log, limits }: CreateStoreParams): QadamVersionStor
             throw moved.error
         }
         const movedVersion = await readAt({ dir: aside, coordinates, verify: false })
-        if (movedVersion.status === QadamVersionReadStatus.PRESENT) {
-            const restored = await tryCatch(() => rename(aside, dir))
-            if (restored.error === null) {
-                await discardStaging({ stagingDir })
-                const kept = await read({ coordinates })
-                if (kept.status !== QadamVersionReadStatus.PRESENT) {
-                    throw new Error(`a version put back does not read back: ${kept.status}`)
-                }
-                return { status: QadamVersionPutStatus.EXISTS, version: kept.version }
-            }
+        if (movedVersion.status === QadamVersionReadStatus.DAMAGED) {
+            void rm(aside, { recursive: true, force: true }).catch(() => undefined)
+            return publish({ stagingDir, dir, coordinates, record, attempt: attempt + 1 })
         }
-        void rm(aside, { recursive: true, force: true }).catch(() => undefined)
-        return publish({ stagingDir, dir, coordinates, record, attempt: attempt + 1 })
+        const restored = await tryCatch(() => rename(aside, dir))
+        if (restored.error !== null) {
+            log.warn({ qadam, platformId: coordinates.platformId, status: movedVersion.status, trashEntry: path.basename(aside), error: describeErrorCode({ error: restored.error }) }, '[qadamVersionStore] Could not put back a version another writer stored; it stays in .trash until the leftover cleanup')
+            return publish({ stagingDir, dir, coordinates, record, attempt: attempt + 1 })
+        }
+        await discardStaging({ stagingDir })
+        const kept = await read({ coordinates })
+        if (kept.status === QadamVersionReadStatus.PRESENT) {
+            return { status: QadamVersionPutStatus.EXISTS, version: kept.version }
+        }
+        const keptReason = 'reason' in kept ? kept.reason : kept.status
+        return { status: QadamVersionPutStatus.REFUSED, reason: `a version this release cannot use is stored there and is kept (${kept.status}: ${keptReason})` }
     }
 
     const putTarball = async ({ coordinates, tarballPath, expectedIntegrity, origin }: PutTarballParams): Promise<QadamVersionPutResult> => {
@@ -447,8 +453,13 @@ async function readIntegrityRecord({ dir }: { dir: string }): Promise<IntegrityR
     if (stats.error !== null) {
         return { ok: false, problem: fileSystemUtils.hasErrorCode({ error: stats.error, code: 'ENOENT' }) ? damaged('integrity.json is missing') : unreadable({ what: 'integrity.json', error: stats.error }) }
     }
-    if (!stats.data.isFile() || stats.data.size > MAX_INTEGRITY_FILE_BYTES) {
-        return { ok: false, problem: damaged('integrity.json is not a regular file of a sane size') }
+    if (!stats.data.isFile()) {
+        return { ok: false, problem: damaged('integrity.json is not a regular file') }
+    }
+    // This release never writes a record this large, so a larger one comes from a later release
+    // (persisted signatures, #780): unsupported here, never damaged.
+    if (stats.data.size > MAX_INTEGRITY_FILE_BYTES) {
+        return { ok: false, problem: unsupported(`integrity.json is larger than this release writes (${MAX_INTEGRITY_FILE_BYTES} bytes)`) }
     }
     const parsed = await readJson({ filePath, what: 'integrity.json' })
     if (!parsed.ok) {

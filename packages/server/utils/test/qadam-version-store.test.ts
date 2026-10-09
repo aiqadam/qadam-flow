@@ -426,6 +426,41 @@ describe('versions that are not damaged are never replaced', () => {
         expect(await readdir(join(root, '.staging'))).toEqual([])
     })
 
+    it('puts back a version a later release stored while this one was replacing the damaged one', async () => {
+        await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version }) })
+        const laterRelease = join(tempDir, 'later-release-copy')
+        await cp(versionPath(), laterRelease, { recursive: true })
+        const laterRecord = { ...JSON.parse(await readFile(join(laterRelease, 'integrity.json'), 'utf8')), storeFormatVersion: 2, marker: 'N+1' }
+        await writeFile(join(laterRelease, 'integrity.json'), JSON.stringify(laterRecord))
+        await unlink(join(versionPath(), 'integrity.json'))
+        log.warn.mockImplementationOnce((_obj: unknown, msg: string) => {
+            if (msg.includes('Replacing a damaged version')) {
+                renameSync(versionPath(), join(tempDir, 'damaged-moved-by-the-other-writer'))
+                renameSync(laterRelease, versionPath())
+            }
+        })
+
+        const result = await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version, extra: { 'src/new.js': 'x' } }) })
+
+        expect(result.status === QadamVersionPutStatus.REFUSED && result.reason).toContain('is kept')
+        expect(JSON.parse(await readFile(join(versionPath(), 'integrity.json'), 'utf8'))).toEqual(laterRecord)
+        expect((await store.read({ coordinates: CSV })).status).toBe(QadamVersionReadStatus.UNSUPPORTED)
+        expect(await readdir(join(root, '.trash'))).toEqual([])
+    })
+
+    it('treats an integrity record larger than this release writes as a later release\'s, and keeps it', async () => {
+        await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version }) })
+        await editIntegrity({ storeFormatVersion: 2, signatures: 'x'.repeat(70_000) })
+        const before = await readFile(join(versionPath(), 'integrity.json'), 'utf8')
+
+        const read = await store.read({ coordinates: CSV })
+        const again = await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version }) })
+
+        expect(read.status).toBe(QadamVersionReadStatus.UNSUPPORTED)
+        expect(again.status === QadamVersionPutStatus.REFUSED && again.reason).toContain('is kept')
+        expect(await readFile(join(versionPath(), 'integrity.json'), 'utf8')).toBe(before)
+    })
+
     it('stores versions readable by other users of the volume', async () => {
         await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version }) })
 
