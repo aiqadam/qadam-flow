@@ -85,7 +85,24 @@ Exposes a Qadam Flow project as a Model Context Protocol (MCP) server so that AI
   step-level run-log opt-outs, #505). `ap_update_step` carries the stored `skip`, `logInput` and
   `logOutput` forward when the call omits them — `_updateAction` in shared copies all three straight
   from the request, so a field the tool left out was a reset, not a no-op (the pre-#505 tool
-  silently un-redacted and un-skipped every step it touched).
+  silently un-redacted and un-skipped every step it touched). **Stopgap (#843, removed when #808 lands):**
+  the rule lives in the shared `flowVersionValidationUtil.prepareRequest`, so it applies to every
+  caller of `flowService.update` (builder, REST, MCP), not just this tool. An `UPDATE_ACTION` /
+  `UPDATE_TRIGGER` whose pin (after `getExactVersion`) equals the step's STORED pin, where that pin
+  is not installed (outside what `qadamMetadataService.get()` resolves, e.g. a `0.x` minor behind the
+  image's build), is validated against the INSTALLED version's metadata
+  (`getOrThrow({ fallbackToInstalledVersion: true })`) instead of failing with
+  `qadam_metadata_not_found`. `ADD_ACTION` and any operation that sets a different pin stay strict.
+  The pin is never moved. The step's stored KIND and qadam NAME must match the operation too.
+  `ap_update_step` borrows the installed version's prop TYPES for its dynamic-prop deep merge and
+  emptied-required-prop guard (`loadActionProps`), which can only make it keep more and refuse
+  more; without them a partial edit of a DYNAMIC prop such as `qadam-tables`' `values` would replace
+  it and drop the stored sub-fields. It never writes the installed version's optional-prop defaults
+  (`fillDefaultsForMissingOptionalProps` stays strict). Both the success reply and the "updated but
+  still invalid" reply carry the `qadamPinIssue` warning. This does NOT make the step run: on a
+  worker whose `pieces-metadata` cache has no entry for the pin, provisioning asks the API for the
+  pin, gets nothing, and the run fails (`PieceNotFoundError`). If no version of the qadam is
+  installed, the write is refused with `qadam_not_installed ...` (a `VALIDATION` error).
 - `ap_add_branch`, `ap_update_branch`, `ap_delete_branch` — conditional branching
 - `ap_lock_and_publish` — publish flow version
 - `ap_change_flow_status` — enable/disable flow

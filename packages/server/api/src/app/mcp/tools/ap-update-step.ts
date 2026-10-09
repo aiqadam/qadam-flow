@@ -19,6 +19,7 @@ import { z } from 'zod'
 import { flowService } from '../../flows/flow/flow.service'
 import { projectService } from '../../project/project-service'
 import { qadamMetadataService } from '../../qadams/metadata/qadam-metadata-service'
+import { qadamPinUtil } from '../../qadams/metadata/qadam-pin-util'
 import { mcpUtils } from './mcp-utils'
 import { stepInputMerge } from './step-input-merge'
 
@@ -237,6 +238,9 @@ export const apUpdateStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLo
                 })
                 const updatedStep = flowStructureUtil.getStep(stepName, updatedFlow.version.trigger)
                 const draftWarning = mcpUtils.publishedFlowWarning(flow.publishedVersionId)
+                // Both replies carry it: an invalid step's diagnosis below is read from the installed
+                // version's metadata, which hides that the step's own pin does not resolve.
+                const pinNote = await unavailablePinNote({ step: updatedStep, platformId: project.platformId, log })
                 if (updatedStep && !updatedStep.valid) {
                     const diagnosis = updatedStep.type === FlowActionType.PIECE
                         ? await diagnoseMissingInputs({ settings: updatedStep.settings, platformId: project.platformId, log })
@@ -248,12 +252,12 @@ export const apUpdateStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLo
                     return {
                         content: [{
                             type: 'text',
-                            text: `⚠️ Step "${stepName}" updated but still invalid. ${hint}${draftWarning}`,
+                            text: `⚠️ Step "${stepName}" updated but still invalid. ${hint}${pinNote}${draftWarning}`,
                         }],
                     }
                 }
                 return {
-                    content: [{ type: 'text', text: `✅ Successfully updated step "${stepName}".${draftWarning}` }],
+                    content: [{ type: 'text', text: `✅ Successfully updated step "${stepName}".${pinNote}${draftWarning}` }],
                 }
             }
             catch (err) {
@@ -291,6 +295,23 @@ function dropStaleAiProviderId({ mergedInput, incomingInput, currentInput }: {
     return mergedInput
 }
 
+// An edit to a step pinned to a version this instance does not have is accepted (#843, validated
+// against the installed build), but the step is still unresolvable at run time on a worker that has
+// not cached that pin. A bare success would hide that from the agent.
+async function unavailablePinNote({ step, platformId, log }: {
+    step: Step | undefined
+    platformId: string
+    log: FastifyBaseLogger
+}): Promise<string> {
+    if (isNil(step) || step.type !== FlowActionType.PIECE) {
+        return ''
+    }
+    const pin = qadamPinUtil.pinOf({ step })
+    const resolutions = await qadamPinUtil.resolvePins({ pins: [pin], platformId, log })
+    const issue = mcpUtils.qadamPinIssue({ pin, resolvable: resolutions.get(pin) })
+    return isNil(issue) ? '' : `\n⚠️ Step "${step.name}" ${issue.message}`
+}
+
 async function loadActionProps({ settings, platformId, log }: {
     settings: Record<string, unknown>
     platformId: string
@@ -301,7 +322,13 @@ async function loadActionProps({ settings, platformId, log }: {
         return undefined
     }
     try {
-        const qadam = await qadamMetadataService(log).getOrThrow({ platformId, name: qadamName, version: qadamVersion })
+        // Without props the dynamic-prop deep merge and the emptied-required guard are both off, so a
+        // partial edit of a DYNAMIC prop would replace it wholesale and drop its stored sub-fields.
+        // For a pin that is not installed (#843, STOPGAP until #808) the installed version's prop TYPES
+        // are borrowed for exactly those two checks: that can only make the merge keep more and the
+        // guard refuse more. Its defaults are never written (`fillDefaultsForMissingOptionalProps`
+        // stays strict).
+        const qadam = await qadamMetadataService(log).getOrThrow({ platformId, name: qadamName, version: qadamVersion, fallbackToInstalledVersion: true })
         return qadam.actions[actionName]?.props
     }
     catch (err) {
@@ -320,7 +347,7 @@ async function diagnoseMissingInputs({ settings, platformId, log }: {
         return 'Missing actionName.'
     }
     try {
-        const qadam = await qadamMetadataService(log).getOrThrow({ platformId, name: qadamName, version: qadamVersion })
+        const qadam = await qadamMetadataService(log).getOrThrow({ platformId, name: qadamName, version: qadamVersion, fallbackToInstalledVersion: true })
         const action = qadam.actions[actionName]
         if (isNil(action)) {
             return `Action "${actionName}" not found in qadam "${qadamName}". Use ap_research_pieces with includeActions=true to get valid action names.`

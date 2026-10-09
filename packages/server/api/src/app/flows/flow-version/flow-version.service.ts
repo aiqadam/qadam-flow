@@ -351,7 +351,7 @@ async function applySingleOperation(
         flowVersion,
         operation,
     })
-    const preparedOperation = await flowVersionValidationUtil(log).prepareRequest({ platformId, request: operation, userId })
+    const preparedOperation = await flowVersionValidationUtil(log).prepareRequest({ platformId, request: operation, userId, storedFlowVersion: flowVersion })
     const updatedFlowVersion = flowOperations.apply(flowVersion, preparedOperation)
     return updatedFlowVersion
 }

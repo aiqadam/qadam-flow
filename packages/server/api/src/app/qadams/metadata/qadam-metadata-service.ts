@@ -64,7 +64,7 @@ export const qadamMetadataService = (log: FastifyBaseLogger) => {
                 version: qadam.version,
             }))
         },
-        async get({ projectId: _projectId, platformId, version, name }: GetOrThrowParams): Promise<QadamMetadataModel | undefined> {
+        async get({ projectId: _projectId, platformId, version, name }: GetParams): Promise<QadamMetadataModel | undefined> {
             const bestMatch = await findExactVersion(log, { name, version, platformId })
             if (isNil(bestMatch)) {
                 return undefined
@@ -89,9 +89,18 @@ export const qadamMetadataService = (log: FastifyBaseLogger) => {
             const bestMatch = await findExactVersion(log, { name, version, platformId })
             return bestMatch?.version
         },
-        async getOrThrow({ version, name, platformId, locale }: GetOrThrowParams): Promise<QadamMetadataModel> {
+        async getOrThrow({ version, name, platformId, locale, fallbackToInstalledVersion }: GetOrThrowParams): Promise<QadamMetadataModel> {
             const qadam = await this.get({ version, name, platformId })
+                ?? (fallbackToInstalledVersion ? await findInstalledForPin({ log, name, version, platformId }) : undefined)
             if (isNil(qadam)) {
+                if (fallbackToInstalledVersion) {
+                    throw new QadamFlowError({
+                        code: ErrorCode.VALIDATION,
+                        params: {
+                            message: `qadam_not_installed qadamName=${name} pinnedVersion=${version ?? 'none'}: this step is pinned to a version of the qadam that is not installed, and no other version of it is installed on this instance either, so it cannot be edited until one is. Install the qadam, or remove the step from the flow.`,
+                        },
+                    })
+                }
                 throw new QadamFlowError({
                     code: ErrorCode.ENTITY_NOT_FOUND,
                     params: {
@@ -261,6 +270,26 @@ export function toQadamMetadataModelSummary<T extends QadamMetadataSchema>(
                 Object.values(qadamMetadataEntity.triggers) : undefined,
         }
     })
+}
+
+// STOPGAP for #843, to be removed when #808 gives an unavailable pin its proper handling (ADR-0003's
+// checked, audited fallback). Editing-time lookup only: it lets a write validate against the
+// installed build of a qadam when the step's own pinned version is not installed.
+//
+// What actually happens to such a step at run time (traced, #843): the worker asks the API for the
+// pin through `get()` — the same resolution that just failed — so on a cold worker cache it throws
+// `PieceNotFoundError`, the run is marked FAILED and enable/publish is refused; the engine's own
+// by-name loader fallback is never reached. Only a worker whose `pieces-metadata` cache already
+// holds this exact `name-version-platform` entry skips the API call and goes on to run it on the
+// installed build. So this does NOT make the step run; it only stops the write path refusing an edit.
+// It reads the pin, never moves it, and may answer with a version outside the pin's caret range, so
+// nothing that resolves a pin to run or store it may use it.
+async function findInstalledForPin({ log, name, version, platformId }: FindInstalledForPinParams): Promise<QadamMetadataModel | undefined> {
+    const installed = await qadamMetadataService(log).get({ name, platformId })
+    if (!isNil(installed) && installed.version !== version) {
+        log.warn({ name, pinnedVersion: version, installedVersion: installed.version }, '[qadamMetadataService] pinned qadam version unavailable, edit validated against the installed version; the pin is unchanged')
+    }
+    return installed
 }
 
 const findOldestCreatedDate = async ({ name, platformId }: { name: string, platformId?: string }): Promise<string> => {
@@ -557,13 +586,25 @@ type ListParams = {
     locale?: LocalesEnum
 }
 
-type GetOrThrowParams = {
+type GetParams = {
     name: string
     version?: string
     entityManager?: EntityManager
     projectId?: string
     platformId?: string
     locale?: LocalesEnum
+}
+
+type GetOrThrowParams = GetParams & {
+    // STOPGAP for #843, removed when #808 lands. See `findInstalledForPin`.
+    fallbackToInstalledVersion?: boolean
+}
+
+type FindInstalledForPinParams = {
+    log: FastifyBaseLogger
+    name: string
+    version?: string
+    platformId?: string
 }
 
 type ResolveVersionParams = {
