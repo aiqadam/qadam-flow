@@ -41,12 +41,13 @@ plan, or cannot reach the release archive, does not fail. It builds **every** pa
 as a snapshot and logs a warning. `<next>` is then the next patch of each package's last release,
 the rule `compute-main-version.mjs` already applies to a platform with no pending changeset. Every
 number still names one artifact, and the extra snapshots are collected like any other (see
-Consequences). A release build never takes this path; it fails instead.
+Consequences). A release build never takes this path; it fails instead. The platform's own version
+stays fail-closed (see Consequences).
 
 **Pin format.** A pin (after its optional `^` or `~`), an alias and the engine accept a release
-`x.y.z` or a snapshot `x.y.z-main.<n>`, and no other prerelease. One parser in `shared` decides this for the step-settings
-and request schemas, the alias, the store's coordinates and the engine, and replaces the patterns
-each of them carries today (see Context). The alias becomes `name@version`, split at the last `@`.
+`x.y.z` or a snapshot `x.y.z-main.<n>`, and no other prerelease. One parser in `shared` decides this
+for the step-settings and request schemas, the alias, the store's coordinates and the engine, and
+replaces the patterns each of them carries today (see Context). The alias becomes `name@version`, split at the last `@`.
 Today it is `name-version`, split at the last hyphen, which a `-main.<n>` tail also contains. Flows do
 not store aliases: a step stores `qadamName` and `qadamVersion` apart. Aliases name directories in
 the worker's install workspace, so existing `name-version` directories get a compatibility read path,
