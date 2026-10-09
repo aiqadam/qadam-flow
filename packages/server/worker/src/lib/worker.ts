@@ -448,11 +448,9 @@ async function startPollingWorkers(apiClient: WorkerToApiContract): Promise<void
 
     if (sandboxManagers.length === 0) {
         const { data: settings } = tryCatchSync(() => workerSettings.getSettings())
-        // Before the first sandbox exists, because its engine's env is fixed when it starts. Isolate
-        // engines never get the store, so they need not open it.
-        if (!isNil(settings) && qadamVersionStoreRoot.isUsedBy({ executionMode: settings.EXECUTION_MODE })) {
-            await qadamVersionStoreRoot.prepare({ log: logger, environment: settings.ENVIRONMENT })
-        }
+        // Before the first sandbox exists, because its engine's env is fixed when it starts. In every
+        // mode: it only reads, and a later switch to a forked mode (on reconnect) needs the root.
+        await qadamVersionStoreRoot.prepare({ log: logger, environment: settings?.ENVIRONMENT, executionMode: settings?.EXECUTION_MODE })
         // Stopped while it waited, or another start created the managers and runs their loops.
         if (signal.aborted || sandboxManagers.length > 0) return
         sandboxManagers = createSandboxManagers()

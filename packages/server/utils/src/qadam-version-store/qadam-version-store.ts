@@ -5,6 +5,7 @@ import { isNil, tryCatch } from '@aiqadam/shared'
 import semver from 'semver'
 import { fileSystemUtils } from '../file-system-utils'
 import { qadamVersionStoreFormat } from './qadam-version-store-format'
+import { qadamVersionStoreFs } from './qadam-version-store-fs'
 import { QADAM_VERSION_STORE_LAYOUT, QadamVersionCoordinates, qadamVersionStoreLayout } from './qadam-version-store-layout'
 import {
     DEFAULT_QADAM_VERSION_STORE_LIMITS,
@@ -33,9 +34,10 @@ export enum QadamVersionPutStatus {
 
 // The versioned qadam store of ADR-0003 on a persistent volume, by `name@version`, per namespace.
 //
-// The engine loads an official qadam version from here when the store holds it, in the forked
-// execution modes (#779, `openForReading`). The API's metadata, the worker's provisioning and the
-// isolate modes do not resolve through it yet; #779 tracks the rest.
+// Only the app writes it. Workers and their engines read it through `qadamVersionStoreReader`
+// (`qadam-version-store-read.ts`), and the engine loads an official qadam version from it when it
+// holds that version, in the forked execution modes (#779). The API's metadata, the worker's
+// provisioning and the isolate modes do not resolve through it yet; #779 tracks the rest.
 //
 // Writes are atomic: a version is assembled in `<root>/.staging/`, checked, given its
 // `integrity.json`, flushed, and renamed into place, so a reader sees a complete version or none.
@@ -54,20 +56,20 @@ export const qadamVersionStore = {
             return realpath(absoluteRoot)
         })
         if (prepared.error !== null) {
-            return { ok: false, reason: `the store directory cannot be prepared (${qadamVersionStoreReader.describeErrorCode({ error: prepared.error })})` }
+            return { ok: false, reason: `the store directory cannot be prepared (${qadamVersionStoreFs.describeErrorCode({ error: prepared.error })})` }
         }
         const realRoot = prepared.data
         // A stored version resolves packages the way Node does, upward from its own directory. A
         // `node_modules` at or above the root would answer for anything the platform does not
         // provide, so a version could silently run on an app's own dependencies (ADR-0003: the
         // platform provides `@aiqadam/*` and `zod` only).
-        const reachable = await qadamVersionStoreReader.findNodeModulesAbove({ dir: realRoot })
+        const reachable = await qadamVersionStoreFs.findNodeModulesAbove({ dir: realRoot })
         if (!isNil(reachable)) {
             return { ok: false, reason: `stored versions could resolve packages from ${reachable}; put the store outside any directory with a node_modules` }
         }
         const caseSensitive = await tryCatch(() => isCaseSensitive({ dir: path.join(realRoot, QADAM_VERSION_STORE_LAYOUT.stagingDir) }))
         if (caseSensitive.error !== null) {
-            return { ok: false, reason: `the store directory is not writable (${qadamVersionStoreReader.describeErrorCode({ error: caseSensitive.error })})` }
+            return { ok: false, reason: `the store directory is not writable (${qadamVersionStoreFs.describeErrorCode({ error: caseSensitive.error })})` }
         }
         // Platform ids and prerelease versions differ by case alone; on a case-insensitive
         // filesystem two platforms could share a directory, so the store refuses to open there.
@@ -76,7 +78,7 @@ export const qadamVersionStore = {
         }
         const cleaned = await tryCatch(() => removeLeftovers({ root: realRoot, log }))
         if (cleaned.error !== null) {
-            log.warn({ error: qadamVersionStoreReader.describeErrorCode({ error: cleaned.error }) }, '[qadamVersionStore] Could not look for leftover staging or trash directories')
+            log.warn({ error: qadamVersionStoreFs.describeErrorCode({ error: cleaned.error }) }, '[qadamVersionStore] Could not look for leftover staging or trash directories')
         }
         return { ok: true, store: createStore({ root: realRoot, log, limits }) }
     },
@@ -224,7 +226,7 @@ function createStore({ root, log, limits }: CreateStoreParams): QadamVersionStor
         }
         const restored = await tryCatch(() => rename(aside, dir))
         if (restored.error !== null) {
-            log.warn({ qadam, platformId: coordinates.platformId, status: movedVersion.status, trashEntry: path.basename(aside), error: qadamVersionStoreReader.describeErrorCode({ error: restored.error }) }, '[qadamVersionStore] Could not put back a version another writer stored; it stays in .trash until the leftover cleanup')
+            log.warn({ qadam, platformId: coordinates.platformId, status: movedVersion.status, trashEntry: path.basename(aside), error: qadamVersionStoreFs.describeErrorCode({ error: restored.error }) }, '[qadamVersionStore] Could not put back a version another writer stored; it stays in .trash until the leftover cleanup')
             return publish({ stagingDir, dir, coordinates, record, attempt: attempt + 1 })
         }
         await discardStaging({ stagingDir })
@@ -292,7 +294,6 @@ const MAX_PUBLISH_ATTEMPTS = 3
 // ones may be another replica's write in progress. Seeding the whole catalogue takes minutes.
 const STALE_LEFTOVER_MS = 6 * 60 * 60 * 1000
 
-
 async function writeIntegrityRecord({ dir, record }: { dir: string, record: QadamVersionIntegrity }): Promise<void> {
     const handle = await open(path.join(dir, QADAM_VERSION_STORE_LAYOUT.integrityFile), 'wx', 0o644)
     try {
@@ -323,8 +324,6 @@ async function ensureDirectoryChain({ root, dir }: { root: string, dir: string }
     }
     return { ok: true }
 }
-
-
 
 async function isCaseSensitive({ dir }: { dir: string }): Promise<boolean> {
     const probe = path.join(dir, `case-probe-${randomUUID()}`)
@@ -381,10 +380,6 @@ function compareStrings(a: string, b: string): number {
     }
     return a < b ? -1 : 1
 }
-
-
-
-
 
 export type QadamVersionStoreLogger = {
     info: (obj: Record<string, unknown>, msg: string) => void
@@ -456,5 +451,4 @@ type PublishParams = {
 type ReplaceDamagedParams = PublishParams & {
     reason: string
 }
-
 

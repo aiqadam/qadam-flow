@@ -31,9 +31,11 @@ export const qadamPlatformModules = {
     // Starts guarding the modules loaded from the store at `storeRoot` (a real path). The hook is
     // registered once per process and serves every store root guarded through it.
     guard: ({ storeRoot }: { storeRoot: string }): GuardResult => {
-        const located = tryCatchSync(() => getPlatformPackageDirs())
-        if (located.error !== null) {
-            return { ok: false, reason: 'the platform\'s copy of a package it provides cannot be found' }
+        // Each package resolved the way a stored version will ask for it. The reason names the
+        // package, never a path.
+        const missing = PLATFORM_PROVIDED_PACKAGES.find((packageName) => tryCatchSync(() => resolveFromPlatform({ specifier: packageName })).error !== null)
+        if (!isNil(missing)) {
+            return { ok: false, reason: `the platform's copy of ${missing} cannot be found` }
         }
         if (!hooksRegistered) {
             const { error } = tryCatchSync(() => registerHooks({ resolve: resolveForStoredModules }))

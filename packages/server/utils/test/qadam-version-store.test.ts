@@ -555,6 +555,28 @@ describe('qadamVersionStore.open', () => {
 })
 
 describe('qadamVersionStoreReader.open', () => {
+    it('reads a version whose entry point resolves outside it as damaged', async () => {
+        await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version }) })
+        const outside = join(tempDir, 'elsewhere')
+        await cp(join(versionDir(CSV), 'src'), outside, { recursive: true })
+        await rm(join(versionDir(CSV), 'src'), { recursive: true })
+        await symlink(outside, join(versionDir(CSV), 'src'))
+
+        const read = await store.read({ coordinates: CSV })
+
+        expect(read).toEqual({ status: QadamVersionReadStatus.DAMAGED, reason: 'the entry point resolves outside the version' })
+    })
+
+    it('reads a version whose package.json is not a regular file as damaged', async () => {
+        await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version }) })
+        await rm(join(versionDir(CSV), 'package.json'))
+        await mkdir(join(versionDir(CSV), 'package.json'))
+
+        const read = await store.read({ coordinates: CSV })
+
+        expect(read).toEqual({ status: QadamVersionReadStatus.DAMAGED, reason: 'package.json is not a regular file' })
+    })
+
     it('reads what the store holds', async () => {
         await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version }) })
 

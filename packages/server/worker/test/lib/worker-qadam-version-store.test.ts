@@ -123,13 +123,31 @@ describe('worker start and the qadam version store', () => {
         expect(workerInternals.activePollLoopCount()).toBe(0)
     }, 20_000)
 
-    it('does not open the store in an isolate mode', async () => {
+    it('opens the store in an isolate mode too, for a later switch to a forked mode', async () => {
         executionMode = 'SANDBOX_CODE_AND_PROCESS'
+        prepareMock.mockResolvedValue(undefined)
         startWorker()
 
         await waitUntil(() => pollCalls > 0, 'the worker never polled')
-        expect(prepareMock).not.toHaveBeenCalled()
+        expect(prepareMock).toHaveBeenCalledWith(expect.objectContaining({ executionMode: 'SANDBOX_CODE_AND_PROCESS' }))
     }, 20_000)
+
+    it('runs one set of poll loops when it is stopped and started again while the store opens', async () => {
+        executionMode = 'UNSANDBOXED'
+        const first = deferred()
+        prepareMock.mockReturnValueOnce(first.promise).mockResolvedValue(undefined)
+        startWorker()
+        await waitUntil(() => prepareMock.mock.calls.length === 1, 'the worker never opened the store')
+
+        await worker.stop()
+        startWorker()
+        await waitUntil(() => pollCalls > 0, 'the restarted worker never polled')
+        first.resolve()
+        await new Promise<void>((resolve) => setTimeout(resolve, 300))
+
+        expect(prepareMock).toHaveBeenCalledTimes(2)
+        expect(workerInternals.activePollLoopCount()).toBe(1)
+    }, 30_000)
 })
 
 let startWorker: () => void = () => undefined

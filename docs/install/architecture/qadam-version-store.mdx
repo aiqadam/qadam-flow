@@ -14,6 +14,8 @@ The store is only partly in use. A worker runs an official qadam version from th
 
 The bundled `docker-compose.yml` mounts the named volume `qadam_versions` at `/var/lib/qadam-flow/qadam-versions` on the `app` service, and read-only on every `worker` replica: only the app writes the store, and workers run flow code that must not be able to change code every tenant runs. Re-running the [installer](/install/options/docker) on an existing install adds the volume; nothing else changes.
 
+A worker that can write the store does not use it, and logs `mount the qadam version store read-only on workers`; in a development environment it uses it anyway, with that warning. Do not combine [`docker-compose.sandboxed.yml`](/install/architecture/sandboxing) with the `UNSANDBOXED` or `SANDBOX_CODE_ONLY` execution mode: it grants workers `CAP_SYS_ADMIN`, which lets flow code in a forked engine remount the store read-write.
+
 If you run the containers another way, mount one volume at that path on the app (read-write) and every worker (read-only), or set `AP_QADAM_VERSION_STORE_PATH` to where you mounted it. Three requirements:
 
 - **Outside any directory with a `node_modules`.** A stored version finds packages the way Node does, upward from its own directory, and must find only what the platform provides. The store refuses to open at or below a directory that contains a `node_modules`, such as the app's own `/usr/src/app`.

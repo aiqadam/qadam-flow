@@ -9,6 +9,10 @@
 # need it, and CAP_SYS_ADMIN is a container-escape-grade capability that every self-hoster should
 # opt into explicitly. See docs/install/architecture/sandboxing.mdx for the trade-off.
 #
+# Use it with an isolate mode only. With CAP_SYS_ADMIN a forked engine (UNSANDBOXED,
+# SANDBOX_CODE_ONLY) could remount the worker's read-only qadam version store read-write and change
+# code every tenant runs (#779).
+#
 # Apply it alongside the default file. `run.sh` can do it for you, once:
 #   curl -fsSL https://flow.aiqadam.org/run.sh | QADAM_FLOW_SANDBOXED=yes sh
 # That fetches this file and writes COMPOSE_FILE into .env, so the capabilities survive a later

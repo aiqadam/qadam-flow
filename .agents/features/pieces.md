@@ -17,7 +17,7 @@ The qadams feature manages the metadata catalog of automation integrations (call
 - `packages/web/src/features/qadams/hooks/pieces-hooks.ts` — React Query hooks for piece listing, piece model, piece options
 - `packages/web/src/features/qadams/hooks/use-piece-output-schema.ts` — reads `outputSchema` for a given step (PIECE action or trigger) off the cached piece model; shares the existing `['piece', name, version]` React Query cache so no extra network call is made
 - `packages/web/src/features/qadams/components/` — `PieceIcon`, `PieceIconList`, `PieceSelectorSearch`, `InstallPieceDialog`
-- `tools/scripts/qadams/bundle/` — builds a qadam version as the ADR-0003 artifact (#804): one esbuild bundle with `@aiqadam/*` and `zod` external and declared as `peerDependencies`, `src/i18n`, and a `metadata.json` written from loading the artifact; `qadam-artifact-config.json` holds the reviewed per-qadam exceptions (node_modules for native addons and packages that read their own files, `__dirname`-started entry points). Nothing publishes this format yet; the qadam version store (#805, below) reads it, and nothing resolves a step to it before #779. Header of `qadam-artifact.mjs` documents the layout; `tools/ci/test-qadam-artifacts.sh` pins it
+- `tools/scripts/qadams/bundle/` — builds a qadam version as the ADR-0003 artifact (#804): one esbuild bundle with `@aiqadam/*` and `zod` external and declared as `peerDependencies`, `src/i18n`, and a `metadata.json` written from loading the artifact; `qadam-artifact-config.json` holds the reviewed per-qadam exceptions (node_modules for native addons and packages that read their own files, `__dirname`-started entry points). Nothing publishes this format yet; the qadam version store (#805, below) reads it, and forked engines load an official step's pin from it when it holds it (#779). Header of `qadam-artifact.mjs` documents the layout; `tools/ci/test-qadam-artifacts.sh` pins it
 - `packages/server/utils/src/qadam-version-store/` — the qadam version store (ADR-0003 "Store", #805), see "Qadam Version Store" below
 - `packages/server/api/src/app/qadams/version-store/qadam-version-store-seeding.ts` — seeds the store from the image at API start-up
 - `packages/qadams/framework/src/lib/output-schema.ts` — `OutputSchema` / `OutputSchemaField` / `FieldFormat` plain TypeScript types (embedded into the piece metadata via `z.custom`)
@@ -174,7 +174,9 @@ qadam, Store Entry): say "qadam version store".
   `docker-compose.yml` mounts the named volume `qadam_versions` there on the app (read-write, it
   seeds) and read-only on every worker (#779 app-sec: a forked engine runs flow code as the worker
   user, `read` does not re-hash files, so a writable store would let one engine plant code every
-  tenant runs). Nothing in the worker or engine writes the store; both use `openForReading`.
+  tenant runs). Nothing in the worker or engine writes the store; both use `qadamVersionStoreReader.open`.
+  The worker checks it: a store it can write (`access(W_OK)` succeeds) is not used outside `AP_ENVIRONMENT=dev`
+  (warned there). `docker-compose.sandboxed.yml` (CAP_SYS_ADMIN) with a forked mode could remount it, so do not combine them.
   Outside `/usr/src/app` on purpose: a stored version resolves packages upward from its own
   directory, and `open` refuses a root at or below any directory holding a `node_modules`. That
   covers the upward walk only; `NODE_PATH` (the sandbox env sets `/usr/src/node_modules`) and the
@@ -241,7 +243,8 @@ qadam, Store Entry): say "qadam version store".
   `AP_QADAM_VERSION_STORE_PATH` (`WorkerSystemProp.QADAM_VERSION_STORE_PATH`, same default as the
   API) with `qadamVersionStoreReader.open` (`qadam-version-store-read.ts`: realpath + the
   `node_modules`-above check, no mkdir, probe or cleanup) before it creates its first sandbox, and
-  only when the execution mode is forked (`cache/qadams/qadam-version-store-root.ts`). Sandbox env
+  in every execution mode, so a later switch to a forked mode on reconnect has a root
+  (`cache/qadams/qadam-version-store-root.ts`; unusable-store lines are info in dev and in isolate modes). Sandbox env
   always carries `AP_QADAM_VERSION_STORE_PATH`: the real root for forked engines, `''` otherwise, so a
   value an operator propagates (`AP_SANDBOX_PROPAGATED_ENV_VARS`) never reaches an isolate engine
   (mounting the store there is a later slice: only the official tree and the job's own platform

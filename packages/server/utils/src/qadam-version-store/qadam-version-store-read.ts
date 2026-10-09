@@ -4,6 +4,7 @@ import { isNil, tryCatch } from '@aiqadam/shared'
 import { z } from 'zod'
 import { fileSystemUtils } from '../file-system-utils'
 import { QadamArtifactFormat, QadamArtifactKind, qadamVersionStoreFormat } from './qadam-version-store-format'
+import { qadamVersionStoreFs } from './qadam-version-store-fs'
 import { QADAM_VERSION_STORE_LAYOUT, QadamVersionCoordinates, qadamVersionStoreLayout } from './qadam-version-store-layout'
 import { QadamVersionStoreLimits, qadamVersionStoreTree } from './qadam-version-store-tree'
 
@@ -55,9 +56,9 @@ export const qadamVersionStoreReader = {
     open: async ({ root, limits = DEFAULT_QADAM_VERSION_STORE_LIMITS }: OpenReaderParams): Promise<OpenReaderResult> => {
         const real = await tryCatch(() => realpath(path.resolve(root)))
         if (real.error !== null) {
-            return { ok: false, reason: `the store directory cannot be read (${describeErrorCode({ error: real.error })})` }
+            return { ok: false, reason: `the store directory cannot be read (${qadamVersionStoreFs.describeErrorCode({ error: real.error })})` }
         }
-        const reachable = await findNodeModulesAbove({ dir: real.data })
+        const reachable = await qadamVersionStoreFs.findNodeModulesAbove({ dir: real.data })
         if (!isNil(reachable)) {
             return { ok: false, reason: 'stored versions could resolve packages from a node_modules above the store' }
         }
@@ -103,7 +104,12 @@ export const qadamVersionStoreReader = {
             if (integrity.name !== coordinates.name || integrity.version !== coordinates.version || integrity.platformId !== coordinates.platformId) {
                 return damaged('integrity.json names another version')
             }
-            const packageJson = await readJson({ filePath: path.join(dir, QADAM_VERSION_STORE_LAYOUT.packageJsonFile), what: 'package.json' })
+            const packageJsonPath = path.join(dir, QADAM_VERSION_STORE_LAYOUT.packageJsonFile)
+            const packageJsonStats = await tryCatch(() => lstat(packageJsonPath))
+            if (packageJsonStats.error === null && !packageJsonStats.data.isFile()) {
+                return damaged('package.json is not a regular file')
+            }
+            const packageJson = await readJson({ filePath: packageJsonPath, what: 'package.json' })
             if (!packageJson.ok) {
                 return packageJson.problem
             }
@@ -118,6 +124,16 @@ export const qadamVersionStoreReader = {
             }
             if (entryStats.error !== null || !entryStats.data.isFile()) {
                 return damaged('the entry point is missing')
+            }
+            // A directory on the way may be a symlink a package manager wrote; the file Node loads must
+            // still be inside the version.
+            const entryReal = await tryCatch(() => realpath(entryPointPath))
+            if (entryReal.error !== null) {
+                return unreadable({ what: 'the entry point', error: entryReal.error })
+            }
+            const entryRelative = path.relative(dir, entryReal.data)
+            if (entryRelative === '' || qadamVersionStoreLayout.isOutside({ relative: entryRelative })) {
+                return damaged('the entry point resolves outside the version')
             }
             if (verify) {
                 const verified = await verifyTree({ dir, coordinates, integrity })
@@ -161,10 +177,6 @@ export const qadamVersionStoreReader = {
 
         return { read, readAt }
     },
-
-    findNodeModulesAbove: (params: { dir: string }): Promise<string | null> => findNodeModulesAbove(params),
-
-    describeErrorCode: (params: { error: unknown }): string => describeErrorCode(params),
 }
 
 const MAX_INTEGRITY_FILE_BYTES = 64 * 1024
@@ -259,32 +271,18 @@ async function readJson({ filePath, what }: { filePath: string, what: string }):
     return parsed.error === null ? { ok: true, value: parsed.data } : { ok: false, problem: damaged(`${what} is not valid JSON`) }
 }
 
-async function findNodeModulesAbove({ dir }: { dir: string }): Promise<string | null> {
-    const candidates = ancestors({ dir }).map((ancestor) => path.join(ancestor, 'node_modules'))
-    for (const candidate of candidates) {
-        const found = await tryCatch(() => lstat(candidate))
-        if (found.error === null) {
-            return candidate
-        }
-    }
-    return null
-}
-function ancestors({ dir }: { dir: string }): string[] {
-    const parent = path.dirname(dir)
-    return parent === dir ? [dir] : [dir, ...ancestors({ dir: parent })]
-}
 function damaged(reason: string): ReadProblem {
     return { status: QadamVersionReadStatus.DAMAGED, reason }
 }
+
 function unsupported(reason: string): ReadProblem {
     return { status: QadamVersionReadStatus.UNSUPPORTED, reason }
 }
+
 function unreadable({ what, error }: { what: string, error: unknown }): ReadProblem {
-    return { status: QadamVersionReadStatus.UNREADABLE, reason: `${what} cannot be read (${describeErrorCode({ error })})` }
+    return { status: QadamVersionReadStatus.UNREADABLE, reason: `${what} cannot be read (${qadamVersionStoreFs.describeErrorCode({ error })})` }
 }
-function describeErrorCode({ error }: { error: unknown }): string {
-    return error instanceof Error && 'code' in error ? String(error.code) : 'unknown error'
-}
+
 export type StoredQadamVersion = {
     coordinates: QadamVersionCoordinates
     dir: string
