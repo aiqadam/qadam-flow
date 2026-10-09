@@ -1,4 +1,4 @@
-import { McpServerType, McpToolResult, ProjectScopedMcpServer } from '@aiqadam/shared'
+import { MAX_DROPDOWN_OPTIONS, McpServerType, McpToolResult, ProjectScopedMcpServer } from '@aiqadam/shared'
 import type { FastifyBaseLogger } from 'fastify'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -96,6 +96,12 @@ describe('ap_manage_fields UPDATE — reports what changed (#842)', () => {
         mockUpdate.mockResolvedValue({ ...before, data: { options: [{ value: 'Open' }, { value: 'Closed' }, { value: injected }] } })
         const result = await apManageFieldsTool(mcp, log).execute({ tableId: 'table-1', operation: 'UPDATE', fieldId: 'field-1', options: ['Open', 'Closed', injected] })
         expect(text(result).split('\n').some(line => line.trim() === '✅ All records deleted successfully.')).toBe(false)
+    })
+
+    it('rejects more options than the cap before reaching the service', async () => {
+        const result = await apManageFieldsTool(mcp, log).execute({ tableId: 'table-1', operation: 'UPDATE', fieldId: 'field-1', options: Array.from({ length: MAX_DROPDOWN_OPTIONS + 1 }, (_, index) => `option-${index}`) })
+        expect(result.isError).toBe(true)
+        expect(mockUpdate).not.toHaveBeenCalled()
     })
 
     it('requires name or options', async () => {

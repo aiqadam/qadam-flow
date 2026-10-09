@@ -1,5 +1,5 @@
-import { apId, assertNotNullOrUndefined, Cell, CreateFieldRequest, ErrorCode, Field, FieldState, FieldType, formErrors, isNil, QadamFlowError, spreadIfDefined, tryCatchSync, unique, UpdateFieldRequest } from '@aiqadam/shared'
-import { EntityManager, In } from 'typeorm'
+import { apId, assertNotNullOrUndefined, Cell, CreateFieldRequest, ErrorCode, Field, FieldState, FieldType, formErrors, isNil, MAX_DROPDOWN_OPTIONS, QadamFlowError, spreadIfDefined, tryCatchSync, unique, UpdateFieldRequest } from '@aiqadam/shared'
+import { EntityManager, In, Not } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
 import { transaction } from '../../core/db/transaction'
 import { system } from '../../helper/system/system'
@@ -180,6 +180,11 @@ export const fieldService = {
                     const message = formErrors.required
                     throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, `Field "${field.name}": options must contain at least one value.`)
                 }
+                if (newOptions.length > MAX_DROPDOWN_OPTIONS) {
+                    // REST is capped by the request schema; the MCP tool calls the service directly. Uncapped,
+                    // a later removal could exceed Postgres's bind-parameter limit in the in-use check.
+                    throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message: `Max options per dropdown field reached: ${MAX_DROPDOWN_OPTIONS}` } })
+                }
                 await assertNoRemovedOptionInUse({ field, newOptions, projectId, entityManager })
             }
             const changes = {
@@ -227,17 +232,24 @@ function assertValidJsonFieldSchema(schema: string | undefined): void {
 
 // Removing an option that a record still holds would leave that cell with a value the field
 // no longer accepts: unwritable back to itself and invisible to the dropdown. Rejected, as is
-// a rename (which is a remove plus an add). Only counts leave this function — never the
-// cell values, which are row data.
+// a rename (which is a remove plus an add). Only a count is computed — cell values are row
+// data and never leave this function.
 async function assertNoRemovedOptionInUse({ field, newOptions, projectId, entityManager }: { field: DropdownField, newOptions: { value: string }[], projectId: string, entityManager: EntityManager }): Promise<void> {
     const kept = new Set(newOptions.map((option) => option.value))
-    // '' is the "unset" sentinel every type validates as empty, never a real selection.
     // `data` is typed as required but the column is nullable (field.entity.ts); see cell-validation.ts.
-    const removed = unique((field.data?.options ?? []).map((option) => option.value)).filter((value) => value !== '' && !kept.has(value))
-    if (removed.length === 0) {
+    const declared = unique((field.data?.options ?? []).map((option) => option.value))
+    // '' is the "unset" sentinel every type validates as empty, never a real selection.
+    const removed = declared.filter((value) => value !== '' && !kept.has(value))
+    // A field with no declared options is unconstrained, so its cells may hold any value and
+    // every one of them becomes out-of-options once a list is set. A field that already
+    // declares options only loses the values it drops: orphan cells it already holds must not
+    // block extending it.
+    const isUnconstrained = declared.length === 0
+    if (!isUnconstrained && removed.length === 0) {
         return
     }
-    const recordsInUse = await cellRepo(entityManager).count({ where: { projectId, fieldId: field.id, value: In(removed) } })
+    const value = isUnconstrained ? Not(In([...kept, ''])) : In(removed)
+    const recordsInUse = await cellRepo(entityManager).count({ where: { projectId, fieldId: field.id, value } })
     if (recordsInUse === 0) {
         return
     }

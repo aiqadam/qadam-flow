@@ -1,4 +1,4 @@
-import { Field, FieldType, isNil, MAX_KEY_FIELDS, McpToolDefinition, Permission, ProjectScopedMcpServer, spreadIfDefined } from '@aiqadam/shared'
+import { Field, FieldType, isNil, MAX_DROPDOWN_OPTIONS, MAX_KEY_FIELDS, McpToolDefinition, Permission, ProjectScopedMcpServer, spreadIfDefined } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
 import { fieldService } from '../../tables/field/field.service'
@@ -12,7 +12,7 @@ const manageFieldsInput = z.object({
     fieldId: z.string().optional().describe('The field ID (required for UPDATE and DELETE). Use ap_list_tables to find it.'),
     name: z.string().optional().describe('Field name (required for ADD; for UPDATE the new name — give name, options, or both)'),
     type: fieldTypeSchema.optional().describe('Field type (required for ADD only)'),
-    options: z.array(z.string()).optional().describe('Dropdown options (required for ADD with STATIC_DROPDOWN type). For UPDATE on a STATIC_DROPDOWN field this is the complete new list: new values are added, and the field id, externalId and existing cells are kept. An option still used by a record cannot be removed (a rename counts as a removal) — clear or change those cells first.'),
+    options: z.array(z.string()).max(MAX_DROPDOWN_OPTIONS).optional().describe('Dropdown options (required for ADD with STATIC_DROPDOWN type). For UPDATE on a STATIC_DROPDOWN field this is the complete new list: new values are added, and the field id, externalId and existing cells are kept. An option still used by a record cannot be removed (a rename counts as a removal) — clear or change those cells first.'),
     keyFieldIds: z.array(z.string()).max(MAX_KEY_FIELDS).optional().describe('Field IDs that together form the table\'s unique business key (required for DECLARE_KEY). A field that is part of the current key cannot be deleted until CLEAR_KEY runs first.'),
 })
 

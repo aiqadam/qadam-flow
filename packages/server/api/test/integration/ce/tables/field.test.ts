@@ -1,7 +1,8 @@
-import { apId, Cell, FieldType, isNil, McpServerType, ProjectScopedMcpServer } from '@aiqadam/shared'
+import { apId, Cell, ErrorCode, FieldType, isNil, MAX_DROPDOWN_OPTIONS, McpServerType, ProjectScopedMcpServer } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { apManageFieldsTool } from '../../../../src/app/mcp/tools/ap-manage-fields'
+import { fieldService } from '../../../../src/app/tables/field/field.service'
 import { db } from '../../../helpers/db'
 import { describeWithAuth } from '../../../helpers/describe-with-auth'
 import {
@@ -10,7 +11,7 @@ import {
     createMockRecord,
     createMockTable,
 } from '../../../helpers/mocks'
-import { createTestContext, TestContext  } from '../../../helpers/test-context'
+import { createTestContext, TestContext } from '../../../helpers/test-context'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
 let app: FastifyInstance | null = null
@@ -289,9 +290,80 @@ describe('Field API', () => {
             const ctx = await setup()
             const { field } = await createDropdownField({ ctx, options: ['Open'] })
 
-            const response = await ctx.post(`/v1/fields/${field.id}`, { data: { options: [] } })
+            // `name` is sent too: without it the body 400s on main for a different reason.
+            const response = await ctx.post(`/v1/fields/${field.id}`, { name: 'X', data: { options: [] } })
 
             expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
+            const stored = await db.findOneBy<StoredField & { name: string }>('field', { id: field.id })
+            expect(stored?.name).toBe(field.name)
+        })
+
+        it('stores a duplicated option once', async () => {
+            const ctx = await setup()
+            const { field } = await createDropdownField({ ctx, options: ['Open'] })
+
+            const response = await ctx.post(`/v1/fields/${field.id}`, { data: { options: [{ value: 'Open' }, { value: 'Open' }, { value: 'Closed' }] } })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            expect(response?.json().data.options).toEqual([{ value: 'Open' }, { value: 'Closed' }])
+        })
+
+        it('allows removing an empty-string option while cells hold the empty value', async () => {
+            const ctx = await setup()
+            const { table, field } = await createDropdownField({ ctx, options: ['Open', ''] })
+            await saveCell({ ctx, tableId: table.id, fieldId: field.id, value: '' })
+
+            const response = await ctx.post(`/v1/fields/${field.id}`, { data: { options: [{ value: 'Open' }] } })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            expect(response?.json().data.options).toEqual([{ value: 'Open' }])
+        })
+
+        it('rejects giving options to an unconstrained dropdown whose cells would fall outside them', async () => {
+            const ctx = await setup()
+            const { table, field } = await createDropdownField({ ctx, options: [] })
+            const written = await ctx.post('/v1/records', { tableId: table.id, records: [[{ fieldId: field.id, value: 'Legacy' }]] })
+            expect(written?.statusCode).toBe(StatusCodes.CREATED)
+
+            const response = await ctx.post(`/v1/fields/${field.id}`, { data: { options: [{ value: 'A' }] } })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+            const stored = await db.findOneBy<StoredField>('field', { id: field.id })
+            expect(stored?.data).toEqual({ options: [] })
+        })
+
+        it('gives options to an unconstrained dropdown when every cell is covered or empty', async () => {
+            const ctx = await setup()
+            const { table, field } = await createDropdownField({ ctx, options: [] })
+            await ctx.post('/v1/records', { tableId: table.id, records: [[{ fieldId: field.id, value: 'Legacy' }]] })
+            await saveCell({ ctx, tableId: table.id, fieldId: field.id, value: '' })
+
+            const response = await ctx.post(`/v1/fields/${field.id}`, { data: { options: [{ value: 'Legacy' }] } })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            expect(response?.json().data.options).toEqual([{ value: 'Legacy' }])
+        })
+
+        it('still extends a dropdown that already holds a cell outside its options', async () => {
+            const ctx = await setup()
+            const { table, field } = await createDropdownField({ ctx, options: ['Open'] })
+            await saveCell({ ctx, tableId: table.id, fieldId: field.id, value: 'Orphan' })
+
+            const response = await ctx.post(`/v1/fields/${field.id}`, { data: { options: [{ value: 'Open' }, { value: 'Closed' }] } })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+        })
+
+        it('rejects more options than the cap when called without the request schema', async () => {
+            const ctx = await setup()
+            const { field } = await createDropdownField({ ctx, options: ['Open'] })
+            const tooMany = Array.from({ length: MAX_DROPDOWN_OPTIONS + 1 }, (_, index) => ({ value: `option-${index}` }))
+
+            await expect(fieldService.update({ id: field.id, projectId: ctx.project.id, request: { data: { options: tooMany } } }))
+                .rejects.toMatchObject({ error: { code: ErrorCode.VALIDATION } })
+
+            const stored = await db.findOneBy<StoredField>('field', { id: field.id })
+            expect(stored?.data).toEqual({ options: [{ value: 'Open' }] })
         })
 
         it('rejects options on a field that is not a STATIC_DROPDOWN', async () => {
@@ -308,14 +380,14 @@ describe('Field API', () => {
             expect(stored?.data ?? null).toBeNull()
         })
 
-        it('does not find a field of another project', async () => {
+        it('cannot update a field of another project', async () => {
             const ctx = await setup()
             const otherCtx = await createTestContext(app!)
             const { field } = await createDropdownField({ ctx: otherCtx, options: ['Open'] })
 
             const response = await ctx.post(`/v1/fields/${field.id}`, { data: { options: [{ value: 'Open' }, { value: 'Closed' }] } })
 
-            expect(response?.statusCode).toBe(StatusCodes.NOT_FOUND)
+            expect(response?.statusCode).toBe(StatusCodes.FORBIDDEN)
             const stored = await db.findOneBy<StoredField>('field', { id: field.id })
             expect(stored?.data).toEqual({ options: [{ value: 'Open' }] })
         })
@@ -405,6 +477,14 @@ async function createDropdownField({ ctx, options, tableId }: { ctx: TestContext
     })
     expect(response?.statusCode).toBe(StatusCodes.CREATED)
     return { table, field: response?.json() }
+}
+
+// Written straight to the database: the API would refuse a value outside the field's options,
+// and the point is to cover cells that predate the field's current option list.
+async function saveCell({ ctx, tableId, fieldId, value }: { ctx: TestContext, tableId: string, fieldId: string, value: string }): Promise<void> {
+    const record = createMockRecord({ tableId, projectId: ctx.project.id })
+    await db.save('record', record)
+    await db.save('cell', { ...createMockCell({ recordId: record.id, fieldId, projectId: ctx.project.id }), value })
 }
 
 function makeMcp(projectId: string): ProjectScopedMcpServer {
