@@ -567,5 +567,71 @@ describe('Flow API', () => {
             expect(responseBody.flows).toHaveLength(1)
             expect(responseBody.flows[0]).toHaveProperty('trigger')
         })
+
+        describe('versionId query', () => {
+            it('Builds the template from the requested version instead of the latest draft', async () => {
+                const ctx = await createTestContext(app!)
+
+                const mockFlow = createMockFlow({ projectId: ctx.project.id })
+                await db.save('flow', mockFlow)
+
+                const publishedVersion = createMockFlowVersion({
+                    flowId: mockFlow.id,
+                    updatedBy: ctx.user.id,
+                    displayName: 'published version',
+                    state: FlowVersionState.LOCKED,
+                    created: '2024-01-01T00:00:00.000Z',
+                })
+                const draftVersion = createMockFlowVersion({
+                    flowId: mockFlow.id,
+                    updatedBy: ctx.user.id,
+                    displayName: 'newer draft version',
+                    state: FlowVersionState.DRAFT,
+                    created: '2024-02-01T00:00:00.000Z',
+                })
+                await db.save('flow_version', [publishedVersion, draftVersion])
+
+                const withVersionId = await ctx.get(`/v1/flows/${mockFlow.id}/template`, { versionId: publishedVersion.id })
+                expect(withVersionId.statusCode).toBe(StatusCodes.OK)
+                expect(withVersionId.json().name).toBe('published version')
+                expect(withVersionId.json().flows).toHaveLength(1)
+                expect(withVersionId.json().flows[0].id).toBe(publishedVersion.id)
+
+                const withoutVersionId = await ctx.get(`/v1/flows/${mockFlow.id}/template`)
+                expect(withoutVersionId.statusCode).toBe(StatusCodes.OK)
+                expect(withoutVersionId.json().name).toBe('newer draft version')
+                expect(withoutVersionId.json().flows[0].id).toBe(draftVersion.id)
+            })
+
+            it('Rejects a versionId that belongs to another flow of the same project', async () => {
+                const ctx = await createTestContext(app!)
+
+                const mockFlow = createMockFlow({ projectId: ctx.project.id })
+                const otherFlow = createMockFlow({ projectId: ctx.project.id })
+                await db.save('flow', [mockFlow, otherFlow])
+
+                const ownVersion = createMockFlowVersion({ flowId: mockFlow.id, updatedBy: ctx.user.id })
+                const otherFlowVersion = createMockFlowVersion({ flowId: otherFlow.id, updatedBy: ctx.user.id })
+                await db.save('flow_version', [ownVersion, otherFlowVersion])
+
+                const response = await ctx.get(`/v1/flows/${mockFlow.id}/template`, { versionId: otherFlowVersion.id })
+
+                expect(response.statusCode).toBe(StatusCodes.NOT_FOUND)
+            })
+
+            it('Rejects a flow and versionId that belong to another project', async () => {
+                const ctx = await createTestContext(app!)
+                const otherCtx = await createTestContext(app!)
+
+                const foreignFlow = createMockFlow({ projectId: otherCtx.project.id })
+                await db.save('flow', foreignFlow)
+                const foreignVersion = createMockFlowVersion({ flowId: foreignFlow.id, updatedBy: otherCtx.user.id })
+                await db.save('flow_version', foreignVersion)
+
+                const response = await ctx.get(`/v1/flows/${foreignFlow.id}/template`, { versionId: foreignVersion.id })
+
+                expect(response.statusCode).toBe(StatusCodes.NOT_FOUND)
+            })
+        })
     })
 })
