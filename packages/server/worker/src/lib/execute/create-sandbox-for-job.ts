@@ -4,6 +4,7 @@ import { Mutex } from 'async-mutex'
 import { nanoid } from 'nanoid'
 import { Logger } from 'pino'
 import { getEnginePath, getGlobalCacheCommonPath, getGlobalCodeCachePath } from '../cache/cache-paths'
+import { qadamVersionStoreRoot } from '../cache/qadams/qadam-version-store-root'
 import { workerSettings } from '../config/worker-settings'
 import { sandboxCapacity } from '../sandbox/capacity'
 import { simpleProcess } from '../sandbox/fork'
@@ -228,6 +229,7 @@ function buildSandboxEnv({ settings, proxyPort, warmup }: {
         ...propagatedEnv({ settings, networkMode }),
         ...proxyEnv({ proxyPort }),
         ...warmupEnv({ warmup }),
+        ...qadamVersionStoreRoot.engineEnv({ executionMode: settings.EXECUTION_MODE }),
     }
 }
 

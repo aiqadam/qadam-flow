@@ -5,10 +5,13 @@ import { EngineGenericError, ErrorCode, extractQadamFromModule, getPackageAliasF
 import { z } from 'zod'
 import { utils } from '../utils'
 import { qadamDistIndex } from './qadam-dist-index'
+import { qadamPlatformModules } from './qadam-platform-modules'
+import { qadamVersionStoreResolver } from './qadam-version-store-resolver'
 
-// Bundled qadams are baked into the image, so a resolved path cannot change while the
-// process lives. The cache holds the in-flight promise so concurrent steps share one walk.
-const qadamPathCache = new Map<string, Promise<string>>()
+// Bundled qadams are baked into the image and a stored version is never overwritten, so a resolved
+// path cannot change while the process lives. The cache holds the in-flight promise so concurrent
+// steps share one walk.
+const qadamPathCache = new Map<string, Promise<ResolvedQadam>>()
 // #419 Phase 0: which resolved qadam paths already had a cold-load line logged. Keyed by the
 // resolved path rather than the (qadamName, qadamVersion) a caller asked for, because a
 // stale-pinned alias falls back to the same bundled dist file (#503) — the import cost is paid
@@ -34,7 +37,7 @@ export const qadamLoader = {
                 devQadams,
             })
             const resolveStart = performance.now()
-            const qadamPath = await qadamLoader.getQadamPath({ packageName, devQadams })
+            const { path: qadamPath, source } = await resolveQadam({ packageName, devQadams })
             const resolveMs = performance.now() - resolveStart
 
             // Cold vs. warm decides only whether the line below gets logged — Node's own module
@@ -43,7 +46,7 @@ export const qadamLoader = {
             if (isColdLoad) {
                 loggedColdQadamPaths.add(qadamPath)
             }
-            const sharedDepsAlreadyLoaded = isColdLoad ? isQadamsFrameworkAlreadyLoaded(qadamPath) : false
+            const sharedDepsAlreadyLoaded = isColdLoad ? isQadamsFrameworkAlreadyLoaded({ qadamPath, source }) : false
 
             const importStart = performance.now()
             const { data: module, error: importError } = await tryCatch(() => import(qadamPath))
@@ -63,7 +66,7 @@ export const qadamLoader = {
 
             if (isColdLoad) {
                 const resolvedVersion = await resolveLoadedQadamVersion(qadamPath)
-                logColdQadamLoad({ qadamName, qadamVersion, resolvedVersion, resolveMs, importMs, sharedDepsAlreadyLoaded })
+                logColdQadamLoad({ qadamName, qadamVersion, resolvedVersion, source, resolveMs, importMs, sharedDepsAlreadyLoaded })
             }
 
             const qadam = extractQadamFromModule<Qadam>({
@@ -168,26 +171,30 @@ export const qadamLoader = {
     },
 
     getQadamPath: async ({ packageName, devQadams }: GetQadamPathParams): Promise<string> => {
-        const isDevQadam = devQadams.includes(getQadamNameFromAlias(packageName))
-        if (isDevQadam) {
-            return resolveQadamPath({ packageName, isDevQadam })
-        }
-
-        const cached = qadamPathCache.get(packageName)
-        if (!isNil(cached)) {
-            return cached
-        }
-
-        const resolving = resolveQadamPath({ packageName, isDevQadam })
-        qadamPathCache.set(packageName, resolving)
-        // A miss is not permanent: an ARCHIVE/CUSTOM qadam can be installed later in this process.
-        void resolving.catch(() => {
-            if (qadamPathCache.get(packageName) === resolving) {
-                qadamPathCache.delete(packageName)
-            }
-        })
-        return resolving
+        return (await resolveQadam({ packageName, devQadams })).path
     },
+}
+
+async function resolveQadam({ packageName, devQadams }: GetQadamPathParams): Promise<ResolvedQadam> {
+    const isDevQadam = devQadams.includes(getQadamNameFromAlias(packageName))
+    if (isDevQadam) {
+        return resolveQadamPath({ packageName, isDevQadam })
+    }
+
+    const cached = qadamPathCache.get(packageName)
+    if (!isNil(cached)) {
+        return cached
+    }
+
+    const resolving = resolveQadamPath({ packageName, isDevQadam })
+    qadamPathCache.set(packageName, resolving)
+    // A miss is not permanent: an ARCHIVE/CUSTOM qadam can be installed later in this process.
+    void resolving.catch(() => {
+        if (qadamPathCache.get(packageName) === resolving) {
+            qadamPathCache.delete(packageName)
+        }
+    })
+    return resolving
 }
 
 // #419 Phase 0: whether the bundled qadams-framework dist entry was already in the CJS module
@@ -201,9 +208,13 @@ export const qadamLoader = {
 // (verified against the real image: `require.resolve` from the engine's own location fails to
 // find it at all). Every bundled qadam's local symlink still realpaths to the same framework
 // file, so `require.cache` correctly reflects a hit made through a different qadam's own symlink.
-function isQadamsFrameworkAlreadyLoaded(qadamPath: string): boolean {
+// A stored version has no `node_modules` of its own to resolve it from; it gets the platform's copy
+// (`qadamPlatformModules`).
+function isQadamsFrameworkAlreadyLoaded({ qadamPath, source }: { qadamPath: string, source: QadamSource }): boolean {
     const { data } = tryCatchSync(() => {
-        const resolved = require.resolve('@aiqadam/qadams-framework', { paths: [path.dirname(qadamPath)] })
+        const resolved = source === QadamSource.STORE
+            ? qadamPlatformModules.resolve({ specifier: '@aiqadam/qadams-framework' })
+            : require.resolve('@aiqadam/qadams-framework', { paths: [path.dirname(qadamPath)] })
         return require.cache[resolved]
     })
     return !isNil(data)
@@ -227,10 +238,11 @@ async function resolveLoadedQadamVersion(qadamPath: string): Promise<string | nu
     return data ?? null
 }
 
-function logColdQadamLoad({ qadamName, qadamVersion, resolvedVersion, resolveMs, importMs, sharedDepsAlreadyLoaded }: LogColdQadamLoadParams): void {
+function logColdQadamLoad({ qadamName, qadamVersion, resolvedVersion, source, resolveMs, importMs, sharedDepsAlreadyLoaded }: LogColdQadamLoadParams): void {
     console.log(`[qadamLoader] cold load ${JSON.stringify({
         qadam: `${qadamName}@${qadamVersion}`,
         resolvedVersion,
+        source,
         resolveMs: roundMs(resolveMs),
         importMs: roundMs(importMs),
         sharedDepsAlreadyLoaded,
@@ -247,12 +259,20 @@ function roundMs(value: number): number {
     return Math.round(value * 10) / 10
 }
 
-async function resolveQadamPath({ packageName, isDevQadam }: ResolveQadamPathParams): Promise<string> {
+async function resolveQadamPath({ packageName, isDevQadam }: ResolveQadamPathParams): Promise<ResolvedQadam> {
     if (isDevQadam) {
         const devPath = await findInDistFolder({ packageName, refreshIndex: true })
         if (!isNil(devPath)) {
-            return devPath
+            return { path: devPath, source: QadamSource.DEV }
         }
+    }
+    // ADR-0003: the store holds the pinned version's own code, so it comes first. A version it does
+    // not hold falls through to the image's build, as before the store (#779 keeps that until #808's
+    // checked fallback exists).
+    const pin = splitExactAlias(packageName)
+    const storedPath = isNil(pin) ? null : await qadamVersionStoreResolver.findOfficialEntryPoint(pin)
+    if (!isNil(storedPath)) {
+        return { path: storedPath, source: QadamSource.STORE }
     }
     // #503: an installed copy at the SAME `name@version` as a bundled build is never a legitimate
     // provider — official qadams are not installed (`needsInstalling` in the worker), so the only
@@ -260,27 +280,28 @@ async function resolveQadamPath({ packageName, isDevQadam }: ResolveQadamPathPar
     // landing in the workspace every tenant shares. The bundled build wins outright there. An
     // installed copy at a DIFFERENT version keeps winning: that is the side-by-side case #477
     // needs once official versions are registry-installed next to the bundled one.
-    const bundledAtSameVersion = await findBundledBuildAtAliasVersion(packageName)
+    const bundledAtSameVersion = isNil(pin) ? null : await findBundledBuildAtVersion(pin)
     if (!isNil(bundledAtSameVersion)) {
-        return bundledAtSameVersion
+        return { path: bundledAtSameVersion, source: QadamSource.BUNDLED }
     }
     const installedPath = await traverseAllParentFoldersToFindQadam(packageName)
     if (!isNil(installedPath)) {
-        return installedPath
+        return { path: installedPath, source: QadamSource.INSTALLED }
     }
     const bundledPath = await findInDistFolder({ packageName, refreshIndex: false })
     if (!isNil(bundledPath)) {
-        return bundledPath
+        return { path: bundledPath, source: QadamSource.BUNDLED }
     }
     throw new EngineGenericError('QadamNotFoundError', `Qadam not found for package: ${packageName}`)
 }
 
-async function findBundledBuildAtAliasVersion(packageName: string): Promise<string | null> {
+function splitExactAlias(packageName: string): ExactPin | null {
     const name = trimVersionFromAlias(packageName)
     const version = packageName.slice(name.length + 1)
-    if (!EXACT_VERSION_PATTERN.test(version)) {
-        return null
-    }
+    return EXACT_VERSION_PATTERN.test(version) ? { name, version } : null
+}
+
+async function findBundledBuildAtVersion({ name, version }: ExactPin): Promise<string | null> {
     const distIndex = await qadamDistIndex.get({ refresh: false, warn: warnOnConsole })
     const bundled = distIndex.get(name)
     if (isNil(bundled) || bundled.version !== version) {
@@ -323,10 +344,29 @@ async function traverseAllParentFoldersToFindQadam(packageName: string): Promise
     return null
 }
 
+// Where a loaded qadam came from, on the cold-load line. Never the path itself (see below).
+enum QadamSource {
+    DEV = 'dev',
+    STORE = 'store',
+    BUNDLED = 'bundled',
+    INSTALLED = 'installed',
+}
+
+type ResolvedQadam = {
+    path: string
+    source: QadamSource
+}
+
+type ExactPin = {
+    name: string
+    version: string
+}
+
 type LogColdQadamLoadParams = {
     qadamName: string
     qadamVersion: string
     resolvedVersion: string | null
+    source: QadamSource
     resolveMs: number
     importMs: number
     sharedDepsAlreadyLoaded: boolean

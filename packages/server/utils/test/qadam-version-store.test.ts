@@ -553,6 +553,55 @@ describe('qadamVersionStore.open', () => {
     })
 })
 
+describe('qadamVersionStore.openForReading', () => {
+    it('reads what the store holds', async () => {
+        await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version }) })
+
+        const opened = await qadamVersionStore.openForReading({ root, log })
+        if (!opened.ok) {
+            throw new Error(opened.reason)
+        }
+        const read = await opened.reader.read({ coordinates: CSV })
+
+        expect(opened.reader.root).toBe(root)
+        expect(read.status).toBe(QadamVersionReadStatus.PRESENT)
+        expect(await opened.reader.read({ coordinates: { ...CSV, version: '9.9.9' } })).toEqual({ status: QadamVersionReadStatus.ABSENT })
+    })
+
+    it('writes nothing: no directory, no probe, no leftover cleanup', async () => {
+        const leftover = join(root, '.staging', `${Date.now() - 7 * 60 * 60 * 1000}-dead`)
+        await mkdir(leftover)
+        const missingRoot = join(tempDir, 'never-opened')
+
+        const opened = await qadamVersionStore.openForReading({ root, log })
+        const missing = await qadamVersionStore.openForReading({ root: missingRoot, log })
+
+        expect(opened.ok).toBe(true)
+        expect(await readdir(join(root, '.staging'))).toEqual([leftover.split('/').at(-1)])
+        expect(missing).toEqual({ ok: false, reason: 'the store directory cannot be read (ENOENT)' })
+        await expect(stat(missingRoot)).rejects.toThrow()
+    })
+
+    it('refuses a root from which stored versions could resolve an app\'s node_modules, without naming the path', async () => {
+        const below = join(tempDir, 'app', 'qadam-versions')
+        await mkdir(join(tempDir, 'app', 'node_modules'), { recursive: true })
+        await mkdir(below)
+
+        const opened = await qadamVersionStore.openForReading({ root: below, log })
+
+        expect(opened).toEqual({ ok: false, reason: 'stored versions could resolve packages from a node_modules above the store' })
+    })
+
+    it('answers with the real path of a root reached through a symlink', async () => {
+        const link = join(tempDir, 'store-link')
+        await symlink(root, link)
+
+        const opened = await qadamVersionStore.openForReading({ root: link, log })
+
+        expect(opened.ok && opened.reader.root).toBe(root)
+    })
+})
+
 async function openStore({ limits }: { limits?: typeof DEFAULT_QADAM_VERSION_STORE_LIMITS } = {}): Promise<QadamVersionStore> {
     const opened = await qadamVersionStore.open({ root, log, limits })
     if (!opened.ok) {

@@ -25,6 +25,7 @@ import { trace } from '@opentelemetry/api'
 import { nanoid } from 'nanoid'
 import type { Logger } from 'pino'
 import { io, Socket } from 'socket.io-client'
+import { qadamVersionStoreRoot } from './cache/qadams/qadam-version-store-root'
 import { qadamWarmup } from './cache/qadams/qadam-warmup'
 import { getApiUrl, system, WorkerSystemProp } from './config/configs'
 import { logger } from './config/logger'
@@ -441,8 +442,11 @@ async function startPollingWorkers(apiClient: WorkerToApiContract): Promise<void
     if (stopped) return
 
     if (sandboxManagers.length === 0) {
-        sandboxManagers = createSandboxManagers()
         const { data: settings } = tryCatchSync(() => workerSettings.getSettings())
+        // Before the first sandbox exists, because its engine's env is fixed when it starts.
+        await qadamVersionStoreRoot.prepare({ log: logger, environment: settings?.ENVIRONMENT })
+        if (stopped) return
+        sandboxManagers = createSandboxManagers()
         sandboxSettings = settings
     }
 

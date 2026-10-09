@@ -92,6 +92,8 @@ The engine (`packages/server/engine/src/lib/helper/qadam-loader.ts`, `loadQadamO
 is imported in a process — a repeat (warm) import of the same path logs nothing. Grep worker stdout
 for the prefix to find these. JSON fields on the line:
 - `qadam` — the requested `name@version` (what the flow step actually pinned).
+- `source` — where the code came from: `store` (the qadam version store, #779), `bundled` (the
+  image's dist, at the pinned version or by name), `installed` (a workspace install) or `dev`.
 - `resolvedVersion` — the version actually loaded, read from the resolved package's own
   `package.json`; can differ from `qadam`'s version when a stale pin falls through to a newer
   bundled dist (#503), and is `null` if that `package.json` couldn't be read. Never the resolved

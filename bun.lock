@@ -2918,6 +2918,7 @@
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
+        "@aiqadam/server-utils": "workspace:*",
         "@aiqadam/shared": "workspace:*",
         "ai": "7.0.127",
         "async-mutex": "0.4.0",

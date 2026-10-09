@@ -37,6 +37,7 @@ export enum WorkerSystemProp {
     REUSE_SANDBOX = 'AP_REUSE_SANDBOX',
     PREWARM_ENGINES = 'AP_WORKER_PREWARM_ENGINES',
     WORKER_SHUTDOWN_GRACE_SECONDS = 'AP_WORKER_SHUTDOWN_GRACE_SECONDS',
+    QADAM_VERSION_STORE_PATH = 'AP_QADAM_VERSION_STORE_PATH',
 }
 
 /**
@@ -57,6 +58,9 @@ const defaultValues: Partial<Record<WorkerSystemProp, string>> = {
     [WorkerSystemProp.OTEL_ENABLED]: 'false',
     [WorkerSystemProp.WORKER_CONCURRENCY]: '5',
     [WorkerSystemProp.WORKER_SHUTDOWN_GRACE_SECONDS]: String(DEFAULT_SHUTDOWN_GRACE_SECONDS),
+    // The API's default too (`AppSystemProp.QADAM_VERSION_STORE_PATH`): `docker-compose.yml` mounts
+    // the `qadam_versions` volume there on the app and every worker.
+    [WorkerSystemProp.QADAM_VERSION_STORE_PATH]: '/var/lib/qadam-flow/qadam-versions',
 }
 
 export const system = {

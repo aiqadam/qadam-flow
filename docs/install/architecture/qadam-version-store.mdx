@@ -7,7 +7,7 @@ icon: "boxes-stacked"
 The qadam version store is a directory on a persistent volume where the server keeps the code of each qadam version it holds, by name and exact version. It is how [ADR-0003](https://github.com/aiqadam/qadam-flow/blob/main/adr/0003-official-qadams-run-from-a-versioned-local-store.md) makes a flow step pinned to `tables@0.5.1` run the code of `tables@0.5.1` across server upgrades, instead of whatever version the current image bundles.
 
 <Warning>
-The store is filled, but nothing runs from it yet. Flows still run the qadams bundled with the image, exactly as [Qadam syncing & versioning](/install/architecture/qadam-syncing) describes. Steps start resolving through the store in a later release ([#779](https://github.com/aiqadam/qadam-flow/issues/779)), and images start shipping versions to put in it with [#807](https://github.com/aiqadam/qadam-flow/issues/807). Until then the volume exists and the server prepares it on every start, so an install that adds it now needs no change later.
+The store is only partly in use. A worker runs an official qadam version from the store when the store holds it, in the `UNSANDBOXED` and `SANDBOX_CODE_ONLY` execution modes (see [How a step finds its code](#how-a-step-finds-its-code)). But no image ships versions to put in it before [#807](https://github.com/aiqadam/qadam-flow/issues/807), so on a real install the store is empty and flows run the qadams bundled with the image, as [Qadam syncing & versioning](/install/architecture/qadam-syncing) describes. The builder's qadam metadata, the sandboxed execution modes and custom qadams do not use the store yet ([#779](https://github.com/aiqadam/qadam-flow/issues/779)). The volume exists and the server prepares it on every start, so an install that adds it now needs no change later.
 </Warning>
 
 ## Where it lives
@@ -31,6 +31,36 @@ When the app starts, it creates the store's directories if they are missing, rem
 ```
 
 `status` is `no-seed` on every image until [#807](https://github.com/aiqadam/qadam-flow/issues/807) adds the versions to ship. `kept` counts versions in the store that this release cannot use, for example ones a later release wrote before you rolled back; they are left in place for that release. A seed that fails is logged as a warning and does not stop the app.
+
+## How a step finds its code
+
+When a worker starts, it opens the store at `AP_QADAM_VERSION_STORE_PATH` with the same checks as the app and logs which way it went:
+
+```text
+[qadamVersionStore] Steps in forked engines load official qadam versions from the qadam version store when it holds them
+[qadamVersionStore] The qadam version store is unavailable; steps load the qadams bundled with the image {"reason":"..."}
+```
+
+Then, for a step pinned to an official qadam at an exact version, such as `@aiqadam/qadam-tables@0.5.1`:
+
+1. If the store holds `@aiqadam/qadam-tables` `0.5.1` and it checks out, the step runs that code, even when the image bundles the same version.
+2. Otherwise the step runs what it ran before the store: the image's build of that version, or the image's build of the qadam at another version. That second case is the silent substitution ADR-0003 removes. It stays until the [unavailable-version fallback](https://github.com/aiqadam/qadam-flow/issues/808) can make the move with a check and an audit record.
+
+A stored version that is damaged or that this release cannot use is skipped, with one warning per version and engine process in the worker's log:
+
+```text
+[qadamVersionStore] The stored version cannot be used, loading the image's build instead {"qadam":"@aiqadam/qadam-tables@0.5.1","status":"damaged","reason":"integrity.json is missing"}
+```
+
+The `[qadamLoader] cold load` line that the worker writes the first time it loads a qadam says where the code came from in `source`: `store`, `bundled`, `installed` or `dev`.
+
+### Libraries the platform provides
+
+A stored version carries its own code and its third-party dependencies. `@aiqadam/qadams-framework`, `@aiqadam/qadams-common`, `@aiqadam/shared` and `zod` come from the platform, so every qadam a worker runs shares one copy of each with the qadams bundled in the image. A stored version finds a package in this order:
+
+1. inside its own version directory;
+2. for the four packages above, the platform's copy;
+3. nowhere else. It does not fall back to `NODE_PATH`, `$HOME/.node_modules` or other global folders, so a version cannot silently run on a library the server happens to have. It fails with "Cannot find module" instead.
 
 ## Layout
 

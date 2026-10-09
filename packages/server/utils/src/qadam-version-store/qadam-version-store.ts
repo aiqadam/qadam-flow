@@ -54,9 +54,9 @@ export const DEFAULT_QADAM_VERSION_STORE_LIMITS: QadamVersionTarballLimits = {
 
 // The versioned qadam store of ADR-0003 on a persistent volume, by `name@version`, per namespace.
 //
-// It is not authoritative yet: nothing resolves a step through it until #779 switches the API,
-// worker and engine over. Until then it is written (seeded from the image) and read by its own
-// checks only, and no flow runs differently because it exists.
+// The engine loads an official qadam version from here when the store holds it, in the forked
+// execution modes (#779, `openForReading`). The API's metadata, the worker's provisioning and the
+// isolate modes do not resolve through it yet; #779 tracks the rest.
 //
 // Writes are atomic: a version is assembled in `<root>/.staging/`, checked, given its
 // `integrity.json`, flushed, and renamed into place, so a reader sees a complete version or none.
@@ -100,6 +100,23 @@ export const qadamVersionStore = {
             log.warn({ error: describeErrorCode({ error: cleaned.error }) }, '[qadamVersionStore] Could not look for leftover staging or trash directories')
         }
         return { ok: true, store: createStore({ root: realRoot, log, limits }) }
+    },
+
+    // For a process that only loads from the store and must never write to it: an engine (#779).
+    // It repeats `open`'s `node_modules` check and skips the rest, because they write: the
+    // directories `open` creates, its case-sensitivity probe and its leftover cleanup. The process
+    // that hands this root over (the worker) has already run `open` on it.
+    openForReading: async ({ root, log, limits = DEFAULT_QADAM_VERSION_STORE_LIMITS }: OpenParams): Promise<OpenForReadingResult> => {
+        const real = await tryCatch(() => realpath(path.resolve(root)))
+        if (real.error !== null) {
+            return { ok: false, reason: `the store directory cannot be read (${describeErrorCode({ error: real.error })})` }
+        }
+        const reachable = await findNodeModulesAbove({ dir: real.data })
+        if (!isNil(reachable)) {
+            return { ok: false, reason: 'stored versions could resolve packages from a node_modules above the store' }
+        }
+        const store = createStore({ root: real.data, log, limits })
+        return { ok: true, reader: { root: store.root, read: store.read } }
     },
 }
 
@@ -670,6 +687,10 @@ type OpenParams = {
 }
 
 type OpenResult = { ok: true, store: QadamVersionStore } | { ok: false, reason: string }
+
+export type QadamVersionStoreReader = Pick<QadamVersionStore, 'root' | 'read'>
+
+type OpenForReadingResult = { ok: true, reader: QadamVersionStoreReader } | { ok: false, reason: string }
 
 type CreateStoreParams = {
     root: string
