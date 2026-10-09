@@ -13,6 +13,17 @@ export const DropdownOptionsInput = BoundedArray({
     max: MAX_DROPDOWN_OPTIONS,
 })
 
+// The update-side twin of DropdownOptionsInput. An update replaces the whole list, and an
+// empty one would silently turn the field into an unconstrained text column (an options list
+// nobody declared constrains nothing, see cell-validation.ts), so it is rejected here.
+export const DropdownOptionsUpdateInput = BoundedArray({
+    element: z.object({
+        value: z.string(),
+    }),
+    max: MAX_DROPDOWN_OPTIONS,
+    nonEmpty: true,
+})
+
 export enum FieldType {
     TEXT = 'TEXT',
     NUMBER = 'NUMBER',

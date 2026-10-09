@@ -87,6 +87,7 @@ Opt-in per table. Nothing changes for a table that has not declared one.
 - `table.create()` — creates table + optional fields
 - `table.list()` — paginated with optional row count, name filter, single-folder filter (`folderId`), multi-folder filter (`folderIds`), externalIds filter
 - `table.update()` — rename, move to folder, change trigger/status
+- `field.update()` — `POST /v1/fields/:id` (and `ap_manage_fields` UPDATE). Renames and/or replaces a STATIC_DROPDOWN's `data.options` **in place** (#842): field id, externalId and cells are kept. Runs in one transaction under a `pessimistic_write` lock on the field row. Options may be added freely; removing an option that any cell in the field still holds is rejected (`dropdownOptionInUse`, count only — no row values), removing an unused one is allowed; renaming an option is remove+add, so it is rejected while in use. `options` on a non-STATIC_DROPDOWN field is rejected (`optionsOnlyOnStaticDropdown`), as is an empty list. A record write that validated against the old list concurrently with a removal is not serialised against it (record writes do not lock the field), so a just-removed value can still land once; that is the pre-existing out-of-options state, not a new one.
 - `table.delete()` — cascades to fields, records, cells, webhooks
 - `table.exportTable()` — returns fields + rows as JSON
 - `table.createWebhook()` / `table.deleteWebhook()` — link table events to flows

@@ -1887,6 +1887,8 @@
   "jsonSchemaMismatch": "Value does not match this field's JSON schema",
   "tableHasDuplicateKeys": "This table has records that share the same key value(s). Resolve the duplicates before declaring this key.",
   "keyFieldInUse": "This field is part of the table's declared key. Clear the table's key declaration first.",
+  "dropdownOptionInUse": "This option is still used by records in this table. Clear or change those values before removing it.",
+  "optionsOnlyOnStaticDropdown": "Options can only be set on a dropdown field.",
   "duplicateKeyValue": "A record with this key value already exists in this table.",
   "tableKeyColumnsNotInTable": "Some of the chosen key columns do not belong to this table.",
   "upsertKeyMustMatchDeclaredKey": "This table has a declared key. Upsert must use exactly that key — clear the table's key declaration first to upsert on a different one.",

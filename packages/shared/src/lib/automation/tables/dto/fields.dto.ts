@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { DropdownOptionsInput, FieldType, JsonFieldData } from '../field'
+import { DropdownOptionsInput, DropdownOptionsUpdateInput, FieldType, JsonFieldData } from '../field'
 
 
 const StaticDropdownData = z.object({
@@ -25,8 +25,14 @@ export const CreateFieldRequest = z.union([z.object({
     externalId: z.string().optional(),
 })])
 
+// `data.options` replaces a STATIC_DROPDOWN's whole option list in place: the field id, its
+// externalId and every cell survive. Both keys are optional so a caller can rename without
+// touching options and the other way round.
 export const UpdateFieldRequest = z.object({
-    name: z.string(),
+    name: z.string().optional(),
+    data: z.object({
+        options: DropdownOptionsUpdateInput,
+    }).optional(),
 })
 
 export const ListFieldsRequestQuery = z.object({
