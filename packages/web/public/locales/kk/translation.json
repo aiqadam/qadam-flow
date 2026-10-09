@@ -2259,6 +2259,8 @@
   "This member is managed by your directory": "Бұл мүше каталогыңызбен басқарылады",
   "The last admin cannot be removed or demoted": "Соңғы әкімшіні жою немесе төмендету мүмкін емес",
   "Framework version retirement": "Framework нұсқасын қолдау тоқтатылды",
-  "This release no longer runs context versions {versions}. Affected steps: {unsupported}. Affected flows: {flows}. Update each step to a qadam version built against a supported framework version.": "Бұл релиз {versions} контекст нұсқаларын енді қолдамайды. Әсер етілген қадамдар: {unsupported}. Әсер етілген ағындар: {flows}. Әр қадамды қолдау көрсетілетін framework нұсқасына сәйкес qadam нұсқасына жаңартыңыз.",
+  "This release no longer runs: {versions}. Affected steps: {unsupported}. Affected flows: {flows}. Update each step to a qadam version built against a supported framework version.": "Бұл релиз енді мыналарды қолдамайды: {versions}. Әсер етілген қадамдар: {unsupported}. Әсер етілген ағындар: {flows}. Әр қадамды қолдау көрсетілетін framework нұсқасына сәйкес qadam нұсқасына жаңартыңыз.",
+  "qadams that predate context versions": "контекст нұсқалары пайда болғанға дейінгі qadam-дар",
+  "context version {version}": "контекст нұсқасы {version}",
   "and {remaining} more": "тағы {remaining}"
 }

@@ -17,9 +17,12 @@ import { FastifyBaseLogger, FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { QueryFailedError } from 'typeorm'
 import { databaseConnection } from '../../../../src/app/database/database-connection'
+import { frameworkCensusCache } from '../../../../src/app/qadams/census/framework-census-cache'
+import { frameworkCensusMarking } from '../../../../src/app/qadams/census/framework-census-marking'
 import { frameworkCensusPolicy } from '../../../../src/app/qadams/census/framework-census-policy'
 import { frameworkCensusService } from '../../../../src/app/qadams/census/framework-census-service'
 import { QadamMetadataSchema } from '../../../../src/app/qadams/metadata/qadam-metadata-entity'
+import { qadamPinUtil } from '../../../../src/app/qadams/metadata/qadam-pin-util'
 import { generateMockToken } from '../../../helpers/auth'
 import { db } from '../../../helpers/db'
 import { withEngineContextVersions } from '../../../helpers/framework-census'
@@ -48,6 +51,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
     await teardownTestEnvironment()
+})
+
+// The endpoint's cache outlives a test; a cached census must not answer for the next one.
+afterEach(() => {
+    frameworkCensusCache.clear()
 })
 
 // ADR-0002's census (#803). The ticket's scenario is test 1: a step pinned to a context-V1 custom
@@ -340,6 +348,114 @@ describe('framework-major census (#803)', () => {
         }
     })
 
+    // #838: a flow version whose step tree cannot be walked is in no count, so the census carries
+    // how many there were — per platform and for the whole instance — for the doctor to report.
+    it('counts a flow version it cannot read as unreadable, per platform and for the instance', async () => {
+        const ctx = await createTestContext(app!)
+        await saveQadamRow({
+            name: 'census-v1-custom',
+            version: '1.0.0',
+            platformId: ctx.platform.id,
+            qadamType: QadamType.CUSTOM,
+            contextVersion: ContextVersion.V1,
+        })
+        await saveFlowWithPinnedStep({ projectId: ctx.project.id, qadamName: 'census-v1-custom', qadamVersion: '1.0.0' })
+        await saveUnreadableFlowVersion({ projectId: ctx.project.id })
+
+        const census = await frameworkCensusService(mockLog).censusOfPlatform({ platformId: ctx.platform.id })
+        expect(census.unreadableVersions).toBe(1)
+        expect(census.summary).toMatchObject({ current: 0, legacy: 1, unsupported: 0 })
+
+        const instance = await frameworkCensusService(mockLog).censusOfInstance()
+        const platform = instance.platforms.find((candidate) => candidate.platformId === ctx.platform.id)
+        expect(platform?.unreadableVersions).toBe(1)
+        expect(instance.unreadableVersions).toBe(instance.platforms.reduce((total, candidate) => total + candidate.unreadableVersions, 0))
+        expect(instance.unreadableVersions).toBeGreaterThanOrEqual(1)
+    })
+
+    // #838: the census counts as it walks and keeps at most `maxSteps` steps, unsupported first,
+    // while the summary and `totalSteps` still count every occurrence.
+    it('caps the kept steps at maxSteps, unsupported first, and still counts every occurrence', async () => {
+        const ctx = await createTestContext(app!)
+        await saveQadamRow({
+            name: 'census-v1-custom',
+            version: '1.0.0',
+            platformId: ctx.platform.id,
+            qadamType: QadamType.CUSTOM,
+            contextVersion: ContextVersion.V1,
+        })
+        await saveQadamRow({
+            name: 'census-none-custom',
+            version: '1.0.0',
+            platformId: ctx.platform.id,
+            qadamType: QadamType.CUSTOM,
+            contextVersion: 'NONE',
+        })
+        await saveDraftFlowsWithPinnedStep({ projectId: ctx.project.id, count: 3, qadamName: 'census-v1-custom', qadamVersion: '1.0.0' })
+        await saveDraftFlowsWithPinnedStep({ projectId: ctx.project.id, count: 2, qadamName: 'census-none-custom', qadamVersion: '1.0.0' })
+
+        // A release that retired only the pre-`getContextInfo` shim: V1 still runs on its shim.
+        await withEngineContextVersions({
+            contextVersions: [ContextVersion.V1, LATEST_CONTEXT_VERSION],
+            run: async () => {
+                const census = await frameworkCensusService(mockLog).censusOfPlatform({ platformId: ctx.platform.id, maxSteps: 3 })
+
+                expect(census.summary).toMatchObject({ legacy: 3, unsupported: 2, flowsWithUnsupportedSteps: 2 })
+                expect(census.totalSteps).toBe(5)
+                expect(census.steps.map((step) => step.status)).toEqual(['unsupported', 'unsupported', 'legacy'])
+            },
+        })
+    })
+
+    // #838 (the deviation from the ticket's nit): a pin some version answers is not `unresolved`,
+    // even when no row of the expected type records that version's context version. Its context is
+    // unknown, which ADR-0002 counts as still needing the old contract — and the MCP marking, which
+    // skips only `unresolved` pins, still marks it.
+    it('keeps a pin that resolves but has no context record official/custom with an unknown context, and marks it', async () => {
+        const ctx = await createTestContext(app!)
+        // Resolves through the registry (a platform row), but no official row records it.
+        await saveQadamRow({
+            name: '@aiqadam/qadam-census-stray',
+            version: '1.0.0',
+            platformId: ctx.platform.id,
+            qadamType: QadamType.CUSTOM,
+            contextVersion: ContextVersion.V2,
+        })
+        // Resolves through the registry (an official row), but no custom row records it.
+        await saveQadamRow({
+            name: 'census-official-typed',
+            version: '1.0.0',
+            platformId: null,
+            qadamType: QadamType.OFFICIAL,
+            contextVersion: ContextVersion.V2,
+        })
+        await saveFlowWithPinnedStep({ projectId: ctx.project.id, qadamName: '@aiqadam/qadam-census-stray', qadamVersion: '1.0.0' })
+        await saveFlowWithPinnedStep({ projectId: ctx.project.id, qadamName: 'census-official-typed', qadamVersion: '1.0.0' })
+
+        const census = await frameworkCensusService(mockLog).censusOfPlatform({ platformId: ctx.platform.id })
+
+        expect(census.summary).toMatchObject({ current: 0, legacy: 2, unsupported: 0 })
+        expect(census.steps.map((step) => ({ pin: step.pin, source: step.source, contextVersion: step.contextVersion })).sort((a, b) => a.pin.localeCompare(b.pin))).toEqual([
+            { pin: '@aiqadam/qadam-census-stray@1.0.0', source: 'official', contextVersion: null },
+            { pin: 'census-official-typed@1.0.0', source: 'custom', contextVersion: null },
+        ])
+
+        await withEngineContextVersions({
+            contextVersions: [LATEST_CONTEXT_VERSION],
+            run: async () => {
+                const qadamSteps = [
+                    ...qadamPinUtil.getQadamSteps({ trigger: pinnedTrigger({ qadamName: '@aiqadam/qadam-census-stray', qadamVersion: '1.0.0' }) }),
+                    ...qadamPinUtil.getQadamSteps({ trigger: pinnedTrigger({ qadamName: 'census-official-typed', qadamVersion: '1.0.0' }) }),
+                    ...qadamPinUtil.getQadamSteps({ trigger: pinnedTrigger({ qadamName: 'census-missing-custom', qadamVersion: '1.0.0' }) }),
+                ]
+                const marked = await frameworkCensusMarking(mockLog).unsupportedPins({ qadamSteps, platformId: ctx.platform.id })
+
+                // The two resolving pins are marked; the pin nothing answers is left to `qadam_version`.
+                expect([...marked.keys()].sort()).toEqual(['@aiqadam/qadam-census-stray@1.0.0', 'census-official-typed@1.0.0'])
+            },
+        })
+    })
+
     it('reports the engine\'s framework major and context versions in the instance census', async () => {
         const census = await frameworkCensusService(mockLog).censusOfInstance()
 
@@ -445,6 +561,56 @@ describe('framework-major census (#803)', () => {
             })
         })
 
+        // #838: once something is retired every request walks the platform, so the endpoint answers
+        // from a per-platform cache and concurrent requests share one walk.
+        it('walks the platform once for concurrent requests and serves later ones from the cache', async () => {
+            const ctx = await createTestContext(app!)
+            await saveQadamRow({
+                name: 'census-v1-custom',
+                version: '1.0.0',
+                platformId: ctx.platform.id,
+                qadamType: QadamType.CUSTOM,
+                contextVersion: ContextVersion.V1,
+            })
+            await saveFlowWithPinnedStep({ projectId: ctx.project.id, qadamName: 'census-v1-custom', qadamVersion: '1.0.0' })
+            // Count walks at the cache's compute: each call of it is one census of the platform.
+            const ofPlatform = frameworkCensusCache.ofPlatform
+            let walks = 0
+            const spy = vi.spyOn(frameworkCensusCache, 'ofPlatform').mockImplementation(({ platformId, compute }) => ofPlatform({
+                platformId,
+                compute: () => {
+                    walks += 1
+                    return compute()
+                },
+            }))
+            try {
+                await withEngineContextVersions({
+                    contextVersions: [LATEST_CONTEXT_VERSION],
+                    run: async () => {
+                        const [first, second] = await Promise.all([ctx.get('/v1/framework-census'), ctx.get('/v1/framework-census')])
+                        expect(first.json<FrameworkCensusResponse>().summary).toMatchObject({ unsupported: 1 })
+                        expect(second.json<FrameworkCensusResponse>().summary).toMatchObject({ unsupported: 1 })
+                        expect(walks).toBe(1)
+
+                        // A step added within the TTL is not seen yet: the census is a report, and
+                        // a few minutes of staleness is the price of a bounded cost.
+                        await saveFlowWithPinnedStep({ projectId: ctx.project.id, qadamName: 'census-v1-custom', qadamVersion: '1.0.0' })
+                        const cached = (await ctx.get('/v1/framework-census')).json<FrameworkCensusResponse>()
+                        expect(cached.summary).toMatchObject({ unsupported: 1 })
+                        expect(walks).toBe(1)
+
+                        frameworkCensusCache.clear()
+                        const fresh = (await ctx.get('/v1/framework-census')).json<FrameworkCensusResponse>()
+                        expect(fresh.summary).toMatchObject({ unsupported: 2 })
+                        expect(walks).toBe(2)
+                    },
+                })
+            }
+            finally {
+                spy.mockRestore()
+            }
+        })
+
         it('caps the step list and reports the total', async () => {
             const ctx = await createTestContext(app!)
             await saveQadamRow({
@@ -506,6 +672,20 @@ async function saveFlowWithPinnedStep({ projectId, qadamName, qadamVersion, stat
     await db.save('flow_version', version)
     await db.update('flow', flow.id, { publishedVersionId: version.id })
     return flow.id
+}
+
+// A flow version whose step tree the census cannot walk: a router whose `children` is not a list.
+async function saveUnreadableFlowVersion({ projectId }: { projectId: string }): Promise<void> {
+    const flow = createMockFlow({ projectId, status: FlowStatus.DISABLED, publishedVersionId: null })
+    await db.save('flow', flow)
+    const version = createMockFlowVersion({ flowId: flow.id, state: FlowVersionState.DRAFT })
+    await databaseConnection().getRepository('flow_version').insert({
+        ...version,
+        trigger: {
+            ...pinnedTrigger({ qadamName: 'census-v1-custom', qadamVersion: '1.0.0' }),
+            nextAction: { type: 'ROUTER', name: 'step_1', displayName: 'Broken Router', valid: true, children: 'not-a-list', settings: {} },
+        },
+    })
 }
 
 async function saveQadamRow({ name, version, platformId, qadamType, contextVersion }: {

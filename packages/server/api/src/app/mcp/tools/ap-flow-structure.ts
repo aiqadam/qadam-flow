@@ -49,13 +49,6 @@ type StepInfo = {
     frameworkVersionSupported?: false
 }
 
-// The two per-pin signals `ap_flow_structure` decorates steps with: whether each pin resolves
-// (#474), and which pins need a retired framework context version (#803).
-type PinSignals = {
-    qadamResolutions: Map<string, boolean | undefined>
-    unsupportedPins: Map<string, PinFrameworkSupport>
-}
-
 function getStepInput(step: Step): Record<string, unknown> | null {
     const settings = isObject(step.settings) ? step.settings : null
     const input = settings?.input
@@ -106,8 +99,9 @@ function qadamPinInfo({ step, qadamResolutions, unsupportedPins }: { step: Step,
     }
 }
 
-// The ticket's own wording (ADR-0002, #803), echoed by `ap_validate_flow`'s `framework_version`
-// category so an agent reading either surface is told the same thing: update this step.
+// The ticket's own wording (ADR-0002, #803). `ap_validate_flow`'s `framework_version` message and
+// the boot log line phrase it as a sentence of their own, but each contains the same remedy:
+// update this step.
 const FRAMEWORK_VERSION_LABEL = 'FRAMEWORK VERSION NO LONGER SUPPORTED: update this step'
 
 function frameworkVersionWarning(step: StepInfo): string {
@@ -118,7 +112,7 @@ function frameworkVersionWarning(step: StepInfo): string {
 // give an agent contradictory accounts of the same pin. `qadamVersionResolvable` is `undefined` in
 // two different situations here, and only one of them reaches `qadamPinIssue` at all: the step
 // carries no pin (filtered by `isNil(step.qadamPin)` below — nothing to say), versus a pin whose
-// lookup errored — the platform couldn't be determined at all (`resolveQadamPinAvailability` then
+// lookup errored — the platform couldn't be determined at all (`resolvePinSignals` then
 // never even calls `resolvePins`) or one specific pin's lookup threw. `qadamPinIssue` is the one
 // place that decides the destructive-remedy wording is only warranted for a confirmed `false`.
 function qadamPinWarning(step: StepInfo): string {
@@ -566,4 +560,11 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
             }
         },
     }
+}
+
+// The two per-pin signals `ap_flow_structure` decorates steps with: whether each pin resolves
+// (#474), and which pins need a retired framework context version (#803).
+type PinSignals = {
+    qadamResolutions: Map<string, boolean | undefined>
+    unsupportedPins: Map<string, PinFrameworkSupport>
 }

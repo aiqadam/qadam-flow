@@ -2259,6 +2259,8 @@
   "This member is managed by your directory": "This member is managed by your directory",
   "The last admin cannot be removed or demoted": "The last admin cannot be removed or demoted",
   "Framework version retirement": "Framework version retirement",
-  "This release no longer runs context versions {versions}. Affected steps: {unsupported}. Affected flows: {flows}. Update each step to a qadam version built against a supported framework version.": "This release no longer runs context versions {versions}. Affected steps: {unsupported}. Affected flows: {flows}. Update each step to a qadam version built against a supported framework version.",
+  "This release no longer runs: {versions}. Affected steps: {unsupported}. Affected flows: {flows}. Update each step to a qadam version built against a supported framework version.": "This release no longer runs: {versions}. Affected steps: {unsupported}. Affected flows: {flows}. Update each step to a qadam version built against a supported framework version.",
+  "qadams that predate context versions": "qadams that predate context versions",
+  "context version {version}": "context version {version}",
   "and {remaining} more": "and {remaining} more"
 }

@@ -3389,6 +3389,36 @@ describe('MCP Tools integration', () => {
                 },
             })
         })
+
+        // #838: a pin no version answers already gets the `qadam_version` error and its remedy; a
+        // second, `framework_version` error about "an unknown context version" would contradict it.
+        it('reports a pin that does not resolve once, as qadam_version, after a retirement', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const flowId = await createFlowAndGetId(mcp, 'Retired Unresolved Pin Flow')
+            await apUpdateTriggerTool(mcp, mockLog).execute({
+                flowId,
+                qadamName: '@aiqadam/qadam-test-email',
+                triggerName: 'new_email',
+            })
+            const flowVersion = await db.findOneByOrFail<{ id: string, trigger: Record<string, any> }>('flow_version', { flowId })
+            flowVersion.trigger.settings.qadamVersion = '0.0.1-gone'
+            await db.save('flow_version', flowVersion)
+
+            await withEngineContextVersions({
+                contextVersions: [LATEST_CONTEXT_VERSION],
+                run: async () => {
+                    const validation = await apValidateFlowTool(mcp, mockLog).execute({ flowId })
+                    const issues = JSON.stringify(validation.structuredContent?.issues)
+                    expect(issues).toContain('qadam_version')
+                    expect(issues).not.toContain('framework_version')
+
+                    const structure = await apFlowStructureTool(mcp, mockLog).execute({ flowId })
+                    expect(text(structure)).toContain('PINNED VERSION UNAVAILABLE')
+                    expect(text(structure)).not.toContain('FRAMEWORK VERSION NO LONGER SUPPORTED')
+                },
+            })
+        })
     })
 
     async function saveCustomQadamWithContextVersion({ platformId, contextVersion, name = '@census/qadam-context-v1' }: { platformId: string, contextVersion: ContextVersion, name?: string }): Promise<void> {

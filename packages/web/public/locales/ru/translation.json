@@ -2259,6 +2259,8 @@
   "This member is managed by your directory": "Этот участник управляется вашей директорией",
   "The last admin cannot be removed or demoted": "Последнего администратора нельзя удалить или понизить",
   "Framework version retirement": "Прекращение поддержки версии фреймворка",
-  "This release no longer runs context versions {versions}. Affected steps: {unsupported}. Affected flows: {flows}. Update each step to a qadam version built against a supported framework version.": "Этот релиз больше не поддерживает версии контекста {versions}. Затронуто шагов: {unsupported}. Затронуто потоков: {flows}. Обновите каждый шаг до версии qadam, собранной против поддерживаемой версии фреймворка.",
+  "This release no longer runs: {versions}. Affected steps: {unsupported}. Affected flows: {flows}. Update each step to a qadam version built against a supported framework version.": "Этот релиз больше не поддерживает: {versions}. Затронуто шагов: {unsupported}. Затронуто потоков: {flows}. Обновите каждый шаг до версии qadam, собранной против поддерживаемой версии фреймворка.",
+  "qadams that predate context versions": "qadam, созданные до появления версий контекста",
+  "context version {version}": "версия контекста {version}",
   "and {remaining} more": "и ещё {remaining}"
 }

@@ -2259,6 +2259,8 @@
   "This member is managed by your directory": "Bu a'zo sizning katalogingiz tomonidan boshqariladi",
   "The last admin cannot be removed or demoted": "Oxirgi administratorni o'chirish yoki pasaytirish mumkin emas",
   "Framework version retirement": "Framework versiyasi qo'llab-quvvatlanmaydi",
-  "This release no longer runs context versions {versions}. Affected steps: {unsupported}. Affected flows: {flows}. Update each step to a qadam version built against a supported framework version.": "Bu reliz {versions} kontekst versiyalarini endi qo'llab-quvvatlamaydi. Ta'sirlangan qadamlar: {unsupported}. Ta'sirlangan oqimlar: {flows}. Har bir qadamni qo'llab-quvvatlanadigan framework versiyasiga mos qadam versiyasiga yangilang.",
+  "This release no longer runs: {versions}. Affected steps: {unsupported}. Affected flows: {flows}. Update each step to a qadam version built against a supported framework version.": "Bu reliz endi quyidagilarni qo'llab-quvvatlamaydi: {versions}. Ta'sirlangan qadamlar: {unsupported}. Ta'sirlangan oqimlar: {flows}. Har bir qadamni qo'llab-quvvatlanadigan framework versiyasiga mos qadam versiyasiga yangilang.",
+  "qadams that predate context versions": "kontekst versiyalari paydo bo'lishidan oldingi qadamlar",
+  "context version {version}": "kontekst versiyasi {version}",
   "and {remaining} more": "yana {remaining} ta"
 }

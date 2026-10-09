@@ -8,6 +8,10 @@ import { frameworkCensusQueries } from '../lib/framework-census-hooks';
 // How many affected flows the banner names before collapsing the rest into a count.
 const MAX_LISTED_FLOWS = 5;
 
+// The census's name for a qadam built before `getContextInfo` existed (`PREDATES_CONTEXT_INFO` in
+// the framework, which the web bundle does not import).
+const PREDATES_CONTEXT_INFO = 'none';
+
 // ADR-0002 (#803): after a release retires a framework context version, the steps pinned to
 // qadams built against it stop running. The release does not block and no flow is disabled (#435),
 // so this banner is where the operator sees the consequence and the repair path.
@@ -35,9 +39,11 @@ export function FrameworkCensusBanner() {
       <AlertTitle>{t('Framework version retirement')}</AlertTitle>
       <AlertDescription>
         {t(
-          'This release no longer runs context versions {versions}. Affected steps: {unsupported}. Affected flows: {flows}. Update each step to a qadam version built against a supported framework version.',
+          'This release no longer runs: {versions}. Affected steps: {unsupported}. Affected flows: {flows}. Update each step to a qadam version built against a supported framework version.',
           {
-            versions: data.retiredContextVersions.join(', '),
+            versions: data.retiredContextVersions
+              .map(contextVersionLabel)
+              .join(', '),
             unsupported: data.summary.unsupported,
             flows: data.summary.flowsWithUnsupportedSteps,
           },
@@ -53,4 +59,12 @@ export function FrameworkCensusBanner() {
       </AlertDescription>
     </Alert>
   );
+}
+
+// The census reports context versions as the engine names them ('1', 'none'); the banner names
+// them in words.
+function contextVersionLabel(version: string): string {
+  return version === PREDATES_CONTEXT_INFO
+    ? t('qadams that predate context versions')
+    : t('context version {version}', { version });
 }

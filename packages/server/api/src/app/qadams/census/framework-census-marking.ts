@@ -19,7 +19,11 @@ export const frameworkCensusMarking = (log: FastifyBaseLogger) => ({
             pins: qadamPinUtil.collectDistinctPins({ steps: qadamSteps }),
             platformId,
         })
-        return new Map([...supportByPin].filter(([, support]) => support.status === 'unsupported'))
+        // A pin no version answers is already `ap_validate_flow`'s `qadam_version` error and
+        // `ap_flow_structure`'s "pinned version unavailable" mark, whose remedy is the right one;
+        // a second mark claiming an unknown context version would only contradict it. The census
+        // itself still counts such a pin as needing the old contract.
+        return new Map([...supportByPin].filter(([, support]) => support.status === 'unsupported' && support.source !== 'unresolved'))
     },
 
     // One line at boot, so a retirement is visible in the operator's logs even before anyone opens
@@ -35,5 +39,3 @@ export const frameworkCensusMarking = (log: FastifyBaseLogger) => ({
         }, '[frameworkCensus] This release no longer runs some framework context versions. Steps pinned to qadams built against them are marked "framework version no longer supported — update this step" by the MCP tools ap_flow_structure and ap_validate_flow, and listed in the banner on the platform Health page. Run the framework census (doctor) to list them all; no flow is disabled.')
     },
 })
-
-export type { PinFrameworkSupport }
