@@ -181,7 +181,7 @@ export async function openReadOnlyDatabaseConnection(): Promise<DataSource> {
     if (ds.isInitialized) {
         const { error: destroyError } = await tryCatch(() => ds.destroy())
         if (!isNil(destroyError)) {
-            system.globalLogger().warn({ error: destroyError }, '[openReadOnlyDatabaseConnection] Closing the refused read-only connection failed')
+            system.globalLogger().warn({ err: destroyError }, '[openReadOnlyDatabaseConnection] Closing the refused read-only connection failed')
         }
     }
     setPersistedConnection(null)

@@ -114,9 +114,42 @@ describe('singleFlightTtlCache (#838)', () => {
         const waiting = cache.get({ key: 'platform-a', compute: () => deferred<string>().promise })
         const settled = expect(waiting).rejects.toThrow('Abandoned after 2000 ms in flight')
 
-        await vi.advanceTimersByTimeAsync(2000)
+        await vi.advanceTimersByTimeAsync(1999)
+        const shared = vi.fn(async () => 'not computed')
+        expect(cache.get({ key: 'platform-a', compute: shared })).toBe(waiting)
+        expect(shared).not.toHaveBeenCalled()
 
+        await vi.advanceTimersByTimeAsync(1)
         await settled
+    })
+
+    // A compute that throws before returning a promise must reject its callers, not leave the
+    // deadline's rejection unhandled (which would crash the process at the bound).
+    it('turns a synchronous throw into a rejection and leaves no unhandled rejection at the bound', async () => {
+        const unhandled = vi.fn()
+        process.on('unhandledRejection', unhandled)
+        try {
+            const cache = singleFlightTtlCache.create<string>({ ttlMs: 1000, maxInFlightMs: 2000 })
+            const compute = (): Promise<string> => {
+                throw new Error('thrown before any promise')
+            }
+
+            await expect(cache.get({ key: 'platform-a', compute })).rejects.toThrow('thrown before any promise')
+            // The deadline was cancelled when the computation settled.
+            expect(vi.getTimerCount()).toBe(0)
+            await vi.advanceTimersByTimeAsync(5000)
+            // Node reports unhandled rejections after the microtask queue drains, so give it real
+            // macrotask turns.
+            vi.useRealTimers()
+            await new Promise((resolve) => setImmediate(resolve))
+            await new Promise((resolve) => setImmediate(resolve))
+
+            expect(unhandled).not.toHaveBeenCalled()
+            expect(await cache.get({ key: 'platform-a', compute: async () => 'census' })).toBe('census')
+        }
+        finally {
+            process.off('unhandledRejection', unhandled)
+        }
     })
 
     it('ignores an old computation that settles after clear(), whether it resolves or rejects', async () => {

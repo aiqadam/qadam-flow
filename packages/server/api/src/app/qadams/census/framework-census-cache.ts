@@ -29,9 +29,12 @@ export const singleFlightTtlCache = {
                 if (!isNil(existing)) {
                     return existing.value
                 }
+                // `compute` runs inside a promise, so a synchronous throw becomes a rejection the race
+                // below handles; the deadline is armed only after that, so it always has a handler.
+                const computed = Promise.resolve().then(compute)
                 const abandoned = new Error(`Abandoned after ${maxInFlightMs} ms in flight`)
                 const deadline = rejectAfter({ ms: maxInFlightMs, error: abandoned })
-                const value = Promise.race([compute(), deadline.promise])
+                const value = Promise.race([computed, deadline.promise])
                 const entry: CacheEntry<T> = { value, expiresAt: null }
                 entries.set(key, entry)
                 // The TTL starts when the value settles, so a slow walk is not stale the moment it
