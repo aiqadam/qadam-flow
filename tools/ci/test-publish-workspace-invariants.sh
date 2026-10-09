@@ -479,7 +479,7 @@ fi
 
 # --- step 1b: the official-qadam leg (#476) -----------------------------------------------
 #
-# ci.yml's `pack-smoke` deliberately builds and packs only the three framework packages, so the
+# ci.yml's `pack-smoke` deliberately packs only the two framework packages, so the
 # qadam-specific half of the pack script is exercised nowhere else on a PR. These cover it.
 
 : > "$NPM_CALL_LOG"

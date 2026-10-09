@@ -106,11 +106,11 @@ jobs:
   # dist-tag. Read those before reordering anything here — the second in particular
   # documents a silent `latest`-starvation trap.
   #
-  # WHAT THIS WORKFLOW DOES NOT CATCH. It has no opinion on whether these three packages
+  # WHAT THIS WORKFLOW DOES NOT CATCH. It has no opinion on whether these two packages
   # should be republished on a given run at all — `packagePrePublishChecks` makes a no-op
-  # publish safe, but nothing here asserts any of the three was actually bumped. They
+  # publish safe, but nothing here asserts either of them was actually bumped. They
   # version independently of anything a caller knows about (`vX.Y.Z` on the Docker image
-  # says nothing about `packages/shared/package.json`'s own version), so "we published
+  # says nothing about `packages/qadams/framework/package.json`'s own version), so "we published
   # nothing" and "we published both" are both a green run with identical logs apart
   # from the per-package skip lines — read those lines, not the job conclusion, to know what
   # actually shipped. That is also why re-running after a transient failure is safe, and why
@@ -281,7 +281,7 @@ jobs:
       #
       # A package already published at its current version produces no tarball and no manifest
       # line, which is how a re-run after a partial failure stays safe.
-      # `--include-qadams` adds the 238 official qadams to the same manifest, AFTER the three
+      # `--include-qadams` adds the 238 official qadams to the same manifest, AFTER the two
       # framework packages (#476, step 1b). One manifest and one artifact rather than a second
       # pack/publish pair, because the publishing job is duplicated across release.yml and
       # publish-packages.yml on purpose (#498) and a third copy of it would be pinned by nothing

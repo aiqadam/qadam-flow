@@ -6,7 +6,9 @@ Scope: `packages/shared/**`. Source: root `AGENTS.md`.
 Source: root `AGENTS.md`. These apply to every TypeScript file, in addition to
 the language rules OCR already merges from its system layer.
 
-- **No `any`.** Use a precise type, or `unknown` plus a type guard.
+- **No `any`.** Use a precise type, or `unknown` plus a type guard. Exception:
+  `packages/server/api/test/**/*.ts`, where ESLint turns `no-explicit-any` off
+  (`serverConfigs.api` in `tools/eslint/server.mjs`) — an `any` there is not a finding.
 - **No type casting.** Do not use `as SomeType` to force a type. If you touch a
   line with an unnecessary cast, removing it is part of the change.
 - **No deprecated APIs.** If a used method or export carries a `@deprecated`
@@ -29,9 +31,10 @@ the language rules OCR already merges from its system layer.
   single exported `const` object; callers use `myUtils.fn1()`. React components
   are named exports instead.
 - **Published package versioning.** Every version is a semver promise to a named
-  consumer (ADR-0001; rule: `.agents/rules/versioning.md`). A change under
-  `@aiqadam/shared`, `@aiqadam/qadams-framework`, `@aiqadam/qadams-common` or a qadam
-  must be named by a `.changeset/*.md` added in the same PR; only the release PR raises
+  consumer (ADR-0001; rule: `.agents/rules/versioning.md`). A change to the `src/` or
+  to a `package.json` dependency section of `@aiqadam/shared`, `@aiqadam/qadams-framework`,
+  `@aiqadam/qadams-common` or a qadam must be named by a `.changeset/*.md` added in the
+  same PR; only the release PR raises
   `version`, and a hand-edited version is a finding. On `0.x` minor is the breaking slot
   and a new export is minor; everything else is patch. From `1.0.0` (today only
   `qadam-assemblyai`) a break is major, a new capability minor, a fix patch. For a qadam,
@@ -43,7 +46,8 @@ the language rules OCR already merges from its system layer.
   git-symlink mirrors; editing a mirror instead of `.agents/` is a finding.
 <!-- repo-wide:end -->
 
-- **Changeset — two packages.** Any change under `packages/shared` must be named
+- **Changeset — two packages.** Any change under `packages/shared/src/`, or to a
+  dependency section of `packages/shared/package.json`, must be named
   by a `.changeset/*.md` added in the same PR, for `@aiqadam/shared` **and** for
   `@aiqadam/qadams-framework`. `shared` is private since #799 and no longer
   published, but the framework re-exports from it and its tarball vendors all of
