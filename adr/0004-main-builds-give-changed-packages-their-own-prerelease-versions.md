@@ -68,12 +68,13 @@ the same `<n>`. With each snapshot the store records the framework version it wa
 
 **Snapshot pins stay on `-main` instances.** A `-main` instance is one whose platform version is a
 `-main.<n>` prerelease. An export that leaves the instance rewrites every snapshot pin to the newest
-**released** version of its caret bucket (same major; on `0.x`, same minor), as the catalogue
-(ADR-0003) lists it. If `1.3.0` is out, `1.3.0-main.412` becomes `^1.3.0` or a newer `1.x`. If only
-`1.2.x` is out, it becomes the newest `1.2.x`, for example `^1.2.4`. The rewrite passes the props
-check of the fallback below: the snapshot's own `metadata.json` against the release's metadata in
-the catalogue. If no release is in the bucket, or the newest one lacks props the step uses, the step
-is exported pinned to its line's own release, `^1.3.0`. The importing instance resolves that pin only
+**released** version at or above the snapshot's base and inside its caret, as the catalogue
+(ADR-0003) lists it. For `1.3.0-main.412` that is the newest release `>=1.3.0 <2.0.0`, for example
+`^1.3.2`. It is never a release below the base, such as `1.2.4`, so the rewrite stays inside the
+pin's own caret range, the bound ADR-0001 sets for anything that moves a pin automatically. The
+rewrite passes the props check of the fallback below: the snapshot's own `metadata.json` against the
+release's metadata in the catalogue. If nothing in that range is released yet, or the newest release
+lacks props the step uses, the step is exported pinned to its line's own release, `^1.3.0`. The importing instance resolves that pin only
 once the release exists; until then it marks the step "version unavailable — update this step". The
 export lists those steps to the person exporting. Keeping snapshot pins is an explicit opt-in on
 export, so a release instance receives one only when someone chose to send it. On import the caret
@@ -87,15 +88,6 @@ rewritten, because their flows never leave it. Today both kinds of caller fetch 
 The query therefore gains an explicit parameter. When it is absent, the server rewrites, so a caller
 that does not say the template stays here gets release pins. The two same-instance template paths
 set the parameter.
-
-**Our reading of ADR-0001 for the export.** A newest release below the snapshot's base lies outside
-the pin's own caret range (`1.2.4` does not satisfy `^1.3.0-main.412`). ADR-0001 bounds "anything that
-moves a pin automatically" by that range, and `versioning.md` names what may never cross it: "a
-resolver, migration or job". We read an export as something else: a person writes a new flow for
-another instance, and the source pin does not move. In the export, the props check stands in for the
-caret's promise. This is the maintainer's reading, chosen on 2026-10-10. A reader who holds ADR-0001's
-bound on exports as well would need one of two things: an export that rewrites only to releases at
-or above the snapshot's base and marks the rest, or a superseding ADR.
 
 **Following `main`.** When an instance starts on a new image, the instance setting
 `AP_QADAM_SNAPSHOT_POLICY` decides what happens to pins whose version is available:
@@ -287,8 +279,9 @@ A second round on the same day, after review, settled six points the first left 
    too;
 2. a revert holds the step;
 3. ADR-0003's Option C is read as covering the released half only (no supersede);
-4. an export rewrites to the newest released version of the caret bucket, after the props check,
-   and same-instance templates are not rewritten;
+4. an export rewrites to the newest released version at or above the snapshot's base and inside
+   its caret, after the props check (a third exchange chose this over rewriting below the base, which
+   would have left ADR-0001's caret range), and same-instance templates are not rewritten;
 5. `2.0.0` waits for gate 9;
 6. revert targets are kept for the last N moves per step.
 
@@ -397,7 +390,7 @@ Rejected.
 | Pin format | `x.y.z` or `x.y.z-main.<n>`, through one parser in `shared` | Any semver prerelease: no build produces one, and the fallback and `follow` rules model only `-main.<n>`. One pattern per consumer (today): they already disagree (Context) |
 | Alias | `name@version`, split at the last `@`; compatibility read for existing `name-version` workspace directories | `name-version` with a smarter split: a qadam name and a prerelease both contain hyphens, so the split has to guess where the version starts |
 | Storage | The instance store; the `:sha-*` image as the archive of record | npm (B), a separate registry (C) |
-| A snapshot pin in an export | Rewritten to the newest released version of its caret bucket, after the props check; the line's own release, marked on import, when nothing passes; snapshots and their metadata kept only on explicit opt-in; same-instance templates not rewritten | Keep snapshots by default: production instances would import pins they can never fetch. Always the line's own release (`^1.3.0`, the first round): before `1.3.0` ships every exported step is unusable. Never keep snapshots: QA-to-QA copies need them, because `^1.3.0` does not contain `1.3.0-main.420`. Rewrite templates too: a template that stays on the instance would lose the code its flow was built on |
+| A snapshot pin in an export | Rewritten to the newest released version at or above the snapshot's base inside its caret, after the props check; the line's own release, marked on import, when nothing passes; snapshots and their metadata kept only on explicit opt-in; same-instance templates not rewritten | Keep snapshots by default: production instances would import pins they can never fetch. Always the line's own release (`^1.3.0`, the first round): it ignores a later release of the line (`1.3.2`, `1.4.0`) that the exporting instance knows of. The newest release of the whole bucket, below the base too (`1.2.4`): it leaves the pin's caret range, which ADR-0001 forbids for an automatic move, and drops what the snapshot added. Never keep snapshots: QA-to-QA copies need them, because `^1.3.0` does not contain `1.3.0-main.420`. Rewrite templates too: a template that stays on the instance would lose the code its flow was built on |
 | Available pins on an instance that starts on a new image | `AP_QADAM_SNAPSHOT_POLICY`: `follow` (default on `-main` instances) moves any pin, release pins included on `-main` instances, to the newest version the image ships inside the caret, with ADR-0003's checks, an audit record and revert; a revert holds the step; `pin` (default on release instances) moves nothing | Always keep (the 2026-10-08 draft): QA stops exercising `main` unless someone updates every step. Always follow: an instance that imported snapshot pins on purpose, for example to reproduce a QA run on a release instance, would have them moved. Snapshot pins only (the first round): steps created on a release stay on it forever on QA. Moving release pins on release images: ADR-0003's rejected Option C. Re-following a reverted step: the next image would undo the person's revert |
 | A snapshot pin where it is missing | ADR-0003's fallback, prereleases counted inside the caret, props from the snapshot's own `metadata.json` (embedded in the export or in the store); without metadata, marked | Exact releases only: on a `-main` instance a missing snapshot could then never move to the image's newer snapshot of a compatible line. No props check (the 2026-10-08 draft): the one place this ADR loosened ADR-0003 |
 | Gate 9 | Measured first, advisory during the clean-up, required when the divergences reach zero; `v2.0.0` is tagged only after that | Required from day one: every `main` image build would be red until all divergent `0.x` qadams have changesets. Report-only for good: unenforced checks are how #783 happened (ADR-0001). ADR-0001 rejected advisory-first for gates 1–7, which a PR can satisfy at once; gate 9 cannot pass until the divergences are released, and it joins the required set before the first release under ADR-0001 all the same |
@@ -563,7 +556,8 @@ citations are at `8ba81dfa` and say so.
   `metadata.json`, embedded in the imported flow or held in the store. Without it, mark the step and
   do not move it.
 - **Export and import.** In `flowService.getTemplate`, rewrite each snapshot pin to the newest
-  released version of its caret bucket, from the catalogue (#778, wired at run time), after the props
+  released version at or above the snapshot's base inside its caret, from the catalogue (#778, wired
+  at run time), after the props
   check. When nothing passes, write the line's own release and list the step to the person
   exporting. Add a parameter to `GetFlowTemplateRequestQuery` that the two same-instance template
   paths set to skip the rewrite; without it, the server rewrites. Add an explicit opt-in that keeps
