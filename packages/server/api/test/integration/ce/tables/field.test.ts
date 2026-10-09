@@ -298,6 +298,15 @@ describe('Field API', () => {
             expect(stored?.name).toBe(field.name)
         })
 
+        it('rejects an update that carries neither a name nor options', async () => {
+            const ctx = await setup()
+            const { field } = await createDropdownField({ ctx, options: ['Open'] })
+
+            const response = await ctx.post(`/v1/fields/${field.id}`, {})
+
+            expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
+        })
+
         it('stores a duplicated option once', async () => {
             const ctx = await setup()
             const { field } = await createDropdownField({ ctx, options: ['Open'] })

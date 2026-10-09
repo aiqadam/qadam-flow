@@ -176,13 +176,14 @@ export const fieldService = {
                     throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, `Field "${field.name}" is ${field.type} — options can only be set on a STATIC_DROPDOWN field.`)
                 }
                 if (newOptions.length === 0) {
-                    // The controller's schema already rejects this; the MCP tool calls the service directly.
+                    // The controller's schema already rejects this. The MCP `options` input has no `.min`, so this is the check MCP reaches.
                     const message = formErrors.required
                     throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, `Field "${field.name}": options must contain at least one value.`)
                 }
                 if (newOptions.length > MAX_DROPDOWN_OPTIONS) {
-                    // REST is capped by the request schema; the MCP tool calls the service directly. Uncapped,
-                    // a later removal could exceed Postgres's bind-parameter limit in the in-use check.
+                    // REST and MCP are both capped by their input schemas, so only internal callers reach this;
+                    // kept as defence in depth, since an uncapped list could later push the in-use check
+                    // past Postgres's bind-parameter limit.
                     throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message: `Max options per dropdown field reached: ${MAX_DROPDOWN_OPTIONS}` } })
                 }
                 await assertNoRemovedOptionInUse({ field, newOptions, projectId, entityManager })

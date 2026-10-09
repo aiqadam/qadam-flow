@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { formErrors } from '../../../form-errors'
 import { DropdownOptionsInput, DropdownOptionsUpdateInput, FieldType, JsonFieldData } from '../field'
 
 
@@ -33,7 +34,7 @@ export const UpdateFieldRequest = z.object({
     data: z.object({
         options: DropdownOptionsUpdateInput,
     }).optional(),
-})
+}).refine((request) => request.name !== undefined || request.data !== undefined, { message: formErrors.required })
 
 export const ListFieldsRequestQuery = z.object({
     tableId: z.string(),

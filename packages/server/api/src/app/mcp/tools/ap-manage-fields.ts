@@ -108,7 +108,8 @@ export const apManageFieldsTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
 function describeFieldChanges({ before, after }: { before: Field, after: Field }): string[] {
     const nameChange = before.name === after.name ? [] : [`renamed from ${mcpUtils.wrapUntrustedValue(before.name)}`]
     const optionChange = before.type === FieldType.STATIC_DROPDOWN && after.type === FieldType.STATIC_DROPDOWN
-        ? describeOptionChange({ before: before.data.options, after: after.data.options })
+        // `data` is typed as required but the column is nullable (field.entity.ts), and this runs after the update has committed.
+        ? describeOptionChange({ before: before.data?.options ?? [], after: after.data?.options ?? [] })
         : []
     const changes = [...nameChange, ...optionChange]
     return changes.length === 0 ? ['no changes'] : changes
