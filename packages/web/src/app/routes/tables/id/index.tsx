@@ -1,7 +1,7 @@
 import { ApFlagId, Permission } from '@aiqadam/shared';
 import { nanoid } from 'nanoid';
 import { useRef, useEffect } from 'react';
-import DataGrid, { DataGridHandle } from 'react-data-grid';
+import { DataGrid, DataGridHandle } from 'react-data-grid';
 import 'react-data-grid/lib/styles.css';
 import { useNavigate } from 'react-router';
 
