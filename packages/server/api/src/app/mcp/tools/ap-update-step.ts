@@ -238,6 +238,9 @@ export const apUpdateStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLo
                 })
                 const updatedStep = flowStructureUtil.getStep(stepName, updatedFlow.version.trigger)
                 const draftWarning = mcpUtils.publishedFlowWarning(flow.publishedVersionId)
+                // Both replies carry it: an invalid step's diagnosis below is read from the installed
+                // version's metadata, which hides that the step's own pin does not resolve.
+                const pinNote = await unavailablePinNote({ step: updatedStep, platformId: project.platformId, log })
                 if (updatedStep && !updatedStep.valid) {
                     const diagnosis = updatedStep.type === FlowActionType.PIECE
                         ? await diagnoseMissingInputs({ settings: updatedStep.settings, platformId: project.platformId, log })
@@ -249,11 +252,10 @@ export const apUpdateStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLo
                     return {
                         content: [{
                             type: 'text',
-                            text: `⚠️ Step "${stepName}" updated but still invalid. ${hint}${draftWarning}`,
+                            text: `⚠️ Step "${stepName}" updated but still invalid. ${hint}${pinNote}${draftWarning}`,
                         }],
                     }
                 }
-                const pinNote = await unavailablePinNote({ step: updatedStep, platformId: project.platformId, log })
                 return {
                     content: [{ type: 'text', text: `✅ Successfully updated step "${stepName}".${pinNote}${draftWarning}` }],
                 }

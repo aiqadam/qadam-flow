@@ -14,7 +14,7 @@ import {
     TriggerTestStrategy,
     tryCatch,
 } from '@aiqadam/shared'
-import type { FastifyBaseLogger } from 'fastify'
+import pino from 'pino'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const loadBundledQadams = vi.fn()
@@ -45,7 +45,8 @@ import { flowVersionValidationUtil } from '../../../../../src/app/flows/flow-ver
 import { qadamMetadataService } from '../../../../../src/app/qadams/metadata/qadam-metadata-service'
 import { createMockFlowVersion } from '../../../../helpers/mocks'
 
-const log = { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() } as unknown as FastifyBaseLogger
+const log = pino({ level: 'silent' })
+const warnSpy = vi.spyOn(log, 'warn')
 
 const QADAM_NAME = '@aiqadam/qadam-fixture'
 // 0.3.1 is outside `^0.5.x`, so `qadamMetadataService.get()` (which never crosses a 0.x minor)
@@ -94,7 +95,7 @@ function installedQadam({ version, requiredProp }: { version: string, requiredPr
     return { ...parsed, contextInfo: undefined }
 }
 
-function storedFlowVersion({ qadamVersion }: { qadamVersion: string }): FlowVersion {
+function storedFlowVersion({ qadamVersion, actionLacksVersion = false }: { qadamVersion: string, actionLacksVersion?: boolean }): FlowVersion {
     const action = {
         name: 'step_1',
         displayName: 'Do thing',
@@ -102,7 +103,8 @@ function storedFlowVersion({ qadamVersion }: { qadamVersion: string }): FlowVers
         type: FlowActionType.PIECE,
         settings: {
             qadamName: QADAM_NAME,
-            qadamVersion,
+            // A legacy stored step can lack its version altogether.
+            qadamVersion: actionLacksVersion ? undefined : qadamVersion,
             actionName: 'do_thing',
             input: { subject: 'hello' },
             propertySettings: {},
@@ -126,16 +128,17 @@ function storedFlowVersion({ qadamVersion }: { qadamVersion: string }): FlowVers
     return createMockFlowVersion({ trigger })
 }
 
-function updateActionRequest({ qadamVersion, input, displayName }: {
+function updateActionRequest({ qadamVersion, input, displayName, stepName = 'step_1' }: {
     qadamVersion: string
     input: Record<string, unknown>
     displayName: string
+    stepName?: string
 }): FlowOperationRequest {
     return FlowOperationRequest.parse({
         type: FlowOperationType.UPDATE_ACTION,
         request: {
             type: FlowActionType.PIECE,
-            name: 'step_1',
+            name: stepName,
             displayName,
             valid: true,
             settings: {
@@ -196,12 +199,12 @@ function updateTriggerRequest({ qadamVersion }: { qadamVersion: string }): FlowO
     })
 }
 
-async function prepare({ request, storedVersion }: { request: FlowOperationRequest, storedVersion?: string }): Promise<FlowOperationRequest> {
+async function prepare({ request, storedVersion, actionLacksVersion }: { request: FlowOperationRequest, storedVersion?: string, actionLacksVersion?: boolean }): Promise<FlowOperationRequest> {
     return flowVersionValidationUtil(log).prepareRequest({
         platformId: PLATFORM_ID,
         userId: null,
         request,
-        storedFlowVersion: storedVersion === undefined ? undefined : storedFlowVersion({ qadamVersion: storedVersion }),
+        storedFlowVersion: storedVersion === undefined ? undefined : storedFlowVersion({ qadamVersion: storedVersion, actionLacksVersion }),
     })
 }
 
@@ -364,6 +367,25 @@ describe('flowVersionValidationUtil.prepareRequest — step pinned to an unavail
             expect(error?.error.code).toBe(ErrorCode.ENTITY_NOT_FOUND)
         })
 
+        it('refuses an UPDATE_ACTION that names the trigger, even with the trigger\'s own pin', async () => {
+            const error = await captureError(() => prepare({
+                storedVersion: UNAVAILABLE_PIN,
+                request: updateActionRequest({ qadamVersion: UNAVAILABLE_PIN, displayName: 'Step', input: { subject: 'hello' }, stepName: 'trigger' }),
+            }))
+
+            expect(error?.error.code).toBe(ErrorCode.ENTITY_NOT_FOUND)
+        })
+
+        it('treats a stored step with no version as having no pin to keep, instead of throwing a TypeError', async () => {
+            const error = await captureError(() => prepare({
+                storedVersion: UNAVAILABLE_PIN,
+                actionLacksVersion: true,
+                request: updateActionRequest({ qadamVersion: UNAVAILABLE_PIN, displayName: 'Step', input: { subject: 'hello' } }),
+            }))
+
+            expect(error?.error.code).toBe(ErrorCode.ENTITY_NOT_FOUND)
+        })
+
         it('refuses an ADD_ACTION with a version that is not installed', async () => {
             const unknownVersion = await captureError(() => prepare({ storedVersion: UNAVAILABLE_PIN, request: addActionRequest({ qadamVersion: '9.9.9' }) }))
             const sameAsAnotherStepsPin = await captureError(() => prepare({ storedVersion: UNAVAILABLE_PIN, request: addActionRequest({ qadamVersion: UNAVAILABLE_PIN }) }))
@@ -410,7 +432,7 @@ describe('flowVersionValidationUtil.prepareRequest — step pinned to an unavail
 
         expect(action.qadamVersion).toBe(INSTALLED_VERSION)
         expect(action.valid).toBe(false)
-        expect(log.warn).not.toHaveBeenCalledWith(
+        expect(warnSpy).not.toHaveBeenCalledWith(
             expect.objectContaining({ pinnedVersion: INSTALLED_VERSION }),
             expect.stringContaining('pinned qadam version unavailable'),
         )

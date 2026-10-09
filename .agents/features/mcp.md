@@ -85,7 +85,7 @@ Exposes a Qadam Flow project as a Model Context Protocol (MCP) server so that AI
   step-level run-log opt-outs, #505). `ap_update_step` carries the stored `skip`, `logInput` and
   `logOutput` forward when the call omits them — `_updateAction` in shared copies all three straight
   from the request, so a field the tool left out was a reset, not a no-op (the pre-#505 tool
-  silently un-redacted and un-skipped every step it touched). **Stopgap (#843, until #805/#808):**
+  silently un-redacted and un-skipped every step it touched). **Stopgap (#843, removed when #808 lands):**
   the rule lives in the shared `flowVersionValidationUtil.prepareRequest`, so it applies to every
   caller of `flowService.update` (builder, REST, MCP), not just this tool. An `UPDATE_ACTION` /
   `UPDATE_TRIGGER` whose pin (after `getExactVersion`) equals the step's STORED pin, where that pin

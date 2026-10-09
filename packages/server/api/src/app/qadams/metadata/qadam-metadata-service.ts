@@ -64,7 +64,7 @@ export const qadamMetadataService = (log: FastifyBaseLogger) => {
                 version: qadam.version,
             }))
         },
-        async get({ projectId: _projectId, platformId, version, name }: GetOrThrowParams): Promise<QadamMetadataModel | undefined> {
+        async get({ projectId: _projectId, platformId, version, name }: GetParams): Promise<QadamMetadataModel | undefined> {
             const bestMatch = await findExactVersion(log, { name, version, platformId })
             if (isNil(bestMatch)) {
                 return undefined
@@ -272,8 +272,8 @@ export function toQadamMetadataModelSummary<T extends QadamMetadataSchema>(
     })
 }
 
-// STOPGAP for #843, to be removed once #805/#808 resolve an unavailable pin properly (ADR-0003's
-// store and audited fallback). Editing-time lookup only: it lets a write validate against the
+// STOPGAP for #843, to be removed when #808 gives an unavailable pin its proper handling (ADR-0003's
+// checked, audited fallback). Editing-time lookup only: it lets a write validate against the
 // installed build of a qadam when the step's own pinned version is not installed.
 //
 // What actually happens to such a step at run time (traced, #843): the worker asks the API for the
@@ -586,14 +586,17 @@ type ListParams = {
     locale?: LocalesEnum
 }
 
-type GetOrThrowParams = {
+type GetParams = {
     name: string
     version?: string
     entityManager?: EntityManager
     projectId?: string
     platformId?: string
     locale?: LocalesEnum
-    // Only `getOrThrow` reads it. See `findInstalledForPin`.
+}
+
+type GetOrThrowParams = GetParams & {
+    // STOPGAP for #843, removed when #808 lands. See `findInstalledForPin`.
     fallbackToInstalledVersion?: boolean
 }
 

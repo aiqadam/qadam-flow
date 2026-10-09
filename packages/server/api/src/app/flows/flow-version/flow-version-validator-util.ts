@@ -97,6 +97,7 @@ export const flowVersionValidationUtil = (log: FastifyBaseLogger) => ({
                             log,
                             fallbackToInstalledVersion: isStoredPinUnchanged({
                                 storedStep: isNil(storedFlowVersion) ? undefined : flowStructureUtil.getStep(clonedRequest.request.name, storedFlowVersion.trigger),
+                                expectedType: FlowActionType.PIECE,
                                 qadamName: clonedRequest.request.settings.qadamName,
                                 qadamVersion: clonedRequest.request.settings.qadamVersion,
                             }),
@@ -133,6 +134,7 @@ export const flowVersionValidationUtil = (log: FastifyBaseLogger) => ({
                             log,
                             fallbackToInstalledVersion: isStoredPinUnchanged({
                                 storedStep: storedFlowVersion?.trigger,
+                                expectedType: FlowTriggerType.PIECE,
                                 qadamName: clonedRequest.request.settings.qadamName,
                                 qadamVersion: clonedRequest.request.settings.qadamVersion,
                             }),
@@ -185,20 +187,28 @@ function warnOnUndeclaredKeys({ log, qadamName, qadamVersion, component, result 
     }, 'Step input carries keys the resolved qadam metadata does not declare; keeping them rather than erasing the caller\'s write')
 }
 
-// STOPGAP for #843, to be removed once #805/#808 give an unavailable pin a real answer (the store, or
-// the audited fallback of ADR-0003).
+// STOPGAP for #843, to be removed when #808 gives an unavailable pin its proper handling (ADR-0003:
+// the checked, audited fallback and the "update this step" state).
 //
 // A step whose pinned qadam version this instance cannot resolve can still be edited: the edit is
 // validated against the installed version instead of being refused. That is allowed ONLY when the
-// edit keeps the step's stored pin. A request that carries a different pin — a new step, or an
-// update that repoints one — stays strict, because validating it against "whatever is installed"
-// would store a pin nothing can resolve, which is the population #808 exists to clear.
-// The pin itself is never rewritten here.
-function isStoredPinUnchanged({ storedStep, qadamName, qadamVersion }: IsStoredPinUnchangedParams): boolean {
-    if (isNil(storedStep) || (storedStep.type !== FlowActionType.PIECE && storedStep.type !== FlowTriggerType.PIECE)) {
+// edit keeps the step's stored pin, on a stored step of the kind the operation updates (an
+// UPDATE_ACTION that names the trigger would otherwise replace it with an action). A request that
+// carries a different pin — a new step, or an update that repoints one — stays strict, because
+// validating it against "whatever is installed" would store a pin nothing can resolve, which is the
+// population #808 exists to clear. The pin itself is never rewritten here.
+function isStoredPinUnchanged({ storedStep, expectedType, qadamName, qadamVersion }: IsStoredPinUnchangedParams): boolean {
+    if (isNil(storedStep) || storedStep.type !== expectedType) {
+        return false
+    }
+    if (storedStep.type !== FlowActionType.PIECE && storedStep.type !== FlowTriggerType.PIECE) {
         return false
     }
     const { qadamName: storedName, qadamVersion: storedVersion } = storedStep.settings
+    // A legacy stored step can lack a version; there is no pin to keep, so it takes the strict path.
+    if (isNil(storedVersion)) {
+        return false
+    }
     return storedName === qadamName
         && flowQadamUtil.getExactVersion(storedVersion) === flowQadamUtil.getExactVersion(qadamVersion)
 }
@@ -312,6 +322,7 @@ type PrepareRequestParams = {
 
 type IsStoredPinUnchangedParams = {
     storedStep: Step | undefined
+    expectedType: FlowActionType.PIECE | FlowTriggerType.PIECE
     qadamName: string
     qadamVersion: string
 }

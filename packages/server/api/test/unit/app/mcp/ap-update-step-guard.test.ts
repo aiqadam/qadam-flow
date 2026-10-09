@@ -154,6 +154,26 @@ describe('ap_update_step — emptied-required-prop guard', () => {
             expect(text).toContain('does not have')
         })
 
+        it('also carries the pin warning when the updated step is still invalid', async () => {
+            const stored = flowWithCallFlowStep(STORED_INPUT)
+            mockUpdate.mockResolvedValue({
+                ...stored,
+                version: {
+                    ...stored.version,
+                    trigger: {
+                        ...stored.version.trigger,
+                        nextAction: { ...stored.version.trigger.nextAction, valid: false },
+                    },
+                },
+            })
+
+            const text = await updateStep({ executionMode: 'inline' })
+
+            expect(text).toContain('updated but still invalid')
+            expect(text).toContain('is pinned to')
+            expect(text).toContain('@aiqadam/qadam-subflows@0.4.14')
+        })
+
         it('adds no pin warning when the pin resolves', async () => {
             mockGet.mockResolvedValue({ version: '0.4.14' })
 
