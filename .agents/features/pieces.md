@@ -18,7 +18,7 @@ The qadams feature manages the metadata catalog of automation integrations (call
 - `packages/web/src/features/qadams/hooks/pieces-hooks.ts` — React Query hooks for piece listing, piece model, piece options
 - `packages/web/src/features/qadams/hooks/use-piece-output-schema.ts` — reads `outputSchema` for a given step (PIECE action or trigger) off the cached piece model; shares the existing `['piece', name, version]` React Query cache so no extra network call is made
 - `packages/web/src/features/qadams/components/` — `PieceIcon`, `PieceIconList`, `PieceSelectorSearch`, `InstallPieceDialog`
-- `tools/scripts/qadams/bundle/` — builds a qadam version as the ADR-0003 artifact (#804): one esbuild bundle with `@aiqadam/*` and `zod` external and declared as `peerDependencies`, `src/i18n`, and a `metadata.json` written from loading the artifact; `qadam-artifact-config.json` holds the reviewed per-qadam exceptions (node_modules for native addons and packages that read their own files, `__dirname`-started entry points). Nothing publishes this format yet; the qadam version store (#805, below) reads it, and nothing resolves a step to it before #779. Header of `qadam-artifact.mjs` documents the layout; `tools/ci/test-qadam-artifacts.sh` pins it
+- `tools/scripts/qadams/bundle/` — builds a qadam version as the ADR-0003 artifact (#804): one esbuild bundle with `@aiqadam/*` and `zod` external and declared as `peerDependencies`, `src/i18n`, and a `metadata.json` written from loading the artifact; `qadam-artifact-config.json` holds the reviewed per-qadam exceptions (node_modules for native addons and packages that read their own files, `__dirname`-started entry points). Nothing publishes this format yet; the qadam version store (#805, below) reads it, and forked engines load an official step's pin from it when it holds it (#779). Header of `qadam-artifact.mjs` documents the layout; `tools/ci/test-qadam-artifacts.sh` pins it
 - `packages/server/utils/src/qadam-version-store/` — the qadam version store (ADR-0003 "Store", #805), see "Qadam Version Store" below
 - `packages/server/api/src/app/qadams/version-store/qadam-version-store-seeding.ts` — seeds the store from the image at API start-up
 - `packages/qadams/framework/src/lib/output-schema.ts` — `OutputSchema` / `OutputSchemaField` / `FieldFormat` plain TypeScript types (embedded into the piece metadata via `z.custom`)
@@ -164,23 +164,37 @@ fallback in `findBundledFallback`, `fetchQadamVersion`) could be that first call
   processes differ in exactly the same four leaves.
 
 ## Qadam Version Store (#805)
-ADR-0003's versioned store of qadam versions on a persistent volume. **Not authoritative yet:** the
-API seeds it and nothing else reads it; steps keep resolving to the bundled build until #779 switches
-the API, worker and engine to it. "Store" alone is ambiguous here (Store qadam, Store Entry): say
-"qadam version store".
+ADR-0003's versioned store of qadam versions on a persistent volume. **Partly authoritative (#779,
+first slice):** a forked engine (`UNSANDBOXED`, `SANDBOX_CODE_ONLY`) loads an official step's exact
+pin from the store when the store holds it (see "Resolution" below). The API's metadata
+(`qadamMetadataService.get`, the census' `resolveOfficialPin`), the worker's provisioning and its
+resolution cache, isolate modes and custom qadams do not resolve through it yet, and no image seeds
+it before #807, so on a real install it is still empty. "Store" alone is ambiguous here (Store
+qadam, Store Entry): say "qadam version store".
 - **Where.** `AP_QADAM_VERSION_STORE_PATH` (default `/var/lib/qadam-flow/qadam-versions`).
-  `docker-compose.yml` mounts the named volume `qadam_versions` there on the app and every worker.
+  `docker-compose.yml` mounts the named volume `qadam_versions` there on the app (read-write, it
+  seeds) and read-only on every worker (#779 app-sec: a forked engine runs flow code as the worker
+  user, `read` does not re-hash files, so a writable store would let one engine plant code every
+  tenant runs). Nothing in the worker or engine writes the store; both use `qadamVersionStoreReader.open`.
+  The worker checks it (`cache/qadams/read-only-mount.ts`): it opens the store and takes the mount the kernel
+  actually reached from `mnt_id` in `/proc/self/fdinfo/<fd>` (so a writable mount stacked over the store or an
+  ancestor later is the one judged), and in `/proc/self/mountinfo` that mount and every mount below it (by
+  parent id) inside the store must carry `ro`; otherwise the store is not used outside
+  `AP_ENVIRONMENT=dev` (warned there) and steps load the bundled builds. Not `access(W_OK)`: Linux
+  (`do_faccessat`, fs/open.c) checks permission bits before it reports a read-only mount, so a non-root
+  worker gets EACCES on a root-owned store whether or not the mount is `:ro`. Without a mount table only
+  EROFS from `access(W_OK)` on the root, `qadams/` and `qadams/_platform/` counts. `docker-compose.sandboxed.yml` (CAP_SYS_ADMIN) with a forked mode could remount it, so do not combine them.
   Outside `/usr/src/app` on purpose: a stored version resolves packages upward from its own
   directory, and `open` refuses a root at or below any directory holding a `node_modules`. That
-  covers the upward walk only — `NODE_PATH` (isolate mode sets it to `/usr/src/node_modules`) and
-  the engine's own resolution are #779's to guard. A named volume because `open` also refuses a
+  covers the upward walk only; `NODE_PATH` (the sandbox env sets `/usr/src/node_modules`) and the
+  global folders are refused by the engine's resolve hook (see "Resolution"). A named volume because `open` also refuses a
   case-insensitive filesystem: platform ids and prerelease versions differ by case. When the store
   cannot open, the seeding hook logs it at warn (info in `AP_ENVIRONMENT=dev`) and returns.
 - **Layout** (`qadam-version-store-layout.ts`, an on-disk format later releases must read):
   `qadams/<name>/<version>/` for official qadams (`@aiqadam/qadam-*` only),
   `qadams/_platform/<platformId>/<name>/<version>/` for custom ones (never the `@aiqadam/` scope),
-  `qadams/node_modules/` reserved for the libraries the platform provides (#779 fills it or replaces
-  it), `.staging/` and `.trash/` beside `qadams/`. Names are held to `NPM_PACKAGE_NAME_REGEX` minus
+  `qadams/node_modules/` reserved for the libraries the platform provides (#779 left it unused: the
+  engine's resolve hook provides them, see "Resolution"), `.staging/` and `.trash/` beside `qadams/`. Names are held to `NPM_PACKAGE_NAME_REGEX` minus
   a `node_modules` segment, versions to canonical semver without build metadata, platform ids to
   the `ApId` shape; a path is built only from validated coordinates and checked to stay in its
   namespace. `_platform` and dot-directories cannot collide with a package name.
@@ -232,6 +246,41 @@ the API, worker and engine to it. "Store" alone is ambiguous here (Store qadam, 
   serialise on the `qadam-version-store-seed` `distributedLock`, and correctness does not depend on
   it. A version already stored is kept even if the image's tarball differs (warned). One line per
   start: `[qadamVersionStore] Seeded the qadam version store from the image {status, stored, present, kept, failed, durationMs}`.
-- **Left to other tickets:** resolution and the engine providing `@aiqadam/*`/`zod` (#779), fetching
+- **Resolution (#779, first slice).** Read-only outside the app. The worker opens the store at
+  `AP_QADAM_VERSION_STORE_PATH` (`WorkerSystemProp.QADAM_VERSION_STORE_PATH`, same default as the
+  API) with `qadamVersionStoreReader.open` (`qadam-version-store-read.ts`: realpath + the
+  `node_modules`-above check, no mkdir, probe or cleanup) before it creates its first sandbox, and
+  in every execution mode, so a later switch to a forked mode on reconnect has a root
+  (`cache/qadams/qadam-version-store-root.ts`; unusable-store lines are info in dev, warn otherwise). Sandbox env
+  always carries `AP_QADAM_VERSION_STORE_PATH`: the real root for forked engines, `''` otherwise, so a
+  value an operator propagates (`AP_SANDBOX_PROPAGATED_ENV_VARS`) never reaches an isolate engine
+  (mounting the store there is a later slice: only the official tree and the job's own platform
+  namespace, and isolate mounts must sit under `/root`, which holds a `node_modules`). The engine
+  opens it the same way through `@aiqadam/server-utils/qadam-version-store-reader`
+  (`qadam-version-store/reader.ts`, reader + layout + `PLATFORM_PROVIDED_PACKAGES`, no writer, no
+  `tar`), taken from source by an esbuild/vitest alias and a `tsconfig.base.json` path. That subpath
+  does not exist at run time anywhere else, and `serverConfigs.server` (`tools/eslint/server.mjs`)
+  forbids `@aiqadam/server-utils/*` outside the engine. `qadam-loader.ts` resolves dev qadam →
+  **store** (`qadam-version-store-resolver.ts`, official namespace, exact `x.y.z` pins) → bundled
+  build at the same version → installed copy → bundled build by name (the pre-store fallback, kept
+  until #808). A stored version that is not PRESENT/ABSENT is skipped with one `console.warn` per
+  version and process. The cold-load line carries `source` (`store` / `bundled` / `installed` /
+  `dev`).
+  **Platform-provided libraries** (`qadam-platform-modules.ts`): before the first stored version
+  loads, the engine registers a `module.registerHooks` resolve hook for modules under the store's
+  `qadams/` (both namespaces). Builtins are Node's. A `PLATFORM_PROVIDED_PACKAGES` specifier (or a
+  subpath) gets the platform's copy: `qadams-framework` and `qadams-common` are the workspace
+  packages `packages/qadams/{framework,common}`, `@aiqadam/shared` and `zod` are the framework's own
+  runtime dependencies, resolved from `packages/qadams/framework` (the same real paths bundled
+  qadams reach, so one copy per engine). A subpath with an empty, `.` or `..` segment is refused, and
+  the resolved file must lie inside that package's real directory. The qadam's own code always gets
+  the platform's copy (a `src/node_modules/zod` beside it is ignored); a third-party module under the
+  version's `node_modules/` gets a private copy nested under it first (#829). Any other specifier
+  must resolve inside the module's own version directory, else `MODULE_NOT_FOUND` (no `NODE_PATH`,
+  global folders or the reserved `qadams/node_modules`). This is a correctness guard against
+  accidental lookups, not a sandbox: a stored version runs with the engine's rights. Hooks do not
+  reach worker threads or child processes a qadam starts (csv's worker, oracle-database's runner).
+- **Left to other tickets:** the rest of #779 (API, worker provisioning and cache, agent-tool
+  provisioning, isolate mounts, custom qadams, removing the by-name fallback with #808), fetching
   and the legacy install path (#806), persisted signature verification next to the store (#780), GC
   and registry config (#478), image seed contents (#807), the unavailable-version fallback (#808).

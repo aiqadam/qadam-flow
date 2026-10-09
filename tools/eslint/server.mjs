@@ -7,6 +7,14 @@ import { safeHttpRules } from './safe-http-rules.mjs'
 
 const { tsFiles, scriptFiles, lodashPatterns, unusedVarsOptions } = baseConfigs
 
+// `@aiqadam/server-utils/qadam-version-store-reader` exists only through the engine's esbuild and
+// vitest aliases (#779). `tsconfig.base.json` maps it for every package, so anywhere else it would
+// type-check and then fail at run time; the engine's own config replaces this rule.
+const ENGINE_ONLY_SERVER_UTILS_SUBPATHS = {
+    group: ['@aiqadam/server-utils/*'],
+    message: 'Import @aiqadam/server-utils from its root. Its subpaths are engine-only aliases that do not exist at run time here.',
+}
+
 export const serverConfigs = {
     /** Former `packages/server/.eslintrc.json`: the SSRF and PUT/PATCH invariants every server package inherits. */
     server: () => defineConfig(
@@ -15,7 +23,7 @@ export const serverConfigs = {
         {
             files: scriptFiles,
             rules: {
-                'no-restricted-imports': ['error', { patterns: lodashPatterns, paths: safeHttpRules.restrictedImportPaths }],
+                'no-restricted-imports': ['error', { patterns: [{ group: lodashPatterns }, ENGINE_ONLY_SERVER_UTILS_SUBPATHS], paths: safeHttpRules.restrictedImportPaths }],
                 'no-restricted-syntax': ['error', ...safeHttpRules.ssrfSyntax, ...safeHttpRules.routeMethodSyntax],
             },
         },

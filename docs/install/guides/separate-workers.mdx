@@ -38,9 +38,9 @@ Benefits of separating workers from the main application (APP):
     Workers also need the [qadam version store](/install/architecture/qadam-version-store), the same one the app uses, at `/var/lib/qadam-flow/qadam-versions`. A Docker named volume exists only on the host that created it: `qadam_versions` on another machine is a new, empty volume, not the app's. For workers on other machines, put the store on a filesystem the app and every worker share, such as NFS, and mount it at that path on each of them:
     ```yaml
     volumes:
-      - <shared filesystem path>:/var/lib/qadam-flow/qadam-versions
+      - <shared filesystem path>:/var/lib/qadam-flow/qadam-versions:ro
     ```
-    The shared filesystem must be case-sensitive, and must not be under a directory that contains `node_modules`. Nothing runs from the store yet, so a worker without it works today; mounting it now means no change when the store is used.
+    Mount it **read-only** on workers: only the app writes the store, and a worker's engines run flow code that must not be able to change code every tenant runs. The shared filesystem must be case-sensitive, and must not be under a directory that contains `node_modules`. A worker without the store runs the qadams bundled with the image; with it, workers in the `UNSANDBOXED` and `SANDBOX_CODE_ONLY` execution modes run an official qadam version from the store when it holds it.
   </Step>
   <Step title="Launch Worker Machine">
     Launch the worker machine and supply it with the generated token.

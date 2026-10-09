@@ -14,9 +14,9 @@ services:
     volumes:
       - ./cache:/usr/src/app/cache
       # The versioned qadam store (ADR-0003, #805): every qadam version the instance holds, under
-      # qadams/<name>/<version>/, seeded from the image at start-up. Shared by the app and every
-      # worker. Unlike ./cache it is not disposable: keep it with the database when you back up or
-      # move an install. Nothing resolves a qadam through it yet (#779), so today it only fills.
+      # qadams/<name>/<version>/, seeded from the image at start-up. The app writes it; workers mount
+      # it read-only below. Unlike ./cache it is not disposable: keep it with the database when you
+      # back up or move an install. Forked engines run official qadam versions from it (#779).
       # Mounted outside /usr/src/app on purpose: a stored version must not reach the app's own
       # node_modules by Node's upward lookup.
       - qadam_versions:/var/lib/qadam-flow/qadam-versions
@@ -44,7 +44,10 @@ services:
     #   cp docker-compose.sandboxed.yml docker-compose.override.yml
     volumes:
       - ./cache:/usr/src/app/cache
-      - qadam_versions:/var/lib/qadam-flow/qadam-versions
+      # Read-only: a worker's engines run flow code (a Code step in UNSANDBOXED runs as this user),
+      # and the store's code runs for every tenant on every worker and outlives the image. Only the
+      # app writes it (#779).
+      - qadam_versions:/var/lib/qadam-flow/qadam-versions:ro
     networks:
       - qadam-flow
   postgres:

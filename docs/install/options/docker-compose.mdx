@@ -103,7 +103,7 @@ Use this if you want the stack under version control, or you intend to modify `d
     docker compose up -d
     ```
 
-    Compose starts four services: `app` (published on `${QADAM_FLOW_PORT:-8080}:80` — set `QADAM_FLOW_PORT` in `.env` to use a different host port), five `worker` replicas, `postgres` (`pgvector/pgvector:0.8.7-pg18`, PostgreSQL 18), and `redis` (`valkey/valkey:8.1.10` — [Valkey](https://valkey.io), the BSD-licensed Redis fork). PostgreSQL and Redis data live in the named volumes `pgdata` and `redis_data`. The `postgres_data` volume is where installs from before PostgreSQL 18 kept their data; on a new install it stays empty. The `qadam_versions` volume, mounted on the app and every worker, is the [qadam version store](/install/architecture/qadam-version-store).
+    Compose starts four services: `app` (published on `${QADAM_FLOW_PORT:-8080}:80` — set `QADAM_FLOW_PORT` in `.env` to use a different host port), five `worker` replicas, `postgres` (`pgvector/pgvector:0.8.7-pg18`, PostgreSQL 18), and `redis` (`valkey/valkey:8.1.10` — [Valkey](https://valkey.io), the BSD-licensed Redis fork). PostgreSQL and Redis data live in the named volumes `pgdata` and `redis_data`. The `postgres_data` volume is where installs from before PostgreSQL 18 kept their data; on a new install it stays empty. The `qadam_versions` volume, mounted on the app and read-only on every worker, is the [qadam version store](/install/architecture/qadam-version-store).
   </Step>
   <Step title="Sign up">
     Open [http://localhost:8080/sign-up](http://localhost:8080/sign-up) — the first account owns the platform.

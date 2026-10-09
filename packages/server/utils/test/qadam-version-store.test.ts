@@ -16,6 +16,7 @@ import {
 } from '../src/qadam-version-store/qadam-version-store'
 import { QadamArtifactFormat, QadamArtifactKind } from '../src/qadam-version-store/qadam-version-store-format'
 import { QadamVersionCoordinates, qadamVersionStoreLayout } from '../src/qadam-version-store/qadam-version-store-layout'
+import { qadamVersionStoreReader } from '../src/qadam-version-store/qadam-version-store-read'
 import { TarEntry, tarFixtures } from './qadam-version-store-fixtures'
 
 const PLATFORM_A = 'AAAAAAAAAAAAAAAAAAAAA'
@@ -550,6 +551,77 @@ describe('qadamVersionStore.open', () => {
         const opened = await qadamVersionStore.open({ root: join(file, 'store'), log })
 
         expect(opened.ok).toBe(false)
+    })
+})
+
+describe('qadamVersionStoreReader.open', () => {
+    it('reads a version whose entry point resolves outside it as damaged', async () => {
+        await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version }) })
+        const outside = join(tempDir, 'elsewhere')
+        await cp(join(versionDir(CSV), 'src'), outside, { recursive: true })
+        await rm(join(versionDir(CSV), 'src'), { recursive: true })
+        await symlink(outside, join(versionDir(CSV), 'src'))
+
+        const read = await store.read({ coordinates: CSV })
+
+        expect(read).toEqual({ status: QadamVersionReadStatus.DAMAGED, reason: 'the entry point resolves outside the version' })
+    })
+
+    it('reads a version whose package.json is not a regular file as damaged', async () => {
+        await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version }) })
+        await rm(join(versionDir(CSV), 'package.json'))
+        await mkdir(join(versionDir(CSV), 'package.json'))
+
+        const read = await store.read({ coordinates: CSV })
+
+        expect(read).toEqual({ status: QadamVersionReadStatus.DAMAGED, reason: 'package.json is not a regular file' })
+    })
+
+    it('reads what the store holds', async () => {
+        await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version }) })
+
+        const opened = await qadamVersionStoreReader.open({ root })
+        if (!opened.ok) {
+            throw new Error(opened.reason)
+        }
+        const read = await opened.reader.read({ coordinates: CSV })
+
+        expect(opened.reader.root).toBe(root)
+        expect(read.status).toBe(QadamVersionReadStatus.PRESENT)
+        expect(await opened.reader.read({ coordinates: { ...CSV, version: '9.9.9' } })).toEqual({ status: QadamVersionReadStatus.ABSENT })
+    })
+
+    it('writes nothing: no directory, no probe, no leftover cleanup', async () => {
+        const leftover = join(root, '.staging', `${Date.now() - 7 * 60 * 60 * 1000}-dead`)
+        await mkdir(leftover)
+        const missingRoot = join(tempDir, 'never-opened')
+
+        const opened = await qadamVersionStoreReader.open({ root })
+        const missing = await qadamVersionStoreReader.open({ root: missingRoot })
+
+        expect(opened.ok).toBe(true)
+        expect(await readdir(join(root, '.staging'))).toEqual([leftover.split('/').at(-1)])
+        expect(missing).toEqual({ ok: false, reason: 'the store directory cannot be read (ENOENT)' })
+        await expect(stat(missingRoot)).rejects.toThrow()
+    })
+
+    it('refuses a root from which stored versions could resolve an app\'s node_modules, without naming the path', async () => {
+        const below = join(tempDir, 'app', 'qadam-versions')
+        await mkdir(join(tempDir, 'app', 'node_modules'), { recursive: true })
+        await mkdir(below)
+
+        const opened = await qadamVersionStoreReader.open({ root: below })
+
+        expect(opened).toEqual({ ok: false, reason: 'stored versions could resolve packages from a node_modules above the store' })
+    })
+
+    it('answers with the real path of a root reached through a symlink', async () => {
+        const link = join(tempDir, 'store-link')
+        await symlink(root, link)
+
+        const opened = await qadamVersionStoreReader.open({ root: link })
+
+        expect(opened.ok && opened.reader.root).toBe(root)
     })
 })
 
