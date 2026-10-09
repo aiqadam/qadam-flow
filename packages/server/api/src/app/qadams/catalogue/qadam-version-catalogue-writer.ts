@@ -57,8 +57,12 @@ export const qadamVersionCatalogueWriter = {
         const added = planned.flatMap((plan) => plan.status === 'add' ? [plan.version] : [])
         if (!existing.hasIndex) {
             const unaccounted = await findUnaccountedFiles({ catalogueDir, added })
-            if (unaccounted.length > 0) {
-                return { status: 'refused', problems: [{ reason: `the catalogue has metadata files but no index, and this archive does not add ${unaccounted.slice(0, 3).join(', ')}${unaccounted.length > 3 ? ', …' : ''}: restore index.json, or remove those files if this is meant to be a new catalogue` }] }
+            if (unaccounted.status === 'unreadable') {
+                return { status: 'refused', problems: [{ reason: `there is no ${QADAM_VERSION_CATALOGUE_INDEX_FILE}, and the ${QADAM_VERSION_CATALOGUE_METADATA_DIR}/ directory cannot be listed to check it holds nothing this run does not add (${unaccounted.code})` }] }
+            }
+            if (unaccounted.files.length > 0) {
+                const listed = `${unaccounted.files.slice(0, 3).join(', ')}${unaccounted.files.length > 3 ? ', …' : ''}`
+                return { status: 'refused', problems: [{ reason: `the catalogue has metadata files but no index, and this archive does not add ${listed}: restore ${QADAM_VERSION_CATALOGUE_INDEX_FILE}, or remove those files if this is meant to be a new catalogue` }] }
             }
         }
         const unchanged = planned.flatMap((plan) => plan.status === 'unchanged' ? [plan.version] : [])
@@ -104,6 +108,7 @@ const TARBALL_METADATA_JSON = 'package/metadata.json'
 const MAX_PACKAGE_JSON_BYTES = 1024 * 1024
 // Bounds the tarballs held in memory and the `tar` processes running at once.
 const CONCURRENCY = 4
+const TAR_STDERR_TAIL_CHARS = 500
 
 // #804's `archive-index.json` (`writeArchiveIndex` in `tools/scripts/qadams/bundle/build-qadam-artifacts.mjs`).
 const ArchiveIndex = z.object({
@@ -136,13 +141,16 @@ const ArtifactKind = z.enum([QadamVersionCatalogueArtifactKind.BUNDLE, QadamVers
 // `tar` rather than a parser in this package: this runs in the release pipeline on artifacts the same
 // pipeline built, never on input from a user. The tarball goes in on stdin, so what is extracted is
 // exactly the buffer whose integrity was checked, not the file read again; the member is a constant,
-// so it cannot be read as an option. Output past `maxBytes` stops the extraction.
+// so it cannot be read as an option. Output past `maxBytes` stops the extraction. A `tar` that cannot
+// be started is reported as such, and a failing one with the end of its stderr, so a broken runner
+// does not read as a bad artifact.
 function extractFromTarball({ tarball, member, maxBytes }: ExtractFromTarballParams): Promise<ExtractFromTarballResult> {
     return new Promise((resolve) => {
-        const child = spawn('tar', ['-xzOf', '-', member], { stdio: ['pipe', 'pipe', 'ignore'] })
+        const child = spawn('tar', ['-xzOf', '-', member], { stdio: ['pipe', 'pipe', 'pipe'] })
         const chunks: Buffer[] = []
         let length = 0
         let tooLarge = false
+        let stderrTail = ''
         child.stdout.on('data', (chunk: Buffer) => {
             length += chunk.length
             if (length > maxBytes) {
@@ -152,15 +160,24 @@ function extractFromTarball({ tarball, member, maxBytes }: ExtractFromTarballPar
             }
             chunks.push(chunk)
         })
+        child.stderr.on('data', (chunk: Buffer) => {
+            stderrTail = `${stderrTail}${chunk.toString('utf8')}`.slice(-TAR_STDERR_TAIL_CHARS)
+        })
         // `tar` may exit before it has read all of stdin (a missing member, or killed above).
         child.stdin.on('error', () => undefined)
-        child.on('error', () => resolve({ status: 'error', reason: `cannot read ${member} from the tarball` }))
+        // A spawn failure may emit no `close`; the first result wins either way.
+        child.on('error', (error) => resolve({ status: 'error', reason: `cannot run tar: ${errorCode({ error }) ?? error.message}` }))
         child.on('close', (code) => {
             if (tooLarge) {
                 resolve({ status: 'error', reason: `${member} is too large` })
                 return
             }
-            resolve(code === 0 ? { status: 'ok', bytes: Buffer.concat(chunks) } : { status: 'error', reason: `cannot read ${member} from the tarball` })
+            if (code !== 0) {
+                const detail = stderrTail.trim()
+                resolve({ status: 'error', reason: `cannot read ${member} from the tarball${detail === '' ? '' : ` (tar: ${detail})`}` })
+                return
+            }
+            resolve({ status: 'ok', bytes: Buffer.concat(chunks) })
         })
         child.stdin.end(tarball)
     })
@@ -328,17 +345,18 @@ async function verifyEntry({ catalogueDir, name, version, entry }: VerifyEntryPa
 // already checked that one in place has the same bytes): that is a first run that stopped before
 // its index. Anything else is a catalogue whose index was lost, and a new index written over it
 // would drop every version it listed.
-async function findUnaccountedFiles({ catalogueDir, added }: { catalogueDir: string, added: Coordinates[] }): Promise<string[]> {
+async function findUnaccountedFiles({ catalogueDir, added }: { catalogueDir: string, added: Coordinates[] }): Promise<FindUnaccountedFilesResult> {
     const { data: dirents, error } = await tryCatch(() => readdir(path.join(catalogueDir, QADAM_VERSION_CATALOGUE_METADATA_DIR), { recursive: true, withFileTypes: true }))
     if (error) {
-        return isFileNotFound(error) ? [] : [`${QADAM_VERSION_CATALOGUE_METADATA_DIR}/ (unreadable)`]
+        return isFileNotFound(error) ? { status: 'ok', files: [] } : { status: 'unreadable', code: errorCode({ error }) ?? 'unknown error' }
     }
     const expected = new Set(added.map((coordinates) => qadamVersionCatalogueFormat.metadataPath(coordinates)))
-    return dirents
+    const files = dirents
         .filter((dirent) => !dirent.isDirectory())
         .map((dirent) => path.relative(catalogueDir, path.join(dirent.parentPath, dirent.name)).split(path.sep).join('/'))
         .filter((relative) => !expected.has(relative))
         .sort()
+    return { status: 'ok', files }
 }
 
 function findDuplicates({ artifacts }: { artifacts: ArchiveArtifact[] }): Coordinates[] {
@@ -376,7 +394,11 @@ function toCoordinates({ name, version }: Coordinates): Coordinates {
 }
 
 function isFileNotFound(error: unknown): boolean {
-    return error instanceof Error && 'code' in error && error.code === 'ENOENT'
+    return errorCode({ error }) === 'ENOENT'
+}
+
+function errorCode({ error }: { error: unknown }): string | undefined {
+    return error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : undefined
 }
 
 type Coordinates = {
@@ -429,6 +451,10 @@ type VerifyEntryParams = Coordinates & {
     catalogueDir: string
     entry: QadamVersionCatalogueEntry
 }
+
+type FindUnaccountedFilesResult =
+    | { status: 'ok', files: string[] }
+    | { status: 'unreadable', code: string }
 
 type LoadExistingResult =
     | { status: 'ok', qadams: CatalogueEntries, hasIndex: boolean }

@@ -11,9 +11,11 @@ import type { AxiosInstance } from 'axios'
 // catalogue root and built by the reader from validated coordinates; each source still refuses one
 // that would leave its root.
 export const qadamVersionCatalogueSource = {
-    // Containment is checked on real paths, so a symlink inside the root cannot lead out of it, and
-    // the file is opened without following a final symlink and without blocking, so a FIFO cannot
-    // hang the read. Only a regular file of at most `maxBytes` is read, and never past its size.
+    // Containment is checked on real paths, so a symlink present in the tree cannot lead out of the
+    // root. That holds barring a concurrent writer inside the root: a directory swapped for a symlink
+    // between `realpath` and `open` is not caught (only the final component is opened `O_NOFOLLOW`).
+    // The file is opened without blocking, so a FIFO cannot hang the read, and only a regular file of
+    // at most `maxBytes` is read, never past its size.
     directory: ({ root }: { root: string }): QadamVersionCatalogueSource => {
         const resolvedRoot = path.resolve(root)
         return {
@@ -101,8 +103,13 @@ function parseBaseUrl({ baseUrl }: { baseUrl: string }): URL | null {
     if (isNil(parsed) || (parsed.protocol !== 'https:' && parsed.protocol !== 'http:')) {
         return null
     }
-    // A base without a trailing slash would resolve `index.json` against its parent directory.
-    return parsed.pathname.endsWith('/') ? parsed : new URL(`${parsed.pathname}/`, parsed)
+    // A base without a trailing slash would resolve `index.json` against its parent directory. The
+    // slash is added by setting `pathname`, never by resolving the path as a URL again: a path that
+    // starts with `//` or `/\` would be re-read as protocol-relative and replace the host.
+    if (!parsed.pathname.endsWith('/')) {
+        parsed.pathname = `${parsed.pathname}/`
+    }
+    return parsed
 }
 
 function isInside({ root, target }: { root: string, target: string }): boolean {

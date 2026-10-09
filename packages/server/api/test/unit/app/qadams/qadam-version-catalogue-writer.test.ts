@@ -1,6 +1,6 @@
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { qadamVersionCatalogueWriter } from '../../../../src/app/qadams/catalogue/qadam-version-catalogue-writer'
 import { catalogueFixtures, FIXTURE_COMMIT, FixtureArtifact } from './qadam-version-catalogue-fixtures'
 
@@ -106,7 +106,7 @@ describe('qadam version catalogue writer (#778)', () => {
         ['a legacy npm package (no qadamArtifact marker)', { name: CSV, version: '1.0.0', packageJson: { name: CSV, version: '1.0.0', main: './src/index.js' } }, 'package.json does not name'],
         ['a package.json for another version', { name: CSV, version: '1.0.0', packageJson: { name: CSV, version: '1.0.1', qadamArtifact: { formatVersion: 1, kind: 'bundle' } } }, 'package.json does not name'],
         ['an unknown artifact format version', { name: CSV, version: '1.0.0', packageJson: { name: CSV, version: '1.0.0', qadamArtifact: { formatVersion: 2, kind: 'bundle' } } }, 'not a format-1 artifact'],
-        ['no metadata.json (built with --no-load-check)', { name: CSV, version: '1.0.0', withMetadata: false }, 'cannot read package/metadata.json'],
+        ['no metadata.json (built with --no-load-check)', { name: CSV, version: '1.0.0', withMetadata: false }, 'cannot read package/metadata.json from the tarball (tar: '],
         ['metadata for another version', { name: CSV, version: '1.0.0', metadata: catalogueFixtures.metadata({ name: CSV, version: '0.9.9' }) }, 'not qadam metadata for this qadam version'],
         ['metadata without actions', { name: CSV, version: '1.0.0', metadata: catalogueFixtures.metadata({ name: CSV, version: '1.0.0', overrides: { actions: [] } }) }, 'not qadam metadata'],
         // The index drops a `null` floor, so the entry would disagree with its own metadata file.
@@ -120,6 +120,18 @@ describe('qadam version catalogue writer (#778)', () => {
 
         expect(result).toEqual({ status: 'refused', problems: [{ name: artifact.name, version: artifact.version, reason: expect.stringContaining(reason) }] })
         expect(await snapshotTree({ dir: catalogueDir })).toEqual({})
+    })
+
+    it('reports a tar that cannot be run as a broken runner, not a bad artifact', async () => {
+        const archiveDir = path.join(root, 'archive')
+        await catalogueFixtures.writeArchive({ archiveDir, artifacts: [{ name: CSV, version: '1.0.0' }] })
+        vi.stubEnv('PATH', path.join(root, 'no-tar-here'))
+        try {
+            expect(await qadamVersionCatalogueWriter.append({ catalogueDir, archiveDir })).toEqual({ status: 'refused', problems: [{ name: CSV, version: '1.0.0', reason: 'cannot run tar: ENOENT' }] })
+        }
+        finally {
+            vi.unstubAllEnvs()
+        }
     })
 
     it('refuses an archive index that lists a version twice', async () => {
@@ -182,6 +194,17 @@ describe('qadam version catalogue writer (#778)', () => {
             reason: `the catalogue has metadata files but no index, and this archive does not add qadams/${CSV}/0.6.0/metadata.json: restore index.json, or remove those files if this is meant to be a new catalogue`,
         }] })
         expect(await snapshotTree({ dir: catalogueDir })).toEqual(before)
+    })
+
+    it('refuses, with its own reason, when there is no index and the metadata directory cannot be listed', async () => {
+        const archiveDir = path.join(root, 'archive')
+        await catalogueFixtures.writeArchive({ archiveDir, artifacts: [] })
+        await mkdir(catalogueDir, { recursive: true })
+        await writeFile(path.join(catalogueDir, 'qadams'), 'not a directory')
+
+        expect(await qadamVersionCatalogueWriter.append({ catalogueDir, archiveDir })).toEqual({ status: 'refused', problems: [{
+            reason: 'there is no index.json, and the qadams/ directory cannot be listed to check it holds nothing this run does not add (ENOTDIR)',
+        }] })
     })
 
     it('finishes a first run that stopped after its metadata files and before its index', async () => {

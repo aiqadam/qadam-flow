@@ -230,6 +230,17 @@ describe('qadam version catalogue reader (#778)', () => {
             expect(requests).toEqual([])
         })
 
+        it('keeps the configured host when the base path starts with // or /\\', async () => {
+            const origin = new URL(baseUrl).origin
+            for (const base of [`${origin}//evil.example/catalog`, `${origin}/\\evil.example/catalog`]) {
+                requests.length = 0
+                const source = qadamVersionCatalogueSource.http({ baseUrl: base, client: allowLoopbackClient() })
+
+                expect(await source.read({ relativePath: 'index.json', maxBytes: 1024 })).toEqual({ status: 'not-found' })
+                expect(requests).toEqual(['//evil.example/catalog/index.json'])
+            }
+        })
+
         it('refuses a base URL that is not http(s), and a path that would leave the base', async () => {
             const notHttp = qadamVersionCatalogueSource.http({ baseUrl: 'file:///etc/' })
             expect(await notHttp.read({ relativePath: 'index.json', maxBytes: 1024 })).toEqual({ status: 'error', reason: 'invalid base URL' })
