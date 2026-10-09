@@ -441,18 +441,23 @@ async function startPollingWorkers(apiClient: WorkerToApiContract): Promise<void
     // controller, where every poll returns instantly and the loop spins on the CPU.
     if (stopped) return
 
+    // Captured per start: a loop still finishing a job that a previous `stop()` abandoned must see
+    // that stop, not the `stopped = false` of the `start()` after it. Taken before the await below,
+    // so a stop (and a `start()` after it) during that await is seen as this start's stop.
+    const { signal } = stopController
+
     if (sandboxManagers.length === 0) {
         const { data: settings } = tryCatchSync(() => workerSettings.getSettings())
-        // Before the first sandbox exists, because its engine's env is fixed when it starts.
-        await qadamVersionStoreRoot.prepare({ log: logger, environment: settings?.ENVIRONMENT })
-        if (stopped) return
+        // Before the first sandbox exists, because its engine's env is fixed when it starts. Isolate
+        // engines never get the store, so they need not open it.
+        if (!isNil(settings) && qadamVersionStoreRoot.isUsedBy({ executionMode: settings.EXECUTION_MODE })) {
+            await qadamVersionStoreRoot.prepare({ log: logger, environment: settings.ENVIRONMENT })
+        }
+        // Stopped while it waited, or another start created the managers and runs their loops.
+        if (signal.aborted || sandboxManagers.length > 0) return
         sandboxManagers = createSandboxManagers()
         sandboxSettings = settings
     }
-
-    // Captured per start: a loop still finishing a job that a previous `stop()` abandoned must see
-    // that stop, not the `stopped = false` of the `start()` after it.
-    const { signal } = stopController
 
     // One `abort` listener per loop lives on the shared signal at a time. Node warns past 10, so
     // size the budget to the loops actually running rather than disabling the leak check outright.

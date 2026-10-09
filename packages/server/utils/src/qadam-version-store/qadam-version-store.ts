@@ -1,41 +1,27 @@
 import { randomUUID } from 'node:crypto'
-import { chmod, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, unlink } from 'node:fs/promises'
+import { chmod, lstat, mkdir, open, readdir, realpath, rename, rm, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import { isNil, tryCatch } from '@aiqadam/shared'
 import semver from 'semver'
-import { z } from 'zod'
 import { fileSystemUtils } from '../file-system-utils'
-import { QadamArtifactFormat, QadamArtifactKind, qadamVersionStoreFormat } from './qadam-version-store-format'
+import { qadamVersionStoreFormat } from './qadam-version-store-format'
 import { QADAM_VERSION_STORE_LAYOUT, QadamVersionCoordinates, qadamVersionStoreLayout } from './qadam-version-store-layout'
+import {
+    DEFAULT_QADAM_VERSION_STORE_LIMITS,
+    QADAM_VERSION_STORE_FORMAT_VERSION,
+    QadamVersionIntegrity,
+    QadamVersionOrigin,
+    QadamVersionReadResult,
+    QadamVersionReadStatus,
+    qadamVersionStoreReader,
+    QadamVersionStoreReader,
+    StoredQadamVersion,
+} from './qadam-version-store-read'
 import { qadamVersionStoreTarball, QadamVersionTarballLimits } from './qadam-version-store-tarball'
 import { qadamVersionStoreTree } from './qadam-version-store-tree'
 
-export enum QadamVersionOrigin {
-    // Shipped in the image and copied into the store at start-up (#805, #807).
-    IMAGE_SEED = 'image-seed',
-    // Fetched from npmjs or a configured registry (#806).
-    REGISTRY = 'registry',
-    // Uploaded by a platform admin as a tarball.
-    ARCHIVE = 'archive',
-}
-
-export enum QadamVersionReadStatus {
-    PRESENT = 'present',
-    ABSENT = 'absent',
-    // The store's own files are wrong: `integrity.json` missing or not JSON, a record naming other
-    // coordinates, a missing entry point, content that no longer matches its digest. The only state
-    // a writer replaces.
-    DAMAGED = 'damaged',
-    // Intact, but not usable by this release on this host: a newer store or artifact format, a
-    // value a later release added, native modules built for another OS, CPU, libc or Node major.
-    // Never replaced: the release or host that wrote it can still read it.
-    UNSUPPORTED = 'unsupported',
-    // An I/O error other than "not found" (EACCES, EIO, EMFILE, …). Never replaced: the error says
-    // nothing about the version.
-    UNREADABLE = 'unreadable',
-    // Coordinates that can never name a version.
-    INVALID_COORDINATES = 'invalid-coordinates',
-}
+export { DEFAULT_QADAM_VERSION_STORE_LIMITS, QadamVersionOrigin, QadamVersionReadStatus }
+export type { QadamVersionIntegrity, QadamVersionReadResult, QadamVersionStoreReader, StoredQadamVersion }
 
 export enum QadamVersionPutStatus {
     STORED = 'stored',
@@ -43,13 +29,6 @@ export enum QadamVersionPutStatus {
     // overwritten (ADR-0001: a version is never reused).
     EXISTS = 'exists',
     REFUSED = 'refused',
-}
-
-export const DEFAULT_QADAM_VERSION_STORE_LIMITS: QadamVersionTarballLimits = {
-    // `bundle-with-node-modules` versions carry a dependency closure: text-helper's is 1,454 files.
-    maxEntries: 100_000,
-    maxBytes: 2 * 1024 * 1024 * 1024,
-    maxFileBytes: 512 * 1024 * 1024,
 }
 
 // The versioned qadam store of ADR-0003 on a persistent volume, by `name@version`, per namespace.
@@ -75,20 +54,20 @@ export const qadamVersionStore = {
             return realpath(absoluteRoot)
         })
         if (prepared.error !== null) {
-            return { ok: false, reason: `the store directory cannot be prepared (${describeErrorCode({ error: prepared.error })})` }
+            return { ok: false, reason: `the store directory cannot be prepared (${qadamVersionStoreReader.describeErrorCode({ error: prepared.error })})` }
         }
         const realRoot = prepared.data
         // A stored version resolves packages the way Node does, upward from its own directory. A
         // `node_modules` at or above the root would answer for anything the platform does not
         // provide, so a version could silently run on an app's own dependencies (ADR-0003: the
         // platform provides `@aiqadam/*` and `zod` only).
-        const reachable = await findNodeModulesAbove({ dir: realRoot })
+        const reachable = await qadamVersionStoreReader.findNodeModulesAbove({ dir: realRoot })
         if (!isNil(reachable)) {
             return { ok: false, reason: `stored versions could resolve packages from ${reachable}; put the store outside any directory with a node_modules` }
         }
         const caseSensitive = await tryCatch(() => isCaseSensitive({ dir: path.join(realRoot, QADAM_VERSION_STORE_LAYOUT.stagingDir) }))
         if (caseSensitive.error !== null) {
-            return { ok: false, reason: `the store directory is not writable (${describeErrorCode({ error: caseSensitive.error })})` }
+            return { ok: false, reason: `the store directory is not writable (${qadamVersionStoreReader.describeErrorCode({ error: caseSensitive.error })})` }
         }
         // Platform ids and prerelease versions differ by case alone; on a case-insensitive
         // filesystem two platforms could share a directory, so the store refuses to open there.
@@ -97,124 +76,17 @@ export const qadamVersionStore = {
         }
         const cleaned = await tryCatch(() => removeLeftovers({ root: realRoot, log }))
         if (cleaned.error !== null) {
-            log.warn({ error: describeErrorCode({ error: cleaned.error }) }, '[qadamVersionStore] Could not look for leftover staging or trash directories')
+            log.warn({ error: qadamVersionStoreReader.describeErrorCode({ error: cleaned.error }) }, '[qadamVersionStore] Could not look for leftover staging or trash directories')
         }
         return { ok: true, store: createStore({ root: realRoot, log, limits }) }
     },
 
-    // For a process that only loads from the store and must never write to it: an engine (#779).
-    // It repeats `open`'s `node_modules` check and skips the rest, because they write: the
-    // directories `open` creates, its case-sensitivity probe and its leftover cleanup. The process
-    // that hands this root over (the worker) has already run `open` on it.
-    openForReading: async ({ root, log, limits = DEFAULT_QADAM_VERSION_STORE_LIMITS }: OpenParams): Promise<OpenForReadingResult> => {
-        const real = await tryCatch(() => realpath(path.resolve(root)))
-        if (real.error !== null) {
-            return { ok: false, reason: `the store directory cannot be read (${describeErrorCode({ error: real.error })})` }
-        }
-        const reachable = await findNodeModulesAbove({ dir: real.data })
-        if (!isNil(reachable)) {
-            return { ok: false, reason: 'stored versions could resolve packages from a node_modules above the store' }
-        }
-        const store = createStore({ root: real.data, log, limits })
-        return { ok: true, reader: { root: store.root, read: store.read } }
-    },
 }
 
 function createStore({ root, log, limits }: CreateStoreParams): QadamVersionStore {
     const stagingRoot = path.join(root, QADAM_VERSION_STORE_LAYOUT.stagingDir)
     const trashRoot = path.join(root, QADAM_VERSION_STORE_LAYOUT.trashDir)
-
-    const read = async ({ coordinates, verify = false }: ReadParams): Promise<QadamVersionReadResult> => {
-        const validation = qadamVersionStoreLayout.validateCoordinates(coordinates)
-        if (!validation.valid) {
-            return { status: QadamVersionReadStatus.INVALID_COORDINATES, reason: validation.reason }
-        }
-        return readAt({ dir: qadamVersionStoreLayout.versionDir({ root, coordinates }), coordinates, verify })
-    }
-
-    // Reads the version in `dir`, which is its layout path, or the place a writer just moved it to.
-    const readAt = async ({ dir, coordinates, verify }: ReadAtParams): Promise<QadamVersionReadResult> => {
-        const dirStats = await tryCatch(() => lstat(dir))
-        if (dirStats.error !== null) {
-            return fileSystemUtils.hasErrorCode({ error: dirStats.error, code: 'ENOENT' })
-                ? { status: QadamVersionReadStatus.ABSENT }
-                : unreadable({ what: 'the version directory', error: dirStats.error })
-        }
-        if (!dirStats.data.isDirectory()) {
-            return damaged('the version path is not a directory')
-        }
-        // A directory of the path replaced by a symlink would make this version live somewhere
-        // else on the host; the real path must be the one the layout names.
-        const real = await tryCatch(() => realpath(dir))
-        if (real.error !== null) {
-            return unreadable({ what: 'the version directory', error: real.error })
-        }
-        if (real.data !== dir) {
-            return damaged('the version path goes through a symlink')
-        }
-        const record = await readIntegrityRecord({ dir })
-        if (!record.ok) {
-            return record.problem
-        }
-        const integrity = record.record
-        if (integrity.name !== coordinates.name || integrity.version !== coordinates.version || integrity.platformId !== coordinates.platformId) {
-            return damaged('integrity.json names another version')
-        }
-        const packageJson = await readJson({ filePath: path.join(dir, QADAM_VERSION_STORE_LAYOUT.packageJsonFile), what: 'package.json' })
-        if (!packageJson.ok) {
-            return packageJson.problem
-        }
-        const runtimeProblem = qadamVersionStoreFormat.checkRuntime({ packageJson: packageJson.value, format: integrity.format, kind: integrity.kind })
-        if (!isNil(runtimeProblem)) {
-            return runtimeProblem.unsupported ? unsupported(runtimeProblem.reason) : damaged(runtimeProblem.reason)
-        }
-        const entryPointPath = path.join(dir, integrity.entryPoint)
-        const entryStats = await tryCatch(() => lstat(entryPointPath))
-        if (entryStats.error !== null && !fileSystemUtils.hasErrorCode({ error: entryStats.error, code: 'ENOENT' })) {
-            return unreadable({ what: 'the entry point', error: entryStats.error })
-        }
-        if (entryStats.error !== null || !entryStats.data.isFile()) {
-            return damaged('the entry point is missing')
-        }
-        if (verify) {
-            const verified = await verifyTree({ dir, coordinates, integrity })
-            if (!isNil(verified)) {
-                return verified
-            }
-        }
-        return {
-            status: QadamVersionReadStatus.PRESENT,
-            version: {
-                coordinates,
-                dir,
-                entryPointPath,
-                metadataPath: path.join(dir, QADAM_VERSION_STORE_LAYOUT.metadataFile),
-                format: integrity.format,
-                kind: integrity.kind,
-                integrity,
-            },
-        }
-    }
-
-    const verifyTree = async ({ dir, coordinates, integrity }: VerifyTreeParams): Promise<ReadProblem | null> => {
-        const walked = await tryCatch(() => qadamVersionStoreTree.walk({ root: dir, limits }))
-        if (walked.error !== null) {
-            return unreadable({ what: 'the version', error: walked.error })
-        }
-        if (!walked.data.ok) {
-            return damaged(walked.data.reason)
-        }
-        const tree = walked.data.tree
-        const inspected = await qadamVersionStoreFormat.inspect({ dir, coordinates, tree })
-        if (!inspected.ok) {
-            return inspected.unsupported ? unsupported(inspected.reason) : damaged(inspected.reason)
-        }
-        const digest = await tryCatch(() => qadamVersionStoreTree.digest({ root: dir, tree, sync: false }))
-        if (digest.error !== null) {
-            return unreadable({ what: 'the version', error: digest.error })
-        }
-        return digest.data === integrity.tree.digest ? null : damaged('the content does not match integrity.json')
-    }
+    const { read, readAt } = qadamVersionStoreReader.create({ root, limits })
 
     const createStaging = async (): Promise<string> => {
         const dir = path.join(stagingRoot, `${Date.now()}-${randomUUID()}`)
@@ -272,7 +144,7 @@ function createStore({ root, log, limits }: CreateStoreParams): QadamVersionStor
         }
         const digest = await qadamVersionStoreTree.digest({ root: stagingDir, tree: walked.tree, sync: true })
         const record: QadamVersionIntegrity = {
-            storeFormatVersion: STORE_FORMAT_VERSION,
+            storeFormatVersion: QADAM_VERSION_STORE_FORMAT_VERSION,
             platformId: coordinates.platformId,
             name: coordinates.name,
             version: coordinates.version,
@@ -352,7 +224,7 @@ function createStore({ root, log, limits }: CreateStoreParams): QadamVersionStor
         }
         const restored = await tryCatch(() => rename(aside, dir))
         if (restored.error !== null) {
-            log.warn({ qadam, platformId: coordinates.platformId, status: movedVersion.status, trashEntry: path.basename(aside), error: describeErrorCode({ error: restored.error }) }, '[qadamVersionStore] Could not put back a version another writer stored; it stays in .trash until the leftover cleanup')
+            log.warn({ qadam, platformId: coordinates.platformId, status: movedVersion.status, trashEntry: path.basename(aside), error: qadamVersionStoreReader.describeErrorCode({ error: restored.error }) }, '[qadamVersionStore] Could not put back a version another writer stored; it stays in .trash until the leftover cleanup')
             return publish({ stagingDir, dir, coordinates, record, attempt: attempt + 1 })
         }
         await discardStaging({ stagingDir })
@@ -414,104 +286,12 @@ function createStore({ root, log, limits }: CreateStoreParams): QadamVersionStor
     }
 }
 
-const STORE_FORMAT_VERSION = 1
 // The first rename, one after a damaged version moved aside or vanished, and one after a race.
 const MAX_PUBLISH_ATTEMPTS = 3
-const MAX_INTEGRITY_FILE_BYTES = 64 * 1024
 // A staging or trash directory older than this was left by a process that died mid-write; younger
 // ones may be another replica's write in progress. Seeding the whole catalogue takes minutes.
 const STALE_LEFTOVER_MS = 6 * 60 * 60 * 1000
 
-const QadamVersionIntegrity = z.object({
-    storeFormatVersion: z.literal(STORE_FORMAT_VERSION),
-    platformId: z.string().nullable(),
-    name: z.string(),
-    version: z.string(),
-    format: z.enum(QadamArtifactFormat),
-    kind: z.enum(QadamArtifactKind).nullable(),
-    entryPoint: z.string(),
-    origin: z.object({
-        kind: z.enum(QadamVersionOrigin),
-        tarballIntegrity: z.string().nullable(),
-    }),
-    tree: z.object({
-        algorithm: z.literal('sha512'),
-        digest: z.string(),
-        files: z.number(),
-        bytes: z.number(),
-    }),
-    storedAt: z.string(),
-})
-
-// The same record with every enumerated value as a plain string: a record that matches this but
-// not the one above carries a value a later release added, which is unsupported, not damaged.
-const IntegrityRecordShape = QadamVersionIntegrity.extend({
-    format: z.string(),
-    kind: z.string().nullable(),
-    origin: z.object({
-        kind: z.string(),
-        tarballIntegrity: z.string().nullable(),
-    }),
-    tree: z.object({
-        algorithm: z.string(),
-        digest: z.string(),
-        files: z.number(),
-        bytes: z.number(),
-    }),
-})
-
-const IntegrityRecordEnvelope = z.object({ storeFormatVersion: z.number().int().positive() }).loose()
-
-export type QadamVersionIntegrity = z.infer<typeof QadamVersionIntegrity>
-
-async function readIntegrityRecord({ dir }: { dir: string }): Promise<IntegrityRecordResult> {
-    const filePath = path.join(dir, QADAM_VERSION_STORE_LAYOUT.integrityFile)
-    const stats = await tryCatch(() => lstat(filePath))
-    if (stats.error !== null) {
-        return { ok: false, problem: fileSystemUtils.hasErrorCode({ error: stats.error, code: 'ENOENT' }) ? damaged('integrity.json is missing') : unreadable({ what: 'integrity.json', error: stats.error }) }
-    }
-    if (!stats.data.isFile()) {
-        return { ok: false, problem: damaged('integrity.json is not a regular file') }
-    }
-    // This release never writes a record this large, so a larger one comes from a later release
-    // (persisted signatures, #780): unsupported here, never damaged.
-    if (stats.data.size > MAX_INTEGRITY_FILE_BYTES) {
-        return { ok: false, problem: unsupported(`integrity.json is larger than this release writes (${MAX_INTEGRITY_FILE_BYTES} bytes)`) }
-    }
-    const parsed = await readJson({ filePath, what: 'integrity.json' })
-    if (!parsed.ok) {
-        return parsed
-    }
-    const envelope = IntegrityRecordEnvelope.safeParse(parsed.value)
-    if (!envelope.success) {
-        return { ok: false, problem: damaged('integrity.json is not a store record') }
-    }
-    if (envelope.data.storeFormatVersion > STORE_FORMAT_VERSION) {
-        return { ok: false, problem: unsupported(`integrity.json is store format ${envelope.data.storeFormatVersion}, written by a later release`) }
-    }
-    const record = QadamVersionIntegrity.safeParse(parsed.value)
-    if (!record.success) {
-        return { ok: false, problem: IntegrityRecordShape.safeParse(parsed.value).success
-            ? unsupported('integrity.json carries a value a later release added')
-            : damaged('integrity.json is not a store record') }
-    }
-    // The entry point is re-checked here because a reader joins it to the version directory.
-    const entryPoint = path.posix.normalize(record.data.entryPoint)
-    if (entryPoint !== record.data.entryPoint || path.posix.isAbsolute(entryPoint) || entryPoint.split('/').includes('..')) {
-        return { ok: false, problem: damaged('integrity.json names an entry point outside the version') }
-    }
-    return { ok: true, record: record.data }
-}
-
-// "Not found" and "not JSON" are damage; any other read error is the filesystem's, not the version's.
-async function readJson({ filePath, what }: { filePath: string, what: string }): Promise<JsonResult> {
-    const content = await tryCatch(() => readFile(filePath, 'utf8'))
-    if (content.error !== null) {
-        return { ok: false, problem: fileSystemUtils.hasErrorCode({ error: content.error, code: 'ENOENT' }) ? damaged(`${what} is missing`) : unreadable({ what, error: content.error }) }
-    }
-    const parsed = await tryCatch(async (): Promise<unknown> => JSON.parse(content.data))
-    return parsed.error === null ? { ok: true, value: parsed.data } : { ok: false, problem: damaged(`${what} is not valid JSON`) }
-}
 
 async function writeIntegrityRecord({ dir, record }: { dir: string, record: QadamVersionIntegrity }): Promise<void> {
     const handle = await open(path.join(dir, QADAM_VERSION_STORE_LAYOUT.integrityFile), 'wx', 0o644)
@@ -544,21 +324,7 @@ async function ensureDirectoryChain({ root, dir }: { root: string, dir: string }
     return { ok: true }
 }
 
-async function findNodeModulesAbove({ dir }: { dir: string }): Promise<string | null> {
-    const candidates = ancestors({ dir }).map((ancestor) => path.join(ancestor, 'node_modules'))
-    for (const candidate of candidates) {
-        const found = await tryCatch(() => lstat(candidate))
-        if (found.error === null) {
-            return candidate
-        }
-    }
-    return null
-}
 
-function ancestors({ dir }: { dir: string }): string[] {
-    const parent = path.dirname(dir)
-    return parent === dir ? [dir] : [dir, ...ancestors({ dir: parent })]
-}
 
 async function isCaseSensitive({ dir }: { dir: string }): Promise<boolean> {
     const probe = path.join(dir, `case-probe-${randomUUID()}`)
@@ -616,47 +382,14 @@ function compareStrings(a: string, b: string): number {
     return a < b ? -1 : 1
 }
 
-function damaged(reason: string): ReadProblem {
-    return { status: QadamVersionReadStatus.DAMAGED, reason }
-}
 
-function unsupported(reason: string): ReadProblem {
-    return { status: QadamVersionReadStatus.UNSUPPORTED, reason }
-}
 
-function unreadable({ what, error }: { what: string, error: unknown }): ReadProblem {
-    return { status: QadamVersionReadStatus.UNREADABLE, reason: `${what} cannot be read (${describeErrorCode({ error })})` }
-}
 
-function describeErrorCode({ error }: { error: unknown }): string {
-    return error instanceof Error && 'code' in error ? String(error.code) : 'unknown error'
-}
 
 export type QadamVersionStoreLogger = {
     info: (obj: Record<string, unknown>, msg: string) => void
     warn: (obj: Record<string, unknown>, msg: string) => void
 }
-
-export type StoredQadamVersion = {
-    coordinates: QadamVersionCoordinates
-    dir: string
-    // Absolute path of the file Node loads for this version (`package.json` `main`).
-    entryPointPath: string
-    metadataPath: string
-    format: QadamArtifactFormat
-    kind: QadamArtifactKind | null
-    integrity: QadamVersionIntegrity
-}
-
-type ReadProblem = {
-    status: QadamVersionReadStatus.DAMAGED | QadamVersionReadStatus.UNSUPPORTED | QadamVersionReadStatus.UNREADABLE | QadamVersionReadStatus.INVALID_COORDINATES
-    reason: string
-}
-
-export type QadamVersionReadResult =
-    | { status: QadamVersionReadStatus.PRESENT, version: StoredQadamVersion }
-    | { status: QadamVersionReadStatus.ABSENT }
-    | ReadProblem
 
 export type QadamVersionPutResult =
     | { status: QadamVersionPutStatus.STORED | QadamVersionPutStatus.EXISTS, version: StoredQadamVersion }
@@ -666,11 +399,7 @@ export type QadamVersionOriginInput = {
     kind: QadamVersionOrigin
 }
 
-export type QadamVersionStore = {
-    root: string
-    // `verify` re-walks and re-hashes the whole version; without it a read checks the integrity
-    // record, `package.json` and the entry point only.
-    read: (params: ReadParams) => Promise<QadamVersionReadResult>
+export type QadamVersionStore = QadamVersionStoreReader & {
     has: (params: { coordinates: QadamVersionCoordinates }) => Promise<boolean>
     listVersions: (params: { platformId: string | null }) => Promise<QadamVersionCoordinates[]>
     // For a writer that assembles a version itself (an install, #806): stage, fill, commit.
@@ -688,31 +417,10 @@ type OpenParams = {
 
 type OpenResult = { ok: true, store: QadamVersionStore } | { ok: false, reason: string }
 
-export type QadamVersionStoreReader = Pick<QadamVersionStore, 'root' | 'read'>
-
-type OpenForReadingResult = { ok: true, reader: QadamVersionStoreReader } | { ok: false, reason: string }
-
 type CreateStoreParams = {
     root: string
     log: QadamVersionStoreLogger
     limits: QadamVersionTarballLimits
-}
-
-type ReadParams = {
-    coordinates: QadamVersionCoordinates
-    verify?: boolean
-}
-
-type ReadAtParams = {
-    dir: string
-    coordinates: QadamVersionCoordinates
-    verify: boolean
-}
-
-type VerifyTreeParams = {
-    dir: string
-    coordinates: QadamVersionCoordinates
-    integrity: QadamVersionIntegrity
 }
 
 type CommitParams = {
@@ -749,6 +457,4 @@ type ReplaceDamagedParams = PublishParams & {
     reason: string
 }
 
-type IntegrityRecordResult = { ok: true, record: QadamVersionIntegrity } | { ok: false, problem: ReadProblem }
 
-type JsonResult = { ok: true, value: unknown } | { ok: false, problem: ReadProblem }

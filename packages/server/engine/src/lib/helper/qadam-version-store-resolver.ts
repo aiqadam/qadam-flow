@@ -1,11 +1,12 @@
-import { QadamVersionReadStatus, qadamVersionStore, QadamVersionStoreLogger, QadamVersionStoreReader } from '@aiqadam/server-utils/qadam-version-store'
+import { QadamVersionReadStatus, QadamVersionStoreReader, qadamVersionStoreReader } from '@aiqadam/server-utils/qadam-version-store-reader'
 import { isNil } from '@aiqadam/shared'
 import { qadamPlatformModules } from './qadam-platform-modules'
 
 // ADR-0003: an official step pinned to `name@version` runs that version's own code from the qadam
 // version store. The worker hands this engine the store's root in `AP_QADAM_VERSION_STORE_PATH`
-// once it has opened the store itself (the forked execution modes only, #779); without it, or when
-// the store does not hold the version, the loader falls back to what it did before the store.
+// once it has opened the store itself (the forked execution modes only, #779); without it (absent or
+// empty), or when the store does not hold the version, the loader falls back to what it did before
+// the store. Only reads: workers mount the store read-only.
 export const qadamVersionStoreResolver = {
     // The entry point of the official `name@version` in the store, or null.
     findOfficialEntryPoint: async ({ name, version }: FindOfficialEntryPointParams): Promise<string | null> => {
@@ -35,12 +36,6 @@ export const qadamVersionStoreResolver = {
 const openedStores = new Map<string, Promise<QadamVersionStoreReader | null>>()
 const warned = new Set<string>()
 
-// `read` writes nothing, and only writes log.
-const SILENT_STORE_LOG: QadamVersionStoreLogger = {
-    info: () => undefined,
-    warn: () => undefined,
-}
-
 function getStore(): Promise<QadamVersionStoreReader | null> {
     const root = process.env.AP_QADAM_VERSION_STORE_PATH
     if (isNil(root) || root.length === 0) {
@@ -56,7 +51,7 @@ function getStore(): Promise<QadamVersionStoreReader | null> {
 }
 
 async function openStore({ root }: { root: string }): Promise<QadamVersionStoreReader | null> {
-    const opened = await qadamVersionStore.openForReading({ root, log: SILENT_STORE_LOG })
+    const opened = await qadamVersionStoreReader.open({ root })
     if (!opened.ok) {
         warnOnce({ key: 'unavailable', line: `[qadamVersionStore] The qadam version store is unavailable to this engine, loading the image's builds ${JSON.stringify({ reason: opened.reason })}` })
         return null

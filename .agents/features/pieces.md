@@ -171,7 +171,10 @@ resolution cache, isolate modes and custom qadams do not resolve through it yet,
 it before #807, so on a real install it is still empty. "Store" alone is ambiguous here (Store
 qadam, Store Entry): say "qadam version store".
 - **Where.** `AP_QADAM_VERSION_STORE_PATH` (default `/var/lib/qadam-flow/qadam-versions`).
-  `docker-compose.yml` mounts the named volume `qadam_versions` there on the app and every worker.
+  `docker-compose.yml` mounts the named volume `qadam_versions` there on the app (read-write, it
+  seeds) and read-only on every worker (#779 app-sec: a forked engine runs flow code as the worker
+  user, `read` does not re-hash files, so a writable store would let one engine plant code every
+  tenant runs). Nothing in the worker or engine writes the store; both use `openForReading`.
   Outside `/usr/src/app` on purpose: a stored version resolves packages upward from its own
   directory, and `open` refuses a root at or below any directory holding a `node_modules`. That
   covers the upward walk only; `NODE_PATH` (the sandbox env sets `/usr/src/node_modules`) and the
@@ -234,28 +237,39 @@ qadam, Store Entry): say "qadam version store".
   serialise on the `qadam-version-store-seed` `distributedLock`, and correctness does not depend on
   it. A version already stored is kept even if the image's tarball differs (warned). One line per
   start: `[qadamVersionStore] Seeded the qadam version store from the image {status, stored, present, kept, failed, durationMs}`.
-- **Resolution (#779, first slice).** The worker opens the store at `AP_QADAM_VERSION_STORE_PATH`
-  (`WorkerSystemProp.QADAM_VERSION_STORE_PATH`, same default as the API) with `open` before it
-  creates its first sandbox (`cache/qadams/qadam-version-store-root.ts`), and passes the real root as
-  `AP_QADAM_VERSION_STORE_PATH` to forked engines only; isolate engines get nothing (mounting the
-  store is the next slice: only the official tree and the job's own platform namespace, and isolate
-  mounts must sit under `/root`, which holds a `node_modules`). The engine opens it with
-  `openForReading` (no writes), imported from source as `@aiqadam/server-utils/qadam-version-store`
-  (an esbuild/vitest alias plus a `tsconfig.base.json` path; that subpath does not exist at run time
-  for the API or worker, which import the package root). `qadam-loader.ts` resolves dev qadam → **store**
-  (`qadam-version-store-resolver.ts`, official namespace, exact `x.y.z` pins) → bundled build at the
-  same version → installed copy → bundled build by name (the pre-store fallback, kept until #808).
-  A stored version that is not PRESENT/ABSENT is skipped with one `console.warn` per version and
-  process. The cold-load line carries `source` (`store` / `bundled` / `installed` / `dev`).
+- **Resolution (#779, first slice).** Read-only outside the app. The worker opens the store at
+  `AP_QADAM_VERSION_STORE_PATH` (`WorkerSystemProp.QADAM_VERSION_STORE_PATH`, same default as the
+  API) with `qadamVersionStoreReader.open` (`qadam-version-store-read.ts`: realpath + the
+  `node_modules`-above check, no mkdir, probe or cleanup) before it creates its first sandbox, and
+  only when the execution mode is forked (`cache/qadams/qadam-version-store-root.ts`). Sandbox env
+  always carries `AP_QADAM_VERSION_STORE_PATH`: the real root for forked engines, `''` otherwise, so a
+  value an operator propagates (`AP_SANDBOX_PROPAGATED_ENV_VARS`) never reaches an isolate engine
+  (mounting the store there is a later slice: only the official tree and the job's own platform
+  namespace, and isolate mounts must sit under `/root`, which holds a `node_modules`). The engine
+  opens it the same way through `@aiqadam/server-utils/qadam-version-store-reader`
+  (`qadam-version-store/reader.ts`, reader + layout + `PLATFORM_PROVIDED_PACKAGES`, no writer, no
+  `tar`), taken from source by an esbuild/vitest alias and a `tsconfig.base.json` path. That subpath
+  does not exist at run time anywhere else, and `serverConfigs.server` (`tools/eslint/server.mjs`)
+  forbids `@aiqadam/server-utils/*` outside the engine. `qadam-loader.ts` resolves dev qadam →
+  **store** (`qadam-version-store-resolver.ts`, official namespace, exact `x.y.z` pins) → bundled
+  build at the same version → installed copy → bundled build by name (the pre-store fallback, kept
+  until #808). A stored version that is not PRESENT/ABSENT is skipped with one `console.warn` per
+  version and process. The cold-load line carries `source` (`store` / `bundled` / `installed` /
+  `dev`).
   **Platform-provided libraries** (`qadam-platform-modules.ts`): before the first stored version
   loads, the engine registers a `module.registerHooks` resolve hook for modules under the store's
-  `qadams/`. Such a module resolves (1) inside its own version directory, (2) for
-  `PLATFORM_PROVIDED_PACKAGES` the platform's copy, anchored on `packages/qadams/common/package.json`
-  (whose `node_modules` holds framework, shared and zod; `qadams-common` is the anchor itself), the
-  same real paths bundled qadams reach, so one copy per engine, (3) nothing else (`MODULE_NOT_FOUND`
-  instead of `NODE_PATH`/global folders). Builtins pass. A private copy of `zod` nested under a
-  third-party dependency of a legacy version is found by (1) and kept. Hooks do not reach worker
-  threads or child processes a qadam starts (csv's worker, oracle-database's runner).
+  `qadams/` (both namespaces). Builtins are Node's. A `PLATFORM_PROVIDED_PACKAGES` specifier (or a
+  subpath) gets the platform's copy: `qadams-framework` and `qadams-common` are the workspace
+  packages `packages/qadams/{framework,common}`, `@aiqadam/shared` and `zod` are the framework's own
+  runtime dependencies, resolved from `packages/qadams/framework` (the same real paths bundled
+  qadams reach, so one copy per engine). A subpath with an empty, `.` or `..` segment is refused, and
+  the resolved file must lie inside that package's real directory. The qadam's own code always gets
+  the platform's copy (a `src/node_modules/zod` beside it is ignored); a third-party module under the
+  version's `node_modules/` gets a private copy nested under it first (#829). Any other specifier
+  must resolve inside the module's own version directory, else `MODULE_NOT_FOUND` (no `NODE_PATH`,
+  global folders or the reserved `qadams/node_modules`). This is a correctness guard against
+  accidental lookups, not a sandbox: a stored version runs with the engine's rights. Hooks do not
+  reach worker threads or child processes a qadam starts (csv's worker, oracle-database's runner).
 - **Left to other tickets:** the rest of #779 (API, worker provisioning and cache, agent-tool
   provisioning, isolate mounts, custom qadams, removing the by-name fallback with #808), fetching
   and the legacy install path (#806), persisted signature verification next to the store (#780), GC

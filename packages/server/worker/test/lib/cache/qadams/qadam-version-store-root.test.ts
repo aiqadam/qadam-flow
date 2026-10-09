@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, realpath, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ApEnvironment, ExecutionMode } from '@aiqadam/shared'
@@ -31,29 +31,46 @@ afterEach(async () => {
 })
 
 describe('qadamVersionStoreRoot', () => {
-    it('hands a store it opened to forked engines only', async () => {
+    it('hands a store it opened to forked engines, and an empty value to isolate engines', async () => {
+        await mkdir(join(tempDir, 'store'))
         process.env['AP_QADAM_VERSION_STORE_PATH'] = join(tempDir, 'store')
 
         await qadamVersionStoreRoot.prepare({ log, environment: ApEnvironment.PRODUCTION })
 
         const env = { AP_QADAM_VERSION_STORE_PATH: join(tempDir, 'store') }
+        const none = { AP_QADAM_VERSION_STORE_PATH: '' }
         expect(qadamVersionStoreRoot.engineEnv({ executionMode: ExecutionMode.UNSANDBOXED })).toEqual(env)
         expect(qadamVersionStoreRoot.engineEnv({ executionMode: ExecutionMode.SANDBOX_CODE_ONLY })).toEqual(env)
-        expect(qadamVersionStoreRoot.engineEnv({ executionMode: ExecutionMode.SANDBOX_PROCESS })).toEqual({})
-        expect(qadamVersionStoreRoot.engineEnv({ executionMode: ExecutionMode.SANDBOX_CODE_AND_PROCESS })).toEqual({})
+        expect(qadamVersionStoreRoot.engineEnv({ executionMode: ExecutionMode.SANDBOX_PROCESS })).toEqual(none)
+        expect(qadamVersionStoreRoot.engineEnv({ executionMode: ExecutionMode.SANDBOX_CODE_AND_PROCESS })).toEqual(none)
         expect(warn).not.toHaveBeenCalled()
     })
 
+    it('never writes the store: it creates nothing, not even a missing root', async () => {
+        process.env['AP_QADAM_VERSION_STORE_PATH'] = join(tempDir, 'store')
+        await mkdir(join(tempDir, 'store'))
+
+        await qadamVersionStoreRoot.prepare({ log, environment: ApEnvironment.PRODUCTION })
+        expect(await readdir(join(tempDir, 'store'))).toEqual([])
+
+        process.env['AP_QADAM_VERSION_STORE_PATH'] = join(tempDir, 'missing')
+        await qadamVersionStoreRoot.prepare({ log, environment: ApEnvironment.PRODUCTION })
+        await expect(stat(join(tempDir, 'missing'))).rejects.toThrow()
+        expect(qadamVersionStoreRoot.engineEnv({ executionMode: ExecutionMode.UNSANDBOXED })).toEqual({ AP_QADAM_VERSION_STORE_PATH: '' })
+    })
+
     it('hands no store over when it cannot open one, and says why', async () => {
+        await mkdir(join(tempDir, 'store'))
         process.env['AP_QADAM_VERSION_STORE_PATH'] = join(tempDir, 'store')
         await qadamVersionStoreRoot.prepare({ log, environment: ApEnvironment.PRODUCTION })
-        await mkdir(join(tempDir, 'app', 'node_modules'), { recursive: true })
+        await mkdir(join(tempDir, 'app', 'qadam-versions'), { recursive: true })
+        await mkdir(join(tempDir, 'app', 'node_modules'))
         process.env['AP_QADAM_VERSION_STORE_PATH'] = join(tempDir, 'app', 'qadam-versions')
 
         await qadamVersionStoreRoot.prepare({ log, environment: ApEnvironment.PRODUCTION })
 
-        expect(qadamVersionStoreRoot.engineEnv({ executionMode: ExecutionMode.UNSANDBOXED })).toEqual({})
-        expect(warn).toHaveBeenCalledWith({ reason: expect.stringContaining('put the store outside any directory with a node_modules') }, expect.stringContaining('[qadamVersionStore] The qadam version store is unavailable'))
+        expect(qadamVersionStoreRoot.engineEnv({ executionMode: ExecutionMode.UNSANDBOXED })).toEqual({ AP_QADAM_VERSION_STORE_PATH: '' })
+        expect(warn).toHaveBeenCalledWith({ reason: 'stored versions could resolve packages from a node_modules above the store' }, expect.stringContaining('[qadamVersionStore] The qadam version store is unavailable'))
     })
 
     it('logs an unusable store at info in a development environment', async () => {

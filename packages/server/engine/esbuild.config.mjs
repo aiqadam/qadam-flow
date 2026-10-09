@@ -27,7 +27,7 @@ const buildOptions = {
         '@aiqadam/pieces-framework': path.resolve(__dirname, '../../pieces/framework/src'),
         '@aiqadam/pieces-common': path.resolve(__dirname, '../../pieces/common/src'),
         // The store's reader only, from source, not the server-utils package (#779).
-        '@aiqadam/server-utils/qadam-version-store': path.resolve(__dirname, '../utils/src/qadam-version-store/index.ts'),
+        '@aiqadam/server-utils/qadam-version-store-reader': path.resolve(__dirname, '../utils/src/qadam-version-store/reader.ts'),
     },
     external: ['isolated-vm', 'utf-8-validate', 'bufferutil'],
     plugins: [

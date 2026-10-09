@@ -653,8 +653,8 @@
       "@aiqadam/server-utils": [
         "packages/server/utils/src/index.ts"
       ],
-      "@aiqadam/server-utils/qadam-version-store": [
-        "packages/server/utils/src/qadam-version-store/index.ts"
+      "@aiqadam/server-utils/qadam-version-store-reader": [
+        "packages/server/utils/src/qadam-version-store/reader.ts"
       ],
       "@aiqadam/shared": [
         "packages/shared/src/index.ts"

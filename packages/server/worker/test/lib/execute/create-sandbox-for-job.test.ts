@@ -230,6 +230,25 @@ describe('createSandboxForJob', () => {
                 process.env = originalProcessEnv
             }
         })
+
+        // #779: an isolate engine gets no qadam version store (nothing mounts it), even when an
+        // operator propagates the worker's own variable.
+        it('hands an isolate engine an empty store path even when the variable is propagated', () => {
+            const originalProcessEnv = { ...process.env }
+            try {
+                process.env['AP_QADAM_VERSION_STORE_PATH'] = '/var/lib/qadam-flow/qadam-versions'
+                getSettingsMock.mockReturnValue(buildSettings({
+                    EXECUTION_MODE: ExecutionMode.SANDBOX_PROCESS,
+                    SANDBOX_PROPAGATED_ENV_VARS: ['AP_QADAM_VERSION_STORE_PATH'],
+                }))
+                createSandboxForJob({ log, apiClient, boxId: 1, reusable: false, proxyPort: null, getCurrentJobContext: () => null })
+
+                expect(createSandboxMock.mock.calls[0][2].env.AP_QADAM_VERSION_STORE_PATH).toBe('')
+            }
+            finally {
+                process.env = originalProcessEnv
+            }
+        })
     })
 
     describe('parseMemoryLimit', () => {

@@ -12,9 +12,9 @@ The store is only partly in use. A worker runs an official qadam version from th
 
 ## Where it lives
 
-The bundled `docker-compose.yml` mounts the named volume `qadam_versions` at `/var/lib/qadam-flow/qadam-versions` on the `app` service and on every `worker` replica. Re-running the [installer](/install/options/docker) on an existing install adds the volume; nothing else changes.
+The bundled `docker-compose.yml` mounts the named volume `qadam_versions` at `/var/lib/qadam-flow/qadam-versions` on the `app` service, and read-only on every `worker` replica: only the app writes the store, and workers run flow code that must not be able to change code every tenant runs. Re-running the [installer](/install/options/docker) on an existing install adds the volume; nothing else changes.
 
-If you run the containers another way, mount one volume at that path on the app and every worker, or set `AP_QADAM_VERSION_STORE_PATH` to where you mounted it. Three requirements:
+If you run the containers another way, mount one volume at that path on the app (read-write) and every worker (read-only), or set `AP_QADAM_VERSION_STORE_PATH` to where you mounted it. Three requirements:
 
 - **Outside any directory with a `node_modules`.** A stored version finds packages the way Node does, upward from its own directory, and must find only what the platform provides. The store refuses to open at or below a directory that contains a `node_modules`, such as the app's own `/usr/src/app`.
 - **A case-sensitive filesystem.** Platform ids and prerelease versions can differ only by case. A Docker named volume is case-sensitive; a bind mount of a macOS or Windows folder usually is not. On a case-insensitive filesystem the store refuses to open.
@@ -34,7 +34,7 @@ When the app starts, it creates the store's directories if they are missing, rem
 
 ## How a step finds its code
 
-When a worker starts, it opens the store at `AP_QADAM_VERSION_STORE_PATH` with the same checks as the app and logs which way it went:
+When a worker in the `UNSANDBOXED` or `SANDBOX_CODE_ONLY` execution mode starts, it opens the store at `AP_QADAM_VERSION_STORE_PATH` for reading only, and logs which way it went:
 
 ```text
 [qadamVersionStore] Steps in forked engines load official qadam versions from the qadam version store when it holds them
@@ -56,11 +56,13 @@ The `[qadamLoader] cold load` line that the worker writes the first time it load
 
 ### Libraries the platform provides
 
-A stored version carries its own code and its third-party dependencies. `@aiqadam/qadams-framework`, `@aiqadam/qadams-common`, `@aiqadam/shared` and `zod` come from the platform, so every qadam a worker runs shares one copy of each with the qadams bundled in the image. A stored version finds a package in this order:
+A stored version carries its own code and its third-party dependencies. `@aiqadam/qadams-framework`, `@aiqadam/qadams-common`, `@aiqadam/shared` and `zod` come from the platform, so every qadam a worker runs shares one copy of each with the qadams bundled in the image. When code in a stored version loads a package:
 
-1. inside its own version directory;
-2. for the four packages above, the platform's copy;
-3. nowhere else. It does not fall back to `NODE_PATH`, `$HOME/.node_modules` or other global folders, so a version cannot silently run on a library the server happens to have. It fails with "Cannot find module" instead.
+1. one of those four packages is the platform's copy. Only a third-party dependency inside the version may use a private copy nested under it;
+2. any other package must be inside the version itself;
+3. nothing else is found. A stored version does not fall back to `NODE_PATH`, `$HOME/.node_modules` or other global folders, so it cannot silently run on a library the server happens to have. It fails with "Cannot find module" instead.
+
+This keeps a version on the libraries it is meant to run with. It is not a security boundary: a qadam runs with the worker's rights, and isolating flow code is the job of the [execution mode](/install/architecture/sandboxing).
 
 ## Layout
 

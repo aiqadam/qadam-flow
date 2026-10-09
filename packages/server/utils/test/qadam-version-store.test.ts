@@ -16,6 +16,7 @@ import {
 } from '../src/qadam-version-store/qadam-version-store'
 import { QadamArtifactFormat, QadamArtifactKind } from '../src/qadam-version-store/qadam-version-store-format'
 import { QadamVersionCoordinates, qadamVersionStoreLayout } from '../src/qadam-version-store/qadam-version-store-layout'
+import { qadamVersionStoreReader } from '../src/qadam-version-store/qadam-version-store-read'
 import { TarEntry, tarFixtures } from './qadam-version-store-fixtures'
 
 const PLATFORM_A = 'AAAAAAAAAAAAAAAAAAAAA'
@@ -553,11 +554,11 @@ describe('qadamVersionStore.open', () => {
     })
 })
 
-describe('qadamVersionStore.openForReading', () => {
+describe('qadamVersionStoreReader.open', () => {
     it('reads what the store holds', async () => {
         await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version }) })
 
-        const opened = await qadamVersionStore.openForReading({ root, log })
+        const opened = await qadamVersionStoreReader.open({ root })
         if (!opened.ok) {
             throw new Error(opened.reason)
         }
@@ -573,8 +574,8 @@ describe('qadamVersionStore.openForReading', () => {
         await mkdir(leftover)
         const missingRoot = join(tempDir, 'never-opened')
 
-        const opened = await qadamVersionStore.openForReading({ root, log })
-        const missing = await qadamVersionStore.openForReading({ root: missingRoot, log })
+        const opened = await qadamVersionStoreReader.open({ root })
+        const missing = await qadamVersionStoreReader.open({ root: missingRoot })
 
         expect(opened.ok).toBe(true)
         expect(await readdir(join(root, '.staging'))).toEqual([leftover.split('/').at(-1)])
@@ -587,7 +588,7 @@ describe('qadamVersionStore.openForReading', () => {
         await mkdir(join(tempDir, 'app', 'node_modules'), { recursive: true })
         await mkdir(below)
 
-        const opened = await qadamVersionStore.openForReading({ root: below, log })
+        const opened = await qadamVersionStoreReader.open({ root: below })
 
         expect(opened).toEqual({ ok: false, reason: 'stored versions could resolve packages from a node_modules above the store' })
     })
@@ -596,7 +597,7 @@ describe('qadamVersionStore.openForReading', () => {
         const link = join(tempDir, 'store-link')
         await symlink(root, link)
 
-        const opened = await qadamVersionStore.openForReading({ root: link, log })
+        const opened = await qadamVersionStoreReader.open({ root: link })
 
         expect(opened.ok && opened.reader.root).toBe(root)
     })

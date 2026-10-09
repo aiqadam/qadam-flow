@@ -2,7 +2,8 @@ import fs from 'fs/promises'
 import { createRequire } from 'module'
 import os from 'os'
 import path from 'path'
-import { QadamVersionOrigin, QadamVersionPutStatus, qadamVersionStore, QadamVersionStore, QadamVersionStoreLogger } from '@aiqadam/server-utils/qadam-version-store'
+// The store's writer builds the fixtures. Engine code reads through the reader entry only.
+import { QadamVersionOrigin, QadamVersionPutStatus, qadamVersionStore, QadamVersionStore, QadamVersionStoreLogger } from '../../../utils/src/qadam-version-store'
 import { qadamLoader } from '../../src/lib/helper/qadam-loader'
 
 // ADR-0003 / #779: an official step pinned to `name@version` loads that version's own code from the
@@ -10,6 +11,7 @@ import { qadamLoader } from '../../src/lib/helper/qadam-loader'
 // `@aiqadam/*` and `zod` to it.
 const PROBE = '@aiqadam/qadam-store-probe'
 const SUBFLOWS = '@aiqadam/qadam-subflows'
+const PLATFORM_ID = 'AAAAAAAAAAAAAAAAAAAAA'
 const STORE_LOG: QadamVersionStoreLogger = { info: () => undefined, warn: () => undefined }
 
 // What a stored version does at load: build a qadam with the framework the platform provides, and
@@ -18,6 +20,7 @@ const PROBE_SOURCE = `
 const framework = require('@aiqadam/qadams-framework')
 const zod = require('zod')
 function attempt(name) { try { return require(name).marker } catch (e) { return e.code } }
+function outcome(name) { try { require(name); return 'resolved' } catch (e) { return e.code } }
 exports.probe = framework.createQadam({
     displayName: 'Store probe',
     auth: framework.QadamAuth.None(),
@@ -29,7 +32,14 @@ exports.probe = framework.createQadam({
 exports.reached = {
     framework,
     zod,
+    zodV4: require('zod/v4'),
     common: require('@aiqadam/qadams-common'),
+    dependency: require('dependency-with-private-zod'),
+    escapes: {
+        throughShared: outcome('@aiqadam/shared/../../../../../../../../../../etc/hostname'),
+        throughCommon: outcome('@aiqadam/qadams-common/../framework/package.json'),
+        throughZod: outcome('zod/./package.json'),
+    },
     own: attempt('own-dependency'),
     reservedNodeModules: attempt('outside-the-version'),
     builtin: typeof require('node:path').join,
@@ -52,6 +62,7 @@ beforeAll(async () => {
     store = opened.store
     subflowsVersion = await readVersion('packages/qadams/core/subflows/package.json')
     await storeVersion({ name: PROBE, version: '1.2.3', entrySource: PROBE_SOURCE })
+    await storeVersion({ platformId: PLATFORM_ID, name: 'acme-crm', version: '1.0.0', entrySource: PROBE_SOURCE })
     // The same version the image bundles: the store's copy wins.
     await storeVersion({ name: SUBFLOWS, version: subflowsVersion, entrySource: PROBE_SOURCE })
     // The reserved `qadams/node_modules` is above every version, so Node's upward walk reaches it.
@@ -93,10 +104,42 @@ describe('qadamLoader with a qadam version store', () => {
         const reached = await loadReached({ name: PROBE, version: '1.2.3' })
         const platform = createRequire(path.resolve('packages/qadams/common/package.json'))
 
-        expect(reached.framework).toBe(platform('@aiqadam/qadams-framework'))
-        expect(reached.zod).toBe(platform('zod'))
+        const framework = createRequire(path.resolve('packages/qadams/framework/package.json'))
+
+        expect(reached.framework).toBe(framework('.'))
+        expect(reached.zod).toBe(framework('zod'))
+        expect(reached.zodV4).toBe(framework('zod/v4'))
         expect(reached.common).toBe(platform('.'))
         expect(reached.builtin).toBe('function')
+    })
+
+    it('gives the qadam\'s own code the platform\'s zod even with a copy beside it, and a dependency its private nested copy', async () => {
+        const reached = await loadReached({ name: PROBE, version: '1.2.3' })
+        const framework = createRequire(path.resolve('packages/qadams/framework/package.json'))
+
+        expect(reached.zod).toBe(framework('zod'))
+        expect(reached.dependency).toEqual({ zod: 'private nested copy', framework: framework('.') })
+    })
+
+    it('refuses a provided package\'s subpath that leaves the package', async () => {
+        const reached = await loadReached({ name: PROBE, version: '1.2.3' })
+
+        expect(reached.escapes).toEqual({ throughShared: 'MODULE_NOT_FOUND', throughCommon: 'MODULE_NOT_FOUND', throughZod: 'MODULE_NOT_FOUND' })
+    })
+
+    it('guards a custom version under its platform\'s namespace the same way', async () => {
+        await loadReached({ name: PROBE, version: '1.2.3' })
+        const entry = path.join(root, 'qadams', '_platform', PLATFORM_ID, 'acme-crm', '1.0.0', 'src', 'index.js')
+        const loaded: unknown = await import(entry)
+        if (typeof loaded !== 'object' || loaded === null || !('reached' in loaded) || typeof loaded.reached !== 'object' || loaded.reached === null) {
+            throw new Error('the stored version exported nothing')
+        }
+        const reached = { ...loaded.reached }
+        const framework = createRequire(path.resolve('packages/qadams/framework/package.json'))
+
+        expect('framework' in reached && reached.framework).toBe(framework('.'))
+        expect('own' in reached && reached.own).toBe('inside the version')
+        expect('reservedNodeModules' in reached && reached.reservedNodeModules).toBe('MODULE_NOT_FOUND')
     })
 
     it('lets a stored version reach its own dependencies and nothing else outside it', async () => {
@@ -149,7 +192,7 @@ async function loadReached({ name, version }: { name: string, version: string })
     return { ...loaded.reached }
 }
 
-async function storeVersion({ name, version, entrySource }: { name: string, version: string, entrySource: string }): Promise<void> {
+async function storeVersion({ platformId = null, name, version, entrySource }: StoreVersionParams): Promise<void> {
     const stagingDir = await store.createStaging()
     await writeFiles({
         dir: stagingDir,
@@ -164,12 +207,27 @@ async function storeVersion({ name, version, entrySource }: { name: string, vers
             'metadata.json': JSON.stringify({ name, version, displayName: name, actions: {}, triggers: {} }),
             'node_modules/own-dependency/package.json': JSON.stringify({ name: 'own-dependency', version: '1.0.0', main: 'index.js' }),
             'node_modules/own-dependency/index.js': 'exports.marker = "inside the version"\n',
+            // A copy beside the qadam's own code: the platform's still wins for it.
+            'src/node_modules/zod/package.json': JSON.stringify({ name: 'zod', version: '0.0.1', main: 'index.js' }),
+            'src/node_modules/zod/index.js': 'exports.marker = "a copy beside the qadam"\n',
+            // A third-party dependency with a private copy nested under it keeps that copy.
+            'node_modules/dependency-with-private-zod/package.json': JSON.stringify({ name: 'dependency-with-private-zod', version: '1.0.0', main: 'index.js' }),
+            'node_modules/dependency-with-private-zod/index.js': 'exports.zod = require("zod").marker\nexports.framework = require("@aiqadam/qadams-framework")\n',
+            'node_modules/dependency-with-private-zod/node_modules/zod/package.json': JSON.stringify({ name: 'zod', version: '3.0.0', main: 'index.js' }),
+            'node_modules/dependency-with-private-zod/node_modules/zod/index.js': 'exports.marker = "private nested copy"\n',
         },
     })
-    const result = await store.commit({ coordinates: { platformId: null, name, version }, stagingDir, origin: { kind: QadamVersionOrigin.ARCHIVE, tarballIntegrity: null } })
+    const result = await store.commit({ coordinates: { platformId, name, version }, stagingDir, origin: { kind: QadamVersionOrigin.ARCHIVE, tarballIntegrity: null } })
     if (result.status !== QadamVersionPutStatus.STORED) {
         throw new Error(`could not store ${name}@${version}: ${result.status === QadamVersionPutStatus.REFUSED ? result.reason : result.status}`)
     }
+}
+
+type StoreVersionParams = {
+    platformId?: string | null
+    name: string
+    version: string
+    entrySource: string
 }
 
 async function writeFiles({ dir, files }: { dir: string, files: Record<string, string> }): Promise<void> {

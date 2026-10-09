@@ -6,8 +6,8 @@ import { system } from '../../helper/system/system'
 import { AppSystemProp } from '../../helper/system/system-props'
 
 // Seeds ADR-0003's versioned qadam store (#805) from what the image ships, in the background at
-// start-up. The store is not authoritative yet: no flow resolves a qadam through it until #779, so
-// a failure here is logged and changes nothing else — the app starts and runs as before.
+// start-up. A failure here is logged and stops nothing: a step whose version the store does not hold
+// loads the image's build, as before the store (#779), so the app starts and runs as before.
 //
 // Every API replica runs this on the same volume. The lock keeps them from hashing and extracting
 // the same tarballs at once; correctness does not depend on it, because each version is written
@@ -16,7 +16,7 @@ export const qadamVersionStoreSeeding = (log: FastifyBaseLogger): { run: () => P
     run: async (): Promise<void> => {
         const { error } = await tryCatch(() => seed({ log }))
         if (error !== null) {
-            log.warn({ error: error.message }, '[qadamVersionStore] Seeding the qadam version store failed; nothing reads the store yet, so nothing else is affected')
+            log.warn({ error: error.message }, '[qadamVersionStore] Seeding the qadam version store failed; steps whose version is missing from it load the image\'s build')
         }
     },
 })
@@ -33,7 +33,7 @@ async function seed({ log }: { log: FastifyBaseLogger }): Promise<void> {
         // A dev tree usually has no writable /var/lib and runs on a laptop's case-insensitive disk;
         // that is expected there, not a problem to warn about.
         const isDev = system.get(AppSystemProp.ENVIRONMENT) === ApEnvironment.DEVELOPMENT
-        const message = '[qadamVersionStore] The qadam version store is unavailable; nothing reads it yet, so nothing else is affected'
+        const message = '[qadamVersionStore] The qadam version store is unavailable to the app; seeding is skipped'
         if (isDev) {
             log.info({ reason: opened.reason }, message)
         }
