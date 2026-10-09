@@ -78,11 +78,10 @@ jobs:
   # blocked on this landing first and is NOT wired here.
   #
   # Since #799 (ADR-0001) `@aiqadam/shared` is private and is no longer packed: what
-  # `qadams-framework` uses from it travels inside the framework tarball (code and `.d.ts`,
+  # `qadams-framework` carries all of it inside the framework tarball (code and `.d.ts`,
   # vendored under `vendor/shared`), and every packed package is refused if its manifest or
   # emitted code still names a private workspace package — see
-  # tools/scripts/utils/stage-package-for-publish.ts. "The three framework packages" below now
-  # means framework and common.
+  # tools/scripts/utils/stage-package-for-publish.ts.
   #
   # WHY NOT bun's OWN `workspace:*` rewrite. `bun publish` / `bun pm pack` do rewrite a
   # `workspace:*` dependency to a real version, but they read that version from bun.lock's

@@ -153,7 +153,7 @@ focused only on what this fork needs: build → test → publish a single image.
 - **Image security scanning** (Trivy/Grype) — separate scheduled workflow, post-MVP.
 - **Auto-deploy** — no workflow in this repo deploys anything. A QA instance that auto-deploys
   `:main` (redeployed several times a day) lives outside the repository (ADR-0004, citing #784);
-  how it pulls the image is not defined here, and no staging target exists in this fork.
+  how it pulls the image is not defined here, and no deployment target is defined in this repo.
 - **Dependabot security fixes** — check the repo's Dependabot alerts for the current count
   (`gh api /repos/aiqadam/qadam-flow/dependabot/alerts`). Separate cleanup task.
 

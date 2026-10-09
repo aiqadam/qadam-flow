@@ -1,13 +1,15 @@
 # @aiqadam/shared
 
-Types, DTOs, Zod schemas, utilities. Every change under `src/`, or to a dependency section of this
-`package.json`, adds a changeset naming this package and its level (CI's gate 1 reads exactly that
-scope; a README, a test or an `AGENTS.md` edit needs none) — the level is the `versioning` skill's
+Types, DTOs, Zod schemas, utilities. Every change that alters what this package ships — its
+`src/` or its `package.json` (`main`, `types`, dependencies), build config included — adds a
+changeset naming this package and its level. CI's gate 1 only detects `src/` and dependency-section
+changes, so a manifest or build-config change needs one too even though gate 1 cannot see it,
+while a README, test or `AGENTS.md`-only edit needs none. The level is the `versioning` skill's
 call, the rule is [`.agents/rules/versioning.md`](../../.agents/rules/versioning.md); only the
-release PR raises the version. It is private since #799: `qadams-framework` vendors all of its build at publish and
-re-exports from it, so no `shared` version is published again — and such a change also needs a
-changeset naming `@aiqadam/qadams-framework`, at the level the change has for a qadam author (gate 1
-enforces it; the `versioning` skill says how to choose).
+release PR raises the version. It is private since #799: `qadams-framework` vendors all of its
+build at publish and re-exports from it, so no `shared` version is published again — and such a
+change also needs a changeset naming `@aiqadam/qadams-framework`, at the level the change has for
+a qadam author (gate 1 enforces it; the `versioning` skill says how to choose).
 
 ## Skills for this package
 

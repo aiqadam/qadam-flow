@@ -31,10 +31,13 @@ the language rules OCR already merges from its system layer.
   single exported `const` object; callers use `myUtils.fn1()`. React components
   are named exports instead.
 - **Published package versioning.** Every version is a semver promise to a named
-  consumer (ADR-0001; rule: `.agents/rules/versioning.md`). A change to the `src/` or
-  to a `package.json` dependency section of `@aiqadam/shared`, `@aiqadam/qadams-framework`,
-  `@aiqadam/qadams-common` or a qadam must be named by a `.changeset/*.md` added in the
-  same PR; only the release PR raises
+  consumer (ADR-0001; rule: `.agents/rules/versioning.md`). A change that alters what
+  `@aiqadam/shared`, `@aiqadam/qadams-framework`, `@aiqadam/qadams-common` or a qadam
+  ships — its `src/` or its own `package.json` (`main`, `types`, `exports`, a build config) —
+  must be named by a `.changeset/*.md` added in the same PR. CI gate 1 is only the
+  mechanical floor: it sees `src/` and `package.json` dependency-section changes, so a
+  README-, test- or AGENTS.md-only edit needs none, but a manifest or build-config change
+  that alters the tarball still does, though gate 1 cannot see it. Only the release PR raises
   `version`, and a hand-edited version is a finding. On `0.x` minor is the breaking slot
   and a new export is minor; everything else is patch. From `1.0.0` (today only
   `qadam-assemblyai`) a break is major, a new capability minor, a fix patch. For a qadam,
@@ -46,8 +49,9 @@ the language rules OCR already merges from its system layer.
   git-symlink mirrors; editing a mirror instead of `.agents/` is a finding.
 <!-- repo-wide:end -->
 
-- **Changeset — two packages.** Any change under `packages/shared/src/`, or to a
-  dependency section of `packages/shared/package.json`, must be named
+- **Changeset — two packages.** Any change that alters what `packages/shared` contributes
+  to the framework tarball — its `src/`, or its `package.json` (`main`, `types`,
+  dependencies) and build config, which decide what gets vendored — must be named
   by a `.changeset/*.md` added in the same PR, for `@aiqadam/shared` **and** for
   `@aiqadam/qadams-framework`. `shared` is private since #799 and no longer
   published, but the framework re-exports from it and its tarball vendors all of
