@@ -92,8 +92,10 @@ export const createPostgresDataSource = ({ access }: { access: DataSourceAccess 
             synchronize: false,
         }
     // `default_transaction_read_only` makes Postgres itself refuse every write on these sessions, so
-    // read-only does not rest on the caller's code paths. `installExtensions: false` stops TypeORM's
-    // `CREATE EXTENSION IF NOT EXISTS` on connect, which is a write.
+    // read-only does not rest on the caller's code paths. A URL's own `?options=` or a pooler can
+    // drop it, so `openReadOnlyDatabaseConnection` checks the session after connecting and fails
+    // closed. `installExtensions: false` stops TypeORM's `CREATE EXTENSION IF NOT EXISTS` on
+    // connect, which is a write.
     const readOnlyConfig = readOnly ? { installExtensions: false } : {}
     const readOnlyExtra = readOnly ? { options: '-c default_transaction_read_only=on' } : {}
 

@@ -56,6 +56,17 @@ describe('frameworkBuildMajor (#803)', () => {
             expect(await frameworkBuildMajor.ofBuild({ directoryPath })).toBeNull()
         })
 
+        // #838: an unreadable build is an answer (`null`), cached like any other, not re-read on
+        // every census.
+        it('caches an unknown major instead of re-reading the build', async () => {
+            const directoryPath = await buildDirectory({ root, name: 'unknown-then-written', content: null })
+            expect(await frameworkBuildMajor.ofBuild({ directoryPath })).toBeNull()
+
+            await writeFile(path.join(directoryPath, 'package.json'), packageJson({ dependencies: { '@aiqadam/qadams-framework': '^3.0.0' } }))
+
+            expect(await frameworkBuildMajor.ofBuild({ directoryPath })).toBeNull()
+        })
+
         it('treats a build with no directory as compiled in this tree', async () => {
             expect(await frameworkBuildMajor.ofBuild({ directoryPath: undefined })).toBe(frameworkCensusPolicy.currentFrameworkMajor())
         })

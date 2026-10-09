@@ -14,9 +14,9 @@ export const frameworkBuildMajor = {
         if (isNil(directoryPath)) {
             return frameworkCensusPolicy.currentFrameworkMajor()
         }
-        const cached = majorByBuild.get(directoryPath)
-        if (!isNil(cached)) {
-            return cached
+        // `has`, not a nil check: an unreadable build caches `null`, which is an answer too.
+        if (majorByBuild.has(directoryPath)) {
+            return majorByBuild.get(directoryPath) ?? null
         }
         const { data: content } = await tryCatch(() => readFile(path.join(directoryPath, 'package.json'), 'utf-8'))
         const major = frameworkBuildMajor.fromPackageJson({ content })

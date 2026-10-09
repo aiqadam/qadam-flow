@@ -6,7 +6,7 @@ import {
     LATEST_CONTEXT_VERSION,
     PREDATES_CONTEXT_INFO,
 } from '@aiqadam/qadams-framework'
-import { isNil } from '@aiqadam/shared'
+import { isNil, unique } from '@aiqadam/shared'
 import { NO_CONTEXT_INFO, QadamContextVersion } from '../metadata/qadam-context-version'
 
 // ADR-0002's rules for the census, in one place: what this release runs, what an official qadam's
@@ -57,7 +57,7 @@ export const frameworkCensusPolicy = {
     // release retires a shim, so a surface can skip pin resolution entirely while it is empty.
     retiredContextVersions(): FrameworkContextVersion[] {
         const engine = frameworkCensusPolicy.engineContextVersions()
-        return knownContextVersions().filter((version) => !engine.includes(version))
+        return unique(knownContextVersions().filter((version) => !engine.includes(version)))
     },
 
     // An unknown context version counts as still needing the old contract (ADR-0002): it is

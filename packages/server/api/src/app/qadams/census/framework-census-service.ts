@@ -12,7 +12,6 @@ import {
     QadamType,
     tryCatch,
     tryCatchSync,
-    unique,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import semver from 'semver'
@@ -46,7 +45,7 @@ export const frameworkCensusService = (log: FastifyBaseLogger) => ({
     async resolvePins({ pins, platformId }: { pins: string[], platformId: string }): Promise<Map<string, PinFrameworkSupport>> {
         const bundled = await loadBundledQadams(log)
         const entries: [string, PinFrameworkSupport][] = []
-        for (const batch of chunk(unique(pins), PIN_BATCH_SIZE)) {
+        for (const batch of chunk([...new Set(pins)], PIN_BATCH_SIZE)) {
             entries.push(...await Promise.all(batch.map(async (pin): Promise<[string, PinFrameworkSupport]> => {
                 const context = await resolvePinContext({ pin, platformId, bundled, log })
                 return [pin, { ...context, status: frameworkCensusPolicy.statusOf({ contextVersion: context.contextVersion }) }]
@@ -56,27 +55,49 @@ export const frameworkCensusService = (log: FastifyBaseLogger) => ({
     },
 
     // Every flow of one platform: its published version (what runs) and its latest version (what
-    // the builder edits and test runs use), each step counted once per version.
-    async censusOfPlatform({ platformId }: { platformId: string }): Promise<PlatformFrameworkCensus> {
-        const batches = await collectBatches({ platformId, log })
-        const pins = unique(batches.flatMap((batch) => batch.steps.map((step) => step.pin)))
-        const supportByPin = await frameworkCensusService(log).resolvePins({ pins, platformId })
-        const steps = batches.flatMap((batch) => batch.steps).flatMap((step): FrameworkCensusStep[] => {
-            const support = supportByPin.get(step.pin)
-            return isNil(support) ? [] : [{ ...step, ...support }]
-        })
+    // the builder edits and test runs use), each step counted once per version. It walks the
+    // platform one flow batch at a time and counts statuses as it goes, so memory holds one batch,
+    // the distinct pins and the steps it keeps — all `legacy` and `unsupported` ones, or with
+    // `maxSteps` at most that many, `unsupported` first.
+    async censusOfPlatform({ platformId, maxSteps }: { platformId: string, maxSteps?: number }): Promise<PlatformFrameworkCensus> {
+        const supportByPin = new Map<string, PinFrameworkSupport>()
+        const unsupportedSteps: FrameworkCensusStep[] = []
+        const legacySteps: FrameworkCensusStep[] = []
+        let summary = EMPTY_SUMMARY
+        let unreadableVersions = 0
+        let cursor = ''
+        for (;;) {
+            const flows = await readFlows({ platformId, cursor })
+            if (flows.length === 0) {
+                break
+            }
+            const batch = await readBatch({ platformId, flows, log })
+            const newPins = [...new Set(batch.steps.map((step) => step.pin))].filter((pin) => !supportByPin.has(pin))
+            const resolved = await frameworkCensusService(log).resolvePins({ pins: newPins, platformId })
+            resolved.forEach((support, pin) => supportByPin.set(pin, support))
+            const steps = batch.steps.flatMap((step): FrameworkCensusStep[] => {
+                const support = supportByPin.get(step.pin)
+                return isNil(support) ? [] : [{ ...step, ...support }]
+            })
+            summary = addSummaries({ a: summary, b: summarize({ steps }) })
+            unreadableVersions += batch.unreadableVersions
+            unsupportedSteps.push(...keep({ steps, status: 'unsupported', room: roomLeft({ kept: unsupportedSteps, maxSteps }) }))
+            legacySteps.push(...keep({ steps, status: 'legacy', room: roomLeft({ kept: legacySteps, maxSteps }) }))
+            cursor = flows[flows.length - 1].flowId
+        }
         return {
             platformId,
-            summary: summarize({ steps }),
-            unreadableVersions: batches.reduce((total, batch) => total + batch.unreadableVersions, 0),
-            steps: steps.filter((step) => step.status !== 'current'),
+            summary,
+            unreadableVersions,
+            totalSteps: summary.legacy + summary.unsupported,
+            steps: [...unsupportedSteps, ...legacySteps].slice(0, maxSteps ?? Number.POSITIVE_INFINITY),
         }
     },
 
-    // The whole instance, platform by platform. Only the `doctor` command and the instance-level
-    // report use this; it reads every platform as a system job may (the precedent is
-    // `qadamContextVersionBackfill`), not as a request, so `.agents/rules/data-isolation.md`'s
-    // per-request filter has no caller to scope by — each platform's own census is scoped.
+    // The whole instance, platform by platform. Only the `doctor` command uses this; it reads every
+    // platform as a system job may (the precedent is `qadamContextVersionBackfill`), not as a
+    // request, so `.agents/rules/data-isolation.md`'s per-request filter has no caller to scope by —
+    // each platform's own census is scoped.
     async censusOfInstance(): Promise<InstanceFrameworkCensus> {
         const platforms = await platformRepo().find({
             select: { id: true, name: true },
@@ -92,27 +113,13 @@ export const frameworkCensusService = (log: FastifyBaseLogger) => ({
                 frameworkMajor: frameworkCensusPolicy.currentFrameworkMajor(),
                 contextVersions: [...frameworkCensusPolicy.engineContextVersions()],
             },
-            summary: summarize({
-                steps: censuses.flatMap((census) => census.steps),
-                currentSteps: censuses.reduce((total, census) => total + census.summary.current, 0),
-            }),
+            // Flows belong to one platform each, so per-platform counts add up without overlap.
+            summary: censuses.reduce((total, census) => addSummaries({ a: total, b: census.summary }), EMPTY_SUMMARY),
+            unreadableVersions: censuses.reduce((total, census) => total + census.unreadableVersions, 0),
             platforms: censuses,
         }
     },
 })
-
-async function collectBatches({ platformId, log }: { platformId: string, log: FastifyBaseLogger }): Promise<CensusBatch[]> {
-    const batches: CensusBatch[] = []
-    let cursor = ''
-    for (;;) {
-        const flows = await readFlows({ platformId, cursor })
-        if (flows.length === 0) {
-            return batches
-        }
-        batches.push(await readBatch({ platformId, flows, log }))
-        cursor = flows[flows.length - 1].flowId
-    }
-}
 
 // Keyset pagination on the flow id, scoped to the platform through the project.
 async function readFlows({ platformId, cursor }: { platformId: string, cursor: string }): Promise<CensusFlowRow[]> {
@@ -241,8 +248,13 @@ async function resolveOfficialPin({ name, version, platformId, bundled, log }: R
             contextVersion: isNil(frameworkMajor) ? null : frameworkCensusPolicy.contextOfOfficialMajor({ major: frameworkMajor }),
         }
     }
-    const stored = await readStoredContextVersion({ name, version: resolvedVersion, platformId: null, qadamType: QadamType.OFFICIAL })
-    return { source: 'official', frameworkMajor: null, contextVersion: stored.contextVersion }
+    // A version answered the pin, so it is not `unresolved` even when no official row records its
+    // context version (a registry entry this path does not read, or — until #779 extends this —
+    // the local store): its context version is unknown, which counts as still needing the old
+    // contract, and the MCP marking still marks it. `unresolved` is reserved for a pin nothing
+    // answers, which the `qadam_version` signal already reports.
+    const contextVersion = await readStoredContextVersion({ name, version: resolvedVersion, platformId: null, qadamType: QadamType.OFFICIAL })
+    return { source: 'official', frameworkMajor: null, contextVersion }
 }
 
 // A custom step runs the version `qadamMetadataService.get` resolves the pin to — exact when the
@@ -254,11 +266,10 @@ async function resolveCustomPin({ name, version, platformId, log }: ResolveCusto
     if (isNil(resolvedVersion)) {
         return UNRESOLVED
     }
-    const stored = await readStoredContextVersion({ name, version: resolvedVersion, platformId, qadamType: QadamType.CUSTOM })
-    if (!stored.found) {
-        return UNRESOLVED
-    }
-    return { source: 'custom', frameworkMajor: null, contextVersion: stored.contextVersion }
+    // As on the official path, a version answered the pin: no custom row for it (the registry
+    // matched a row of another type) is an unknown context version, not an unresolved pin.
+    const contextVersion = await readStoredContextVersion({ name, version: resolvedVersion, platformId, qadamType: QadamType.CUSTOM })
+    return { source: 'custom', frameworkMajor: null, contextVersion }
 }
 
 // What `qadamMetadataService.get` resolves the pin to, through the registry's named columns only, so
@@ -276,21 +287,18 @@ async function resolvePinVersion({ name, version, platformId, log }: ResolvePinV
 // `contextVersion` itself (#802) reads as unknown. Any other failure — a timeout, a dropped
 // connection — is thrown: reading it as unknown would report a healthy step as one that stops
 // running.
-async function readStoredContextVersion({ name, version, platformId, qadamType }: ReadStoredContextVersionParams): Promise<StoredContextVersion> {
+async function readStoredContextVersion({ name, version, platformId, qadamType }: ReadStoredContextVersionParams): Promise<FrameworkContextVersion | null> {
     const { data: row, error } = await tryCatch(() => qadamRepos().findOne({
         select: { id: true, contextVersion: true },
         where: { name, version, platformId: platformId ?? IsNull(), qadamType },
     }))
     if (error !== null) {
         if (isUndefinedColumn(error)) {
-            return { found: true, contextVersion: null }
+            return null
         }
         throw error
     }
-    if (isNil(row)) {
-        return { found: false, contextVersion: null }
-    }
-    return { found: true, contextVersion: frameworkCensusPolicy.fromStoredContextVersion({ value: row.contextVersion }) }
+    return isNil(row) ? null : frameworkCensusPolicy.fromStoredContextVersion({ value: row.contextVersion })
 }
 
 function isUndefinedColumn(error: unknown): boolean {
@@ -304,14 +312,35 @@ function isUndefinedColumn(error: unknown): boolean {
         && driverError.code === POSTGRES_UNDEFINED_COLUMN
 }
 
-function summarize({ steps, currentSteps = 0 }: { steps: { status: FrameworkCensusStatus, flowId: string }[], currentSteps?: number }): FrameworkCensusSummary {
+// A batch holds whole flows (both of a flow's versions are read with it), so a flow's unsupported
+// steps are all in one batch and `flowsWithUnsupportedSteps` adds up across batches.
+function summarize({ steps }: { steps: { status: FrameworkCensusStatus, flowId: string }[] }): FrameworkCensusSummary {
     return {
-        current: currentSteps + steps.filter((step) => step.status === 'current').length,
+        current: steps.filter((step) => step.status === 'current').length,
         legacy: steps.filter((step) => step.status === 'legacy').length,
         unsupported: steps.filter((step) => step.status === 'unsupported').length,
-        flowsWithUnsupportedSteps: unique(steps.filter((step) => step.status === 'unsupported').map((step) => step.flowId)).length,
+        flowsWithUnsupportedSteps: new Set(steps.filter((step) => step.status === 'unsupported').map((step) => step.flowId)).size,
     }
 }
+
+function addSummaries({ a, b }: { a: FrameworkCensusSummary, b: FrameworkCensusSummary }): FrameworkCensusSummary {
+    return {
+        current: a.current + b.current,
+        legacy: a.legacy + b.legacy,
+        unsupported: a.unsupported + b.unsupported,
+        flowsWithUnsupportedSteps: a.flowsWithUnsupportedSteps + b.flowsWithUnsupportedSteps,
+    }
+}
+
+function roomLeft({ kept, maxSteps }: { kept: FrameworkCensusStep[], maxSteps: number | undefined }): number {
+    return isNil(maxSteps) ? Number.POSITIVE_INFINITY : Math.max(0, maxSteps - kept.length)
+}
+
+function keep({ steps, status, room }: { steps: FrameworkCensusStep[], status: FrameworkCensusStatus, room: number }): FrameworkCensusStep[] {
+    return steps.filter((step) => step.status === status).slice(0, room)
+}
+
+const EMPTY_SUMMARY: FrameworkCensusSummary = { current: 0, legacy: 0, unsupported: 0, flowsWithUnsupportedSteps: 0 }
 
 const UNRESOLVED: PinContext = { source: 'unresolved', frameworkMajor: null, contextVersion: null }
 
@@ -344,7 +373,11 @@ export type PlatformFrameworkCensus = {
     summary: FrameworkCensusSummary
     // Flow versions whose step tree could not be walked; their steps are not in the counts.
     unreadableVersions: number
-    // `legacy` and `unsupported` steps only; `current` ones are counted in the summary.
+    // How many `legacy` and `unsupported` step occurrences the census found; `steps` may carry
+    // fewer when the caller capped it.
+    totalSteps: number
+    // `legacy` and `unsupported` steps only, `unsupported` first; `current` ones are counted in the
+    // summary.
     steps: FrameworkCensusStep[]
 }
 
@@ -354,6 +387,10 @@ export type InstanceFrameworkCensus = {
         contextVersions: FrameworkContextVersion[]
     }
     summary: FrameworkCensusSummary
+    // Flow versions, across every platform, whose step tree could not be walked. Their steps are in
+    // no count, so a step among them may stop running on this release (ADR-0002: unknown counts as
+    // still needing the old contract).
+    unreadableVersions: number
     platforms: (PlatformFrameworkCensus & { platformName: string })[]
 }
 
@@ -383,11 +420,6 @@ type CensusVersionRow = Pick<FlowVersion, 'id' | 'flowId' | 'displayName' | 'tri
 type CensusBatch = {
     steps: CensusStepOccurrence[]
     unreadableVersions: number
-}
-
-type StoredContextVersion = {
-    found: boolean
-    contextVersion: FrameworkContextVersion | null
 }
 
 type ResolvePinContextParams = {

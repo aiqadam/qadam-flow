@@ -1,4 +1,4 @@
-import { isNil } from '@aiqadam/shared'
+import { isNil, isObject } from '@aiqadam/shared'
 import {
     DataSource,
     EntitySchema,
@@ -156,15 +156,42 @@ export const databaseConnection = (): DataSource => {
 // upgrade. The application's connection would migrate that database on `initialize()`; this one
 // never migrates and Postgres refuses its writes. It becomes the process's connection so the
 // repositories read through it, and it refuses to replace a connection that already exists.
-export function openReadOnlyDatabaseConnection(): DataSource {
+//
+// Read-only rests on the startup option `default_transaction_read_only=on`, which can be lost on
+// the way: node-postgres lets a `POSTGRES_URL` carrying its own `?options=` override it, and
+// PgBouncer with `ignore_startup_parameters=options` drops it. So the connection asks Postgres
+// after connecting and fails closed — it is destroyed and the call throws — unless the session
+// reports `on`. A per-session `SET` is no substitute: under transaction pooling it would leak to
+// other clients' sessions.
+export async function openReadOnlyDatabaseConnection(): Promise<DataSource> {
     if (!isNil(getPersistedConnection())) {
         throw new Error('A database connection already exists in this process; a read-only connection must be the first and only one.')
     }
     const ds = createDataSource({ access: 'read-only' })
     setPersistedConnection(ds)
-    return ds
+    try {
+        await ds.initialize()
+        await assertSessionIsReadOnly(ds)
+        return ds
+    }
+    catch (error) {
+        if (ds.isInitialized) {
+            await ds.destroy()
+        }
+        setPersistedConnection(null)
+        throw error
+    }
 }
 
-export function resetDatabaseConnection(): void {
-    setPersistedConnection(null)
+// `replacement` puts back a connection a test set aside (the doctor's test swaps the shared one out).
+export function resetDatabaseConnection({ replacement = null }: { replacement?: DataSource | null } = {}): void {
+    setPersistedConnection(replacement)
+}
+
+async function assertSessionIsReadOnly(ds: DataSource): Promise<void> {
+    const rows: unknown = await ds.query('SHOW default_transaction_read_only')
+    const setting = Array.isArray(rows) && isObject(rows[0]) ? rows[0].default_transaction_read_only : undefined
+    if (setting !== 'on') {
+        throw new Error(`Refusing to run: the read-only database session reports default_transaction_read_only=${String(setting)}, not "on". A POSTGRES_URL with its own "options" parameter, or a pooler that drops startup options (PgBouncer's ignore_startup_parameters), removes the read-only guarantee. Connect directly to Postgres, or remove the "options" parameter from the URL.`)
+    }
 }

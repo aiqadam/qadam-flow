@@ -56,7 +56,7 @@ Exposes a Qadam Flow project as a Model Context Protocol (MCP) server so that AI
 - `ap_validate_flow`, `ap_validate_step_config` — validation helpers. `ap_validate_flow` reports
   issue categories: `step_validity`, `qadam_version` (a pinned qadam version this installation
   cannot resolve, #432), `framework_version` (a pinned qadam built against a framework context
-  version this release no longer runs, #803), `template_reference`, `empty_branch`, and — since
+  version this release no longer runs, #803; a pin that does not resolve gets `qadam_version` only, #838), `template_reference`, `empty_branch`, and — since
   #391 — `subflow_payload`
   (a `callFlow` step calling a child with no arguments) and `inline_pause` (an
   `executionMode: "inline"` step whose callee can pause, found by walking the call graph and

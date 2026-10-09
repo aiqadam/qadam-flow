@@ -2,7 +2,8 @@ import { assertNotNullOrUndefined, FrameworkCensusResponse, PrincipalType } from
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { StatusCodes } from 'http-status-codes'
 import { securityAccess } from '../../core/security/authorization/fastify-security'
-import { frameworkCensusPolicy, FrameworkCensusStatus } from './framework-census-policy'
+import { frameworkCensusCache } from './framework-census-cache'
+import { frameworkCensusPolicy } from './framework-census-policy'
 import { frameworkCensusService } from './framework-census-service'
 
 // The admin surface of the ADR-0002 census (#803): the platform's own steps, with the context
@@ -32,22 +33,22 @@ export const frameworkCensusController: FastifyPluginAsyncZod = async (app) => {
             }
         }
 
-        const census = await frameworkCensusService(req.log).censusOfPlatform({ platformId })
-        const unsupportedFirst = [...census.steps].sort((a, b) => statusRank(a.status) - statusRank(b.status))
+        // A walk of every flow of the platform: served from the per-platform cache, one walk per
+        // process per TTL, shared by concurrent requests (`framework-census-cache.ts`).
+        const census = await frameworkCensusCache.ofPlatform({
+            platformId,
+            compute: () => frameworkCensusService(req.log).censusOfPlatform({ platformId, maxSteps: MAX_STEPS }),
+        })
         return {
             engine,
             retiredContextVersions: frameworkCensusPolicy.retiredContextVersions(),
             ran: true,
             summary: census.summary,
             unreadableVersions: census.unreadableVersions,
-            totalSteps: census.steps.length,
-            steps: unsupportedFirst.slice(0, MAX_STEPS),
+            totalSteps: census.totalSteps,
+            steps: census.steps,
         }
     })
-}
-
-function statusRank(status: FrameworkCensusStatus): number {
-    return status === 'unsupported' ? 0 : 1
 }
 
 // The banner names a handful of flows and the summary carries the counts; the full list of a large

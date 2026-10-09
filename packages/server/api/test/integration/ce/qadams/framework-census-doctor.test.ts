@@ -1,5 +1,5 @@
 import { ContextVersion } from '@aiqadam/qadams-framework'
-import { FlowStatus, FlowTriggerType, FlowVersionState, PackageType, QadamType } from '@aiqadam/shared'
+import { FlowStatus, FlowTriggerType, FlowVersionState, isNil, PackageType, QadamType } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { DataSource } from 'typeorm'
 import { databaseConnection, openReadOnlyDatabaseConnection, resetDatabaseConnection } from '../../../../src/app/database/database-connection'
@@ -51,15 +51,22 @@ describe('framework census doctor connection (#803)', () => {
         }))
 
         // Make the newest migration pending again, as on a database the new image has not migrated.
+        // Every change to shared state happens inside the `try`, and the `finally` undoes only what
+        // actually ran, so a failure here cannot leave later serial suites without their connection
+        // or their migration row.
         const shared = databaseConnection()
-        const [newest] = await shared.query<MigrationRow[]>('SELECT "id", "timestamp", "name" FROM "migrations" ORDER BY "timestamp" DESC LIMIT 1')
-        await shared.query('DELETE FROM "migrations" WHERE "id" = $1', [newest.id])
-        const pendingCount = await countMigrations(shared)
-
-        resetDatabaseConnection()
-        const doctor = openReadOnlyDatabaseConnection()
+        let removed: MigrationRow | null = null
+        let swapped = false
+        let doctor: DataSource | null = null
         try {
-            await doctor.initialize()
+            const [newest] = await shared.query<MigrationRow[]>('SELECT "id", "timestamp", "name" FROM "migrations" ORDER BY "timestamp" DESC LIMIT 1')
+            await shared.query('DELETE FROM "migrations" WHERE "id" = $1', [newest.id])
+            removed = newest
+            const pendingCount = await countMigrations(shared)
+
+            resetDatabaseConnection()
+            swapped = true
+            doctor = await openReadOnlyDatabaseConnection()
 
             expect(await countMigrations(doctor)).toBe(pendingCount)
             expect(await doctor.query('SELECT 1 FROM "migrations" WHERE "name" = $1', [newest.name])).toEqual([])
@@ -72,17 +79,51 @@ describe('framework census doctor connection (#803)', () => {
             expect(platform?.steps).toEqual([expect.objectContaining({ pin: 'doctor-v1-custom@1.0.0', contextVersion: ContextVersion.V1, status: 'legacy' })])
         }
         finally {
-            if (doctor.isInitialized) {
+            if (doctor?.isInitialized) {
                 await doctor.destroy()
             }
-            restoreConnection(shared)
-            await shared.query('INSERT INTO "migrations" ("timestamp", "name") VALUES ($1, $2)', [newest.timestamp, newest.name])
+            if (swapped) {
+                resetDatabaseConnection({ replacement: shared })
+            }
+            if (!isNil(removed)) {
+                await shared.query('INSERT INTO "migrations" ("timestamp", "name") VALUES ($1, $2)', [removed.timestamp, removed.name])
+            }
         }
-        expect(await countMigrations(shared)).toBe(pendingCount + 1)
+        expect(removed).not.toBeNull()
+        expect(await shared.query('SELECT 1 FROM "migrations" WHERE "name" = $1', [removed?.name])).toHaveLength(1)
     })
 
-    it('refuses to replace a connection that already exists', () => {
-        expect(() => openReadOnlyDatabaseConnection()).toThrow('A database connection already exists')
+    // #838: read-only rests on a startup option that a URL's own `?options=` silently overrides (and
+    // PgBouncer can drop). The connection must notice and refuse, not report on a writable session.
+    it('refuses to open when the session is not read-only, and leaves no connection behind', async () => {
+        const shared = databaseConnection()
+        const previousUrl = process.env.AP_POSTGRES_URL
+        let swapped = false
+        try {
+            process.env.AP_POSTGRES_URL = postgresUrlWithOptions({ options: '-c default_transaction_read_only=off' })
+            resetDatabaseConnection()
+            swapped = true
+
+            await expect(openReadOnlyDatabaseConnection()).rejects.toThrow('default_transaction_read_only=off')
+            // Failed closed: the refused connection is not left as the process's connection, so a
+            // second attempt is refused for the same reason, not as "a connection already exists".
+            await expect(openReadOnlyDatabaseConnection()).rejects.toThrow('default_transaction_read_only=off')
+        }
+        finally {
+            if (isNil(previousUrl)) {
+                delete process.env.AP_POSTGRES_URL
+            }
+            else {
+                process.env.AP_POSTGRES_URL = previousUrl
+            }
+            if (swapped) {
+                resetDatabaseConnection({ replacement: shared })
+            }
+        }
+    })
+
+    it('refuses to replace a connection that already exists', async () => {
+        await expect(openReadOnlyDatabaseConnection()).rejects.toThrow('A database connection already exists')
     })
 })
 
@@ -91,10 +132,17 @@ async function countMigrations(dataSource: DataSource): Promise<number> {
     return Number(count)
 }
 
-// `openReadOnlyDatabaseConnection` becomes the process's connection, as it must in the doctor. The
-// rest of this suite runs on the shared test connection, so the test puts that one back by hand.
-function restoreConnection(dataSource: DataSource): void {
-    (globalThis as Record<string, unknown>).__AP_DB_CONNECTION__ = dataSource
+// The test database through a URL, as an operator's `POSTGRES_URL` would name it, carrying its own
+// `options` startup parameter.
+function postgresUrlWithOptions({ options }: { options: string }): string {
+    const url = new URL('postgres://localhost')
+    url.username = process.env.AP_POSTGRES_USERNAME ?? ''
+    url.password = process.env.AP_POSTGRES_PASSWORD ?? ''
+    url.hostname = process.env.AP_POSTGRES_HOST ?? ''
+    url.port = process.env.AP_POSTGRES_PORT ?? ''
+    url.pathname = `/${process.env.AP_POSTGRES_DATABASE ?? ''}`
+    url.searchParams.set('options', options)
+    return url.toString()
 }
 
 type MigrationRow = {
