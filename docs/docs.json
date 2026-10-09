@@ -199,6 +199,7 @@
                      "install/architecture/durable-execution",
                      "install/architecture/waitpoints",
                      "install/architecture/network-security",
+                     "install/architecture/qadam-version-catalogue",
                      "install/architecture/qadam-syncing",
                      "install/architecture/qadam-version-store",
                      "install/architecture/benchmark"
