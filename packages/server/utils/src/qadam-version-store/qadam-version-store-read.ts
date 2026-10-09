@@ -132,7 +132,7 @@ export const qadamVersionStoreReader = {
                 return unreadable({ what: 'the entry point', error: entryReal.error })
             }
             const entryRelative = path.relative(dir, entryReal.data)
-            if (entryRelative === '' || qadamVersionStoreLayout.isOutside({ relative: entryRelative })) {
+            if (qadamVersionStoreLayout.isOutside({ relative: entryRelative })) {
                 return damaged('the entry point resolves outside the version')
             }
             if (verify) {

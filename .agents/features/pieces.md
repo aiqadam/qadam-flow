@@ -175,8 +175,12 @@ qadam, Store Entry): say "qadam version store".
   seeds) and read-only on every worker (#779 app-sec: a forked engine runs flow code as the worker
   user, `read` does not re-hash files, so a writable store would let one engine plant code every
   tenant runs). Nothing in the worker or engine writes the store; both use `qadamVersionStoreReader.open`.
-  The worker checks it: a store it can write (`access(W_OK)` succeeds) is not used outside `AP_ENVIRONMENT=dev`
-  (warned there). `docker-compose.sandboxed.yml` (CAP_SYS_ADMIN) with a forked mode could remount it, so do not combine them.
+  The worker checks it (`cache/qadams/read-only-mount.ts`): from `/proc/self/mountinfo`, the mount holding
+  the store and every mount inside it must carry `ro`; otherwise the store is not used outside
+  `AP_ENVIRONMENT=dev` (warned there) and steps load the bundled builds. Not `access(W_OK)`: Linux
+  (`do_faccessat`, fs/open.c) checks permission bits before it reports a read-only mount, so a non-root
+  worker gets EACCES on a root-owned store whether or not the mount is `:ro`. Without a mount table only
+  EROFS from `access(W_OK)` on the root, `qadams/` and `qadams/_platform/` counts. `docker-compose.sandboxed.yml` (CAP_SYS_ADMIN) with a forked mode could remount it, so do not combine them.
   Outside `/usr/src/app` on purpose: a stored version resolves packages upward from its own
   directory, and `open` refuses a root at or below any directory holding a `node_modules`. That
   covers the upward walk only; `NODE_PATH` (the sandbox env sets `/usr/src/node_modules`) and the
@@ -244,7 +248,7 @@ qadam, Store Entry): say "qadam version store".
   API) with `qadamVersionStoreReader.open` (`qadam-version-store-read.ts`: realpath + the
   `node_modules`-above check, no mkdir, probe or cleanup) before it creates its first sandbox, and
   in every execution mode, so a later switch to a forked mode on reconnect has a root
-  (`cache/qadams/qadam-version-store-root.ts`; unusable-store lines are info in dev and in isolate modes). Sandbox env
+  (`cache/qadams/qadam-version-store-root.ts`; unusable-store lines are info in dev, warn otherwise). Sandbox env
   always carries `AP_QADAM_VERSION_STORE_PATH`: the real root for forked engines, `''` otherwise, so a
   value an operator propagates (`AP_SANDBOX_PROPAGATED_ENV_VARS`) never reaches an isolate engine
   (mounting the store there is a later slice: only the official tree and the job's own platform

@@ -3,14 +3,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ApEnvironment, ExecutionMode } from '@aiqadam/shared'
 import pino from 'pino'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, MockInstance, vi } from 'vitest'
 import { qadamVersionStoreRoot } from '../../../../src/lib/cache/qadams/qadam-version-store-root'
+import { readOnlyMount } from '../../../../src/lib/cache/qadams/read-only-mount'
 
 const log = pino({ level: 'silent' })
 const info = vi.spyOn(log, 'info')
 const warn = vi.spyOn(log, 'warn')
-// root ignores directory permissions, so a 0555 directory still reads as writable to it.
-const isRoot = process.getuid?.() === 0
 
 let tempDir: string
 let previousStorePath: string | undefined
@@ -21,6 +20,14 @@ beforeEach(async () => {
     info.mockClear()
     warn.mockClear()
 })
+
+// The temp directory sits on a writable mount: a store there is refused unless a test says the
+// mount table shows it read-only (readOnlyMount has its own tests).
+let readOnlyMountSpy: MockInstance<typeof readOnlyMount.check> | null = null
+
+function asReadOnlyMount(): void {
+    readOnlyMountSpy = vi.spyOn(readOnlyMount, 'check').mockResolvedValue({ readOnly: true })
+}
 
 afterEach(async () => {
     if (previousStorePath === undefined) {
@@ -34,10 +41,12 @@ afterEach(async () => {
         await chmod(join(tempDir, entry), 0o755).catch(() => undefined)
     }
     await rm(tempDir, { recursive: true, force: true })
+    readOnlyMountSpy?.mockRestore()
+    readOnlyMountSpy = null
 })
 
 describe('qadamVersionStoreRoot', () => {
-    it.skipIf(isRoot)('hands a read-only store to forked engines, and an empty value to isolate engines', async () => {
+    it('hands a store on a read-only mount to forked engines, and an empty value to isolate engines', async () => {
         const root = await readOnlyStore()
 
         await qadamVersionStoreRoot.prepare({ log, environment: ApEnvironment.PRODUCTION, executionMode: ExecutionMode.UNSANDBOXED })
@@ -51,7 +60,7 @@ describe('qadamVersionStoreRoot', () => {
         expect(warn).not.toHaveBeenCalled()
     })
 
-    it.skipIf(isRoot)('keeps the root it opened in an isolate mode, for a later switch to a forked mode', async () => {
+    it('keeps the root it opened in an isolate mode, for a later switch to a forked mode', async () => {
         const root = await readOnlyStore()
 
         await qadamVersionStoreRoot.prepare({ log, environment: ApEnvironment.PRODUCTION, executionMode: ExecutionMode.SANDBOX_PROCESS })
@@ -60,14 +69,18 @@ describe('qadamVersionStoreRoot', () => {
         expect(qadamVersionStoreRoot.engineEnv({ executionMode: ExecutionMode.UNSANDBOXED })).toEqual({ AP_QADAM_VERSION_STORE_PATH: root })
     })
 
-    it('refuses a store this worker can write, outside a development environment', async () => {
+    it.each([
+        ['writable', 0o755],
+        ['read-only by its permission bits only (chmod 555)', 0o555],
+    ])('refuses a store that is not on a read-only mount (%s), outside a development environment', async (_label, mode) => {
         await mkdir(join(tempDir, 'store'))
+        await chmod(join(tempDir, 'store'), mode)
         process.env['AP_QADAM_VERSION_STORE_PATH'] = join(tempDir, 'store')
 
         await qadamVersionStoreRoot.prepare({ log, environment: ApEnvironment.PRODUCTION, executionMode: ExecutionMode.UNSANDBOXED })
 
         expect(qadamVersionStoreRoot.engineEnv({ executionMode: ExecutionMode.UNSANDBOXED })).toEqual({ AP_QADAM_VERSION_STORE_PATH: '' })
-        expect(warn).toHaveBeenCalledWith({ used: false }, expect.stringContaining('mount the qadam version store read-only on workers'))
+        expect(warn).toHaveBeenCalledWith({ reason: 'the qadam version store is not on a read-only mount', used: false }, expect.stringContaining('mount the qadam version store read-only on workers'))
     })
 
     it('uses a writable store in a development environment, with a warning', async () => {
@@ -77,7 +90,7 @@ describe('qadamVersionStoreRoot', () => {
         await qadamVersionStoreRoot.prepare({ log, environment: ApEnvironment.DEVELOPMENT, executionMode: ExecutionMode.UNSANDBOXED })
 
         expect(qadamVersionStoreRoot.engineEnv({ executionMode: ExecutionMode.UNSANDBOXED })).toEqual({ AP_QADAM_VERSION_STORE_PATH: join(tempDir, 'store') })
-        expect(warn).toHaveBeenCalledWith({ used: true }, expect.stringContaining('mount the qadam version store read-only on workers'))
+        expect(warn).toHaveBeenCalledWith({ reason: 'the qadam version store is not on a read-only mount', used: true }, expect.stringContaining('mount the qadam version store read-only on workers'))
     })
 
     it('never writes the store: it creates nothing, not even a missing root', async () => {
@@ -108,25 +121,34 @@ describe('qadamVersionStoreRoot', () => {
         expect(warn).toHaveBeenCalledWith({ reason: 'stored versions could resolve packages from a node_modules above the store' }, expect.stringContaining('[qadamVersionStore] The qadam version store is unavailable'))
     })
 
-    it.each([
-        ['a development environment', ApEnvironment.DEVELOPMENT, ExecutionMode.UNSANDBOXED],
-        ['an execution mode that does not use the store', ApEnvironment.PRODUCTION, ExecutionMode.SANDBOX_PROCESS],
-    ])('logs an unusable store at info in %s', async (_label, environment, executionMode) => {
-        await mkdir(join(tempDir, 'app', 'qadam-versions'), { recursive: true })
-        await mkdir(join(tempDir, 'app', 'node_modules'))
-        process.env['AP_QADAM_VERSION_STORE_PATH'] = join(tempDir, 'app', 'qadam-versions')
+    it('logs an unusable store at info in a development environment', async () => {
+        await unusableStore()
 
-        await qadamVersionStoreRoot.prepare({ log, environment, executionMode })
+        await qadamVersionStoreRoot.prepare({ log, environment: ApEnvironment.DEVELOPMENT, executionMode: ExecutionMode.UNSANDBOXED })
 
         expect(warn).not.toHaveBeenCalled()
         expect(info).toHaveBeenCalledWith({ reason: expect.any(String) }, expect.stringContaining('[qadamVersionStore] The qadam version store is unavailable'))
     })
+
+    it('logs an unusable store at warn outside development, in an isolate mode too', async () => {
+        await unusableStore()
+
+        await qadamVersionStoreRoot.prepare({ log, environment: ApEnvironment.PRODUCTION, executionMode: ExecutionMode.SANDBOX_PROCESS })
+
+        expect(warn).toHaveBeenCalledWith({ reason: expect.any(String) }, expect.stringContaining('[qadamVersionStore] The qadam version store is unavailable'))
+    })
 })
+
+async function unusableStore(): Promise<void> {
+    await mkdir(join(tempDir, 'app', 'qadam-versions'), { recursive: true })
+    await mkdir(join(tempDir, 'app', 'node_modules'))
+    process.env['AP_QADAM_VERSION_STORE_PATH'] = join(tempDir, 'app', 'qadam-versions')
+}
 
 async function readOnlyStore(): Promise<string> {
     const root = join(tempDir, 'store')
     await mkdir(root)
-    await chmod(root, 0o555)
     process.env['AP_QADAM_VERSION_STORE_PATH'] = root
+    asReadOnlyMount()
     return root
 }

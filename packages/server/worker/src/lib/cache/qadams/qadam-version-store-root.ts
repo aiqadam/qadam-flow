@@ -1,8 +1,8 @@
-import { access, constants } from 'node:fs/promises'
 import { qadamVersionStoreReader } from '@aiqadam/server-utils'
 import { ApEnvironment, ExecutionMode, isNil, tryCatch } from '@aiqadam/shared'
 import { Logger } from 'pino'
 import { system, WorkerSystemProp } from '../../config/configs'
+import { readOnlyMount } from './read-only-mount'
 
 // The qadam version store root this worker hands its engines (ADR-0003, #779).
 //
@@ -14,9 +14,10 @@ import { system, WorkerSystemProp } from '../../config/configs'
 // writes the store (it seeds it, and runs `qadamVersionStore.open` with every check, the
 // case-sensitivity probe included).
 //
-// The read-only mount is checked, not trusted: a worker that can write the store refuses to use it
-// (outside a development environment), because the shipped compose file is only one way to run a
-// worker and an older or custom one may still mount it read-write.
+// The read-only mount is checked, not trusted (`readOnlyMount`): a store that is not on a read-only
+// mount, or has a writable mount inside it, is not used outside a development environment. The
+// shipped compose file is only one way to run a worker, and an older or custom one may still mount
+// it read-write. Failing closed costs nothing but the store: steps load the image's builds.
 //
 // Forked engines only. An isolate sandbox sees only what the worker mounts, and mounting the store
 // needs its own design (only the official tree and the job's own platform namespace, never the
@@ -31,7 +32,9 @@ export const qadamVersionStoreRoot = {
             preparedRoot = null
             return
         }
-        const quiet = environment === ApEnvironment.DEVELOPMENT || !qadamVersionStoreRoot.isUsedBy({ executionMode })
+        // Not by execution mode: a store opened in an isolate mode is the one a later switch to a
+        // forked mode would use.
+        const quiet = environment === ApEnvironment.DEVELOPMENT
         const { data: opened, error } = await tryCatch(() => qadamVersionStoreReader.open({ root }))
         if (error !== null) {
             preparedRoot = null
@@ -43,13 +46,12 @@ export const qadamVersionStoreRoot = {
             logUnavailable({ log, quiet, reason: opened.reason })
             return
         }
-        // EROFS (a `:ro` mount) or EACCES is the expected answer.
-        const { error: notWritable } = await tryCatch(() => access(opened.reader.root, constants.W_OK))
-        if (isNil(notWritable)) {
+        const mount = await readOnlyMount.check({ dir: opened.reader.root })
+        if (!mount.readOnly) {
             const isDevelopment = environment === ApEnvironment.DEVELOPMENT
-            log.warn({ used: isDevelopment }, isDevelopment
-                ? '[qadamVersionStore] This worker can write the qadam version store; mount the qadam version store read-only on workers. Used anyway in a development environment'
-                : '[qadamVersionStore] This worker can write the qadam version store, so it does not use it; mount the qadam version store read-only on workers')
+            log.warn({ reason: mount.reason, used: isDevelopment }, isDevelopment
+                ? '[qadamVersionStore] The qadam version store is not on a read-only mount; mount the qadam version store read-only on workers. Used anyway in a development environment'
+                : '[qadamVersionStore] The qadam version store is not on a read-only mount, so this worker does not use it; mount the qadam version store read-only on workers')
             if (!isDevelopment) {
                 preparedRoot = null
                 return
@@ -73,8 +75,7 @@ let preparedRoot: string | null = null
 
 const FORKED_MODES: readonly string[] = [ExecutionMode.UNSANDBOXED, ExecutionMode.SANDBOX_CODE_ONLY]
 
-// At info in a development tree, which usually has no store at the default under /var/lib, and in
-// an execution mode that does not use the store.
+// At info in a development tree, which usually has no store at the default under /var/lib.
 function logUnavailable({ log, quiet, reason }: LogUnavailableParams): void {
     const message = '[qadamVersionStore] The qadam version store is unavailable; steps load the qadams bundled with the image'
     if (quiet) {

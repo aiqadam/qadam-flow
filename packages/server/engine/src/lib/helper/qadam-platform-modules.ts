@@ -31,9 +31,10 @@ export const qadamPlatformModules = {
     // Starts guarding the modules loaded from the store at `storeRoot` (a real path). The hook is
     // registered once per process and serves every store root guarded through it.
     guard: ({ storeRoot }: { storeRoot: string }): GuardResult => {
-        // Each package resolved the way a stored version will ask for it. The reason names the
-        // package, never a path.
-        const missing = PLATFORM_PROVIDED_PACKAGES.find((packageName) => tryCatchSync(() => resolveFromPlatform({ specifier: packageName })).error !== null)
+        // Each package resolved the way a stored version will ask for it, the workspace packages
+        // first because the others are found through the framework. The reason names the package,
+        // never a path.
+        const missing = [...WORKSPACE_PACKAGE_DIRS.keys(), ...PLATFORM_PROVIDED_PACKAGES].find((packageName) => tryCatchSync(() => resolveFromPlatform({ specifier: packageName })).error !== null)
         if (!isNil(missing)) {
             return { ok: false, reason: `the platform's copy of ${missing} cannot be found` }
         }
@@ -54,7 +55,8 @@ export const qadamPlatformModules = {
 }
 
 let hooksRegistered = false
-let platformPackageDirs: Map<string, string> | null = null
+// Each package's real directory, once found; a package not found is looked for again next time.
+const platformPackageDirs = new Map<string, string>()
 const guardedQadamsDirs = new Set<string>()
 
 function resolveForStoredModules(specifier: string, context: ResolveHookContext, nextResolve: NextResolve): ResolveFnOutput {
@@ -146,11 +148,8 @@ function resolveFromPlatform({ specifier }: { specifier: string }): string {
     if (isNil(packageName) || subpath.split('/').slice(1).some((segment) => segment === '' || segment === '.' || segment === '..')) {
         throw notProvided({ specifier })
     }
-    const packageDir = getPlatformPackageDirs().get(packageName)
-    if (isNil(packageDir)) {
-        throw notProvided({ specifier })
-    }
-    const resolved = WORKSPACE_PACKAGES.has(packageName)
+    const packageDir = locatePlatformPackage({ packageName })
+    const resolved = WORKSPACE_PACKAGE_DIRS.has(packageName)
         // A workspace package has no `exports`, so its subpaths are paths inside it.
         ? createRequire(path.join(packageDir, 'package.json')).resolve(`.${subpath}`)
         : frameworkRequire().resolve(specifier)
@@ -160,24 +159,20 @@ function resolveFromPlatform({ specifier }: { specifier: string }): string {
     return resolved
 }
 
-// The real directory of each package the platform provides. `qadams-framework` and `qadams-common`
-// are workspace packages; `@aiqadam/shared` and `zod` are the framework's own runtime dependencies,
-// the copies it validates and re-exports with. Relative to the working directory, like the bundled
-// qadams root (`qadam-dist-index.ts`).
-function getPlatformPackageDirs(): Map<string, string> {
-    if (!isNil(platformPackageDirs)) {
-        return platformPackageDirs
+// The real directory of a package the platform provides, found on its own so a missing one is the
+// one named. `qadams-framework` and `qadams-common` are workspace packages; `@aiqadam/shared` and
+// `zod` are the framework's own runtime dependencies, the copies it validates and re-exports with.
+// Relative to the working directory, like the bundled qadams root (`qadam-dist-index.ts`).
+function locatePlatformPackage({ packageName }: { packageName: string }): string {
+    const known = platformPackageDirs.get(packageName)
+    if (!isNil(known)) {
+        return known
     }
-    const located = new Map<string, string>([
-        [FRAMEWORK_PACKAGE, realpathSync(path.resolve(FRAMEWORK_DIR))],
-        [COMMON_PACKAGE, realpathSync(path.resolve(COMMON_DIR))],
-        ...FRAMEWORK_DEPENDENCIES.map((packageName): [string, string] => [packageName, path.dirname(frameworkRequire().resolve(`${packageName}/package.json`))]),
-    ])
-    const missing = PLATFORM_PROVIDED_PACKAGES.find((packageName) => !located.has(packageName))
-    if (!isNil(missing)) {
-        throw new Error(`no platform copy is configured for ${missing}`)
-    }
-    platformPackageDirs = located
+    const workspaceDir = WORKSPACE_PACKAGE_DIRS.get(packageName)
+    const located = isNil(workspaceDir)
+        ? path.dirname(frameworkRequire().resolve(`${packageName}/package.json`))
+        : realpathSync(path.resolve(workspaceDir))
+    platformPackageDirs.set(packageName, located)
     return located
 }
 
@@ -202,8 +197,7 @@ const FRAMEWORK_PACKAGE = '@aiqadam/qadams-framework'
 const COMMON_PACKAGE = '@aiqadam/qadams-common'
 const FRAMEWORK_DIR = 'packages/qadams/framework'
 const COMMON_DIR = 'packages/qadams/common'
-const WORKSPACE_PACKAGES = new Set([FRAMEWORK_PACKAGE, COMMON_PACKAGE])
-const FRAMEWORK_DEPENDENCIES = ['@aiqadam/shared', 'zod']
+const WORKSPACE_PACKAGE_DIRS = new Map([[FRAMEWORK_PACKAGE, FRAMEWORK_DIR], [COMMON_PACKAGE, COMMON_DIR]])
 
 type NextResolve = (specifier: string, context?: Partial<ResolveHookContext>) => ResolveFnOutput
 

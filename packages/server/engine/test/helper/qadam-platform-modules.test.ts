@@ -13,7 +13,24 @@ describe('qadamPlatformModules.guard', () => {
         try {
             const guarded = qadamPlatformModules.guard({ storeRoot: path.join(elsewhere, 'store') })
 
-            expect(guarded).toEqual({ ok: false, reason: 'the platform\'s copy of @aiqadam/shared cannot be found' })
+            expect(guarded).toEqual({ ok: false, reason: 'the platform\'s copy of @aiqadam/qadams-framework cannot be found' })
+        }
+        finally {
+            process.chdir(repoRoot)
+            await fs.rm(elsewhere, { recursive: true, force: true })
+        }
+    })
+
+    it('names the one package that is missing', async () => {
+        const repoRoot = process.cwd()
+        const elsewhere = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'engine-no-common-')))
+        await fs.mkdir(path.join(elsewhere, 'packages', 'qadams'), { recursive: true })
+        await fs.symlink(path.join(repoRoot, 'packages', 'qadams', 'framework'), path.join(elsewhere, 'packages', 'qadams', 'framework'))
+        process.chdir(elsewhere)
+        try {
+            const guarded = qadamPlatformModules.guard({ storeRoot: path.join(elsewhere, 'store') })
+
+            expect(guarded).toEqual({ ok: false, reason: 'the platform\'s copy of @aiqadam/qadams-common cannot be found' })
         }
         finally {
             process.chdir(repoRoot)
