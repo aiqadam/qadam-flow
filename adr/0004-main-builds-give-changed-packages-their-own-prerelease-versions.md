@@ -190,8 +190,8 @@ sends `CURRENT_VERSION` as `release` to `/registry`
 `ExactVersionType` (`qadam-requests.ts:71-73`). Also, `isSupportedRelease` orders `2.1.0-main.5`
 below a `2.1.0` floor (`qadam-cache-utils.ts:74-85`).
 
-**Since then** (at `8ba81dfa`, 2026-10-10), three of those places have changed, each with its own
-pattern:
+**Since then** (at `8ba81dfa`, 2026-10-10), the platform version, the engine and the new store have
+each gained their own pattern:
 - #828 (#798) accepts the platform's prerelease as `release` through a pattern that admits any
   semver prerelease (`PLATFORM_RELEASE_PATTERN`, `packages/shared/src/lib/automation/qadams/dto/qadam-requests.ts:10-14`,
   used at `:64` and `:79`). The image stamp writes only `X.Y.Z-main.<n>`
@@ -207,9 +207,9 @@ The step and install schemas still use `x.y.z` (`qadam-requests.ts:7-9`, `:16-18
 version may look like is decided in five places, and they disagree on prereleases. The worker names
 each workspace member `qadams/<name>-<version>`
 (`packages/server/worker/src/lib/cache/qadams/qadam-installer.ts:746`, `:818`), and the engine looks
-installed copies up under that alias (`qadam-loader.ts:322`, `:332`). Flow export, in the UI, its
-bulk variant and `ap_export_flow`, goes through one function, `flowService.getTemplate`
-(`packages/server/api/src/app/flows/flow/flow.service.ts:585-616`; callers
+installed copies up under that alias (`qadam-loader.ts:322`, `:332`). Flow export, in the UI (one
+flow, several, or shared as a template) and in `ap_export_flow`, goes through one function,
+`flowService.getTemplate` (`packages/server/api/src/app/flows/flow/flow.service.ts:585-616`; callers
 `flow.controller.ts:187-195`, `packages/server/api/src/app/mcp/tools/ap-export-flow.ts:22`). Import
 expands into add-step operations (`packages/shared/src/lib/automation/flows/operations/import-flow.ts:166-188`),
 each of which strips a leading `^` or `~` from the pin
