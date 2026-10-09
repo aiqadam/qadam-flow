@@ -78,10 +78,16 @@ export const qadamVersionStoreLayout = {
         const dir = path.join(namespaceDir, ...coordinates.name.split('/'), coordinates.version)
         // Defence in depth: the validation above already excludes every way out of the namespace.
         const relative = path.relative(namespaceDir, dir)
-        if (relative.startsWith('..') || path.isAbsolute(relative) || relative === '') {
+        if (relative === '' || qadamVersionStoreLayout.isOutside({ relative })) {
             throw new Error('qadam version path escapes its namespace')
         }
         return dir
+    },
+
+    // Whether a `path.relative(base, target)` result leaves `base`. Not `startsWith('..')`: a name
+    // such as `..cache` is inside.
+    isOutside: ({ relative }: { relative: string }): boolean => {
+        return relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)
     },
 
     isReservedNamespaceEntry: ({ entryName }: { entryName: string }): boolean => {

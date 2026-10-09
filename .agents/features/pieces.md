@@ -167,10 +167,14 @@ ADR-0003's versioned store of qadam versions on a persistent volume. **Not autho
 API seeds it and nothing else reads it; steps keep resolving to the bundled build until #779 switches
 the API, worker and engine to it. "Store" alone is ambiguous here (Store qadam, Store Entry): say
 "qadam version store".
-- **Where.** `AP_QADAM_VERSION_STORE_PATH` (default `qadam-versions` under the working directory,
-  i.e. `/usr/src/app/qadam-versions` in the image). `docker-compose.yml` mounts the named volume
-  `qadam_versions` there on the app and every worker. A named volume because the store refuses a
-  case-insensitive filesystem (`open` probes it): platform ids and prerelease versions differ by case.
+- **Where.** `AP_QADAM_VERSION_STORE_PATH` (default `/var/lib/qadam-flow/qadam-versions`).
+  `docker-compose.yml` mounts the named volume `qadam_versions` there on the app and every worker.
+  Outside `/usr/src/app` on purpose: a stored version resolves packages upward from its own
+  directory, and `open` refuses a root at or below any directory holding a `node_modules`. That
+  covers the upward walk only — `NODE_PATH` (isolate mode sets it to `/usr/src/node_modules`) and
+  the engine's own resolution are #779's to guard. A named volume because `open` also refuses a
+  case-insensitive filesystem: platform ids and prerelease versions differ by case. When the store
+  cannot open, the seeding hook logs it at warn (info in `AP_ENVIRONMENT=dev`) and returns.
 - **Layout** (`qadam-version-store-layout.ts`, an on-disk format later releases must read):
   `qadams/<name>/<version>/` for official qadams (`@aiqadam/qadam-*` only),
   `qadams/_platform/<platformId>/<name>/<version>/` for custom ones (never the `@aiqadam/` scope),
@@ -189,29 +193,44 @@ the API, worker and engine to it. "Store" alone is ambiguous here (Store qadam, 
   (`qadam-assemblyai@2.0.0` is legacy). Both: `package.json` and `metadata.json` must name the
   coordinates, `main` must be a regular file inside the version, and the version must not carry its
   own `node_modules/@aiqadam/*` (any depth) or top-level `node_modules/zod` (#772 option C: those
-  resolve upward to the platform's copy). Bundles: peers only among `@aiqadam/shared|qadams-framework|qadams-common` and `zod`,
-  no `node_modules` for kind `bundle`, and `builtFor` os/cpu must match the host for
-  `bundle-with-node-modules`.
-- **Writes** are stage → check → `integrity.json` (files fsync'd while hashed) → `rename` into place;
-  a version is never overwritten (`EXISTS`), a concurrent writer loses the rename and discards its
-  copy, and an unreadable version is moved to `.trash/` and replaced. `putTarball` checks the sha512
-  integrity first (only sha512), then extracts with `qadam-version-store-tarball.ts`: regular files
-  and directories only, one top-level directory stripped, no `..`/absolute/backslash/NUL/duplicate
-  paths, `wx` creates, modes reduced to 0644/0755, entry/byte/file-size limits and node-tar's
-  decompression-ratio guard, one file open at a time. `createStaging` / `commit` are for a writer
+  resolve upward to the platform's copy). `main` resolves as Node's CommonJS loader does (file,
+  `.js`, `/index.js`, then the package's `index.js`), `.js` only, inside the version. Bundles: peers
+  only among `@aiqadam/shared|qadams-framework|qadams-common` and `zod`, no `node_modules` for kind
+  `bundle`. `bundle-with-node-modules` must record `builtFor` os, cpu, libc and node, and runs only on
+  the same os/cpu, the same Node major, and glibc at least as new (or non-glibc on both sides) — the
+  same rule on write and on read.
+- **Read statuses.** `PRESENT`, `ABSENT`, `DAMAGED` (the store's own files are wrong: `integrity.json`
+  missing (ENOENT) or not JSON, a record or `package.json` naming other coordinates, missing entry
+  point, digest mismatch), `UNSUPPORTED` (a newer `storeFormatVersion`, an enum value or artifact
+  `formatVersion`/kind a later release added, a peer this release does not provide, native modules
+  for another host), `UNREADABLE` (any I/O error but ENOENT), `INVALID_COORDINATES`. **Only `DAMAGED`
+  is ever replaced**; on `UNSUPPORTED`/`UNREADABLE` a write returns `REFUSED` and the seed counts the
+  version as `kept` — so a rollback, another host on the volume, or a transient EACCES/EIO never costs
+  a version.
+- **Writes** are stage → check → `integrity.json` (files fsync'd while hashed) → `chmod 0755` →
+  `rename` into place; a version is never overwritten (`EXISTS`), a concurrent writer loses the rename
+  and discards its copy. A damaged version is moved to `.trash/`, and what was moved is read again: if
+  it reads `PRESENT` (another writer replaced the damaged one in between), it is put back and the
+  write returns `EXISTS`. `putTarball` extracts with `qadam-version-store-tarball.ts`, which reads the
+  tarball once through one descriptor and returns the sha512 of exactly the bytes it parsed; the
+  expected integrity (sha512 only) is compared before commit. Extraction: regular files and
+  directories only (an entry node-tar skips, `ignoredEntry`, refuses the archive too), one top-level
+  directory stripped, no `..`/absolute/backslash/NUL/duplicate paths, `wx` creates, modes reduced to
+  0644/0755, entry/byte/file-size limits and node-tar's decompression-ratio guard, one file open at a
+  time. `createStaging` / `commit` are for a writer
   that assembles a version itself (#806's legacy install): symlinks are accepted only when their
-  realpath stays inside the version, hard links (`nlink > 1`, e.g. bun's default hardlink backend)
-  are refused — install with `--backend=copyfile`.
+  target, as written, stays inside the version and whose realpath does too; hard links (`nlink > 1`,
+  e.g. bun's default hardlink backend) are refused — install with `--backend=copyfile`.
 - **Reads** check `integrity.json`, the coordinates it names, `package.json` against the recorded
   format, `builtFor`, the entry point, and that the real path is the layout's (no symlinked
   component). `verify: true` re-walks and re-hashes the tree.
 - **Seeding** (`qadam-version-store-seed.ts`, `qadamVersionStoreSeeding` in the API's
-  `appPostBoot`, background, never throws). Reads `AP_QADAM_VERSION_STORE_SEED_PATH` (default
+  `appPostBoot`, background, never throws). Report: `stored`, `present`, `kept`, `failed`. Reads `AP_QADAM_VERSION_STORE_SEED_PATH` (default
   `packages/qadams/version-store-seed`): #804's `--pack` output, `archive-index.json` + tarballs.
   No image ships one before #807, so today every start logs `status: no-seed`. Idempotent; replicas
   serialise on the `qadam-version-store-seed` `distributedLock`, and correctness does not depend on
   it. A version already stored is kept even if the image's tarball differs (warned). One line per
-  start: `[qadamVersionStore] Seeded the qadam version store from the image {status, stored, present, failed, durationMs}`.
+  start: `[qadamVersionStore] Seeded the qadam version store from the image {status, stored, present, kept, failed, durationMs}`.
 - **Left to other tickets:** resolution and the engine providing `@aiqadam/*`/`zod` (#779), fetching
   and the legacy install path (#806), persisted signature verification next to the store (#780), GC
   and registry config (#478), image seed contents (#807), the unavailable-version fallback (#808).

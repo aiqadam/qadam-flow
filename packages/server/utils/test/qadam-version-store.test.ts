@@ -1,8 +1,10 @@
-import { link, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises'
+import { renameSync } from 'node:fs'
+import { chmod, cp, link, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 import {
     DEFAULT_QADAM_VERSION_STORE_LIMITS,
     QadamVersionOrigin,
@@ -20,6 +22,7 @@ const PLATFORM_A = 'AAAAAAAAAAAAAAAAAAAAA'
 const PLATFORM_B = 'BBBBBBBBBBBBBBBBBBBBB'
 const CSV = { platformId: null, name: '@aiqadam/qadam-csv', version: '0.6.0' }
 const log = { info: vi.fn(), warn: vi.fn() }
+const HOST = { os: process.platform, cpu: process.arch, libc: hostLibc(), node: process.versions.node }
 
 let tempDir: string
 let root: string
@@ -161,6 +164,15 @@ describe('archive extraction refuses hostile tarballs', () => {
         await expectNothingWritten()
     })
 
+    it('refuses an entry the tar parser skips, which would otherwise pass every limit', async () => {
+        const entries: TarEntry[] = [...valid(), { path: 'package/huge.bin', type: 'S' }]
+
+        const result = await putEntries({ coordinates: CSV, entries })
+
+        expect(result.status === QadamVersionPutStatus.REFUSED && result.reason).toContain('entry type')
+        await expectNothingWritten()
+    })
+
     it('refuses a tarball over the entry, byte and file-size limits', async () => {
         const small = await openStore({ limits: { maxEntries: 3, maxBytes: DEFAULT_QADAM_VERSION_STORE_LIMITS.maxBytes, maxFileBytes: DEFAULT_QADAM_VERSION_STORE_LIMITS.maxFileBytes } })
         const tiny = await openStore({ limits: { maxEntries: 100, maxBytes: 100, maxFileBytes: 1_000 } })
@@ -206,7 +218,10 @@ describe('format checks', () => {
         ['a package.json naming another version', { 'package.json': JSON.stringify({ name: CSV.name, version: '9.9.9', main: './src/index.js' }) }, 'package.json names another'],
         ['an entry point outside the version', { 'package.json': JSON.stringify({ name: CSV.name, version: CSV.version, main: '../../../../etc/passwd' }) }, 'entry point'],
         ['metadata naming another qadam', { 'metadata.json': JSON.stringify({ name: 'other', version: CSV.version, actions: {}, triggers: {} }) }, 'metadata.json names another'],
-        ['native modules built for another host', { 'package.json': JSON.stringify({ name: CSV.name, version: CSV.version, main: './src/index.js', qadamArtifact: { formatVersion: 1, kind: 'bundle-with-node-modules', builtFor: { os: 'plan9', cpu: 'mips' } } }) }, 'built for plan9-mips'],
+        ['native modules built for another host', { 'package.json': JSON.stringify({ name: CSV.name, version: CSV.version, main: './src/index.js', qadamArtifact: { formatVersion: 1, kind: 'bundle-with-node-modules', builtFor: { os: 'plan9', cpu: 'mips', libc: 'glibc 2.17', node: process.versions.node } } }) }, 'built for plan9-mips'],
+        ['native modules built without a record of libc and node', { 'package.json': JSON.stringify({ name: CSV.name, version: CSV.version, main: './src/index.js', qadamArtifact: { formatVersion: 1, kind: 'bundle-with-node-modules', builtFor: { os: process.platform, cpu: process.arch } } }) }, 'without a record'],
+        ['native modules built for another Node major', { 'package.json': JSON.stringify({ name: CSV.name, version: CSV.version, main: './src/index.js', qadamArtifact: { formatVersion: 1, kind: 'bundle-with-node-modules', builtFor: { ...HOST, node: '18.20.0' } } }) }, 'node 18.20.0'],
+        ['native modules built against a newer glibc', { 'package.json': JSON.stringify({ name: CSV.name, version: CSV.version, main: './src/index.js', qadamArtifact: { formatVersion: 1, kind: 'bundle-with-node-modules', builtFor: { ...HOST, libc: 'glibc 99.0' } } }) }, 'glibc 99.0'],
     ])('refuses %s', async (_label, overrides, reason) => {
         const files = { ...tarFixtures.legacyFiles({ name: CSV.name, version: CSV.version }), ...overrides }
 
@@ -222,6 +237,21 @@ describe('format checks', () => {
         const result = await putFiles({ coordinates: CSV, files })
 
         expect(result.status === QadamVersionPutStatus.REFUSED && result.reason).toContain('metadata.json')
+    })
+
+    it.each<[string, string | undefined, Record<string, string>, string]>([
+        ['no main', undefined, { 'index.js': 'module.exports = {}' }, 'index.js'],
+        ['an empty main', '', { 'index.js': 'module.exports = {}' }, 'index.js'],
+        ['a directory main with a trailing slash', 'dist/', { 'dist/index.js': 'module.exports = {}' }, 'dist/index.js'],
+        ['a main without its extension', './lib/entry', { 'lib/entry.js': 'module.exports = {}' }, 'lib/entry.js'],
+        ['a main that names nothing, falling back to index.js as Node does', './missing.js', { 'index.js': 'module.exports = {}' }, 'index.js'],
+    ])('resolves the entry point as Node does for %s', async (_label, main, extra, entryPoint) => {
+        const { 'src/index.js': _bundle, ...base } = tarFixtures.legacyFiles({ name: CSV.name, version: CSV.version })
+        const manifest = { name: CSV.name, version: CSV.version, ...(main === undefined ? {} : { main }) }
+
+        const result = await putFiles({ coordinates: CSV, files: { ...base, ...extra, 'package.json': JSON.stringify(manifest) } })
+
+        expect(result.status === QadamVersionPutStatus.STORED && result.version.integrity.entryPoint).toBe(entryPoint)
     })
 
     it('accepts a private zod nested under a third-party dependency of a legacy version', async () => {
@@ -251,6 +281,10 @@ describe('qadamVersionStore.commit from a staged directory', () => {
             await symlink(relative(staging, join(tempDir, 'outside.txt')), join(staging, 'outside'))
         }, 'outside the version'],
         ['a dangling symlink', (staging) => symlink('missing.js', join(staging, 'dangling')), 'does not resolve'],
+        ['a symlink written to climb out, even when it resolves inside today', async (staging) => {
+            await mkdir(join(staging, 'lib'))
+            await symlink(`../../${staging.split('/').at(-1)}/package.json`, join(staging, 'lib', 'manifest'))
+        }, 'points outside the version'],
         ['a chain of symlinks climbing out together', async (staging) => {
             await symlink('.', join(staging, 'here'))
             await symlink('here/..', join(staging, 'parent'))
@@ -265,6 +299,16 @@ describe('qadamVersionStore.commit from a staged directory', () => {
 
         expect(result.status === QadamVersionPutStatus.REFUSED && result.reason).toContain(reason)
         await expectNothingWritten()
+    })
+
+    it('accepts a file whose name starts with two dots, which is not a parent directory', async () => {
+        const staging = await store.createStaging()
+        await tarFixtures.writeFiles({ dir: staging, files: tarFixtures.legacyFiles({ name: CSV.name, version: CSV.version, extra: { '..cache/data.json': '{}' } }) })
+        await symlink('..cache/data.json', join(staging, 'data-link.json'))
+
+        const result = await store.commit({ coordinates: CSV, stagingDir: staging, origin: { kind: QadamVersionOrigin.REGISTRY, tarballIntegrity: null } })
+
+        expect(result.status).toBe(QadamVersionPutStatus.STORED)
     })
 
     it('refuses to write through a symlinked directory of the layout, and creates nothing where it points', async () => {
@@ -298,12 +342,12 @@ describe('damaged versions', () => {
         await writeFile(join(versionDir(CSV), 'src', 'index.js'), 'tampered')
 
         expect((await store.read({ coordinates: CSV })).status).toBe(QadamVersionReadStatus.PRESENT)
-        expect(await store.read({ coordinates: CSV, verify: true })).toEqual({ status: QadamVersionReadStatus.INVALID, reason: 'the content does not match integrity.json' })
+        expect(await store.read({ coordinates: CSV, verify: true })).toEqual({ status: QadamVersionReadStatus.DAMAGED, reason: 'the content does not match integrity.json' })
     })
 
     it('replaces a version whose integrity record is gone', async () => {
         await unlink(join(versionDir(CSV), 'integrity.json'))
-        expect((await store.read({ coordinates: CSV })).status).toBe(QadamVersionReadStatus.INVALID)
+        expect((await store.read({ coordinates: CSV })).status).toBe(QadamVersionReadStatus.DAMAGED)
 
         const again = await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version }) })
 
@@ -317,7 +361,7 @@ describe('damaged versions', () => {
         await mkdir(join(real, '0.6.0'), { recursive: true })
         await symlink(real, join(root, 'qadams', '@aiqadam', 'qadam-csv'))
 
-        expect(await store.read({ coordinates: CSV })).toEqual({ status: QadamVersionReadStatus.INVALID, reason: 'the version path goes through a symlink' })
+        expect(await store.read({ coordinates: CSV })).toEqual({ status: QadamVersionReadStatus.DAMAGED, reason: 'the version path goes through a symlink' })
     })
 
     it('treats an integrity record for other coordinates as invalid', async () => {
@@ -325,7 +369,69 @@ describe('damaged versions', () => {
         const record = JSON.parse(await readFile(integrityPath, 'utf8'))
         await writeFile(integrityPath, JSON.stringify({ ...record, platformId: PLATFORM_A }))
 
-        expect(await store.read({ coordinates: CSV })).toEqual({ status: QadamVersionReadStatus.INVALID, reason: 'integrity.json names another version' })
+        expect(await store.read({ coordinates: CSV })).toEqual({ status: QadamVersionReadStatus.DAMAGED, reason: 'integrity.json names another version' })
+    })
+})
+
+describe('versions that are not damaged are never replaced', () => {
+    const versionPath = (): string => versionDir(CSV)
+
+    it.each<[string, () => Promise<void>, QadamVersionReadStatus]>([
+        ['a newer store format', async () => editIntegrity({ storeFormatVersion: 2 }), QadamVersionReadStatus.UNSUPPORTED],
+        ['an origin kind a later release added', async () => editIntegrity({ origin: { kind: 'mirror', tarballIntegrity: null } }), QadamVersionReadStatus.UNSUPPORTED],
+        ['an artifact format version a later release added', async () => editPackageJson({ qadamArtifact: { formatVersion: 2, kind: 'bundle' } }), QadamVersionReadStatus.UNSUPPORTED],
+        ['native modules built for another host', async () => {
+            await rm(versionPath(), { recursive: true })
+            await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version, kind: 'bundle-with-node-modules', builtFor: HOST }) })
+            await editPackageJson({ qadamArtifact: { formatVersion: 1, kind: 'bundle-with-node-modules', builtFor: { ...HOST, cpu: HOST.cpu === 'arm64' ? 'x64' : 'arm64' } } })
+        }, QadamVersionReadStatus.UNSUPPORTED],
+        ['an integrity record the process cannot read', async () => chmod(join(versionPath(), 'integrity.json'), 0o000), QadamVersionReadStatus.UNREADABLE],
+    ])('keeps a version with %s', async (_label, change, status) => {
+        if (status === QadamVersionReadStatus.UNREADABLE && process.getuid?.() === 0) {
+            return
+        }
+        await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version }) })
+        await change()
+        const before = await readdir(versionPath(), { recursive: true })
+
+        const read = await store.read({ coordinates: CSV })
+        const again = await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version, extra: { 'src/new.js': 'x' } }) })
+
+        expect(read.status).toBe(status)
+        expect(again.status === QadamVersionPutStatus.REFUSED && again.reason).toContain('is kept')
+        expect(await readdir(versionPath(), { recursive: true })).toEqual(before)
+        expect(await readdir(join(root, '.trash'))).toEqual([])
+        expect(await readdir(join(root, '.staging'))).toEqual([])
+        await chmod(join(versionPath(), 'integrity.json'), 0o644).catch(() => undefined)
+    })
+
+    it('puts back a good version another writer stored while this one was replacing the damaged one', async () => {
+        await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version }) })
+        const goodCopy = join(tempDir, 'good-copy')
+        await cp(versionPath(), goodCopy, { recursive: true })
+        await unlink(join(versionPath(), 'integrity.json'))
+        // The other writer wins exactly between this writer's read (damaged) and its move aside.
+        log.warn.mockImplementationOnce((_obj: unknown, msg: string) => {
+            if (msg.includes('Replacing a damaged version')) {
+                renameSync(versionPath(), join(tempDir, 'damaged-moved-by-the-other-writer'))
+                renameSync(goodCopy, versionPath())
+            }
+        })
+
+        const result = await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version, extra: { 'src/new.js': 'x' } }) })
+
+        expect(result.status).toBe(QadamVersionPutStatus.EXISTS)
+        expect((await store.read({ coordinates: CSV, verify: true })).status).toBe(QadamVersionReadStatus.PRESENT)
+        await expect(stat(join(versionPath(), 'src', 'new.js'))).rejects.toThrow()
+        expect(await readdir(join(root, '.staging'))).toEqual([])
+    })
+
+    it('stores versions readable by other users of the volume', async () => {
+        await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version }) })
+
+        expect((await stat(versionPath())).mode & 0o777).toBe(0o755)
+        expect((await stat(join(versionPath(), 'src'))).mode & 0o777).toBe(0o755)
+        expect((await stat(join(versionPath(), 'src', 'index.js'))).mode & 0o777).toBe(0o644)
     })
 })
 
@@ -384,13 +490,22 @@ describe('qadamVersionStore.open', () => {
     it('removes trash and staging left by a dead process, and keeps a recent staging directory', async () => {
         const old = join(root, '.staging', `${Date.now() - 7 * 60 * 60 * 1000}-dead`)
         const recent = join(root, '.staging', `${Date.now()}-live`)
-        const trash = join(root, '.trash', `${Date.now()}-aside`)
-        await Promise.all([mkdir(old), mkdir(recent), mkdir(trash)])
+        const oldTrash = join(root, '.trash', `${Date.now() - 7 * 60 * 60 * 1000}-aside`)
+        const recentTrash = join(root, '.trash', `${Date.now()}-aside`)
+        await Promise.all([mkdir(old), mkdir(recent), mkdir(oldTrash), mkdir(recentTrash)])
 
         await openStore()
 
         expect(await readdir(join(root, '.staging'))).toEqual([recent.split('/').at(-1)])
-        expect(await readdir(join(root, '.trash'))).toEqual([])
+        expect(await readdir(join(root, '.trash'))).toEqual([recentTrash.split('/').at(-1)])
+    })
+
+    it('refuses a root from which stored versions could resolve an app\'s node_modules', async () => {
+        await mkdir(join(tempDir, 'app', 'node_modules'), { recursive: true })
+
+        const opened = await qadamVersionStore.open({ root: join(tempDir, 'app', 'qadam-versions'), log })
+
+        expect(opened.ok === false && opened.reason).toContain(join(tempDir, 'app', 'node_modules'))
     })
 
     it('reports a root it cannot prepare instead of throwing', async () => {
@@ -431,8 +546,23 @@ function versionDir(coordinates: QadamVersionCoordinates): string {
     return qadamVersionStoreLayout.versionDir({ root, coordinates })
 }
 
+async function editIntegrity(changes: Record<string, unknown>): Promise<void> {
+    const file = join(versionDir(CSV), 'integrity.json')
+    await writeFile(file, JSON.stringify({ ...JSON.parse(await readFile(file, 'utf8')), ...changes }))
+}
+
+async function editPackageJson(changes: Record<string, unknown>): Promise<void> {
+    const file = join(versionDir(CSV), 'package.json')
+    await writeFile(file, JSON.stringify({ ...JSON.parse(await readFile(file, 'utf8')), ...changes }))
+}
+
 async function expectNothingWritten(): Promise<void> {
     expect(await readdir(join(root, 'qadams'))).toEqual([])
     expect(await readdir(join(root, '.staging'))).toEqual([])
     expect(await readdir(tempDir)).not.toContain('escaped.js')
+}
+
+function hostLibc(): string {
+    const glibc = z.object({ header: z.object({ glibcVersionRuntime: z.string().optional() }) }).safeParse(process.report?.getReport()).data?.header.glibcVersionRuntime
+    return glibc === undefined ? 'unknown' : `glibc ${glibc}`
 }

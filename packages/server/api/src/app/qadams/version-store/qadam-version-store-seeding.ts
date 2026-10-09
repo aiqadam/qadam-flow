@@ -1,5 +1,5 @@
 import { qadamVersionStore, qadamVersionStoreSeed, SeedStatus } from '@aiqadam/server-utils'
-import { tryCatch } from '@aiqadam/shared'
+import { ApEnvironment, tryCatch } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { distributedLock } from '../../database/redis-connections'
 import { system } from '../../helper/system/system'
@@ -30,7 +30,16 @@ async function seed({ log }: { log: FastifyBaseLogger }): Promise<void> {
     const seedDir = system.getOrThrow(AppSystemProp.QADAM_VERSION_STORE_SEED_PATH)
     const opened = await qadamVersionStore.open({ root, log })
     if (!opened.ok) {
-        log.warn({ reason: opened.reason }, '[qadamVersionStore] The qadam version store is unavailable; nothing reads it yet, so nothing else is affected')
+        // A dev tree usually has no writable /var/lib and runs on a laptop's case-insensitive disk;
+        // that is expected there, not a problem to warn about.
+        const isDev = system.get(AppSystemProp.ENVIRONMENT) === ApEnvironment.DEVELOPMENT
+        const message = '[qadamVersionStore] The qadam version store is unavailable; nothing reads it yet, so nothing else is affected'
+        if (isDev) {
+            log.info({ reason: opened.reason }, message)
+        }
+        else {
+            log.warn({ reason: opened.reason }, message)
+        }
         return
     }
     const startedAt = Date.now()
@@ -39,7 +48,7 @@ async function seed({ log }: { log: FastifyBaseLogger }): Promise<void> {
         timeoutInSeconds: SEED_LOCK_TIMEOUT_SECONDS,
         fn: () => qadamVersionStoreSeed.seedFromImage({ store: opened.store, seedDir, log }),
     })
-    const summary = { status: report.status, stored: report.stored, present: report.present, failed: report.failed.length, durationMs: Date.now() - startedAt }
+    const summary = { status: report.status, stored: report.stored, present: report.present, kept: report.kept, failed: report.failed.length, durationMs: Date.now() - startedAt }
     if (report.status === SeedStatus.INVALID_SEED || report.failed.length > 0) {
         log.warn({ ...summary, reason: report.reason }, '[qadamVersionStore] Seeded the qadam version store from the image, with problems')
         return

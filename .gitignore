@@ -114,5 +114,3 @@ packages/qadams/dist-index.json
 # Written by the Dockerfile (#598), for the same reason.
 packages/qadams/bundled-qadams-metadata.json
 
-# ADR-0003 versioned qadam store (#805), created at API start in a dev tree
-/qadam-versions

@@ -12,22 +12,25 @@ The store is filled, but nothing runs from it yet. Flows still run the qadams bu
 
 ## Where it lives
 
-The bundled `docker-compose.yml` mounts the named volume `qadam_versions` at `/usr/src/app/qadam-versions` on the `app` service and on every `worker` replica. Re-running the [installer](/install/options/docker) on an existing install adds the volume; nothing else changes.
+The bundled `docker-compose.yml` mounts the named volume `qadam_versions` at `/var/lib/qadam-flow/qadam-versions` on the `app` service and on every `worker` replica. Re-running the [installer](/install/options/docker) on an existing install adds the volume; nothing else changes.
 
-If you run the containers another way, mount one volume at that path on the app and every worker, or set `AP_QADAM_VERSION_STORE_PATH` to where you mounted it. Two requirements:
+If you run the containers another way, mount one volume at that path on the app and every worker, or set `AP_QADAM_VERSION_STORE_PATH` to where you mounted it. Three requirements:
 
-- **A case-sensitive filesystem.** Platform ids and prerelease versions can differ only by case. A Docker named volume is case-sensitive; a bind mount of a macOS or Windows folder usually is not. On a case-insensitive filesystem the server logs `[qadamVersionStore] The qadam version store is unavailable` and does not use the store.
-- **One volume per CPU architecture.** A qadam version that ships native modules runs only on the OS and CPU it was built for. Do not share one volume between `amd64` and `arm64` containers.
+- **Outside any directory with a `node_modules`.** A stored version finds packages the way Node does, upward from its own directory, and must find only what the platform provides. The store refuses to open at or below a directory that contains a `node_modules`, such as the app's own `/usr/src/app`.
+- **A case-sensitive filesystem.** Platform ids and prerelease versions can differ only by case. A Docker named volume is case-sensitive; a bind mount of a macOS or Windows folder usually is not. On a case-insensitive filesystem the store refuses to open.
+- **One volume per host type.** A qadam version that ships native modules runs only where it was built: the same OS and CPU, the same Node major version, and a C library at least as new. Do not share one volume between `amd64` and `arm64` containers. The store keeps a version it cannot run here instead of replacing it, so another host that can run it still finds it.
+
+When the store cannot open, the app logs `[qadamVersionStore] The qadam version store is unavailable` with the reason — at info level in a development environment, where `/var/lib` is usually not writable — and runs as before. To use the store in a development tree, set `AP_QADAM_VERSION_STORE_PATH` to a writable directory outside the repository.
 
 ## What the server does at start-up
 
-When the app starts, it creates the store's directories if they are missing, removes what an interrupted write left behind, and copies into the store every qadam version the image ships. A version already in the store is left as it is. With several app replicas, one seeds at a time and the others find the work done. Each start logs one line:
+When the app starts, it creates the store's directories if they are missing, removes what an interrupted write left behind, and copies into the store every qadam version the image ships. With several app replicas, one seeds at a time and the others find the work done. Each start logs one line:
 
 ```text
-[qadamVersionStore] Seeded the qadam version store from the image {"status":"no-seed","stored":0,"present":0,"failed":0}
+[qadamVersionStore] Seeded the qadam version store from the image {"status":"no-seed","stored":0,"present":0,"kept":0,"failed":0,"durationMs":3}
 ```
 
-`status` is `no-seed` on every image until [#807](https://github.com/aiqadam/qadam-flow/issues/807) adds the versions to ship. A seed that fails is logged as a warning and does not stop the app.
+`status` is `no-seed` on every image until [#807](https://github.com/aiqadam/qadam-flow/issues/807) adds the versions to ship. `kept` counts versions in the store that this release cannot use, for example ones a later release wrote before you rolled back; they are left in place for that release. A seed that fails is logged as a warning and does not stop the app.
 
 ## Layout
 
@@ -38,7 +41,7 @@ qadam-versions/
     _platform/<platformId>/<name>/1.0.0/  a custom qadam of one platform
 ```
 
-Each version directory holds the qadam's code (`package.json`, its entry point, and `node_modules` when the version needs it), `metadata.json`, and `integrity.json`. The store writes a version in a staging directory and renames it into place, so a version is either complete or absent. It never overwrites a version: a version is never republished (see [Qadam versioning](/build-qadams/qadam-reference/qadam-versioning)). `integrity.json` records a sha512 digest of every file, and a version whose record is missing or damaged is replaced the next time the server stores that version.
+Each version directory holds the qadam's code (`package.json`, its entry point, and `node_modules` when the version needs it), `metadata.json`, and `integrity.json`. The store writes a version in a staging directory and renames it into place, so a version is either complete or absent. It never overwrites a version: a version is never republished (see [Qadam versioning](/build-qadams/qadam-reference/qadam-versioning)). `integrity.json` records a sha512 digest of every file. Only a damaged version — its record missing or not readable as JSON, or naming another version — is replaced the next time the server stores that version. A version written by a later release, built for another host, or that the server cannot read because of a filesystem error is never replaced.
 
 Custom qadams get a directory per platform, so one platform's qadams are never found under another platform's name. Nothing writes custom qadams to the store yet; they are installed as described in [Manage qadams](/admin-guide/guides/manage-qadams) until resolution moves to the store.
 

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -34,8 +34,8 @@ describe('qadamVersionStoreSeed.seedFromImage', () => {
         const first = await qadamVersionStoreSeed.seedFromImage({ store, seedDir, log })
         const second = await qadamVersionStoreSeed.seedFromImage({ store, seedDir, log })
 
-        expect(first).toEqual({ status: SeedStatus.DONE, reason: null, stored: 2, present: 0, failed: [] })
-        expect(second).toEqual({ status: SeedStatus.DONE, reason: null, stored: 0, present: 2, failed: [] })
+        expect(first).toEqual({ status: SeedStatus.DONE, reason: null, stored: 2, present: 0, kept: 0, failed: [] })
+        expect(second).toEqual({ status: SeedStatus.DONE, reason: null, stored: 0, present: 2, kept: 0, failed: [] })
         const read = await store.read({ coordinates: { platformId: null, ...CSV }, verify: true })
         expect(read.status === QadamVersionReadStatus.PRESENT && read.version.integrity.origin.kind).toBe(QadamVersionOrigin.IMAGE_SEED)
     })
@@ -94,6 +94,20 @@ describe('qadamVersionStoreSeed.seedFromImage', () => {
         expect(report.failed[0].reason).toBe('the tarball does not match its expected integrity')
         expect(report.failed[1].reason).toBe('the index names a tarball outside the seed directory')
         expect(log.warn).toHaveBeenCalledTimes(4)
+    })
+
+    it('keeps a stored version a later release wrote, instead of replacing it with the image\'s', async () => {
+        const store = await openStore()
+        await writeSeed({ artifacts: [await packArtifact(CSV)] })
+        await qadamVersionStoreSeed.seedFromImage({ store, seedDir, log })
+        const integrityPath = join(root, 'qadams', '@aiqadam', 'qadam-csv', '0.6.0', 'integrity.json')
+        const newer = { ...JSON.parse(await readFile(integrityPath, 'utf8')), storeFormatVersion: 2 }
+        await writeFile(integrityPath, JSON.stringify(newer))
+
+        const report = await qadamVersionStoreSeed.seedFromImage({ store, seedDir, log })
+
+        expect(report).toMatchObject({ stored: 0, present: 0, kept: 1, failed: [] })
+        expect(JSON.parse(await readFile(integrityPath, 'utf8'))).toEqual(newer)
     })
 
     it('keeps a version already in the store even when the image ships a different file for it', async () => {

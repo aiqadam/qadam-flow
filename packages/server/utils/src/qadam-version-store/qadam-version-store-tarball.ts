@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto'
-import { createReadStream } from 'node:fs'
 import { FileHandle, mkdir, open } from 'node:fs/promises'
 import path from 'node:path'
 import { isNil } from '@aiqadam/shared'
@@ -7,16 +6,6 @@ import { Parser, ReadEntry } from 'tar'
 import { QadamVersionStoreLimits } from './qadam-version-store-tree'
 
 export const qadamVersionStoreTarball = {
-    // npm's `dist.integrity` (and `npm pack`'s): `sha512-<base64>`. Only sha512 is accepted — the
-    // weaker algorithms an SRI string may name are not a check this store relies on.
-    computeIntegrity: async ({ file }: { file: string }): Promise<string> => {
-        const hash = createHash('sha512')
-        for await (const chunk of createReadStream(file)) {
-            hash.update(chunk)
-        }
-        return `sha512-${hash.digest('base64')}`
-    },
-
     isSupportedIntegrity: ({ integrity }: { integrity: string }): boolean => SHA512_INTEGRITY.test(integrity),
 
     // Extracts an npm-style tarball (every entry under one top-level directory, `package/` for
@@ -30,79 +19,106 @@ export const qadamVersionStoreTarball = {
     // - limits on entry count, declared bytes, one file's bytes, and the decompression ratio
     //   (node-tar's own guard), checked before a byte of an entry is written.
     // Any refusal aborts the parse; the caller removes `destination`.
+    //
+    // The tarball is read once, through one descriptor, and its sha512 (npm's `dist.integrity` form)
+    // is computed from the very bytes that were parsed and returned with the result. The caller
+    // compares it before using what was extracted: hashing the file first and extracting it in a
+    // second read would let the file change in between.
     extract: async ({ file, destination, limits }: ExtractParams): Promise<ExtractResult> => {
-        const seen = new Set<string>()
-        const counters: ExtractCounters = { entries: 0, bytes: 0, topLevel: null }
-        const outcome: { failure: string | null } = { failure: null }
-        const queue = sequentialQueue()
-        const parser = new Parser({ strict: true })
-        const fail = (reason: string): void => {
-            if (isNil(outcome.failure)) {
-                outcome.failure = reason
+        const handle = await open(file, 'r')
+        try {
+            const size = (await handle.stat()).size
+            if (size > limits.maxBytes) {
+                return { ok: false, reason: `the tarball is larger than ${limits.maxBytes} bytes` }
             }
-            parser.abort(new Error(reason))
+            return await extractFrom({ handle, destination, limits })
         }
-        parser.on('entry', (entry: ReadEntry) => {
-            const { decision, next } = admitEntry({ entry, counters, limits })
-            Object.assign(counters, next)
-            if (decision.kind !== 'refuse' && decision.segments.length > 0) {
-                const key = decision.segments.join('/')
-                if (seen.has(key)) {
-                    entry.resume()
-                    fail('the same path appears twice')
-                    return
-                }
-                seen.add(key)
-            }
-            if (decision.kind === 'refuse') {
-                entry.resume()
-                fail(decision.reason)
-                return
-            }
-            const target = path.join(destination, ...decision.segments)
-            if (decision.kind === 'directory') {
-                queue.push(async () => {
-                    await mkdir(target, { recursive: true, mode: 0o755 })
-                })
-                entry.resume()
-                return
-            }
-            writeFileEntry({ entry, target, executable: decision.executable, queue })
-        })
-        const finished = new Promise<void>((resolve) => {
-            parser.on('end', () => resolve())
-            parser.on('error', (error: Error) => {
-                if (isNil(outcome.failure)) {
-                    outcome.failure = `not a readable tarball: ${error.message}`
-                }
-                resolve()
-            })
-        })
-        for await (const chunk of createReadStream(file, { highWaterMark: INPUT_CHUNK_BYTES })) {
-            if (!isNil(outcome.failure)) {
-                break
-            }
-            parser.write(chunk)
-            // Every file write the chunk started has completed before the next chunk is parsed, so
-            // at most one file is open and memory holds at most one chunk's decompressed bytes.
-            await queue.drained().catch((error: unknown) => fail(describeWriteError({ error })))
+        finally {
+            await handle.close()
         }
-        if (isNil(outcome.failure)) {
-            parser.end()
-        }
-        await finished
-        await queue.drained().catch((error: unknown) => {
-            outcome.failure = outcome.failure ?? describeWriteError({ error })
-        })
-        if (!isNil(outcome.failure)) {
-            await queue.abort()
-            return { ok: false, reason: outcome.failure }
-        }
-        if (isNil(counters.topLevel)) {
-            return { ok: false, reason: 'the archive is empty' }
-        }
-        return { ok: true }
     },
+}
+
+async function extractFrom({ handle, destination, limits }: ExtractFromParams): Promise<ExtractResult> {
+    const seen = new Set<string>()
+    const counters: ExtractCounters = { entries: 0, bytes: 0, topLevel: null }
+    const outcome: { failure: string | null } = { failure: null }
+    const queue = sequentialQueue()
+    const parser = new Parser({ strict: true })
+    const fail = (reason: string): void => {
+        if (isNil(outcome.failure)) {
+            outcome.failure = reason
+        }
+        parser.abort(new Error(reason))
+    }
+    parser.on('entry', (entry: ReadEntry) => {
+        const { decision, next } = admitEntry({ entry, counters, limits })
+        Object.assign(counters, next)
+        if (decision.kind !== 'refuse' && decision.segments.length > 0) {
+            const key = decision.segments.join('/')
+            if (seen.has(key)) {
+                entry.resume()
+                fail('the same path appears twice')
+                return
+            }
+            seen.add(key)
+        }
+        if (decision.kind === 'refuse') {
+            entry.resume()
+            fail(decision.reason)
+            return
+        }
+        const target = path.join(destination, ...decision.segments)
+        if (decision.kind === 'directory') {
+            queue.push(async () => {
+                await mkdir(target, { recursive: true, mode: 0o755 })
+            })
+            entry.resume()
+            return
+        }
+        writeFileEntry({ entry, target, executable: decision.executable, queue })
+    })
+    // node-tar skips an entry of a type it does not know, or an oversized extended header, without
+    // an `entry` event — so past every limit above. Such an archive is refused.
+    parser.on('ignoredEntry', (entry: ReadEntry) => {
+        entry.resume()
+        fail(`entry type ${entry.type} is not allowed`)
+    })
+    const finished = new Promise<void>((resolve) => {
+        parser.on('end', () => resolve())
+        parser.on('error', (error: Error) => {
+            if (isNil(outcome.failure)) {
+                outcome.failure = `not a readable tarball: ${error.message}`
+            }
+            resolve()
+        })
+    })
+    const hash = createHash('sha512')
+    for await (const chunk of handle.createReadStream({ autoClose: false, start: 0, highWaterMark: INPUT_CHUNK_BYTES })) {
+        if (!isNil(outcome.failure)) {
+            break
+        }
+        hash.update(chunk)
+        parser.write(chunk)
+        // Every file write the chunk started has completed before the next chunk is parsed, so
+        // at most one file is open and memory holds at most one chunk's decompressed bytes.
+        await queue.drained().catch((error: unknown) => fail(describeWriteError({ error })))
+    }
+    if (isNil(outcome.failure)) {
+        parser.end()
+    }
+    await finished
+    await queue.drained().catch((error: unknown) => {
+        outcome.failure = outcome.failure ?? describeWriteError({ error })
+    })
+    if (!isNil(outcome.failure)) {
+        await queue.abort()
+        return { ok: false, reason: outcome.failure }
+    }
+    if (isNil(counters.topLevel)) {
+        return { ok: false, reason: 'the archive is empty' }
+    }
+    return { ok: true, integrity: `sha512-${hash.digest('base64')}` }
 }
 
 const SHA512_INTEGRITY = /^sha512-[A-Za-z0-9+/]{86}==$/
@@ -179,15 +195,8 @@ function writeFileEntry({ entry, target, executable, queue }: WriteFileEntryPara
         queue.push(async () => {
             const opened = handle.current
             handle.current = null
-            if (isNil(opened)) {
-                return
-            }
-            try {
-                await opened.datasync()
-            }
-            finally {
-                await opened.close()
-            }
+            // Flushed to disk later, once, when the store hashes the staged version for its record.
+            await opened?.close()
         })
     })
     // A refusal elsewhere skips the queued writes; the descriptor is still closed.
@@ -267,7 +276,14 @@ type ExtractParams = {
     limits: QadamVersionTarballLimits
 }
 
-type ExtractResult = { ok: true } | { ok: false, reason: string }
+// `integrity`: sha512 of the bytes that were extracted, `sha512-<base64>`.
+type ExtractResult = { ok: true, integrity: string } | { ok: false, reason: string }
+
+type ExtractFromParams = {
+    handle: FileHandle
+    destination: string
+    limits: QadamVersionTarballLimits
+}
 
 type AdmitEntryParams = {
     entry: ReadEntry

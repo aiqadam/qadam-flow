@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { lstat, open, readdir, readlink, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { tryCatch } from '@aiqadam/shared'
-import { QADAM_VERSION_STORE_LAYOUT } from './qadam-version-store-layout'
+import { QADAM_VERSION_STORE_LAYOUT, qadamVersionStoreLayout } from './qadam-version-store-layout'
 
 export const qadamVersionStoreTree = {
     // Lists every entry below `root` without following a symlink, and refuses what a version must
@@ -89,6 +89,12 @@ async function checkSymlink({ realRoot, absolutePath, relativePath }: CheckSymli
     if (path.isAbsolute(target)) {
         return { ok: false, reason: `${relativePath} is a symlink with an absolute target` }
     }
+    // The target as written must stay inside: a link that only resolves inside today because of
+    // what else is on disk is refused too.
+    const lexical = path.posix.normalize(path.posix.join(path.posix.dirname(relativePath), target))
+    if (lexical === '.' || lexical === '..' || lexical.startsWith('../')) {
+        return { ok: false, reason: `${relativePath} is a symlink that points outside the version` }
+    }
     // realpath follows every link in the chain, so a chain whose links each look harmless but
     // together climb out (`a -> .`, `b -> a/..`) is caught; a dangling link is refused too.
     const resolved = await tryCatch(() => realpath(absolutePath))
@@ -96,7 +102,7 @@ async function checkSymlink({ realRoot, absolutePath, relativePath }: CheckSymli
         return { ok: false, reason: `${relativePath} is a symlink that does not resolve` }
     }
     const inside = path.relative(realRoot, resolved.data)
-    if (inside === '' || inside.startsWith('..') || path.isAbsolute(inside)) {
+    if (inside === '' || qadamVersionStoreLayout.isOutside({ relative: inside })) {
         return { ok: false, reason: `${relativePath} is a symlink that resolves outside the version` }
     }
     return { ok: true, entry: { kind: 'symlink', path: relativePath, target } }

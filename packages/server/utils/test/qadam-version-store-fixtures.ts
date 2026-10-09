@@ -95,8 +95,9 @@ function octal({ value, width }: { value: number, width: number }): string {
 
 export type TarEntry = {
     path: string
-    // '0' file, '1' hard link, '2' symlink, '5' directory, '3' character device
-    type: '0' | '1' | '2' | '3' | '5'
+    // '0' file, '1' hard link, '2' symlink, '5' directory, '3' character device, 'S' sparse (a type
+    // node-tar does not know, and so skips)
+    type: '0' | '1' | '2' | '3' | '5' | 'S'
     content?: string
     mode?: number
     linkname?: string

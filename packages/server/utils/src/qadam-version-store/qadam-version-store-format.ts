@@ -19,6 +19,11 @@ import { qadamVersionStoreTree, QadamVersionTree } from './qadam-version-store-t
 // The marker decides the format, not the version number: `assemblyai@2.0.0` is past `1.0.0` and
 // still legacy. A marker this reader does not know (another `formatVersion`) is refused rather than
 // read as legacy, so a newer format is never loaded by rules written for an older one.
+//
+// Every refusal says whether the version is damaged or only unsupported here: a format, kind or
+// provided package a later release knows, or native modules built for another host. A store
+// replaces a damaged version but must never replace an unsupported one — another release, or
+// another host sharing the volume, may read it fine.
 export enum QadamArtifactFormat {
     BUNDLE = 'bundle',
     LEGACY_NPM = 'legacy-npm',
@@ -35,25 +40,25 @@ export const qadamVersionStoreFormat = {
     inspect: async ({ dir, coordinates, tree }: InspectParams): Promise<InspectResult> => {
         const packageJson = await readJsonFile({ filePath: path.join(dir, QADAM_VERSION_STORE_LAYOUT.packageJsonFile), tree, schema: ArtifactPackageJson, maxBytes: MAX_PACKAGE_JSON_BYTES })
         if (!packageJson.ok) {
-            return { ok: false, reason: `package.json: ${packageJson.reason}` }
+            return damaged(`package.json: ${packageJson.reason}`)
         }
         if (packageJson.value.name !== coordinates.name || packageJson.value.version !== coordinates.version) {
-            return { ok: false, reason: 'package.json names another qadam or version' }
+            return damaged('package.json names another qadam or version')
         }
         const metadata = await readJsonFile({ filePath: path.join(dir, QADAM_VERSION_STORE_LAYOUT.metadataFile), tree, schema: ArtifactMetadata, maxBytes: MAX_METADATA_JSON_BYTES })
         if (!metadata.ok) {
-            return { ok: false, reason: `metadata.json: ${metadata.reason}` }
+            return damaged(`metadata.json: ${metadata.reason}`)
         }
         if (metadata.value.name !== coordinates.name || metadata.value.version !== coordinates.version) {
-            return { ok: false, reason: 'metadata.json names another qadam or version' }
+            return damaged('metadata.json names another qadam or version')
         }
         const entryPoint = resolveEntryPoint({ main: packageJson.value.main, tree })
         if (isNil(entryPoint)) {
-            return { ok: false, reason: 'the entry point named by package.json is not a file inside the version' }
+            return damaged('the entry point named by package.json is not a file inside the version')
         }
         const ownCopy = findOwnPlatformPackageCopy({ tree })
         if (!isNil(ownCopy)) {
-            return { ok: false, reason: `the version carries its own copy of ${ownCopy}, which the platform provides` }
+            return damaged(`the version carries its own copy of ${ownCopy}, which the platform provides`)
         }
         const format = describeFormat({ packageJson: packageJson.value, tree })
         if (!format.ok) {
@@ -64,16 +69,25 @@ export const qadamVersionStoreFormat = {
 
     // What a reader checks on every lookup, without walking the tree: the marker still says what the
     // integrity record says, and a version with native modules runs only where it was built.
-    checkRuntime: ({ packageJson, format, kind }: CheckRuntimeParams): string | null => {
+    // The host rule is the one `inspect` applies when the version is written (`describeHostMismatch`).
+    checkRuntime: ({ packageJson, format, kind }: CheckRuntimeParams): FormatProblem | null => {
         const marker = ArtifactPackageJson.safeParse(packageJson)
         if (!marker.success) {
-            return 'package.json is not a qadam package manifest'
+            return damaged('package.json is not a qadam package manifest')
         }
-        const markerFormat = isNil(marker.data.qadamArtifact) ? QadamArtifactFormat.LEGACY_NPM : QadamArtifactFormat.BUNDLE
+        const artifact = marker.data.qadamArtifact
+        if (!isNil(artifact) && artifact.formatVersion !== SUPPORTED_ARTIFACT_FORMAT_VERSION) {
+            return unsupported(`artifact format version ${artifact.formatVersion} is not one this platform reads`)
+        }
+        if (!isNil(artifact) && !Object.values(QadamArtifactKind).some((known) => known === artifact.kind)) {
+            return unsupported(`artifact kind ${artifact.kind} is not one this platform reads`)
+        }
+        const markerFormat = isNil(artifact) ? QadamArtifactFormat.LEGACY_NPM : QadamArtifactFormat.BUNDLE
         if (markerFormat !== format || (marker.data.qadamArtifact?.kind ?? null) !== kind) {
-            return 'package.json disagrees with the integrity record'
+            return damaged('package.json disagrees with the integrity record')
         }
-        return describeHostMismatch({ builtFor: marker.data.qadamArtifact?.builtFor })
+        const mismatch = describeHostMismatch({ kind, builtFor: marker.data.qadamArtifact?.builtFor })
+        return isNil(mismatch) ? null : unsupported(mismatch)
     },
 }
 
@@ -86,7 +100,16 @@ const SUPPORTED_ARTIFACT_FORMAT_VERSION = 1
 const BuiltFor = z.object({
     os: z.string(),
     cpu: z.string(),
+    // `glibc <major>.<minor>` or `unknown` (not glibc), as #804's builder records it.
+    libc: z.string().optional(),
+    node: z.string().optional(),
 }).loose()
+
+const ProcessReport = z.object({
+    header: z.object({ glibcVersionRuntime: z.string().optional() }).loose(),
+}).loose()
+
+const GLIBC_PATTERN = /^glibc (\d+)\.(\d+)/
 
 const ArtifactMarker = z.object({
     formatVersion: z.number(),
@@ -114,8 +137,11 @@ async function readJsonFile<T>({ filePath, tree, schema, maxBytes }: ReadJsonFil
     if (!qadamVersionStoreTree.has({ tree, relativePath, kind: 'file' })) {
         return { ok: false, reason: 'missing, or not a regular file' }
     }
-    const size = (await stat(filePath)).size
-    if (size > maxBytes) {
+    const stats = await tryCatch(() => stat(filePath))
+    if (stats.error !== null) {
+        return { ok: false, reason: 'cannot be read' }
+    }
+    if (stats.data.size > maxBytes) {
         return { ok: false, reason: `larger than ${maxBytes} bytes` }
     }
     const parsed = await tryCatch(async (): Promise<unknown> => JSON.parse(await readFile(filePath, 'utf8')))
@@ -126,15 +152,18 @@ async function readJsonFile<T>({ filePath, tree, schema, maxBytes }: ReadJsonFil
     return result.success ? { ok: true, value: result.data } : { ok: false, reason: 'unexpected shape' }
 }
 
-// `main` as Node reads it, held to the version's own directory: no absolute path, no `..`, and the
-// file must be a regular file of the version (a symlink there could point anywhere the version can).
+// `main` as Node's CommonJS loader reads it — the file, `<main>.js`, `<main>/index.js`, then the
+// package's `index.js` when `main` is absent, empty or resolves to nothing (Node's DEP0128 fallback) —
+// limited to `.js` (a qadam's entry is JavaScript, never `.json` or `.node`) and held to the version's
+// own directory: no absolute path, no `..`, and the file must be a regular file of the version (a
+// symlink there could point anywhere the version can).
 function resolveEntryPoint({ main, tree }: { main: string | undefined, tree: QadamVersionTree }): string | null {
-    const declared = path.posix.normalize(main ?? 'index.js').replace(/^\.\//, '')
-    if (declared === '' || declared === '.' || path.posix.isAbsolute(declared) || declared.split('/').includes('..') || declared.includes('\\')) {
+    const declared = isNil(main) || main === '' ? null : path.posix.normalize(main).replace(/^\.\//, '').replace(/\/$/, '')
+    if (!isNil(declared) && (path.posix.isAbsolute(declared) || declared.split('/').includes('..') || declared.includes('\\'))) {
         return null
     }
-    const candidates = [declared, `${declared}.js`, `${declared}/index.js`]
-    return candidates.find((candidate) => qadamVersionStoreTree.has({ tree, relativePath: candidate, kind: 'file' })) ?? null
+    const fromMain = isNil(declared) || declared === '' || declared === '.' ? [] : [declared, `${declared}.js`, `${declared}/index.js`]
+    return [...fromMain, 'index.js'].find((candidate) => qadamVersionStoreTree.has({ tree, relativePath: candidate, kind: 'file' })) ?? null
 }
 
 // The version's own `require('@aiqadam/qadams-framework')` or `require('zod')` would find a copy
@@ -158,38 +187,81 @@ function describeFormat({ packageJson, tree }: DescribeFormatParams): FormatResu
         return { ok: true, format: QadamArtifactFormat.LEGACY_NPM, kind: null }
     }
     if (marker.formatVersion !== SUPPORTED_ARTIFACT_FORMAT_VERSION) {
-        return { ok: false, reason: `artifact format version ${marker.formatVersion} is not one this platform reads` }
+        return unsupported(`artifact format version ${marker.formatVersion} is not one this platform reads`)
     }
     const kind = Object.values(QadamArtifactKind).find((known) => known === marker.kind)
     if (isNil(kind)) {
-        return { ok: false, reason: `artifact kind ${marker.kind} is not one this platform reads` }
+        return unsupported(`artifact kind ${marker.kind} is not one this platform reads`)
     }
     const unknownPeers = Object.keys(packageJson.peerDependencies ?? {}).filter((peer) => !PLATFORM_PROVIDED_PACKAGES.includes(peer))
     if (unknownPeers.length > 0) {
-        return { ok: false, reason: `the bundle expects packages the platform does not provide: ${unknownPeers.join(', ')}` }
+        return unsupported(`the bundle expects packages the platform does not provide: ${unknownPeers.join(', ')}`)
     }
     const hasNodeModules = qadamVersionStoreTree.has({ tree, relativePath: 'node_modules', kind: 'directory' })
     if (kind === QadamArtifactKind.BUNDLE && hasNodeModules) {
-        return { ok: false, reason: 'a plain bundle carries node_modules' }
+        return damaged('a plain bundle carries node_modules')
     }
-    if (kind === QadamArtifactKind.BUNDLE_WITH_NODE_MODULES) {
-        const mismatch = describeHostMismatch({ builtFor: marker.builtFor })
-        if (!isNil(mismatch)) {
-            return { ok: false, reason: mismatch }
-        }
+    const mismatch = describeHostMismatch({ kind, builtFor: marker.builtFor })
+    if (!isNil(mismatch)) {
+        return unsupported(mismatch)
     }
     return { ok: true, format: QadamArtifactFormat.BUNDLE, kind }
 }
 
-// A native addon runs only on the OS and CPU it was built for (#804 records them as `builtFor`).
-function describeHostMismatch({ builtFor }: { builtFor: z.infer<typeof BuiltFor> | undefined }): string | null {
-    if (isNil(builtFor)) {
+// A version with native modules runs only where they were built: the OS and CPU, the C library
+// (glibc at least as new as the one it was built against, or not glibc on both sides), and the
+// Node major, whose module ABI a prebuilt addon is compiled for. #804 records all four as `builtFor`.
+// The same rule applies when a version is written and when it is read. Versions without native
+// modules carry no `builtFor` and run anywhere.
+function describeHostMismatch({ kind, builtFor }: { kind: QadamArtifactKind | null, builtFor: z.infer<typeof BuiltFor> | undefined }): string | null {
+    if (kind !== QadamArtifactKind.BUNDLE_WITH_NODE_MODULES) {
         return null
     }
-    if (builtFor.os !== process.platform || builtFor.cpu !== process.arch) {
-        return `built for ${builtFor.os}-${builtFor.cpu}, this host is ${process.platform}-${process.arch}`
+    if (isNil(builtFor) || isNil(builtFor.libc) || isNil(builtFor.node)) {
+        return 'native modules without a record of the os, cpu, libc and node they were built for'
     }
-    return null
+    const host = hostPlatform()
+    const built = `built for ${builtFor.os}-${builtFor.cpu} ${builtFor.libc} node ${builtFor.node}`
+    const here = `this host is ${host.os}-${host.cpu} ${host.libc} node ${host.node}`
+    if (builtFor.os !== host.os || builtFor.cpu !== host.cpu || majorOf({ version: builtFor.node }) !== majorOf({ version: host.node })) {
+        return `${built}, ${here}`
+    }
+    return isLibcCompatible({ built: builtFor.libc, host: host.libc }) ? null : `${built}, ${here}`
+}
+
+function isLibcCompatible({ built, host }: { built: string, host: string }): boolean {
+    const builtGlibc = GLIBC_PATTERN.exec(built)
+    const hostGlibc = GLIBC_PATTERN.exec(host)
+    if (isNil(builtGlibc) || isNil(hostGlibc)) {
+        return isNil(builtGlibc) && isNil(hostGlibc) && built === host
+    }
+    const [builtMajor, builtMinor] = [Number(builtGlibc[1]), Number(builtGlibc[2])]
+    const [hostMajor, hostMinor] = [Number(hostGlibc[1]), Number(hostGlibc[2])]
+    return hostMajor > builtMajor || (hostMajor === builtMajor && hostMinor >= builtMinor)
+}
+
+function majorOf({ version }: { version: string }): string {
+    return version.split('.')[0] ?? ''
+}
+
+// Computed once: `process.report.getReport()` is not free, and the host does not change.
+let cachedHost: HostPlatform | null = null
+
+function hostPlatform(): HostPlatform {
+    if (isNil(cachedHost)) {
+        const report = ProcessReport.safeParse(process.report?.getReport())
+        const glibc = report.success ? report.data.header.glibcVersionRuntime : undefined
+        cachedHost = { os: process.platform, cpu: process.arch, libc: isNil(glibc) ? 'unknown' : `glibc ${glibc}`, node: process.versions.node }
+    }
+    return cachedHost
+}
+
+function damaged(reason: string): FormatProblem {
+    return { ok: false, reason, unsupported: false }
+}
+
+function unsupported(reason: string): FormatProblem {
+    return { ok: false, reason, unsupported: true }
 }
 
 type InspectParams = {
@@ -198,13 +270,23 @@ type InspectParams = {
     tree: QadamVersionTree
 }
 
+// `unsupported`: not damaged, only not runnable by this release on this host (see the header).
+export type FormatProblem = { ok: false, reason: string, unsupported: boolean }
+
 type InspectResult =
     | { ok: true, format: QadamArtifactFormat, kind: QadamArtifactKind | null, entryPoint: string }
-    | { ok: false, reason: string }
+    | FormatProblem
 
 type FormatResult =
     | { ok: true, format: QadamArtifactFormat, kind: QadamArtifactKind | null }
-    | { ok: false, reason: string }
+    | FormatProblem
+
+type HostPlatform = {
+    os: string
+    cpu: string
+    libc: string
+    node: string
+}
 
 type DescribeFormatParams = {
     packageJson: z.infer<typeof ArtifactPackageJson>

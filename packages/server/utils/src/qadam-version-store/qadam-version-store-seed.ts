@@ -25,15 +25,17 @@ export enum SeedStatus {
 }
 
 export const qadamVersionStoreSeed = {
-    // Idempotent and safe to run from several processes at once on one volume: a version already
-    // stored is left as it is, and two processes storing the same version race on an atomic rename
+    // Idempotent and safe to run from several processes at once on one volume. A version already
+    // stored is left as it is, and so is one this release cannot use but that is not damaged (a later
+    // release's format, another host's native build, an I/O error): only a DAMAGED version is
+    // replaced. Two processes storing the same version race on an atomic rename
     // that one wins (`qadamVersionStore`). It never removes a version. Callers that run it from
     // every replica should still hold one lock around it (the API holds a `distributedLock`), so
     // the replicas do not all hash and extract the same tarballs at once.
     seedFromImage: async ({ store, seedDir, log }: SeedParams): Promise<SeedReport> => {
         const index = await readSeedIndex({ seedDir })
         if (!index.ok) {
-            return { status: index.status, reason: index.reason, stored: 0, present: 0, failed: [] }
+            return { status: index.status, reason: index.reason, stored: 0, present: 0, kept: 0, failed: [] }
         }
         const outcomes: SeedOutcome[] = []
         for (const artifact of index.artifacts) {
@@ -45,6 +47,7 @@ export const qadamVersionStoreSeed = {
             reason: null,
             stored: outcomes.filter((outcome) => outcome.kind === 'stored').length,
             present: outcomes.filter((outcome) => outcome.kind === 'present').length,
+            kept: outcomes.filter((outcome) => outcome.kind === 'kept').length,
             failed,
         }
     },
@@ -103,6 +106,10 @@ async function seedOne({ store, seedDir, artifact, log }: SeedOneParams): Promis
         }
         return { kind: 'present' }
     }
+    if (existing.status === QadamVersionReadStatus.UNSUPPORTED || existing.status === QadamVersionReadStatus.UNREADABLE) {
+        log.warn({ qadam, status: existing.status, reason: existing.reason }, '[qadamVersionStore] A stored version this release cannot use is kept, not replaced by the image\'s')
+        return { kind: 'kept' }
+    }
     const tarballPath = path.join(seedDir, artifact.file)
     const tarballStats = await tryCatch(() => lstat(tarballPath))
     if (tarballStats.error !== null || !tarballStats.data.isFile()) {
@@ -140,6 +147,8 @@ export type SeedReport = {
     reason: string | null
     stored: number
     present: number
+    // Stored versions this release cannot use (UNSUPPORTED / UNREADABLE), left in place.
+    kept: number
     failed: { qadam: string, reason: string }[]
 }
 
@@ -159,6 +168,7 @@ type SeedOneParams = {
 type SeedOutcome =
     | { kind: 'stored' }
     | { kind: 'present' }
+    | { kind: 'kept' }
     | { kind: 'failed', qadam: string, reason: string }
 
 type SeedIndexResult =

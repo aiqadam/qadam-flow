@@ -34,6 +34,13 @@ Benefits of separating workers from the main application (APP):
       - <your path>:/usr/src/app/cache
     ```
     Note: This setup works whether you attach one volume per worker, It cannot be shared across multiple workers.
+
+    Also mount the volume of the [qadam version store](/install/architecture/qadam-version-store), the same one the app uses, on every worker:
+    ```yaml
+    volumes:
+      - qadam_versions:/var/lib/qadam-flow/qadam-versions
+    ```
+    Nothing runs from the store yet, so a worker without it works today; mounting it now means no change when the store is used.
   </Step>
   <Step title="Launch Worker Machine">
     Launch the worker machine and supply it with the generated token.

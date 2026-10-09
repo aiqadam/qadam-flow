@@ -42,7 +42,7 @@ describe('qadamVersionStoreSeeding', () => {
 
         expect(runExclusive).toHaveBeenCalledWith(expect.objectContaining({ key: 'qadam-version-store-seed' }))
         expect((await readdir(join(tempDir, 'store'))).sort()).toEqual(['.staging', '.trash', 'qadams'])
-        expect(log.info).toHaveBeenCalledWith(expect.objectContaining({ status: 'no-seed', stored: 0 }), expect.stringContaining('Seeded the qadam version store'))
+        expect(log.info).toHaveBeenCalledWith(expect.objectContaining({ status: 'no-seed', stored: 0, kept: 0 }), expect.stringContaining('Seeded the qadam version store'))
         expect(log.warn).not.toHaveBeenCalled()
     })
 
@@ -63,6 +63,19 @@ describe('qadamVersionStoreSeeding', () => {
 
         expect(runExclusive).not.toHaveBeenCalled()
         expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ reason: expect.stringContaining('cannot be prepared') }), expect.stringContaining('unavailable'))
+    })
+
+    it('reports an unusable store at info, not warn, in a dev tree', async () => {
+        const environment = process.env.AP_ENVIRONMENT
+        process.env.AP_ENVIRONMENT = 'dev'
+        await writeFile(join(tempDir, 'not-a-directory'), '')
+        process.env[STORE_ENV] = join(tempDir, 'not-a-directory', 'store')
+
+        await qadamVersionStoreSeeding(logger).run()
+
+        restoreEnv({ name: 'AP_ENVIRONMENT', value: environment })
+        expect(log.warn).not.toHaveBeenCalled()
+        expect(log.info).toHaveBeenCalledWith(expect.objectContaining({ reason: expect.stringContaining('cannot be prepared') }), expect.stringContaining('unavailable'))
     })
 
     it('never throws when the lock cannot be taken', async () => {

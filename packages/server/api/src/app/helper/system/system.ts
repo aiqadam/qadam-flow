@@ -25,9 +25,11 @@ const systemPropDefaultValues: Partial<Record<SystemProp, string>> = {
     [AppSystemProp.CLIENT_REAL_IP_HEADER]: 'x-real-ip',
     [AppSystemProp.CLOUD_AUTH_ENABLED]: 'true',
     [AppSystemProp.CONFIG_PATH]: path.join(os.homedir(), '.activepieces'),
-    // ADR-0003's versioned qadam store (#805). In the image the working directory is /usr/src/app,
-    // where docker-compose.yml mounts the `qadam_versions` volume.
-    [AppSystemProp.QADAM_VERSION_STORE_PATH]: path.resolve('qadam-versions'),
+    // ADR-0003's versioned qadam store (#805), where docker-compose.yml mounts the `qadam_versions`
+    // volume. Deliberately outside /usr/src/app: a stored version resolves packages upward from its own
+    // directory, and the app's node_modules must not be reachable that way (the store refuses to open
+    // below any node_modules).
+    [AppSystemProp.QADAM_VERSION_STORE_PATH]: '/var/lib/qadam-flow/qadam-versions',
     // What the image ships to seed the store with: an `archive-index.json` and its tarballs (#804's
     // `--pack` output). No image carries one before #807; a missing directory seeds nothing.
     [AppSystemProp.QADAM_VERSION_STORE_SEED_PATH]: path.resolve('packages/qadams/version-store-seed'),
