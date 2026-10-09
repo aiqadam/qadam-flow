@@ -200,6 +200,7 @@
                      "install/architecture/waitpoints",
                      "install/architecture/network-security",
                      "install/architecture/qadam-syncing",
+                     "install/architecture/qadam-version-store",
                      "install/architecture/benchmark"
                   ]
                }

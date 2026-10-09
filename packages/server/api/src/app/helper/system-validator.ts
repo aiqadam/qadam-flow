@@ -99,6 +99,8 @@ const systemPropValidators: {
     [AppSystemProp.CLIENT_REAL_IP_HEADER]: stringValidator,
     [AppSystemProp.CLOUD_AUTH_ENABLED]: booleanValidator,
     [AppSystemProp.CONFIG_PATH]: stringValidator,
+    [AppSystemProp.QADAM_VERSION_STORE_PATH]: stringValidator,
+    [AppSystemProp.QADAM_VERSION_STORE_SEED_PATH]: stringValidator,
     [AppSystemProp.DB_TYPE]: enumValidator(Object.values(DatabaseType)),
     [AppSystemProp.DEV_QADAMS]: stringValidator,
     [AppSystemProp.ENCRYPTION_KEY]: stringValidator,

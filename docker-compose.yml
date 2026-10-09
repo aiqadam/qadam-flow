@@ -13,6 +13,13 @@ services:
       - AP_CONTAINER_TYPE=APP
     volumes:
       - ./cache:/usr/src/app/cache
+      # The versioned qadam store (ADR-0003, #805): every qadam version the instance holds, under
+      # qadams/<name>/<version>/, seeded from the image at start-up. Shared by the app and every
+      # worker. Unlike ./cache it is not disposable: keep it with the database when you back up or
+      # move an install. Nothing resolves a qadam through it yet (#779), so today it only fills.
+      # Mounted outside /usr/src/app on purpose: a stored version must not reach the app's own
+      # node_modules by Node's upward lookup.
+      - qadam_versions:/var/lib/qadam-flow/qadam-versions
     networks:
       - qadam-flow
   worker:
@@ -37,6 +44,7 @@ services:
     #   cp docker-compose.sandboxed.yml docker-compose.override.yml
     volumes:
       - ./cache:/usr/src/app/cache
+      - qadam_versions:/var/lib/qadam-flow/qadam-versions
     networks:
       - qadam-flow
   postgres:
@@ -102,5 +110,8 @@ volumes:
   pgdata:
   postgres_data:
   redis_data:
+  # A named volume, not a bind mount like ./cache: the store must sit on a case-sensitive
+  # filesystem, which a bind mount from macOS or Windows is not, and the store refuses to open there.
+  qadam_versions:
 networks:
   qadam-flow:

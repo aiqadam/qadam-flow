@@ -11,7 +11,9 @@
 #   4. docker compose pull.
 #   5. Upgrades the bundled PostgreSQL's data if it was written by an older major
 #      (dump with the old image, restore into a new volume, keep the old one).
-#   6. docker compose up -d.
+#   6. docker compose up -d. Compose creates the named volumes on first start: pgdata and
+#      redis_data, and qadam_versions, the versioned qadam store (ADR-0003, #805) the app seeds
+#      from the image. A re-run adds a volume a newer docker-compose.yml introduces; none is removed.
 #   7. Waits for the API to start and prints the URL.
 #
 # Environment overrides:
@@ -806,7 +808,7 @@ ${C_DIM}First-time onboarding:${C_RESET}
 ${C_DIM}Common commands (from $(pwd)):${C_RESET}
   docker compose logs -f app worker   follow logs
   docker compose down                 stop (keep data)
-  docker compose down -v              stop AND wipe data
+  docker compose down -v              stop AND wipe data (database, Redis, qadam version store)
 
 ${C_DIM}To upgrade, re-run the installer against this directory. It refreshes docker-compose.yml, which${C_RESET}
 ${C_DIM}pins the Postgres and Redis images, and keeps .env; docker compose pull alone updates only the app.${C_RESET}

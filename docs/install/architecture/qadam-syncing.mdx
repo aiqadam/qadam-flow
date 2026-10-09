@@ -53,7 +53,7 @@ A server upgrade can replace the bundled version of an official qadam, so a step
 One exception. When a flow version is first migrated to flow schema version 32, a one-off migration repoints each pin that cannot be resolved at that moment to a version the server can serve, even across a breaking boundary, after storing a backup of the flow version. It runs once per flow version, not on every upgrade, so it does not repair a pin that becomes unavailable later.
 </Note>
 
-The plan for removing this limitation — a versioned store on a persistent volume, so that a step runs the exact version it names — is [ADR-0003](https://github.com/aiqadam/qadam-flow/blob/main/adr/0003-official-qadams-run-from-a-versioned-local-store.md). Until it ships, the behavior above is what your server does.
+The plan for removing this limitation — a versioned store on a persistent volume, so that a step runs the exact version it names — is [ADR-0003](https://github.com/aiqadam/qadam-flow/blob/main/adr/0003-official-qadams-run-from-a-versioned-local-store.md). The volume is already part of the install, see [Qadam version store](/install/architecture/qadam-version-store), but nothing runs from it yet: until steps resolve through it, the behavior above is what your server does.
 
 ## Server compatibility
 
