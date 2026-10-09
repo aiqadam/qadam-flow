@@ -24,6 +24,8 @@ export const formErrors = {
     jsonSchemaMismatch: 'jsonSchemaMismatch',
     tableHasDuplicateKeys: 'tableHasDuplicateKeys',
     keyFieldInUse: 'keyFieldInUse',
+    dropdownOptionInUse: 'dropdownOptionInUse',
+    optionsOnlyOnStaticDropdown: 'optionsOnlyOnStaticDropdown',
     duplicateKeyValue: 'duplicateKeyValue',
     tableKeyColumnsNotInTable: 'tableKeyColumnsNotInTable',
     upsertKeyMustMatchDeclaredKey: 'upsertKeyMustMatchDeclaredKey',

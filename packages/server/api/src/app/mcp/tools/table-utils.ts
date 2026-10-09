@@ -91,7 +91,8 @@ export function toStructuredRecord(record: PopulatedRecord): StructuredRecord {
 
 export function formatFieldInfo(field: Field): string {
     if (field.type === FieldType.STATIC_DROPDOWN) {
-        const options = field.data.options.map(o => mcpUtils.wrapUntrustedValue(o.value)).join(', ')
+        // `data` is typed as required but the column is nullable (field.entity.ts).
+        const options = (field.data?.options ?? []).map(o => mcpUtils.wrapUntrustedValue(o.value)).join(', ')
         return `${mcpUtils.wrapUntrustedValue(field.name)} (id: ${field.id}, type: ${field.type}, options: ${options})`
     }
     return `${mcpUtils.wrapUntrustedValue(field.name)} (id: ${field.id}, type: ${field.type})`

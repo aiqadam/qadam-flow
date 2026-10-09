@@ -1,13 +1,16 @@
-import { apId, assertNotNullOrUndefined, CreateFieldRequest, ErrorCode, Field, FieldState, FieldType, formErrors, isNil, QadamFlowError, spreadIfDefined, tryCatchSync, UpdateFieldRequest } from '@aiqadam/shared'
-import { EntityManager, In } from 'typeorm'
+import { apId, assertNotNullOrUndefined, Cell, CreateFieldRequest, ErrorCode, Field, FieldState, FieldType, formErrors, isNil, MAX_DROPDOWN_OPTIONS, QadamFlowError, spreadIfDefined, tryCatchSync, unique, UpdateFieldRequest } from '@aiqadam/shared'
+import { EntityManager, In, Not } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
+import { transaction } from '../../core/db/transaction'
 import { system } from '../../helper/system/system'
 import { AppSystemProp } from '../../helper/system/system-props'
+import { CellEntity } from '../record/cell.entity'
 import { tableKey } from '../record/key-reader'
 import { TableEntity } from '../table/table.entity'
 import { FieldEntity } from './field.entity'
 
 const fieldRepo = repoFactory<Field>(FieldEntity)
+const cellRepo = repoFactory<Cell>(CellEntity)
 // TableEntity directly, not tableService — table.service.ts already imports
 // fieldService, so importing tableService here would be a circular module
 // dependency. The entity has none of that baggage.
@@ -158,13 +161,42 @@ export const fieldService = {
     },
 
     async update({ id, projectId, request }: UpdateParams): Promise<Field> {
-        await fieldRepo().update({
-            id,
-            projectId,
-        }, {
-            name: request.name,
+        const newOptions = request.data?.options
+        return transaction(async (entityManager) => {
+            // The row lock serialises two concurrent option edits on one field, so the
+            // in-use check below cannot be computed against a list the other edit is
+            // about to replace.
+            const field = await fieldRepo(entityManager).findOne({ where: { id, projectId }, lock: { mode: 'pessimistic_write' } })
+            if (isNil(field)) {
+                throw new QadamFlowError({ code: ErrorCode.ENTITY_NOT_FOUND, params: { entityType: 'Field', entityId: id } })
+            }
+            if (!isNil(newOptions)) {
+                if (field.type !== FieldType.STATIC_DROPDOWN) {
+                    const message = formErrors.optionsOnlyOnStaticDropdown
+                    throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, `Field "${field.name}" is ${field.type} — options can only be set on a STATIC_DROPDOWN field.`)
+                }
+                if (newOptions.length === 0) {
+                    // The controller's schema already rejects this. The MCP `options` input has no `.min`, so this is the check MCP reaches.
+                    const message = formErrors.required
+                    throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, `Field "${field.name}": options must contain at least one value.`)
+                }
+                if (newOptions.length > MAX_DROPDOWN_OPTIONS) {
+                    // REST and MCP are both capped by their input schemas, so only internal callers reach this;
+                    // kept as defence in depth, since an uncapped list could later push the in-use check
+                    // past Postgres's bind-parameter limit.
+                    throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message: `Max options per dropdown field reached: ${MAX_DROPDOWN_OPTIONS}` } })
+                }
+                await assertNoRemovedOptionInUse({ field, newOptions, projectId, entityManager })
+            }
+            const changes = {
+                ...spreadIfDefined('name', request.name),
+                ...spreadIfDefined('data', isNil(newOptions) ? undefined : { options: dedupeOptions(newOptions) }),
+            }
+            if (Object.keys(changes).length > 0) {
+                await fieldRepo(entityManager).update({ id, projectId }, changes)
+            }
+            return fieldRepo(entityManager).findOneByOrFail({ id, projectId })
         })
-        return this.getById({ id, projectId })
     },
 
     async count({ projectId, tableId, entityManager }: CountParams): Promise<number> {
@@ -199,6 +231,37 @@ function assertValidJsonFieldSchema(schema: string | undefined): void {
     }
 }
 
+// Removing an option that a record still holds would leave that cell with a value the field
+// no longer accepts: unwritable back to itself and invisible to the dropdown. Rejected, as is
+// a rename (which is a remove plus an add). Only a count is computed — cell values are row
+// data and never leave this function.
+async function assertNoRemovedOptionInUse({ field, newOptions, projectId, entityManager }: { field: DropdownField, newOptions: { value: string }[], projectId: string, entityManager: EntityManager }): Promise<void> {
+    const kept = new Set(newOptions.map((option) => option.value))
+    // `data` is typed as required but the column is nullable (field.entity.ts); see cell-validation.ts.
+    const declared = unique((field.data?.options ?? []).map((option) => option.value))
+    // '' is the "unset" sentinel every type validates as empty, never a real selection.
+    const removed = declared.filter((value) => value !== '' && !kept.has(value))
+    // A field with no declared options is unconstrained, so its cells may hold any value and
+    // every one of them becomes out-of-options once a list is set. A field that already
+    // declares options only loses the values it drops: orphan cells it already holds must not
+    // block extending it.
+    const isUnconstrained = declared.length === 0
+    if (!isUnconstrained && removed.length === 0) {
+        return
+    }
+    const value = isUnconstrained ? Not(In([...kept, ''])) : In(removed)
+    const recordsInUse = await cellRepo(entityManager).count({ where: { projectId, fieldId: field.id, value } })
+    if (recordsInUse === 0) {
+        return
+    }
+    const message = formErrors.dropdownOptionInUse
+    throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, `Field "${field.name}": ${recordsInUse} record(s) still use an option that is being removed. Clear or change those values first. Renaming an option counts as removing it.`)
+}
+
+function dedupeOptions(options: { value: string }[]): { value: string }[] {
+    return unique(options.map((option) => option.value)).map((value) => ({ value }))
+}
+
 // A field that is part of a table's declared key (#409) cannot be deleted — doing so
 // would leave `table.keyFieldIds` naming a field that no longer exists, and every
 // future write's keyValue derivation (tableKey.buildValueReader in record/key-reader.ts) would
@@ -212,6 +275,8 @@ async function assertFieldNotInDeclaredKey({ field, projectId, entityManager }: 
     const message = formErrors.keyFieldInUse
     throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, `Field "${field.name}" is part of table "${table.name}"'s declared key. Clear the table's key declaration first.`)
 }
+
+type DropdownField = Extract<Field, { type: FieldType.STATIC_DROPDOWN }>
 
 type CreateParams = {
     projectId: string

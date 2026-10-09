@@ -4,13 +4,24 @@ import { BaseModelSchema, BoundedArray } from '../../core/common'
 // The request-side cap on a STATIC_DROPDOWN's options, wherever a caller supplies them
 // (CreateFieldRequest, FieldState). Generous — a country or city list fits — because it
 // exists to bound parsing, not to shape tables.
-const MAX_DROPDOWN_OPTIONS = 10_000
+export const MAX_DROPDOWN_OPTIONS = 10_000
 
 export const DropdownOptionsInput = BoundedArray({
     element: z.object({
         value: z.string(),
     }),
     max: MAX_DROPDOWN_OPTIONS,
+})
+
+// The update-side twin of DropdownOptionsInput. An update replaces the whole list, and an
+// empty one would silently turn the field into an unconstrained text column (an options list
+// nobody declared constrains nothing, see cell-validation.ts), so it is rejected here.
+export const DropdownOptionsUpdateInput = BoundedArray({
+    element: z.object({
+        value: z.string(),
+    }),
+    max: MAX_DROPDOWN_OPTIONS,
+    nonEmpty: true,
 })
 
 export enum FieldType {
