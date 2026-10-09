@@ -19,6 +19,7 @@ import { z } from 'zod'
 import { flowService } from '../../flows/flow/flow.service'
 import { projectService } from '../../project/project-service'
 import { qadamMetadataService } from '../../qadams/metadata/qadam-metadata-service'
+import { qadamPinUtil } from '../../qadams/metadata/qadam-pin-util'
 import { mcpUtils } from './mcp-utils'
 import { stepInputMerge } from './step-input-merge'
 
@@ -252,8 +253,9 @@ export const apUpdateStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLo
                         }],
                     }
                 }
+                const pinNote = await unavailablePinNote({ step: updatedStep, platformId: project.platformId, log })
                 return {
-                    content: [{ type: 'text', text: `✅ Successfully updated step "${stepName}".${draftWarning}` }],
+                    content: [{ type: 'text', text: `✅ Successfully updated step "${stepName}".${pinNote}${draftWarning}` }],
                 }
             }
             catch (err) {
@@ -291,6 +293,23 @@ function dropStaleAiProviderId({ mergedInput, incomingInput, currentInput }: {
     return mergedInput
 }
 
+// An edit to a step pinned to a version this instance does not have is accepted (#843, validated
+// against the installed build), but the step is still unresolvable at run time on a worker that has
+// not cached that pin. A bare success would hide that from the agent.
+async function unavailablePinNote({ step, platformId, log }: {
+    step: Step | undefined
+    platformId: string
+    log: FastifyBaseLogger
+}): Promise<string> {
+    if (isNil(step) || step.type !== FlowActionType.PIECE) {
+        return ''
+    }
+    const pin = qadamPinUtil.pinOf({ step })
+    const resolutions = await qadamPinUtil.resolvePins({ pins: [pin], platformId, log })
+    const issue = mcpUtils.qadamPinIssue({ pin, resolvable: resolutions.get(pin) })
+    return isNil(issue) ? '' : `\n⚠️ Step "${step.name}" ${issue.message}`
+}
+
 async function loadActionProps({ settings, platformId, log }: {
     settings: Record<string, unknown>
     platformId: string
@@ -301,7 +320,7 @@ async function loadActionProps({ settings, platformId, log }: {
         return undefined
     }
     try {
-        const qadam = await qadamMetadataService(log).getOrThrow({ platformId, name: qadamName, version: qadamVersion, fallbackToInstalledVersion: true })
+        const qadam = await qadamMetadataService(log).getOrThrow({ platformId, name: qadamName, version: qadamVersion })
         return qadam.actions[actionName]?.props
     }
     catch (err) {

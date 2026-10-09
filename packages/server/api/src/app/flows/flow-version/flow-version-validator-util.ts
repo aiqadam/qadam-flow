@@ -9,7 +9,9 @@ import {
     FlowOperationRequest,
     FlowOperationType,
     flowQadamUtil,
+    flowStructureUtil,
     FlowTriggerType,
+    FlowVersion,
     isNil,
     LoopOnItemsActionSettings,
     PlatformId,
@@ -17,6 +19,7 @@ import {
     QadamTriggerSettings,
     RouterActionSettingsWithValidation,
     SourceCode,
+    Step,
     UserId,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
@@ -44,7 +47,7 @@ type ValidationResult = {
 }
 
 export const flowVersionValidationUtil = (log: FastifyBaseLogger) => ({
-    async prepareRequest({ platformId, request, userId }: PrepareRequestParams): Promise<FlowOperationRequest> {
+    async prepareRequest({ platformId, request, userId, storedFlowVersion }: PrepareRequestParams): Promise<FlowOperationRequest> {
         const clonedRequest: FlowOperationRequest = JSON.parse(JSON.stringify(request))
 
         switch (clonedRequest.type) {
@@ -88,9 +91,16 @@ export const flowVersionValidationUtil = (log: FastifyBaseLogger) => ({
                         break
                     case FlowActionType.PIECE: {
                         clonedRequest.request.settings.qadamVersion = flowQadamUtil.getExactVersion(clonedRequest.request.settings.qadamVersion)
-                        const result = await validateAction(
-                            { settings: clonedRequest.request.settings, platformId, log },
-                        )
+                        const result = await validateAction({
+                            settings: clonedRequest.request.settings,
+                            platformId,
+                            log,
+                            fallbackToInstalledVersion: isStoredPinUnchanged({
+                                storedStep: isNil(storedFlowVersion) ? undefined : flowStructureUtil.getStep(clonedRequest.request.name, storedFlowVersion.trigger),
+                                qadamName: clonedRequest.request.settings.qadamName,
+                                qadamVersion: clonedRequest.request.settings.qadamVersion,
+                            }),
+                        })
                         clonedRequest.request.valid = result.valid
                         if (!isNil(result.cleanInput)) {
                             clonedRequest.request.settings.input = result.cleanInput
@@ -117,9 +127,16 @@ export const flowVersionValidationUtil = (log: FastifyBaseLogger) => ({
                         break
                     case FlowTriggerType.PIECE: {
                         clonedRequest.request.settings.qadamVersion = flowQadamUtil.getExactVersion(clonedRequest.request.settings.qadamVersion)
-                        const result = await validateTrigger(
-                            { settings: clonedRequest.request.settings, platformId, log },
-                        )
+                        const result = await validateTrigger({
+                            settings: clonedRequest.request.settings,
+                            platformId,
+                            log,
+                            fallbackToInstalledVersion: isStoredPinUnchanged({
+                                storedStep: storedFlowVersion?.trigger,
+                                qadamName: clonedRequest.request.settings.qadamName,
+                                qadamVersion: clonedRequest.request.settings.qadamVersion,
+                            }),
+                        })
                         clonedRequest.request.valid = result.valid
                         if (result.valid && result.cleanInput) {
                             clonedRequest.request.settings.input = result.cleanInput
@@ -168,7 +185,25 @@ function warnOnUndeclaredKeys({ log, qadamName, qadamVersion, component, result 
     }, 'Step input carries keys the resolved qadam metadata does not declare; keeping them rather than erasing the caller\'s write')
 }
 
-async function validateAction({ settings, platformId, log }: ValidateActionParams): Promise<ValidationResult> {
+// STOPGAP for #843, to be removed once #805/#808 give an unavailable pin a real answer (the store, or
+// the audited fallback of ADR-0003).
+//
+// A step whose pinned qadam version this instance cannot resolve can still be edited: the edit is
+// validated against the installed version instead of being refused. That is allowed ONLY when the
+// edit keeps the step's stored pin. A request that carries a different pin — a new step, or an
+// update that repoints one — stays strict, because validating it against "whatever is installed"
+// would store a pin nothing can resolve, which is the population #808 exists to clear.
+// The pin itself is never rewritten here.
+function isStoredPinUnchanged({ storedStep, qadamName, qadamVersion }: IsStoredPinUnchangedParams): boolean {
+    if (isNil(storedStep) || (storedStep.type !== FlowActionType.PIECE && storedStep.type !== FlowTriggerType.PIECE)) {
+        return false
+    }
+    const { qadamName: storedName, qadamVersion: storedVersion } = storedStep.settings
+    return storedName === qadamName
+        && flowQadamUtil.getExactVersion(storedVersion) === flowQadamUtil.getExactVersion(qadamVersion)
+}
+
+async function validateAction({ settings, platformId, log, fallbackToInstalledVersion = false }: ValidateActionParams): Promise<ValidationResult> {
     if (
         isNil(settings.qadamName) ||
         isNil(settings.qadamVersion) ||
@@ -182,7 +217,7 @@ async function validateAction({ settings, platformId, log }: ValidateActionParam
         platformId,
         name: settings.qadamName,
         version: settings.qadamVersion,
-        fallbackToInstalledVersion: true,
+        fallbackToInstalledVersion,
     })
 
     if (isNil(piece)) {
@@ -199,7 +234,7 @@ async function validateAction({ settings, platformId, log }: ValidateActionParam
     return validateProps(props, settings.input, piece.auth, action.requireAuth)
 }
 
-async function validateTrigger({ settings, platformId, log }: ValidateTriggerParams): Promise<ValidationResult> {
+async function validateTrigger({ settings, platformId, log, fallbackToInstalledVersion = false }: ValidateTriggerParams): Promise<ValidationResult> {
     if (
         isNil(settings.qadamName) ||
         isNil(settings.qadamVersion) ||
@@ -213,7 +248,7 @@ async function validateTrigger({ settings, platformId, log }: ValidateTriggerPar
         platformId,
         name: settings.qadamName,
         version: settings.qadamVersion,
-        fallbackToInstalledVersion: true,
+        fallbackToInstalledVersion,
     })
     if (isNil(piece)) {
         return { valid: false, undeclaredKeys: [] }
@@ -270,16 +305,27 @@ type PrepareRequestParams = {
     platformId?: PlatformId
     request: FlowOperationRequest
     userId: UserId | null
+    // The version as stored before this operation. Only UPDATE_ACTION / UPDATE_TRIGGER read it, to
+    // tell an edit that keeps a step's pin from one that sets a new pin (see `isStoredPinUnchanged`).
+    storedFlowVersion?: FlowVersion
+}
+
+type IsStoredPinUnchangedParams = {
+    storedStep: Step | undefined
+    qadamName: string
+    qadamVersion: string
 }
 
 type ValidateActionParams = {
     settings: QadamActionSettings
     platformId?: PlatformId
     log: FastifyBaseLogger
+    fallbackToInstalledVersion?: boolean
 }
 
 type ValidateTriggerParams = {
     settings: QadamTriggerSettings
     platformId?: PlatformId
     log: FastifyBaseLogger
+    fallbackToInstalledVersion?: boolean
 }

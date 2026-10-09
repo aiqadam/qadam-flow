@@ -151,7 +151,7 @@ async function diagnoseMissingTriggerInputs({ qadamName, qadamVersion, triggerNa
     log: FastifyBaseLogger
 }): Promise<string | null> {
     try {
-        const piece = await qadamMetadataService(log).getOrThrow({ platformId, name: qadamName, version: qadamVersion, fallbackToInstalledVersion: true })
+        const piece = await qadamMetadataService(log).getOrThrow({ platformId, name: qadamName, version: qadamVersion })
         const trigger = piece.triggers[triggerName]
         if (isNil(trigger)) {
             return `Trigger "${triggerName}" not found in piece "${qadamName}". Use ap_research_pieces with includeTriggers=true to get valid trigger names.`

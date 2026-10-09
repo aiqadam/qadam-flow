@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mockGetOnePopulated = vi.fn()
 const mockUpdate = vi.fn()
 const mockGetOrThrow = vi.fn()
+const mockGet = vi.fn()
 
 vi.mock('../../../../src/app/flows/flow/flow.service', () => ({
     flowService: vi.fn(() => ({
@@ -29,6 +30,7 @@ vi.mock('../../../../src/app/project/project-service', () => ({
 vi.mock('../../../../src/app/qadams/metadata/qadam-metadata-service', () => ({
     qadamMetadataService: vi.fn(() => ({
         getOrThrow: mockGetOrThrow,
+        get: mockGet,
     })),
 }))
 
@@ -89,6 +91,7 @@ describe('ap_update_step — emptied-required-prop guard', () => {
     beforeEach(() => {
         vi.clearAllMocks()
         mockGetOnePopulated.mockResolvedValue(flowWithCallFlowStep(STORED_INPUT))
+        mockGet.mockResolvedValue({ version: '0.4.14' })
         mockGetOrThrow.mockResolvedValue({
             auth: undefined,
             actions: { callFlow: { props: CALL_FLOW_PROPS, requireAuth: false } },
@@ -127,14 +130,37 @@ describe('ap_update_step — emptied-required-prop guard', () => {
         expect(written.flowProps).toEqual({ payload: { key: 'farewell', lang: 'ru' } })
     })
 
-    it('asks for the installed version\'s props when the pinned version is not installed (#843)', async () => {
-        await updateStep({ executionMode: 'inline' })
+    describe('a step pinned to a version this instance does not have (#843)', () => {
+        beforeEach(() => {
+            mockGet.mockResolvedValue(undefined)
+            mockGetOrThrow.mockRejectedValue(new Error('qadam_metadata_not_found'))
+        })
 
-        expect(mockGetOrThrow).toHaveBeenCalledWith(expect.objectContaining({
-            name: '@aiqadam/qadam-subflows',
-            version: '0.4.14',
-            fallbackToInstalledVersion: true,
-        }))
+        it('writes the edit without borrowing the installed version\'s props, defaults or required-prop guard', async () => {
+            const text = await updateStep({ executionMode: 'inline' })
+
+            expect(text).toContain('Successfully updated')
+            const written = mockUpdate.mock.calls[0][0].operation.request.settings.input
+            expect(written).toEqual({ ...STORED_INPUT, executionMode: 'inline' })
+            expect(mockGetOrThrow).not.toHaveBeenCalledWith(expect.objectContaining({ fallbackToInstalledVersion: true }))
+        })
+
+        it('tells the agent the step is still pinned to a version nothing can resolve', async () => {
+            const text = await updateStep({ executionMode: 'inline' })
+
+            expect(text).toContain('Successfully updated')
+            expect(text).toContain('is pinned to')
+            expect(text).toContain('@aiqadam/qadam-subflows@0.4.14')
+            expect(text).toContain('does not have')
+        })
+
+        it('adds no pin warning when the pin resolves', async () => {
+            mockGet.mockResolvedValue({ version: '0.4.14' })
+
+            const text = await updateStep({ executionMode: 'inline' })
+
+            expect(text).not.toContain('is pinned to')
+        })
     })
 
     it('allows overwriting a required prop with a new value', async () => {
