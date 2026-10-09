@@ -123,7 +123,20 @@ gate 1 applies.
 - Never lower a level to get past a check. A level above the computed one always passes.
 - A clean gate 2 says nothing about behaviour: step 3 still applies.
 
-## 7. When `semver-override` applies
+## 7. Cutting a release (maintainers)
+
+1. Merge the release PR ("chore(release): version packages"). It raises the versions and the root,
+   and consumes the changesets.
+2. Before tagging, merge a docs PR that folds `## Unreleased` in
+   `docs/install/configuration/breaking-changes.mdx` into a `## <version>` section for the new root
+   version (merge it into an existing `## <version>` if there is one) and leaves an empty
+   `## Unreleased`. Do not commit this to the release PR's branch: `changesets.yml` rewrites that
+   branch on every push to `main`. The release's `breaking-change-gate` needs a non-empty
+   `## <version>` section.
+3. Tag the merged result `v<root version>`. That starts `release.yml`, and `version-tag-gate`
+   compares the tag with the root.
+
+## 8. When `semver-override` applies
 
 Only for gate 2, only when CI computed a higher level than the change is, and only when a maintainer
 agrees and applies it; every use stays visible on the PR. It does not cover a missing changeset

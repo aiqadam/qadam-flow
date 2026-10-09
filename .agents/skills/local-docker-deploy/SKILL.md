@@ -23,9 +23,15 @@ the API. Re-running it is idempotent.
 Build from local source instead of pulling:
 
 ```bash
-docker build --build-arg SKIP_SSL_VERIFY=true -t ghcr.io/aiqadam/qadam-flow:latest .
+docker build --build-arg SKIP_SSL_VERIFY=true \
+  --build-arg PLATFORM_VERSION="$(node tools/ci/compute-main-version.mjs --counter 0)" \
+  -t ghcr.io/aiqadam/qadam-flow:latest .
 docker compose up -d
 ```
+
+`PLATFORM_VERSION` makes the local image report a `main`-style prerelease (`<next>-main.0`, below
+every CI build of the same line) instead of the last release it is not (ADR-0001, #798). Leave it
+out and the image reports the root `package.json`, the last release.
 
 `docker-compose.yml` reads the image name from `$QADAM_FLOW_IMAGE`
 (default `ghcr.io/aiqadam/qadam-flow:latest`). Tag a local build with

@@ -67,8 +67,12 @@
 //   - the changesets pending at head (every `.changeset/*.md`, not only this PR's) take the platform
 //     from that version back to at least the version the base held, so no release number the tree
 //     already claimed is handed out again lower (2.0.0 -> 1.1.0 needs a pending platform `major`).
-// Once the root equals the newest tag there is nothing left to realign, so the rule cannot fire
-// twice; a tag that is missing locally (shallow clone) simply leaves the edit a failure.
+// Once the root equals the newest tag there is nothing left to realign. That holds only once a release
+// is TAGGED: between merging a release PR (root raised to X) and pushing `vX`, the newest tag is still
+// the previous release, and a PR could realign the root back to it — though only together with pending
+// platform changesets that re-reach X, and `version-tag-gate` would then fail the `vX` tag against the
+// root. So tag promptly after the release PR merges. A tag that is missing locally (shallow clone)
+// leaves the edit a failure.
 //
 // ---------------------------------------------------------------------------
 // A CHANGE TO `@aiqadam/shared` IS ALSO A CHANGE TO `qadams-framework`
@@ -118,7 +122,7 @@ const PLATFORM_DIR = 'packages/platform'
 const BREAKING_CHANGES_DOC = 'docs/install/configuration/breaking-changes.mdx'
 const RELEASE_BRANCH_PREFIX = 'changeset-release/'
 const REALIGNABLE_FILES = ['package.json', `${PLATFORM_DIR}/package.json`]
-const RELEASE_TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
+const RELEASE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 const CHANGESET_DIR = '.changeset'
 
 const main = () => {
@@ -423,7 +427,7 @@ const pendingLevel = ({ changesets, name }) => {
 
 // `X.Y.Z` (no prerelease, no build metadata) as numbers, or null.
 const parseReleaseVersion = ({ version }) => {
-  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(version ?? '')
+  const match = RELEASE_VERSION.exec(version ?? '')
   return match ? match.slice(1, 4).map(Number) : null
 }
 
@@ -460,7 +464,7 @@ const resolveRealignment = ({ range }) => {
   const deny = (reason) => ({ allowed: false, reason })
   const tags = (gitOrNull({ args: ['tag', '--merged', range.head, '--list', 'v*'] }) ?? '')
     .split('\n')
-    .filter((tag) => RELEASE_TAG.test(tag))
+    .filter((tag) => tag.startsWith('v') && parseReleaseVersion({ version: tag.slice(1) }) !== null)
     .sort((a, b) => compareReleaseVersions({ a: b.slice(1), b: a.slice(1) }))
   const tag = tags[0]
   if (tag === undefined) {

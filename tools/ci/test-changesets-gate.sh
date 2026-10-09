@@ -242,6 +242,15 @@ write "$d/docs/install/configuration/breaking-changes.mdx" $'## Unreleased\n\n2.
 commit_all "$d"
 expect 1 'a release tag not reachable from the head does not count -> FAIL' "$d" 'no vX.Y.Z release tag is reachable'
 
+d="$(new_repo realign-platform-split)"
+git -C "$d" tag v1.1.0 base
+set_platform "$d" 1.1.0
+write "$d/packages/platform/package.json" '{ "name": "@aiqadam/platform", "version": "1.2.0", "private": true }'
+changeset "$d" platform "$PLATFORM_MAJOR"
+write "$d/docs/install/configuration/breaking-changes.mdx" $'## Unreleased\n\n2.0.0.'
+commit_all "$d"
+expect 1 'the root realigns to the tag while the platform package gets another version -> FAIL' "$d" 'root package.json is 1.1.0 but packages/platform/package.json is 1.2.0'
+
 d="$(new_repo realign-platform-only)"
 git -C "$d" tag v1.1.0 base
 write "$d/packages/platform/package.json" '{ "name": "@aiqadam/platform", "version": "1.1.0", "private": true }'

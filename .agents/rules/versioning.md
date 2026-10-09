@@ -72,9 +72,10 @@ support table and gate 8, which fails a removal the table does not allow, landed
 
 A PR that changes a versioned package adds a `.changeset/*.md` naming each package, its level and
 one line on what changed. The release PR collects them, raises versions (dependents inside the repo
-included), writes changelogs and tags. Root `package.json` (and `@aiqadam/platform`) holds the last
-released version — `1.1.0` until the first release PR takes it to `2.0.0` with the pending platform
-`major` — and only the release PR moves it. Images built from `main` report `<next>-main.<n>`: the
+included) and writes changelogs; a maintainer then folds `## Unreleased` of `breaking-changes.mdx`
+into the new version's section and tags (the `versioning` skill, "Cutting a release"). Root
+`package.json` (and `@aiqadam/platform`) holds the last released version — `1.1.0` until the first
+release PR takes it to `2.0.0` with the pending platform `major` — and only the release PR moves it. Images built from `main` report `<next>-main.<n>`: the
 root raised by the pending platform changesets (at least a patch), with `<n>` the CI run number
 (`node tools/ci/compute-main-version.mjs --next` prints `<next>`, the release a change merged now
 ships in — e.g. a migration's `release`). How a `main` build versions *changed package* code
