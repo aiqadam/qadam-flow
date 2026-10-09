@@ -175,8 +175,10 @@ qadam, Store Entry): say "qadam version store".
   seeds) and read-only on every worker (#779 app-sec: a forked engine runs flow code as the worker
   user, `read` does not re-hash files, so a writable store would let one engine plant code every
   tenant runs). Nothing in the worker or engine writes the store; both use `qadamVersionStoreReader.open`.
-  The worker checks it (`cache/qadams/read-only-mount.ts`): from `/proc/self/mountinfo`, the mount holding
-  the store and every mount inside it must carry `ro`; otherwise the store is not used outside
+  The worker checks it (`cache/qadams/read-only-mount.ts`): it opens the store and takes the mount the kernel
+  actually reached from `mnt_id` in `/proc/self/fdinfo/<fd>` (so a writable mount stacked over the store or an
+  ancestor later is the one judged), and in `/proc/self/mountinfo` that mount and every mount below it (by
+  parent id) inside the store must carry `ro`; otherwise the store is not used outside
   `AP_ENVIRONMENT=dev` (warned there) and steps load the bundled builds. Not `access(W_OK)`: Linux
   (`do_faccessat`, fs/open.c) checks permission bits before it reports a read-only mount, so a non-root
   worker gets EACCES on a root-owned store whether or not the mount is `:ro`. Without a mount table only
