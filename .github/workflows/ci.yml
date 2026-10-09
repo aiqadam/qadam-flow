@@ -939,7 +939,15 @@ jobs:
   image:
     name: Docker Image (${{ matrix.platform }})
     needs: [changes, verify, platform-version]
-    if: needs.changes.outputs.docs_only != 'true'
+    # Status-aware on purpose (#831). A bare expression is wrapped in an implicit success(), which
+    # checks every upstream job, not just `needs:` — and `semver-override` (upstream via `verify` →
+    # `verify-run`) is skipped outside pull requests, so every push to main skipped this job.
+    if: >-
+      !cancelled()
+      && needs.changes.result == 'success'
+      && needs.verify.result == 'success'
+      && needs.platform-version.result == 'success'
+      && needs.changes.outputs.docs_only != 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     permissions:
@@ -1085,7 +1093,13 @@ jobs:
   image_publish:
     name: Publish multi-arch manifest
     needs: [image, platform-version]
-    if: github.event_name == 'push'
+    # Status-aware for the same reason as `image` (#831): the implicit success() would see the
+    # skipped `semver-override` upstream and skip the publish on every push to main.
+    if: >-
+      !cancelled()
+      && github.event_name == 'push'
+      && needs.image.result == 'success'
+      && needs.platform-version.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
