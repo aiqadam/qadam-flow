@@ -1,4 +1,4 @@
-import { isNil, isObject } from '@aiqadam/shared'
+import { isNil, isObject, tryCatch } from '@aiqadam/shared'
 import {
     DataSource,
     EntitySchema,
@@ -169,18 +169,20 @@ export async function openReadOnlyDatabaseConnection(): Promise<DataSource> {
     }
     const ds = createDataSource({ access: 'read-only' })
     setPersistedConnection(ds)
-    try {
+    const { error } = await tryCatch(async () => {
         await ds.initialize()
         await assertSessionIsReadOnly(ds)
+    })
+    if (isNil(error)) {
         return ds
     }
-    catch (error) {
-        if (ds.isInitialized) {
-            await ds.destroy()
-        }
-        setPersistedConnection(null)
-        throw error
+    // Whatever the teardown does, the refused connection never stays the process's connection,
+    // and the caller sees why it was refused, not a failure of the cleanup.
+    if (ds.isInitialized) {
+        await tryCatch(() => ds.destroy())
     }
+    setPersistedConnection(null)
+    throw error
 }
 
 // `replacement` puts back a connection a test set aside (the doctor's test swaps the shared one out).

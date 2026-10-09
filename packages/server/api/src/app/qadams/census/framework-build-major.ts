@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { isNil, tryCatch, tryCatchSync } from '@aiqadam/shared'
+import { isNil, isObject, tryCatch, tryCatchSync } from '@aiqadam/shared'
 import semver from 'semver'
 import { z } from 'zod'
 import { frameworkCensusPolicy } from './framework-census-policy'
@@ -14,13 +14,19 @@ export const frameworkBuildMajor = {
         if (isNil(directoryPath)) {
             return frameworkCensusPolicy.currentFrameworkMajor()
         }
-        // `has`, not a nil check: an unreadable build caches `null`, which is an answer too.
+        // `has`, not a nil check: a build with no or an unusable `package.json` caches `null`, which
+        // is an answer too.
         if (majorByBuild.has(directoryPath)) {
             return majorByBuild.get(directoryPath) ?? null
         }
-        const { data: content } = await tryCatch(() => readFile(path.join(directoryPath, 'package.json'), 'utf-8'))
+        const { data: content, error } = await tryCatch(() => readFile(path.join(directoryPath, 'package.json'), 'utf-8'))
         const major = frameworkBuildMajor.fromPackageJson({ content })
-        majorByBuild.set(directoryPath, major)
+        // Only an answer the build itself gave is cached: its content, or its missing file. Any other
+        // read error (EMFILE or EAGAIN under concurrency) is transient, and caching its `null` would
+        // make the build's major unknown until the process restarts.
+        if (isNil(error) || isMissingFile(error)) {
+            majorByBuild.set(directoryPath, major)
+        }
         return major
     },
 
@@ -46,6 +52,10 @@ export const frameworkBuildMajor = {
         const { data: minimum } = tryCatchSync(() => semver.minVersion(spec))
         return minimum?.major ?? null
     },
+}
+
+function isMissingFile(error: unknown): boolean {
+    return isObject(error) && error.code === 'ENOENT'
 }
 
 const FRAMEWORK_PACKAGE = '@aiqadam/qadams-framework'

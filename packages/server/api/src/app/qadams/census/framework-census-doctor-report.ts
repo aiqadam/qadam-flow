@@ -38,11 +38,20 @@ function platformLines({ platform }: { platform: InstanceFrameworkCensus['platfo
         ...(platform.unreadableVersions > 0
             ? [`  Flow versions that could not be read (their steps are in no count and may stop running): ${platform.unreadableVersions}`]
             : []),
-        ...(unsupported.length === 0
-            ? ['  Nothing stops running on this release.']
-            : ['  Steps that stop running on this release:', ...unsupported.map((step) => `    - ${formatStep({ step })}`)]),
+        ...unsupportedLines({ unsupported, unreadableVersions: platform.unreadableVersions }),
         '',
     ]
+}
+
+// "Nothing stops running" only when every flow version of the platform was read: an unreadable one
+// may hold steps that stop running (ADR-0002), so the all-clear is hedged then.
+function unsupportedLines({ unsupported, unreadableVersions }: { unsupported: FrameworkCensusStep[], unreadableVersions: number }): string[] {
+    if (unsupported.length > 0) {
+        return ['  Steps that stop running on this release:', ...unsupported.map((step) => `    - ${formatStep({ step })}`)]
+    }
+    return unreadableVersions === 0
+        ? ['  Nothing stops running on this release.']
+        : ['  No step the census could read stops running on this release; the unreadable flow versions above may hold some.']
 }
 
 function summaryLine({ census }: { census: InstanceFrameworkCensus }): string {

@@ -17,11 +17,12 @@ import { FastifyBaseLogger, FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { QueryFailedError } from 'typeorm'
 import { databaseConnection } from '../../../../src/app/database/database-connection'
-import { flowRepo } from '../../../../src/app/flows/flow/flow.repo'
 import { frameworkCensusCache } from '../../../../src/app/qadams/census/framework-census-cache'
+import { frameworkCensusMarking } from '../../../../src/app/qadams/census/framework-census-marking'
 import { frameworkCensusPolicy } from '../../../../src/app/qadams/census/framework-census-policy'
 import { frameworkCensusService } from '../../../../src/app/qadams/census/framework-census-service'
 import { QadamMetadataSchema } from '../../../../src/app/qadams/metadata/qadam-metadata-entity'
+import { qadamPinUtil } from '../../../../src/app/qadams/metadata/qadam-pin-util'
 import { generateMockToken } from '../../../helpers/auth'
 import { db } from '../../../helpers/db'
 import { withEngineContextVersions } from '../../../helpers/framework-census'
@@ -50,6 +51,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
     await teardownTestEnvironment()
+})
+
+// The endpoint's cache outlives a test; a cached census must not answer for the next one.
+afterEach(() => {
+    frameworkCensusCache.clear()
 })
 
 // ADR-0002's census (#803). The ticket's scenario is test 1: a step pinned to a context-V1 custom
@@ -401,6 +407,55 @@ describe('framework-major census (#803)', () => {
         })
     })
 
+    // #838 (the deviation from the ticket's nit): a pin some version answers is not `unresolved`,
+    // even when no row of the expected type records that version's context version. Its context is
+    // unknown, which ADR-0002 counts as still needing the old contract — and the MCP marking, which
+    // skips only `unresolved` pins, still marks it.
+    it('keeps a pin that resolves but has no context record official/custom with an unknown context, and marks it', async () => {
+        const ctx = await createTestContext(app!)
+        // Resolves through the registry (a platform row), but no official row records it.
+        await saveQadamRow({
+            name: '@aiqadam/qadam-census-stray',
+            version: '1.0.0',
+            platformId: ctx.platform.id,
+            qadamType: QadamType.CUSTOM,
+            contextVersion: ContextVersion.V2,
+        })
+        // Resolves through the registry (an official row), but no custom row records it.
+        await saveQadamRow({
+            name: 'census-official-typed',
+            version: '1.0.0',
+            platformId: null,
+            qadamType: QadamType.OFFICIAL,
+            contextVersion: ContextVersion.V2,
+        })
+        await saveFlowWithPinnedStep({ projectId: ctx.project.id, qadamName: '@aiqadam/qadam-census-stray', qadamVersion: '1.0.0' })
+        await saveFlowWithPinnedStep({ projectId: ctx.project.id, qadamName: 'census-official-typed', qadamVersion: '1.0.0' })
+
+        const census = await frameworkCensusService(mockLog).censusOfPlatform({ platformId: ctx.platform.id })
+
+        expect(census.summary).toMatchObject({ current: 0, legacy: 2, unsupported: 0 })
+        expect(census.steps.map((step) => ({ pin: step.pin, source: step.source, contextVersion: step.contextVersion })).sort((a, b) => a.pin.localeCompare(b.pin))).toEqual([
+            { pin: '@aiqadam/qadam-census-stray@1.0.0', source: 'official', contextVersion: null },
+            { pin: 'census-official-typed@1.0.0', source: 'custom', contextVersion: null },
+        ])
+
+        await withEngineContextVersions({
+            contextVersions: [LATEST_CONTEXT_VERSION],
+            run: async () => {
+                const qadamSteps = [
+                    ...qadamPinUtil.getQadamSteps({ trigger: pinnedTrigger({ qadamName: '@aiqadam/qadam-census-stray', qadamVersion: '1.0.0' }) }),
+                    ...qadamPinUtil.getQadamSteps({ trigger: pinnedTrigger({ qadamName: 'census-official-typed', qadamVersion: '1.0.0' }) }),
+                    ...qadamPinUtil.getQadamSteps({ trigger: pinnedTrigger({ qadamName: 'census-missing-custom', qadamVersion: '1.0.0' }) }),
+                ]
+                const marked = await frameworkCensusMarking(mockLog).unsupportedPins({ qadamSteps, platformId: ctx.platform.id })
+
+                // The two resolving pins are marked; the pin nothing answers is left to `qadam_version`.
+                expect([...marked.keys()].sort()).toEqual(['@aiqadam/qadam-census-stray@1.0.0', 'census-official-typed@1.0.0'])
+            },
+        })
+    })
+
     it('reports the engine\'s framework major and context versions in the instance census', async () => {
         const census = await frameworkCensusService(mockLog).censusOfInstance()
 
@@ -518,7 +573,16 @@ describe('framework-major census (#803)', () => {
                 contextVersion: ContextVersion.V1,
             })
             await saveFlowWithPinnedStep({ projectId: ctx.project.id, qadamName: 'census-v1-custom', qadamVersion: '1.0.0' })
-            const walks = vi.spyOn(flowRepo(), 'createQueryBuilder')
+            // Count walks at the cache's compute: each call of it is one census of the platform.
+            const ofPlatform = frameworkCensusCache.ofPlatform
+            let walks = 0
+            const spy = vi.spyOn(frameworkCensusCache, 'ofPlatform').mockImplementation(({ platformId, compute }) => ofPlatform({
+                platformId,
+                compute: () => {
+                    walks += 1
+                    return compute()
+                },
+            }))
             try {
                 await withEngineContextVersions({
                     contextVersions: [LATEST_CONTEXT_VERSION],
@@ -526,25 +590,24 @@ describe('framework-major census (#803)', () => {
                         const [first, second] = await Promise.all([ctx.get('/v1/framework-census'), ctx.get('/v1/framework-census')])
                         expect(first.json<FrameworkCensusResponse>().summary).toMatchObject({ unsupported: 1 })
                         expect(second.json<FrameworkCensusResponse>().summary).toMatchObject({ unsupported: 1 })
-                        // One walk of a one-batch platform reads flows twice: the batch, then the
-                        // empty page that ends it.
-                        expect(walks).toHaveBeenCalledTimes(2)
+                        expect(walks).toBe(1)
 
                         // A step added within the TTL is not seen yet: the census is a report, and
                         // a few minutes of staleness is the price of a bounded cost.
                         await saveFlowWithPinnedStep({ projectId: ctx.project.id, qadamName: 'census-v1-custom', qadamVersion: '1.0.0' })
                         const cached = (await ctx.get('/v1/framework-census')).json<FrameworkCensusResponse>()
                         expect(cached.summary).toMatchObject({ unsupported: 1 })
-                        expect(walks).toHaveBeenCalledTimes(2)
+                        expect(walks).toBe(1)
 
                         frameworkCensusCache.clear()
                         const fresh = (await ctx.get('/v1/framework-census')).json<FrameworkCensusResponse>()
                         expect(fresh.summary).toMatchObject({ unsupported: 2 })
+                        expect(walks).toBe(2)
                     },
                 })
             }
             finally {
-                walks.mockRestore()
+                spy.mockRestore()
             }
         })
 

@@ -100,8 +100,8 @@ function qadamPinInfo({ step, qadamResolutions, unsupportedPins }: { step: Step,
 }
 
 // The ticket's own wording (ADR-0002, #803). `ap_validate_flow`'s `framework_version` message and
-// the boot log line phrase it as a sentence of their own, but each ends in the same remedy: update
-// this step.
+// the boot log line phrase it as a sentence of their own, but each contains the same remedy:
+// update this step.
 const FRAMEWORK_VERSION_LABEL = 'FRAMEWORK VERSION NO LONGER SUPPORTED: update this step'
 
 function frameworkVersionWarning(step: StepInfo): string {

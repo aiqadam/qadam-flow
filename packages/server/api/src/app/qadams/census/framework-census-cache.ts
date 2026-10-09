@@ -10,17 +10,24 @@ import { PlatformFrameworkCensus } from './framework-census-service'
 export const FRAMEWORK_CENSUS_CACHE_TTL_MS = 5 * 60 * 1000
 
 export const singleFlightTtlCache = {
-    create<T>({ ttlMs, now = (): number => Date.now() }: { ttlMs: number, now?: () => number }): SingleFlightTtlCache<T> {
+    // `maxInFlightMs` bounds how long callers wait on one computation: a walk that hangs (a stuck
+    // connection) is replaced by a fresh one after it, instead of answering for its key until the
+    // process restarts.
+    create<T>({ ttlMs, maxInFlightMs = 2 * ttlMs, now = (): number => Date.now() }: {
+        ttlMs: number
+        maxInFlightMs?: number
+        now?: () => number
+    }): SingleFlightTtlCache<T> {
         const entries = new Map<string, CacheEntry<T>>()
         return {
             get({ key, compute }): Promise<T> {
-                pruneExpired({ entries, time: now() })
+                pruneStale({ entries, time: now(), maxInFlightMs })
                 const existing = entries.get(key)
                 if (!isNil(existing)) {
                     return existing.value
                 }
                 const value = compute()
-                const entry: CacheEntry<T> = { value, expiresAt: null }
+                const entry: CacheEntry<T> = { value, startedAt: now(), expiresAt: null }
                 entries.set(key, entry)
                 // The TTL starts when the value settles, so a slow walk is not stale the moment it
                 // lands. A failure is never cached: the next request tries again.
@@ -55,10 +62,14 @@ export const frameworkCensusCache = {
     },
 }
 
-// Expired entries go on every read, so a platform asked about once does not stay in memory.
-function pruneExpired<T>({ entries, time }: { entries: Map<string, CacheEntry<T>>, time: number }): void {
+// Expired entries go on every read, so a platform asked about once does not stay in memory; so do
+// computations in flight for longer than `maxInFlightMs`.
+function pruneStale<T>({ entries, time, maxInFlightMs }: { entries: Map<string, CacheEntry<T>>, time: number, maxInFlightMs: number }): void {
     for (const [key, entry] of entries) {
-        if (!isNil(entry.expiresAt) && entry.expiresAt <= time) {
+        const expired = isNil(entry.expiresAt)
+            ? entry.startedAt + maxInFlightMs <= time
+            : entry.expiresAt <= time
+        if (expired) {
             entries.delete(key)
         }
     }
@@ -75,6 +86,7 @@ export type SingleFlightTtlCache<T> = {
 
 type CacheEntry<T> = {
     value: Promise<T>
+    startedAt: number
     // `null` while the value is still being computed.
     expiresAt: number | null
 }

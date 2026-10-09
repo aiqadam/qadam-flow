@@ -67,6 +67,19 @@ describe('frameworkBuildMajor (#803)', () => {
             expect(await frameworkBuildMajor.ofBuild({ directoryPath })).toBeNull()
         })
 
+        // #838 review: only an answer the build gave is cached. A read that fails for another
+        // reason (EMFILE / EAGAIN under load; here EISDIR) is retried on the next census.
+        it('does not cache an unknown major caused by a read error other than a missing file', async () => {
+            const directoryPath = await buildDirectory({ root, name: 'transient-read-error', content: null })
+            await mkdir(path.join(directoryPath, 'package.json'))
+            expect(await frameworkBuildMajor.ofBuild({ directoryPath })).toBeNull()
+
+            await rm(path.join(directoryPath, 'package.json'), { recursive: true })
+            await writeFile(path.join(directoryPath, 'package.json'), packageJson({ dependencies: { '@aiqadam/qadams-framework': '^4.0.0' } }))
+
+            expect(await frameworkBuildMajor.ofBuild({ directoryPath })).toBe(4)
+        })
+
         it('treats a build with no directory as compiled in this tree', async () => {
             expect(await frameworkBuildMajor.ofBuild({ directoryPath: undefined })).toBe(frameworkCensusPolicy.currentFrameworkMajor())
         })
