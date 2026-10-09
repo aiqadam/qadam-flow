@@ -16,7 +16,7 @@
     "@dnd-kit/sortable": "8.0.0",
     "@dnd-kit/utilities": "3.2.2",
     "@hookform/resolvers": "5.2.2",
-    "@microlink/react-json-view": "1.31.39",
+    "@microlink/react-json-view": "1.31.40",
     "@radix-ui/react-accordion": "1.2.4",
     "@radix-ui/react-use-controllable-state": "1.2.2",
     "@segment/analytics-next": "1.84.3",
