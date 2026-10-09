@@ -301,7 +301,7 @@ async function loadActionProps({ settings, platformId, log }: {
         return undefined
     }
     try {
-        const qadam = await qadamMetadataService(log).getOrThrow({ platformId, name: qadamName, version: qadamVersion })
+        const qadam = await qadamMetadataService(log).getOrThrow({ platformId, name: qadamName, version: qadamVersion, fallbackToInstalledVersion: true })
         return qadam.actions[actionName]?.props
     }
     catch (err) {
@@ -320,7 +320,7 @@ async function diagnoseMissingInputs({ settings, platformId, log }: {
         return 'Missing actionName.'
     }
     try {
-        const qadam = await qadamMetadataService(log).getOrThrow({ platformId, name: qadamName, version: qadamVersion })
+        const qadam = await qadamMetadataService(log).getOrThrow({ platformId, name: qadamName, version: qadamVersion, fallbackToInstalledVersion: true })
         const action = qadam.actions[actionName]
         if (isNil(action)) {
             return `Action "${actionName}" not found in qadam "${qadamName}". Use ap_research_pieces with includeActions=true to get valid action names.`

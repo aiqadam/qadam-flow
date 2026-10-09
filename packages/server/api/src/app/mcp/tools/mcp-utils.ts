@@ -422,7 +422,7 @@ async function fillDefaultsForMissingOptionalProps({ settings, platformId, log }
         return
     }
     try {
-        const qadam = await qadamMetadataService(log).getOrThrow({ platformId, name: qadamName, version: qadamVersion })
+        const qadam = await qadamMetadataService(log).getOrThrow({ platformId, name: qadamName, version: qadamVersion, fallbackToInstalledVersion: true })
         const action = qadam.actions[actionName]
         if (isNil(action)) {
             return

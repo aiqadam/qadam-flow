@@ -127,6 +127,16 @@ describe('ap_update_step — emptied-required-prop guard', () => {
         expect(written.flowProps).toEqual({ payload: { key: 'farewell', lang: 'ru' } })
     })
 
+    it('asks for the installed version\'s props when the pinned version is not installed (#843)', async () => {
+        await updateStep({ executionMode: 'inline' })
+
+        expect(mockGetOrThrow).toHaveBeenCalledWith(expect.objectContaining({
+            name: '@aiqadam/qadam-subflows',
+            version: '0.4.14',
+            fallbackToInstalledVersion: true,
+        }))
+    })
+
     it('allows overwriting a required prop with a new value', async () => {
         const text = await updateStep({ executionMode: 'inline', flowProps: { payload: { key: 'other' } } })
 

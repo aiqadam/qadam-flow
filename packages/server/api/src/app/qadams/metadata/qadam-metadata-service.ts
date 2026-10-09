@@ -89,9 +89,18 @@ export const qadamMetadataService = (log: FastifyBaseLogger) => {
             const bestMatch = await findExactVersion(log, { name, version, platformId })
             return bestMatch?.version
         },
-        async getOrThrow({ version, name, platformId, locale }: GetOrThrowParams): Promise<QadamMetadataModel> {
+        async getOrThrow({ version, name, platformId, locale, fallbackToInstalledVersion }: GetOrThrowParams): Promise<QadamMetadataModel> {
             const qadam = await this.get({ version, name, platformId })
+                ?? (fallbackToInstalledVersion ? await this.getInstalledForPin({ name, version, platformId }) : undefined)
             if (isNil(qadam)) {
+                if (fallbackToInstalledVersion) {
+                    throw new QadamFlowError({
+                        code: ErrorCode.VALIDATION,
+                        params: {
+                            message: `qadam_not_installed qadamName=${name} pinnedVersion=${version ?? 'none'}: no version of this qadam is installed on this instance, so a step pinned to it cannot be edited. Install the qadam first, or delete the step and add it again.`,
+                        },
+                    })
+                }
                 throw new QadamFlowError({
                     code: ErrorCode.ENTITY_NOT_FOUND,
                     params: {
@@ -103,6 +112,18 @@ export const qadamMetadataService = (log: FastifyBaseLogger) => {
                 return qadam
             }
             return qadamTranslation.translatePiece<QadamMetadataModel>({ piece: qadam, locale, mutate: false })
+        },
+        // Editing-time lookup only, for a step whose pinned version is not installed (#843). The
+        // engine already runs such a step on the installed build; this lets the write path validate
+        // against that same build instead of refusing the edit. It reads, never moves, the pin, so
+        // it may answer with a version outside the pin's caret range — which is why it must not be
+        // used for anything that resolves a pin to execute or store it.
+        async getInstalledForPin({ name, version, platformId }: GetInstalledForPinParams): Promise<QadamMetadataModel | undefined> {
+            const installed = await this.get({ name, platformId })
+            if (!isNil(installed) && installed.version !== version) {
+                log.warn({ name, pinnedVersion: version, installedVersion: installed.version }, '[qadamMetadataService] pinned qadam version unavailable, edit validated against the installed version; the pin is unchanged')
+            }
+            return installed
         },
         async updateUsage({ id, usage }: UpdateUsage): Promise<void> {
             const existingMetadata = await qadamRepos().findOneByOrFail({
@@ -564,6 +585,14 @@ type GetOrThrowParams = {
     projectId?: string
     platformId?: string
     locale?: LocalesEnum
+    // Only `getOrThrow` reads it. See `getInstalledForPin`.
+    fallbackToInstalledVersion?: boolean
+}
+
+type GetInstalledForPinParams = {
+    name: string
+    version?: string
+    platformId?: string
 }
 
 type ResolveVersionParams = {

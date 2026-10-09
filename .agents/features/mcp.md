@@ -85,7 +85,13 @@ Exposes a Qadam Flow project as a Model Context Protocol (MCP) server so that AI
   step-level run-log opt-outs, #505). `ap_update_step` carries the stored `skip`, `logInput` and
   `logOutput` forward when the call omits them — `_updateAction` in shared copies all three straight
   from the request, so a field the tool left out was a reset, not a no-op (the pre-#505 tool
-  silently un-redacted and un-skipped every step it touched).
+  silently un-redacted and un-skipped every step it touched). Since #843 an edit to a PIECE step
+  whose pinned qadam version is not installed (outside what `qadamMetadataService.get()` resolves,
+  e.g. a `0.x` minor behind the image's build) validates against the INSTALLED version's metadata
+  — `getOrThrow({ fallbackToInstalledVersion: true })`, used by `flowVersionValidationUtil` and the
+  tools' own prop lookups — and leaves the pin as it was; the pin is never moved here (that is the
+  #808 fallback, ADR-0003). If no version of the qadam is installed the write is refused with
+  `qadam_not_installed ...` (a `VALIDATION` error) instead of `qadam_metadata_not_found`.
 - `ap_add_branch`, `ap_update_branch`, `ap_delete_branch` — conditional branching
 - `ap_lock_and_publish` — publish flow version
 - `ap_change_flow_status` — enable/disable flow

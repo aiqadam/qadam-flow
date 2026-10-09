@@ -182,6 +182,7 @@ async function validateAction({ settings, platformId, log }: ValidateActionParam
         platformId,
         name: settings.qadamName,
         version: settings.qadamVersion,
+        fallbackToInstalledVersion: true,
     })
 
     if (isNil(piece)) {
@@ -212,6 +213,7 @@ async function validateTrigger({ settings, platformId, log }: ValidateTriggerPar
         platformId,
         name: settings.qadamName,
         version: settings.qadamVersion,
+        fallbackToInstalledVersion: true,
     })
     if (isNil(piece)) {
         return { valid: false, undeclaredKeys: [] }
