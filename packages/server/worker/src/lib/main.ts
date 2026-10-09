@@ -4,8 +4,6 @@ import { getApiUrl, getSocketUrl, system, WorkerSystemProp } from './config/conf
 import { logger } from './config/logger'
 import { worker } from './worker'
 
-const workerToken = system.getOrThrow(WorkerSystemProp.WORKER_TOKEN)
-
 /** Room for what `stop()` does after the drain: sandbox, socket and egress teardown. */
 const FORCED_EXIT_MARGIN_MS = 15_000
 
@@ -13,6 +11,7 @@ const FORCED_EXIT_MARGIN_MS = 15_000
 // module scope can be neither awaited nor cancelled, so a test that imported this module leaked
 // one in-flight start into the next test (#823).
 export async function main(): Promise<void> {
+    const workerToken = system.getOrThrow(WorkerSystemProp.WORKER_TOKEN)
     const containerType = system.getContainerType()
 
     // Fire-and-forget: a stale-cache cleanup failure must never block a worker from
