@@ -131,18 +131,46 @@ describe('ap_update_step — emptied-required-prop guard', () => {
     })
 
     describe('a step pinned to a version this instance does not have (#843)', () => {
+        // A `values`-like DYNAMIC prop, as `qadam-tables`' update_record / upsert_records declare it.
+        const INSTALLED_PROPS = {
+            table: { type: PropertyType.DROPDOWN, required: true, displayName: 'Table' },
+            values: { type: PropertyType.DYNAMIC, required: true, displayName: 'Values' },
+            tags: { type: PropertyType.ARRAY, required: false, displayName: 'Tags' },
+        }
+        const STORED_RECORD_INPUT = { table: 'people', values: { name: 'Ada', age: '36' } }
+
         beforeEach(() => {
             mockGet.mockResolvedValue(undefined)
-            mockGetOrThrow.mockRejectedValue(new Error('qadam_metadata_not_found'))
+            mockGetOnePopulated.mockResolvedValue(flowWithCallFlowStep(STORED_RECORD_INPUT))
+            // Mirrors the real service: the pin does not resolve, the installed version does, and only
+            // a caller that opts in to the fallback sees it.
+            mockGetOrThrow.mockImplementation(({ fallbackToInstalledVersion }: { fallbackToInstalledVersion?: boolean }) => fallbackToInstalledVersion
+                ? Promise.resolve({ auth: undefined, actions: { callFlow: { props: INSTALLED_PROPS, requireAuth: false } } })
+                : Promise.reject(new Error('qadam_metadata_not_found')))
         })
 
-        it('writes the edit without borrowing the installed version\'s props, defaults or required-prop guard', async () => {
-            const text = await updateStep({ executionMode: 'inline' })
+        it('keeps the stored sub-fields of a DYNAMIC prop on a partial update', async () => {
+            const text = await updateStep({ values: { age: '37' } })
 
             expect(text).toContain('Successfully updated')
             const written = mockUpdate.mock.calls[0][0].operation.request.settings.input
-            expect(written).toEqual({ ...STORED_INPUT, executionMode: 'inline' })
-            expect(mockGetOrThrow).not.toHaveBeenCalledWith(expect.objectContaining({ fallbackToInstalledVersion: true }))
+            expect(written.values).toEqual({ name: 'Ada', age: '37' })
+        })
+
+        it('refuses an update that would empty a required sub-field, and writes nothing', async () => {
+            const text = await updateStep({ values: { name: '' } })
+
+            expect(text).toContain('would clear required input')
+            expect(text).toContain('values.name')
+            expect(mockUpdate).not.toHaveBeenCalled()
+        })
+
+        it('does not write the installed version\'s optional-prop defaults into the step', async () => {
+            await updateStep({ table: 'places' })
+
+            const written = mockUpdate.mock.calls[0][0].operation.request.settings.input
+            expect(written).toEqual({ table: 'places', values: { name: 'Ada', age: '36' } })
+            expect(mockGetOrThrow.mock.calls.some(([params]) => params.fallbackToInstalledVersion !== true)).toBe(true)
         })
 
         it('tells the agent the step is still pinned to a version nothing can resolve', async () => {

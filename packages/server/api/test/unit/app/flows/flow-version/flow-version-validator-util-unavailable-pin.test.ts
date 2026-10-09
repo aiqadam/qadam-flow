@@ -51,14 +51,15 @@ const warnSpy = vi.spyOn(log, 'warn')
 const QADAM_NAME = '@aiqadam/qadam-fixture'
 // 0.3.1 is outside `^0.5.x`, so `qadamMetadataService.get()` (which never crosses a 0.x minor)
 // answers nothing for it even though 0.5.1 is installed — the state #843 reports.
+const OTHER_QADAM_NAME = '@aiqadam/qadam-other'
 const UNAVAILABLE_PIN = '0.3.1'
 const INSTALLED_VERSION = '0.5.1'
 const PLATFORM_ID = 'platform-1'
 
-function installedQadam({ version, requiredProp }: { version: string, requiredProp: string }) {
+function installedQadam({ version, requiredProp, name = QADAM_NAME }: { version: string, requiredProp: string, name?: string }) {
     const parsed = QadamMetadataModel.parse({
-        name: QADAM_NAME,
-        displayName: QADAM_NAME,
+        name,
+        displayName: name,
         logoUrl: '',
         description: '',
         authors: [],
@@ -128,8 +129,9 @@ function storedFlowVersion({ qadamVersion, actionLacksVersion = false }: { qadam
     return createMockFlowVersion({ trigger })
 }
 
-function updateActionRequest({ qadamVersion, input, displayName, stepName = 'step_1' }: {
+function updateActionRequest({ qadamVersion, input, displayName, stepName = 'step_1', qadamName = QADAM_NAME }: {
     qadamVersion: string
+    qadamName?: string
     input: Record<string, unknown>
     displayName: string
     stepName?: string
@@ -142,7 +144,7 @@ function updateActionRequest({ qadamVersion, input, displayName, stepName = 'ste
             displayName,
             valid: true,
             settings: {
-                qadamName: QADAM_NAME,
+                qadamName,
                 qadamVersion,
                 actionName: 'do_thing',
                 input,
@@ -179,7 +181,7 @@ function addActionRequest({ qadamVersion }: { qadamVersion: string }): FlowOpera
     })
 }
 
-function updateTriggerRequest({ qadamVersion }: { qadamVersion: string }): FlowOperationRequest {
+function updateTriggerRequest({ qadamVersion, qadamName = QADAM_NAME }: { qadamVersion: string, qadamName?: string }): FlowOperationRequest {
     return FlowOperationRequest.parse({
         type: FlowOperationType.UPDATE_TRIGGER,
         request: {
@@ -189,7 +191,7 @@ function updateTriggerRequest({ qadamVersion }: { qadamVersion: string }): FlowO
             valid: true,
             lastUpdatedDate: '2026-10-01T00:00:00.000Z',
             settings: {
-                qadamName: QADAM_NAME,
+                qadamName,
                 qadamVersion,
                 triggerName: 'on_thing',
                 input: { subject: 'hello' },
@@ -367,6 +369,20 @@ describe('flowVersionValidationUtil.prepareRequest — step pinned to an unavail
             expect(error?.error.code).toBe(ErrorCode.ENTITY_NOT_FOUND)
         })
 
+        it('refuses an UPDATE_ACTION that switches the step to a different qadam at the same unavailable version', async () => {
+            loadBundledQadams.mockResolvedValue([
+                installedQadam({ version: INSTALLED_VERSION, requiredProp: 'subject' }),
+                installedQadam({ version: INSTALLED_VERSION, requiredProp: 'subject', name: OTHER_QADAM_NAME }),
+            ])
+
+            const error = await captureError(() => prepare({
+                storedVersion: UNAVAILABLE_PIN,
+                request: updateActionRequest({ qadamVersion: UNAVAILABLE_PIN, displayName: 'Step', input: { subject: 'hello' }, qadamName: OTHER_QADAM_NAME }),
+            }))
+
+            expect(error?.error.code).toBe(ErrorCode.ENTITY_NOT_FOUND)
+        })
+
         it('refuses an UPDATE_ACTION that names the trigger, even with the trigger\'s own pin', async () => {
             const error = await captureError(() => prepare({
                 storedVersion: UNAVAILABLE_PIN,
@@ -412,6 +428,20 @@ describe('flowVersionValidationUtil.prepareRequest — step pinned to an unavail
 
             expect(trigger.valid).toBe(true)
             expect(trigger.qadamVersion).toBe(UNAVAILABLE_PIN)
+        })
+
+        it('refuses an edit that switches the trigger to a different qadam at the same unavailable version', async () => {
+            loadBundledQadams.mockResolvedValue([
+                installedQadam({ version: INSTALLED_VERSION, requiredProp: 'subject' }),
+                installedQadam({ version: INSTALLED_VERSION, requiredProp: 'subject', name: OTHER_QADAM_NAME }),
+            ])
+
+            const error = await captureError(() => prepare({
+                storedVersion: UNAVAILABLE_PIN,
+                request: updateTriggerRequest({ qadamVersion: UNAVAILABLE_PIN, qadamName: OTHER_QADAM_NAME }),
+            }))
+
+            expect(error?.error.code).toBe(ErrorCode.ENTITY_NOT_FOUND)
         })
 
         it('refuses an edit that repoints the trigger to a version that is not installed', async () => {

@@ -93,9 +93,13 @@ Exposes a Qadam Flow project as a Model Context Protocol (MCP) server so that AI
   image's build), is validated against the INSTALLED version's metadata
   (`getOrThrow({ fallbackToInstalledVersion: true })`) instead of failing with
   `qadam_metadata_not_found`. `ADD_ACTION` and any operation that sets a different pin stay strict.
-  The pin is never moved. The edit does not borrow the installed version's props for
-  `ap_update_step`'s dynamic-prop merge, emptied-required-prop guard or optional-prop defaults, and
-  a success on such a step carries the `qadamPinIssue` warning. This does NOT make the step run: on a
+  The pin is never moved. The step's stored KIND and qadam NAME must match the operation too.
+  `ap_update_step` borrows the installed version's prop TYPES for its dynamic-prop deep merge and
+  emptied-required-prop guard (`loadActionProps`), which can only make it keep more and refuse
+  more; without them a partial edit of a DYNAMIC prop such as `qadam-tables`' `values` would replace
+  it and drop the stored sub-fields. It never writes the installed version's optional-prop defaults
+  (`fillDefaultsForMissingOptionalProps` stays strict). Both the success reply and the "updated but
+  still invalid" reply carry the `qadamPinIssue` warning. This does NOT make the step run: on a
   worker whose `pieces-metadata` cache has no entry for the pin, provisioning asks the API for the
   pin, gets nothing, and the run fails (`PieceNotFoundError`). If no version of the qadam is
   installed, the write is refused with `qadam_not_installed ...` (a `VALIDATION` error).

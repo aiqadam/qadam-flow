@@ -322,7 +322,13 @@ async function loadActionProps({ settings, platformId, log }: {
         return undefined
     }
     try {
-        const qadam = await qadamMetadataService(log).getOrThrow({ platformId, name: qadamName, version: qadamVersion })
+        // Without props the dynamic-prop deep merge and the emptied-required guard are both off, so a
+        // partial edit of a DYNAMIC prop would replace it wholesale and drop its stored sub-fields.
+        // For a pin that is not installed (#843, STOPGAP until #808) the installed version's prop TYPES
+        // are borrowed for exactly those two checks: that can only make the merge keep more and the
+        // guard refuse more. Its defaults are never written (`fillDefaultsForMissingOptionalProps`
+        // stays strict).
+        const qadam = await qadamMetadataService(log).getOrThrow({ platformId, name: qadamName, version: qadamVersion, fallbackToInstalledVersion: true })
         return qadam.actions[actionName]?.props
     }
     catch (err) {
