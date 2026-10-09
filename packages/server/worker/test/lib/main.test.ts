@@ -1,11 +1,14 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { main } from '../../src/lib/main'
 
-const mockDeleteStaleCache = vi.fn().mockResolvedValue(undefined)
-const mockWorkerStart = vi.fn().mockResolvedValue(undefined)
-const mockWorkerStop = vi.fn().mockResolvedValue(undefined)
+const { mockDeleteStaleCache, mockWorkerStart, mockWorkerStop } = vi.hoisted(() => ({
+    mockDeleteStaleCache: vi.fn(),
+    mockWorkerStart: vi.fn(),
+    mockWorkerStop: vi.fn(),
+}))
 
 vi.mock('../../src/lib/cache/cache-paths', () => ({
-    deleteStaleCache: (...args: unknown[]) => mockDeleteStaleCache(...args),
+    deleteStaleCache: mockDeleteStaleCache,
 }))
 
 vi.mock('../../src/lib/config/configs', () => ({
@@ -35,27 +38,40 @@ vi.mock('../../src/lib/config/logger', () => ({
 
 vi.mock('../../src/lib/worker', () => ({
     worker: {
-        start: (...args: unknown[]) => mockWorkerStart(...args),
-        stop: (...args: unknown[]) => mockWorkerStop(...args),
+        start: mockWorkerStart,
+        stop: mockWorkerStop,
     },
 }))
 
-afterEach(() => {
-    vi.resetModules()
+// main() needs only `eventLoopMonitor` from here. The real barrel pulls in all of server-utils and
+// shared, and would leave a live event-loop histogram running after every test.
+vi.mock('@aiqadam/server-utils', () => ({
+    eventLoopMonitor: {
+        start: vi.fn().mockReturnValue({ stop: vi.fn() }),
+    },
+}))
+
+beforeEach(() => {
     vi.clearAllMocks()
+    mockDeleteStaleCache.mockResolvedValue(undefined)
+    mockWorkerStart.mockResolvedValue(undefined)
+    mockWorkerStop.mockResolvedValue(undefined)
+})
+
+afterEach(() => {
     process.removeAllListeners('SIGINT')
     process.removeAllListeners('SIGTERM')
 })
 
 describe('worker main', () => {
     it('kicks off stale cache eviction on startup without blocking job polling', async () => {
-        await import('../../src/lib/main')
+        // An eviction that never settles: if main() awaited it, this test would hang instead of
+        // reaching worker.start().
+        mockDeleteStaleCache.mockReturnValue(new Promise<never>(() => undefined))
 
-        // main() is fired at module scope and not awaited by the import itself;
-        // flush the microtask queue so its body has run.
-        await vi.waitFor(() => {
-            expect(mockDeleteStaleCache).toHaveBeenCalledTimes(1)
-        })
+        await main()
+
+        expect(mockDeleteStaleCache).toHaveBeenCalledTimes(1)
         expect(mockWorkerStart).toHaveBeenCalledTimes(1)
     })
 
@@ -63,11 +79,9 @@ describe('worker main', () => {
     // Asserting the argument is what makes that meaningful: without it, inverting the
     // `containerType === 'WORKER'` test in main.ts turns nothing red.
     it('starts the health server for a WORKER container', async () => {
-        await import('../../src/lib/main')
+        await main()
 
-        await vi.waitFor(() => {
-            expect(mockWorkerStart).toHaveBeenCalledTimes(1)
-        })
+        expect(mockWorkerStart).toHaveBeenCalledTimes(1)
         expect(mockWorkerStart).toHaveBeenCalledWith(expect.objectContaining({ withHealthServer: true }))
     })
 })

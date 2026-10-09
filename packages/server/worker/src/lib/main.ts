@@ -9,7 +9,10 @@ const workerToken = system.getOrThrow(WorkerSystemProp.WORKER_TOKEN)
 /** Room for what `stop()` does after the drain: sandbox, socket and egress teardown. */
 const FORCED_EXIT_MARGIN_MS = 15_000
 
-async function main(): Promise<void> {
+// Exported rather than invoked here: `src/index.ts` is the entry point that runs it. A call at
+// module scope can be neither awaited nor cancelled, so a test that imported this module leaked
+// one in-flight start into the next test (#823).
+export async function main(): Promise<void> {
     const containerType = system.getContainerType()
 
     // Fire-and-forget: a stale-cache cleanup failure must never block a worker from
@@ -35,9 +38,3 @@ async function main(): Promise<void> {
     process.on('SIGINT', () => void shutdown())
     process.on('SIGTERM', () => void shutdown())
 }
-
-main().catch((err) => {
-    logger.error({ error: err }, 'Worker crashed')
-    process.exit(1)
-})
-
