@@ -103,7 +103,7 @@
     "react-use": "17.6.1",
     "recharts": "3.10.1",
     "remark-breaks": "4.0.0",
-    "remark-gfm": "4.0.0",
+    "remark-gfm": "4.0.1",
     "semver": "7.6.0",
     "shiki": "4.0.2",
     "socket.io-client": "4.8.4",
