@@ -1,4 +1,5 @@
 import { isNil } from '@aiqadam/shared'
+import { system } from '../../helper/system/system'
 import { frameworkCensusPolicy } from './framework-census-policy'
 import { PlatformFrameworkCensus } from './framework-census-service'
 
@@ -10,34 +11,44 @@ import { PlatformFrameworkCensus } from './framework-census-service'
 export const FRAMEWORK_CENSUS_CACHE_TTL_MS = 5 * 60 * 1000
 
 export const singleFlightTtlCache = {
-    // `maxInFlightMs` bounds how long callers wait on one computation: a walk that hangs (a stuck
-    // connection) is replaced by a fresh one after it, instead of answering for its key until the
-    // process restarts.
-    create<T>({ ttlMs, maxInFlightMs = 2 * ttlMs, now = (): number => Date.now() }: {
+    // `maxInFlightMs` bounds how long anyone waits on one computation. At the bound, every caller
+    // sharing it — including those that joined late — is released with an error, the entry is
+    // evicted and `onAbandon` is told once; the next caller starts a fresh computation. The
+    // abandoned one cannot be cancelled and keeps running until it settles; its late result,
+    // success or failure, is ignored.
+    create<T>({ ttlMs, maxInFlightMs = 2 * ttlMs, onAbandon }: {
         ttlMs: number
         maxInFlightMs?: number
-        now?: () => number
+        onAbandon?: (params: { key: string, maxInFlightMs: number }) => void
     }): SingleFlightTtlCache<T> {
         const entries = new Map<string, CacheEntry<T>>()
         return {
             get({ key, compute }): Promise<T> {
-                pruneStale({ entries, time: now(), maxInFlightMs })
+                pruneExpired({ entries, time: Date.now() })
                 const existing = entries.get(key)
                 if (!isNil(existing)) {
                     return existing.value
                 }
-                const value = compute()
-                const entry: CacheEntry<T> = { value, startedAt: now(), expiresAt: null }
+                const abandoned = new Error(`Abandoned after ${maxInFlightMs} ms in flight`)
+                const deadline = rejectAfter({ ms: maxInFlightMs, error: abandoned })
+                const value = Promise.race([compute(), deadline.promise])
+                const entry: CacheEntry<T> = { value, expiresAt: null }
                 entries.set(key, entry)
                 // The TTL starts when the value settles, so a slow walk is not stale the moment it
-                // lands. A failure is never cached: the next request tries again.
+                // lands. A failure is never cached: the next request tries again. Both handlers
+                // touch only their own entry, so a late settle never displaces a newer one.
                 value.then(
                     () => {
-                        entry.expiresAt = now() + ttlMs
+                        deadline.cancel()
+                        entry.expiresAt = Date.now() + ttlMs
                     },
-                    () => {
+                    (error: unknown) => {
+                        deadline.cancel()
                         if (entries.get(key) === entry) {
                             entries.delete(key)
+                        }
+                        if (error === abandoned) {
+                            onAbandon?.({ key, maxInFlightMs })
                         }
                     },
                 )
@@ -62,31 +73,42 @@ export const frameworkCensusCache = {
     },
 }
 
-// Expired entries go on every read, so a platform asked about once does not stay in memory; so do
-// computations in flight for longer than `maxInFlightMs`.
-function pruneStale<T>({ entries, time, maxInFlightMs }: { entries: Map<string, CacheEntry<T>>, time: number, maxInFlightMs: number }): void {
+// Expired entries go on every read, so a platform asked about once does not stay in memory.
+function pruneExpired<T>({ entries, time }: { entries: Map<string, CacheEntry<T>>, time: number }): void {
     for (const [key, entry] of entries) {
-        const expired = isNil(entry.expiresAt)
-            ? entry.startedAt + maxInFlightMs <= time
-            : entry.expiresAt <= time
-        if (expired) {
+        if (!isNil(entry.expiresAt) && entry.expiresAt <= time) {
             entries.delete(key)
         }
     }
 }
 
-const platformCensuses = singleFlightTtlCache.create<PlatformFrameworkCensus>({ ttlMs: FRAMEWORK_CENSUS_CACHE_TTL_MS })
+// The timer is unref'd so a pending deadline never holds the process open, and cancelled as soon as
+// the computation settles.
+function rejectAfter({ ms, error }: { ms: number, error: Error }): { promise: Promise<never>, cancel: () => void } {
+    let timer: NodeJS.Timeout | undefined
+    const promise = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(error), ms)
+        timer.unref()
+    })
+    return { promise, cancel: () => clearTimeout(timer) }
+}
+
+const platformCensuses = singleFlightTtlCache.create<PlatformFrameworkCensus>({
+    ttlMs: FRAMEWORK_CENSUS_CACHE_TTL_MS,
+    onAbandon: ({ key, maxInFlightMs }) => {
+        system.globalLogger().warn({ key, maxInFlightMs }, '[frameworkCensusCache] A platform census was still running at the bound; its waiters were released with an error and the next request starts a new census')
+    },
+})
 
 export type SingleFlightTtlCache<T> = {
     // The cached value for `key` while it is fresh or still being computed; otherwise `compute()`,
-    // shared with every caller that asks for `key` until it settles.
+    // shared with every caller that asks for `key` until it settles or reaches `maxInFlightMs`.
     get(params: { key: string, compute: () => Promise<T> }): Promise<T>
     clear(): void
 }
 
 type CacheEntry<T> = {
     value: Promise<T>
-    startedAt: number
     // `null` while the value is still being computed.
     expiresAt: number | null
 }

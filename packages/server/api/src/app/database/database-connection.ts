@@ -179,7 +179,10 @@ export async function openReadOnlyDatabaseConnection(): Promise<DataSource> {
     // Whatever the teardown does, the refused connection never stays the process's connection,
     // and the caller sees why it was refused, not a failure of the cleanup.
     if (ds.isInitialized) {
-        await tryCatch(() => ds.destroy())
+        const { error: destroyError } = await tryCatch(() => ds.destroy())
+        if (!isNil(destroyError)) {
+            system.globalLogger().warn({ error: destroyError }, '[openReadOnlyDatabaseConnection] Closing the refused read-only connection failed')
+        }
     }
     setPersistedConnection(null)
     throw error
