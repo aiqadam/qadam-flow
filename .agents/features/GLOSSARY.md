@@ -128,6 +128,7 @@
 | Term | Definition (one sentence) | Aliases to avoid | Related terms |
 |---|---|---|---|
 | Context version | What a qadam reports through `getContextInfo()`: `'1'` or `'2'` (a `ContextVersion`), `'none'` (predates `getContextInfo`), or unknown. | context info, contract version | Framework major, Framework census |
+| Qadam version catalogue | ADR-0003's static JSON (`flow.aiqadam.org/catalog/v1/`) listing every released official qadam version with its artifact integrity and its own `metadata.json`; appended by releases, never rewritten (#778). Not read at run time yet. | catalogue (alone: collides with the builder's list of qadams), registry | Qadam version store |
 | Framework census | The instance-local, offline list of steps whose pinned qadam needs a framework context version this release no longer runs (ADR-0002, #803). | doctor report, retirement scan | Context version, Retired context version, Framework support table |
 | Framework major | A major version of `@aiqadam/qadams-framework`; since 1.0.0 a new engine ↔ qadam context version is one (ADR-0002). | SDK major | Context version, Framework support table |
 | Framework support table | The repository file (`packages/qadams/framework/src/lib/context/framework-support-table.json`) recording, per framework major, its context versions and release dates; gate 8 enforces it. | support matrix | Framework major, Retired context version |

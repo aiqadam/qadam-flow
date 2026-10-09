@@ -1,0 +1,73 @@
+---
+title: "Qadam version catalogue"
+description: "The static JSON list of every released official qadam version, with integrity, and how to mirror it"
+icon: "book-open"
+---
+
+The qadam version catalogue is a set of static JSON files that describe every released version of every official qadam: the integrity of the artifact that was released, and that version's metadata (its actions, triggers and props). [ADR-0003](https://github.com/aiqadam/qadam-flow/blob/main/adr/0003-official-qadams-run-from-a-versioned-local-store.md) uses it so that your server knows about qadam versions its image does not ship. For example, it can show and validate a flow step pinned to an older version, or decide whether a pinned version that cannot be fetched may move to a compatible one.
+
+<Warning>
+Nothing reads the catalogue yet, and nothing is published at the default address yet. Your server resolves qadams exactly as [Qadam syncing & versioning](/install/architecture/qadam-syncing) describes. The server starts reading the catalogue when fetching missing versions ([#806](https://github.com/aiqadam/qadam-flow/issues/806)), the slim image ([#807](https://github.com/aiqadam/qadam-flow/issues/807)) and the unavailable-version fallback ([#808](https://github.com/aiqadam/qadam-flow/issues/808)) ship. This page describes the format and where it will be published, so you can plan a mirror.
+</Warning>
+
+## Where it is published
+
+The catalogue is published on GitHub Pages at `https://flow.aiqadam.org/catalog/v1/`. Every release appends the versions it releases, and nothing is ever removed or changed. A version is never republished, so an entry stays valid for good.
+
+The slim image will carry a snapshot of the catalogue taken when the image was built. A server that cannot reach the published catalogue still knows every version up to its own release.
+
+## What it contains
+
+```text
+catalog/v1/
+├── index.json
+└── qadams/
+    └── @aiqadam/
+        └── qadam-csv/
+            └── 0.6.0/
+                └── metadata.json
+```
+
+- **`index.json`** lists every qadam and its versions. For each version it records:
+  - the artifact's format and its `sha512` integrity and size;
+  - the `sha512` integrity and size of its `metadata.json`;
+  - the range of Qadam Flow releases it supports;
+  - the commit it was built from.
+- **`qadams/<name>/<version>/metadata.json`** is the `metadata.json` from inside that version's released artifact, byte for byte.
+
+```json index.json (one version)
+{
+  "schemaVersion": 1,
+  "qadams": {
+    "@aiqadam/qadam-csv": {
+      "versions": {
+        "0.6.0": {
+          "artifact": { "format": "bundle", "kind": "bundle", "integrity": "sha512-pzvj…76g==", "size": 411103 },
+          "metadata": { "integrity": "sha512-…", "size": 4713 },
+          "minimumSupportedRelease": "0.82.0",
+          "commit": "627eda536f3a7fcdbb3153555427273ef160793f"
+        }
+      }
+    }
+  }
+}
+```
+
+The server checks every `metadata.json` it reads against the integrity in `index.json`, and refuses one that does not match or that names another qadam or version. Official qadam tarballs keep their own protection: the server checks their npm signature when it fetches them, whichever catalogue it read.
+
+## Compatibility between releases
+
+The `v1` in the address is the format's major version. Within `v1` the format only grows: a later release may add a field or a new value, and an older server ignores a field it does not know and skips an entry it cannot read. A change that an older server would misread gets a new address, `catalog/v2/`, and `catalog/v1/` stays published for the releases that read it.
+
+## Mirroring the catalogue
+
+The catalogue is a plain directory of files, so any static file server can mirror it. Copy the whole `catalog/v1/` tree, `index.json` and `qadams/` together, and keep copying it as releases append to it. The address the server reads will be configurable when the server starts reading the catalogue.
+
+<Note>
+The server reads the catalogue through the same outbound-request filter as every other configured URL. A mirror on a private or loopback address needs that address in `AP_SSRF_ALLOW_LIST`. See [Network security](/install/architecture/network-security).
+</Note>
+
+## Related
+
+- [Qadam syncing & versioning](/install/architecture/qadam-syncing): how the server resolves qadam versions today.
+- [ADR-0003](https://github.com/aiqadam/qadam-flow/blob/main/adr/0003-official-qadams-run-from-a-versioned-local-store.md): the decision this implements.
