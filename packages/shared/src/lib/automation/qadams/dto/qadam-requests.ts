@@ -7,10 +7,17 @@ import { PackageType, QadamCategory } from '../qadam'
 export const EXACT_VERSION_PATTERN = '^[0-9]+\\.[0-9]+\\.[0-9]+$'
 export const EXACT_VERSION_REGEX = new RegExp(EXACT_VERSION_PATTERN)
 const VERSION_PATTERN = '^([~^])?[0-9]+\\.[0-9]+\\.[0-9]+$'
+// A semver prerelease identifier: a number without a leading zero, or alphanumerics and hyphens.
+const PRERELEASE_IDENTIFIER = '(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+// The platform version as `apVersionUtil.getCurrentRelease()` reports it: a release, or a prerelease
+// such as `2.1.0-main.5` on images built from `main` (ADR-0001, #798). Never build metadata.
+const PLATFORM_RELEASE_PATTERN = `^[0-9]+\\.[0-9]+\\.[0-9]+(-${PRERELEASE_IDENTIFIER}(\\.${PRERELEASE_IDENTIFIER})*)?$`
 
 export const ExactVersionType = z.string().regex(new RegExp(EXACT_VERSION_PATTERN))
 
 export const VersionType = z.string().regex(new RegExp(VERSION_PATTERN))
+
+const PlatformReleaseType = z.string().regex(new RegExp(PLATFORM_RELEASE_PATTERN))
 
 // The npm package-name shape (lower-case, optional `@scope/`, no leading `.` or `_`). A qadam name
 // becomes a directory under the worker's install workspace, a key in its bunfig.toml and a
@@ -54,7 +61,7 @@ export type GetQadamRequestParams = z.infer<typeof GetQadamRequestParams>
 
 export const ListQadamsRequestQuery = z.object({
     projectId: z.string().optional(),
-    release: ExactVersionType.optional(),
+    release: PlatformReleaseType.optional(),
     includeTags: OptionalBooleanFromQuery,
     includeHidden: OptionalBooleanFromQuery,
     searchQuery: z.string().optional(),
@@ -69,7 +76,7 @@ export type ListQadamsRequestQuery = z.infer<typeof ListQadamsRequestQuery>
 
 
 export const RegistryQadamsRequestQuery = z.object({
-    release: ExactVersionType,
+    release: PlatformReleaseType,
 })
 
 export type RegistryQadamsRequestQuery = z.infer<typeof RegistryQadamsRequestQuery>

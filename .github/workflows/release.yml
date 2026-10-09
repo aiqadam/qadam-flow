@@ -28,7 +28,7 @@ jobs:
   # WHY HERE AND NOT IN ci.yml. `:latest` — the tag every installer and every
   # `docker pull` without a version resolves to — is published in exactly one
   # place: the `publish` job below, on a tag push. ci.yml's `image` job pushes
-  # only `type=ref,event=branch` and `type=sha` (`:main`, `:sha-…`). So a merge
+  # only `:main`, `:sha-…` and the `-main` prerelease version (`:2.0.0-main.<n>`). So a merge
   # to `main` cannot reach a user, and the tag is the last point where a check
   # can still stop one from doing so.
   #
@@ -366,11 +366,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Labels only — `publish` below pushes the tags. The `tags:` line is here for the
+      # `org.opencontainers.image.version` label metadata-action derives from it: without one it
+      # falls back to the raw ref, `v2.0.0`, instead of the version the image reports, `2.0.0`.
       - name: Compute image labels
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/aiqadam/qadam-flow
+          tags: |
+            type=semver,pattern={{version}}
           labels: |
             org.opencontainers.image.title=Qadam Flow
             org.opencontainers.image.description=Open-source AI-first workflow automation platform
@@ -444,6 +449,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Tag scheme (ADR-0001 "The platform version"): the exact version (`:2.0.0`, the tag without
+      # its `v`, which version-tag-gate keeps equal to the version the image reports) plus the
+      # moving `:2.0` and `:latest`, the moving ones only for a release, never a prerelease tag.
+      # Builds of `main` get `:<next>-main.<n>`, `:main` and `:sha-<short>` from ci.yml instead.
+      #
+      # Flavours (#807, ADR-0003) are not built yet. When they are, every tag here takes a
+      # `-<flavour>` suffix (`:2.0.0-fat`, `:2.0.0-slim`), and `:latest` stays an alias of the fat
+      # image.
       - name: Compute image tags
         id: meta
         uses: docker/metadata-action@v5

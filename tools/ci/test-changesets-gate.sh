@@ -78,6 +78,15 @@ new_repo() {
 
 commit_all() { git -C "$1" add -A && git -C "$1" commit -q -m "${2:-change}"; }
 
+# set_platform <dir> <version> — the root package.json and packages/platform at <version>, as the
+# release PR's version script leaves them.
+set_platform() {
+  write "$1/package.json" "{ \"name\": \"qadam-flow\", \"version\": \"$2\", \"private\": true, \"workspaces\": [\"packages/shared\", \"packages/platform\", \"packages/web\", \"packages/qadams/framework\", \"packages/qadams/core/*\"] }"
+  write "$1/packages/platform/package.json" "{ \"name\": \"@aiqadam/platform\", \"version\": \"$2\", \"private\": true }"
+}
+
+PLATFORM_MAJOR=$'---\n"@aiqadam/platform": major\n---\n\nThe first release under ADR-0001.'
+
 changeset() { write "$1/.changeset/$2.md" "$3"; }
 
 # run_gate <dir> [env assignments...]
@@ -175,7 +184,80 @@ changeset "$d" framework $'---\n"@aiqadam/qadams-framework": patch\n---\n\nFix f
 commit_all "$d"
 expect 0 'a framework change does not demand a shared changeset (the mapping runs one way) -> PASS' "$d" 'OK'
 
+# The #798 realignment: the tree says 2.0.0 (#326), the newest tag is v1.1.0, and ADR-0001 says the
+# root holds the last released version. Every reject case below differs from this one in one thing.
+d="$(new_repo realign)"
+git -C "$d" tag v1.1.0 base
+set_platform "$d" 1.1.0
+changeset "$d" platform "$PLATFORM_MAJOR"
+write "$d/docs/install/configuration/breaking-changes.mdx" $'## Unreleased\n\n2.0.0 is the first release under ADR-0001.'
+commit_all "$d"
+expect 0 'realigning root + platform to the last release tag, with a pending major back to 2.0.0 -> PASS' "$d" 'realigned package.json: 2.0.0 -> 1.1.0, the last release tag v1.1.0; the pending platform changesets take the next release to 2.0.0'
+expect 0 'the platform package is realigned with the root -> PASS' "$d" 'realigned packages/platform/package.json: 2.0.0 -> 1.1.0'
+
+d="$(new_repo realign-pending-on-base)"
+changeset "$d" platform "$PLATFORM_MAJOR"
+write "$d/docs/install/configuration/breaking-changes.mdx" $'## Unreleased\n\n2.0.0.'
+commit_all "$d"; git -C "$d" tag -f base >/dev/null; git -C "$d" tag v1.1.0 base
+set_platform "$d" 1.1.0
+commit_all "$d"
+expect 0 'the platform changeset that re-reaches the base may already be pending on main -> PASS' "$d" 'next release to 2.0.0'
+
+d="$(new_repo realign-ignores-prerelease-tags)"
+git -C "$d" tag v1.1.0 base; git -C "$d" tag v2.0.0-rc.1 base
+set_platform "$d" 1.1.0
+changeset "$d" platform "$PLATFORM_MAJOR"
+write "$d/docs/install/configuration/breaking-changes.mdx" $'## Unreleased\n\n2.0.0.'
+commit_all "$d"
+expect 0 'a prerelease tag is not a release the root can be realigned to, nor one that blocks it -> PASS' "$d" 'the last release tag v1.1.0'
+
 echo "== REJECT =="
+
+d="$(new_repo realign-no-changeset)"
+git -C "$d" tag v1.1.0 base
+set_platform "$d" 1.1.0
+commit_all "$d"
+expect 1 'realigning without a pending platform changeset would hand out a lower next release -> FAIL' "$d" 'take the platform from 1.1.0 only to 1.1.0, below the 2.0.0 the base held'
+
+d="$(new_repo realign-minor-short)"
+git -C "$d" tag v1.1.0 base
+set_platform "$d" 1.1.0
+changeset "$d" platform $'---\n"@aiqadam/platform": minor\n---\n\nNew capability.'
+commit_all "$d"
+expect 1 'a pending minor reaches only 1.2.0, below the 2.0.0 already claimed -> FAIL' "$d" 'only to 1.2.0'
+
+d="$(new_repo realign-older-tag)"
+git -C "$d" tag v1.0.0 base; git -C "$d" tag v1.1.0 base
+set_platform "$d" 1.0.0
+changeset "$d" platform "$PLATFORM_MAJOR"
+write "$d/docs/install/configuration/breaking-changes.mdx" $'## Unreleased\n\n2.0.0.'
+commit_all "$d"
+expect 1 'realigning to a release tag that is not the newest one -> FAIL' "$d" '1.0.0 is not the last release tag v1.1.0'
+
+d="$(new_repo realign-unreachable-tag)"
+git -C "$d" checkout -q -b side; write "$d/side.txt" 'side'; commit_all "$d"; git -C "$d" tag v1.1.0; git -C "$d" checkout -q main
+set_platform "$d" 1.1.0
+changeset "$d" platform "$PLATFORM_MAJOR"
+write "$d/docs/install/configuration/breaking-changes.mdx" $'## Unreleased\n\n2.0.0.'
+commit_all "$d"
+expect 1 'a release tag not reachable from the head does not count -> FAIL' "$d" 'no vX.Y.Z release tag is reachable'
+
+d="$(new_repo realign-platform-split)"
+git -C "$d" tag v1.1.0 base
+set_platform "$d" 1.1.0
+write "$d/packages/platform/package.json" '{ "name": "@aiqadam/platform", "version": "1.2.0", "private": true }'
+changeset "$d" platform "$PLATFORM_MAJOR"
+write "$d/docs/install/configuration/breaking-changes.mdx" $'## Unreleased\n\n2.0.0.'
+commit_all "$d"
+expect 1 'the root realigns to the tag while the platform package gets another version -> FAIL' "$d" 'root package.json is 1.1.0 but packages/platform/package.json is 1.2.0'
+
+d="$(new_repo realign-platform-only)"
+git -C "$d" tag v1.1.0 base
+write "$d/packages/platform/package.json" '{ "name": "@aiqadam/platform", "version": "1.1.0", "private": true }'
+changeset "$d" platform "$PLATFORM_MAJOR"
+write "$d/docs/install/configuration/breaking-changes.mdx" $'## Unreleased\n\n2.0.0.'
+commit_all "$d"
+expect 1 'realigning the platform package without the root is a hand edit -> FAIL' "$d" 'packages/platform/package.json: "version" was edited by hand'
 
 d="$(new_repo src-no-changeset)"
 write "$d/packages/qadams/core/tables/src/index.ts" 'export const t = 2'; commit_all "$d"

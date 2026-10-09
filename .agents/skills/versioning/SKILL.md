@@ -77,7 +77,11 @@ No gate checks this (ADR-0001); the line is how a reviewer checks it.
 1. Check what the branch already did: `git diff origin/main...HEAD -- .changeset/`. One changeset
    per package is enough; if it already declares the level you need, stop.
 2. Add the changeset (step 5). Never edit `version` in a package's own `package.json` (or the
-   root): only the release PR raises versions, and gate 1 fails a hand edit.
+   root): only the release PR raises versions, and gate 1 fails a hand edit. The one edit gate 1
+   accepts is a realignment of the root and `@aiqadam/platform` to the newest `vX.Y.Z` tag when
+   the tree has drifted from it, together with a pending platform changeset that brings the next
+   release back to at least the old number (#798 did it once: `2.0.0` → `1.1.0` plus a `major`).
+   The rule is in `tools/ci/check-changesets.mjs`, "REALIGNING THE PLATFORM".
 3. Changed a qadam's dependencies? Gate 1 requires the changeset. Changed a prop?
    `npm run check-required-prop-defaults` must pass — it accepts the breaking slot declared in a
    changeset (a hand-edited version fails gate 1 instead). On a Renovate branch
@@ -119,7 +123,20 @@ gate 1 applies.
 - Never lower a level to get past a check. A level above the computed one always passes.
 - A clean gate 2 says nothing about behaviour: step 3 still applies.
 
-## 7. When `semver-override` applies
+## 7. Cutting a release (maintainers)
+
+1. Merge the release PR ("chore(release): version packages"). It raises the versions and the root,
+   and consumes the changesets.
+2. Before tagging, merge a docs PR that folds `## Unreleased` in
+   `docs/install/configuration/breaking-changes.mdx` into a `## <version>` section for the new root
+   version (merge it into an existing `## <version>` if there is one) and leaves an empty
+   `## Unreleased`. Do not commit this to the release PR's branch: `changesets.yml` rewrites that
+   branch on every push to `main`. The release's `breaking-change-gate` needs a non-empty
+   `## <version>` section.
+3. Tag the merged result `v<root version>`. That starts `release.yml`, and `version-tag-gate`
+   compares the tag with the root.
+
+## 8. When `semver-override` applies
 
 Only for gate 2, only when CI computed a higher level than the change is, and only when a maintainer
 agrees and applies it; every use stays visible on the PR. It does not cover a missing changeset

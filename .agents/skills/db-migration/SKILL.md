@@ -15,7 +15,9 @@ Before generating, identify:
 - Which table(s) are affected
 - What SQL is needed (`ADD COLUMN`, `CREATE TABLE`, `CREATE INDEX`, etc.)
 - Whether the migration is **breaking** (drops columns/tables, transforms data irreversibly — cannot be rolled back safely)
-- The current release version (check root `package.json` → `version`)
+- The release the migration will ship in: `node tools/ci/compute-main-version.mjs --next`. Not the root
+  `package.json` — under ADR-0001 that holds the last release, which the migration is *not* part of
+  (#798)
 
 ### Step 2: UPDATE THE ENTITY
 
@@ -46,7 +48,7 @@ The CLI generates a file using `MigrationInterface`. You **must** patch it to us
 1. Replace `import { MigrationInterface, QueryRunner } from "typeorm"` with `import { QueryRunner } from 'typeorm'` and add `import { Migration } from '../../migration'`
 2. Replace `implements MigrationInterface` with `implements Migration`
 3. Add `breaking = false` (or `true` if destructive)
-4. Add `release = '<version>'` matching the upcoming release version from root `package.json`
+4. Add `release = '<version>'` — the upcoming release, `node tools/ci/compute-main-version.mjs --next`
 5. Verify `down()` correctly reverses `up()`
 
 Example result:
@@ -72,7 +74,7 @@ export class AddMyColumn1234567890 implements Migration {
 **Required fields:**
 - `name = '<ExportedClassName>'` — the CLI sets this; do not blank it out
 - `breaking = false` — set to `true` only if rolling back is destructive
-- `release = '<version>'` — the upcoming release version from root `package.json`
+- `release = '<version>'` — the upcoming release (`node tools/ci/compute-main-version.mjs --next`; never the root `package.json`'s last release, or rolling back to that release would keep the migration)
 - `down()` — must reverse `up()` (required)
 
 The `Migration` type marks `breaking`/`release` optional, but `_verify.yml`'s

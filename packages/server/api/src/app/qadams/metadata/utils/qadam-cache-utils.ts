@@ -71,6 +71,14 @@ export function isCustomQadam(platformId: string | undefined, qadam: QadamMetada
     return qadam.platformId === platformId && qadam.qadamType === QadamType.CUSTOM
 }
 
+// `release` is the version this platform reports, a prerelease such as `2.1.0-main.5` on images
+// built from `main` (ADR-0001, #798). It is compared in semver's own order on purpose, so
+// `2.1.0-main.5` meets every floor up to the `2.0.x` release it was built after but not a floor of
+// `2.1.0`: a canary never claims a release it is not. No in-tree MINIMUM is hidden by that — a floor
+// names the release a capability first shipped in (.agents/rules/versioning.md), and gate 7
+// (tools/ci/check-compat-floors.mjs) holds every in-tree floor at or below the root package.json, the
+// last release. A MAXIMUM equal to that root passes gate 7 but is below `<next>-main.<n>`, so a
+// `main` build does hide that qadam: the build is already past the release the ceiling names.
 export function isSupportedRelease(release: string | undefined, qadam: { minimumSupportedRelease?: string, maximumSupportedRelease?: string }): boolean {
     if (isNil(release) || !semVer.valid(release)) {
         return true

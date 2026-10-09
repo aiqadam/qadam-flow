@@ -12,7 +12,7 @@ This section is for maintainers cutting a release. If you are upgrading an insta
 
 This page is not maintained by convention — a CI job refuses to publish a release without it.
 
-**Why.** [PR #210](https://github.com/aiqadam/qadam-flow/pull/210) removed the `WORKER_AND_APP` launch mode and made `AP_CONTAINER_TYPE` required. Any all-in-one container install refuses to start after that ships, and there is no automated migration from the embedded PGLite database to PostgreSQL, so recovery is manual. The change *is* written up below — but only because a person noticed it needed to be. Nothing mechanical would have stopped the release. Since `:latest` is published solely by `release.yml` on a tag push (merges to `main` publish `:main` and `:sha-…` only), the tag is the last moment at which a check can stop an undocumented breaking change from reaching users, so that is where the check lives.
+**Why.** [PR #210](https://github.com/aiqadam/qadam-flow/pull/210) removed the `WORKER_AND_APP` launch mode and made `AP_CONTAINER_TYPE` required. Any all-in-one container install refuses to start after that ships, and there is no automated migration from the embedded PGLite database to PostgreSQL, so recovery is manual. The change *is* written up below — but only because a person noticed it needed to be. Nothing mechanical would have stopped the release. Since `:latest` is published solely by `release.yml` on a tag push (merges to `main` publish `:main`, `:sha-…` and a `-main` prerelease version such as `:2.0.0-main.1234` only), the tag is the last moment at which a check can stop an undocumented breaking change from reaching users, so that is where the check lives.
 
 **What it does.** On a `v*` tag push, `tools/ci/check-breaking-change-changelog.sh` walks every commit from the previous non-prerelease tag up to the tag being released. If any of them declares a breaking change — a Conventional Commits `type!:` subject, or a `BREAKING CHANGE:` footer — then this file must have been modified somewhere in that range **and** must contain a non-empty `## <version>` section for the version being released. In practice that means renaming the `## Unreleased` heading below to the version number as part of cutting the release.
 
@@ -290,6 +290,20 @@ PostgreSQL 14, so every install created before this change has to move its data 
   changes for your data. If that server runs PostgreSQL 14, plan its upgrade before 2026-11-12.
 
 ## 2.0.0
+
+2.0.0 is the first release after 1.1.0. Cutting it moves the entries that are under *Unreleased* at
+that moment into this section. It is also the first release under the version scheme of
+[ADR-0001](https://github.com/aiqadam/qadam-flow/blob/main/adr/0001-everything-versioned-follows-semver-declared-with-changesets.md)
+([#798](https://github.com/aiqadam/qadam-flow/issues/798)). Nothing changes for an instance on a release
+tag or on `:latest`. An instance on `:main` sees two changes:
+
+- **It reports the release it leads to as a prerelease**, for example `2.0.0-main.1234`, instead of
+  `2.0.0`. The image is tagged with that version as well. Semver orders it below `2.0.0`, so such an
+  instance is offered `2.0.0` as an update once it ships.
+- **Two different `main` builds count as different versions.** The API hands jobs only to workers of
+  its own version, so a worker from an older or newer `main` build waits until it runs the same
+  build as the API. Update the API and the worker containers together, as `docker compose pull &&
+  docker compose up -d` does.
 
 ### What has changed?
 

@@ -186,6 +186,18 @@ ARG BUILD_TIMESTAMP=
 ENV COMMIT_SHA=$COMMIT_SHA
 ENV BUILD_TIMESTAMP=$BUILD_TIMESTAMP
 
+# The platform version this image reports (ADR-0001, #798). ci.yml passes `<next>-main.<n>` for
+# builds of `main` (tools/ci/compute-main-version.mjs); the script writes it into the root
+# package.json, which `apVersionUtil.getCurrentRelease()` reads in both the API and the worker. It
+# refuses anything but a `-main` prerelease above the tree's last release, so a build argument can
+# never make an image claim a release. Empty — local builds and release.yml, whose tag
+# version-tag-gate already pins to package.json — leaves the tree's version as it is. Last, like
+# the two args above, so a new value per build invalidates only this layer.
+ARG PLATFORM_VERSION=
+COPY --from=build /usr/src/app/tools/scripts/stamp-platform-version.mjs /tmp/stamp-platform-version.mjs
+RUN node /tmp/stamp-platform-version.mjs "$PLATFORM_VERSION" package.json \
+    && rm /tmp/stamp-platform-version.mjs
+
 LABEL service=qadam-flow
 
 # PID 1 has to reap orphans, and Node does not reap processes it did not spawn.

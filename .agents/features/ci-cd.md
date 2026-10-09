@@ -66,8 +66,8 @@ the job for install and package-runner invocations — that one is a denylist, s
 | Trigger              | Workflow           | Lint+Unit | Docker build | Image push     | Tags                                    |
 |----------------------|--------------------|-----------|--------------|----------------|-----------------------------------------|
 | `pull_request`       | `ci.yml`           | ✅        | ✅           | ❌             | —                                       |
-| `push: main`         | `ci.yml`           | ✅        | ✅           | ✅             | `:main`, `:sha-<7chars>`                |
-| `push: tag v*`       | `release.yml`      | ✅        | ✅           | ✅             | `:vX.Y.Z`, `:latest` — and the npm publish |
+| `push: main`         | `ci.yml`           | ✅        | ✅           | ✅             | `:<next>-main.<n>`, `:main`, `:sha-<7chars>` |
+| `push: tag v*`       | `release.yml`      | ✅        | ✅           | ✅             | `:X.Y.Z`, `:X.Y`, `:latest` — and the npm publish |
 | `workflow_dispatch`  | `publish-packages.yml` | ✅    | ❌           | ❌             | npm only; no image, no GitHub Release   |
 | `pull_request` title | `pr-title.yml`     | —         | —            | —              | Validates Conventional Commits format   |
 | `schedule daily`     | `cleanup.yml`      | —         | —            | —              | Deletes runs older than 30 days         |
@@ -100,14 +100,21 @@ add traffic costs (on private repos), and provide no operational value.
 vs ~25 min cold. Single shared scope works because the Dockerfile layers are layer-stable
 between branches (only the application source layer churns).
 
-### 5. Image tagging convention
+### 5. Image tagging convention (ADR-0001 "The platform version", #798)
+- `:<next>-main.<n>` — the exact version a `main` image reports, e.g. `:2.0.0-main.1234`. `<next>` is
+  the root `package.json` (the last release) raised by the pending `@aiqadam/platform` changesets
+  (at least a patch); `<n>` is `github.run_number`. Computed by `tools/ci/compute-main-version.mjs`
+  in `ci.yml`'s `platform-version` job and written into the image's root `package.json` by the
+  Dockerfile (`tools/scripts/stamp-platform-version.mjs`), so `apVersionUtil.getCurrentRelease()`
+  reports it. Semver orders it below the release it leads to.
 - `:main` — moving pointer to latest green main
 - `:sha-<7chars>` — immutable per-commit tag (used by future deploy automation)
-- `:vX.Y.Z` — immutable release tag
-- `:latest` — moving pointer to latest release tag
+- `:X.Y.Z` — immutable release tag (the `vX.Y.Z` git tag without its `v`)
+- `:X.Y`, `:latest` — moving pointers to the latest release (not moved by a prerelease tag)
 
-No `:edge`, no `:nightly`, no `:canary`. Self-hosters pin to `:vX.Y.Z` or `:latest`; CI/CD
-internals use `:main` / `:sha-...`.
+Flavours (`:fat` / `:slim`, ADR-0003, #807) will add a `-<flavour>` suffix to each of these. No
+`:edge`, no `:nightly`, no `:canary`. Self-hosters pin to `:X.Y.Z` or `:latest`; CI/CD internals and
+the canary (#116) use `:main` / `:sha-...`.
 
 ### 6. Single-arch only (linux/amd64)
 **Decision**: No `linux/arm64` builds in CI yet.
