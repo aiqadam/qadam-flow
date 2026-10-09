@@ -190,7 +190,7 @@ export const flowController: FastifyPluginAsyncZod = async (app) => {
             flowId: request.params.id,
             userMetadata,
             projectId: request.projectId,
-            versionId: undefined,
+            versionId: request.query.versionId,
         })
     })
 
