@@ -7,6 +7,7 @@ import { flowService } from '../../flows/flow/flow.service'
 import { expressionRewriter } from '../../flows/flow-version/migrations/expression-rewriter'
 import { projectService } from '../../project/project-service'
 import { qadamMetadataService } from '../../qadams/metadata/qadam-metadata-service'
+import { MALFORMED_TOOL_PIN } from '../../qadams/metadata/qadam-pin-util'
 
 const NON_INPUT_PROP_TYPES = new Set<PropertyType>([
     PropertyType.OAUTH2,
@@ -578,6 +579,14 @@ function readFlowToolReference(tool: unknown): string | null {
 function qadamPinIssue({ pin, resolvable, subject = 'step' }: { pin: string, resolvable: boolean | undefined, subject?: 'step' | 'agent_tool' }): QadamPinIssue | null {
     if (resolvable === true) {
         return null
+    }
+    if (resolvable === false && subject === 'agent_tool' && pin === MALFORMED_TOOL_PIN) {
+        // Not "a version this installation does not have": the tool's name or version is no name or
+        // version at all, and its own text is not echoed (#779).
+        return {
+            severity: 'unavailable',
+            message: 'has a malformed qadam pin (no valid name or version). Every run and every trigger provisioning attempt of the flow fails on it. Remove that tool from the agent step, or add it again with ap_update_step.',
+        }
     }
     if (resolvable === false) {
         return {

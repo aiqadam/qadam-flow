@@ -67,6 +67,41 @@ describe('qadamCache.getPiece', () => {
         expect(await readdir(cacheRoot)).toEqual([])
     })
 
+    // The cache folder is one path segment named `<name>-<version>-<platform>`, so a name inside npm's
+    // 214 characters with a long exact version is still past the filesystem's 255 bytes: the read
+    // rethrew ENAMETOOLONG as a plain Error (#779). Such a pin is not cached; it asks the API.
+    const SNAPSHOT_44 = '999999999.999999999.999999999-main.999999999'
+    const PLATFORM_21 = 'p'.repeat(21)
+
+    it.each([
+        ['a 214-character name with a 44-character snapshot version', 'a'.repeat(214), SNAPSHOT_44, false],
+        ['a 200-character name with a 44-character snapshot version', 'a'.repeat(200), SNAPSHOT_44, false],
+        ['a 214-character name with a short snapshot version', 'a'.repeat(214), '1.0.0-main.999999999', false],
+        ['a long scoped name whose scope folder already exists', `@aiqadam/${'a'.repeat(200)}`, SNAPSHOT_44, true],
+    ])('resolves %s through the API without a cache folder or ENAMETOOLONG', async (_label, qadamName, qadamVersion, scopeFolderExists) => {
+        if (scopeFolderExists) {
+            await mkdir(join(cacheRoot, '@aiqadam'))
+        }
+        const { apiClient, methods } = fakeApiClient()
+
+        const piece = await qadamCache(log, apiClient).getPiece({ qadamName, qadamVersion, platformId: PLATFORM_21 })
+
+        expect(piece).toMatchObject({ packageType: PackageType.REGISTRY })
+        expect(methods).toEqual(['getQadam'])
+        const written = await readdir(cacheRoot, { recursive: true })
+        expect(written.filter((entry) => entry.length > 100)).toEqual([])
+    })
+
+    it('still caches a pin whose folder name fits', async () => {
+        const { apiClient, methods } = fakeApiClient()
+        const qadamCacheForTest = qadamCache(log, apiClient)
+
+        await qadamCacheForTest.getPiece({ qadamName: 'a'.repeat(150), qadamVersion: '1.0.0', platformId: PLATFORM_21 })
+        await qadamCacheForTest.getPiece({ qadamName: 'a'.repeat(150), qadamVersion: '1.0.0', platformId: PLATFORM_21 })
+
+        expect(methods).toEqual(['getQadam'])
+    })
+
     it('still resolves and caches a name inside the grammar', async () => {
         const { apiClient, methods } = fakeApiClient()
 

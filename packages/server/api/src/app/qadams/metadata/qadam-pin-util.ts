@@ -1,4 +1,4 @@
-import { agentToolPins, apVersionUtil } from '@aiqadam/server-utils'
+import { agentToolPins, apVersionUtil, NPM_PACKAGE_NAME_MAX_LENGTH } from '@aiqadam/server-utils'
 import {
     FlowActionType,
     flowStructureUtil,
@@ -14,8 +14,6 @@ import { qadamMetadataService } from './qadam-metadata-service'
 import { isNewerVersion } from './utils'
 
 export const MALFORMED_TOOL_PIN = 'malformed pin'
-// npm's own limit on a package name.
-const NPM_PACKAGE_NAME_MAX_LENGTH = 214
 
 // A step keeps the exact qadam version it was configured with, and three call sites each needed
 // their own copy of "walk the steps, find the pinned ones, ask qadamMetadataService whether the

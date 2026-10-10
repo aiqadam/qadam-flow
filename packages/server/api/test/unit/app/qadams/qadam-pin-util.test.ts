@@ -9,7 +9,7 @@ vi.mock('../../../../src/app/qadams/metadata/qadam-metadata-service', () => ({
     qadamMetadataService: (): { get: typeof mockGet, registry: typeof mockRegistry } => ({ get: mockGet, registry: mockRegistry }),
 }))
 
-import { qadamPinUtil } from '../../../../src/app/qadams/metadata/qadam-pin-util'
+import { MALFORMED_TOOL_PIN, qadamPinUtil } from '../../../../src/app/qadams/metadata/qadam-pin-util'
 
 const log = { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() } as unknown as FastifyBaseLogger
 const PLATFORM_ID = 'platform-1'
@@ -254,6 +254,6 @@ describe('qadamPinUtil — a malformed agent tool pin', () => {
     ])('keys %s as the one constant malformed pin, without its text', (_label, malformed) => {
         const pin = qadamPinUtil.pinOfTool({ tool: malformed })
 
-        expect(pin).toBe('malformed pin')
+        expect(pin).toBe(MALFORMED_TOOL_PIN)
     })
 })

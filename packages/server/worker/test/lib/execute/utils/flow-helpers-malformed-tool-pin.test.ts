@@ -125,4 +125,25 @@ describe('provisionFlowPieces — an agent tool with a malformed version', () =>
 
         expect(result).toEqual({ provisioned: false, unavailableQadam: 'a malformed pin', usedBy: 'an agent tool of step agent' })
     })
+
+    // ON_DISABLE provisions the flow too and must not throw on a pin the filesystem cannot hold (#432, #779).
+    it.each([
+        ['a 214-character name at a 44-character snapshot version', 'a'.repeat(214), '999999999.999999999.999999999-main.999999999'],
+        ['a 200-character name at a 44-character snapshot version', 'a'.repeat(200), '999999999.999999999.999999999-main.999999999'],
+    ])('provisions a flow with %s without throwing', async (_label, qadamName, qadamVersion) => {
+        const getQadam = vi.fn().mockResolvedValue({ packageType: PackageType.REGISTRY, name: qadamName, version: qadamVersion, qadamType: QadamType.OFFICIAL })
+        const params = {
+            flowVersion: flowWithToolVersion({ qadamVersion, qadamName }),
+            platformId: 'p'.repeat(21),
+            flowId: 'flow-1',
+            projectId: 'project-1',
+            log: { error: vi.fn(), info: vi.fn() } as any,
+            apiClient: { getQadam } as any,
+        }
+
+        await expect(provisionFlowPieces(params)).resolves.toEqual({ provisioned: true })
+
+        getQadam.mockResolvedValue(null)
+        await expect(provisionFlowPieces(params)).resolves.toMatchObject({ provisioned: false, usedBy: expect.stringContaining('an agent tool of step agent') })
+    })
 })
