@@ -55,7 +55,7 @@
     "@uiw/codemirror-theme-github": "4.25.12",
     "@uiw/react-codemirror": "4.25.12",
     "@xyflow/react": "12.3.5",
-    "ai": "7.0.130",
+    "ai": "7.0.131",
     "async-mutex": "0.4.0",
     "axios": "1.20.0",
     "boring-avatars": "1.11.2",
