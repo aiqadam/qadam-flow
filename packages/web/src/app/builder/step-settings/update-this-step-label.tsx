@@ -35,7 +35,7 @@ export function UpdateThisStepLabel({
     return null;
   }
   const exactVersion = flowQadamUtil.getExactVersion(
-    step.settings.qadamVersion
+    step.settings.qadamVersion,
   );
   const isOwnPinMarked =
     mark === exactVersion &&
@@ -55,10 +55,10 @@ export function UpdateThisStepLabel({
       <p className="text-sm text-muted-foreground">
         {isOwnPinMarked
           ? t(
-              'This step was imported with a pre-release build that could not be moved to a released version. Update its version.'
+              'This step was imported with a pre-release build that could not be moved to a released version. Update its version.',
             )
           : t(
-              'This step was imported with an agent tool pinned to a pre-release build that could not be moved to a released version. Update that tool.'
+              'This step was imported with an agent tool pinned to a pre-release build that could not be moved to a released version. Update that tool.',
             )}
       </p>
       {isOwnPinMarked && !readonly && (
@@ -87,7 +87,7 @@ function hasSnapshotToolPin({
       parsed.success &&
       qadamVersionParser.isSnapshot({
         version: flowQadamUtil.getExactVersion(
-          parsed.data.qadamMetadata.qadamVersion
+          parsed.data.qadamMetadata.qadamVersion,
         ),
       })
     );
