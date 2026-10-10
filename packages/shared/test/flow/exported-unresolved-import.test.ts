@@ -45,6 +45,25 @@ describe('importing a flow with exported-unresolved steps', () => {
         expect(JSON.stringify(imported)).not.toContain('exportedUnresolvedPin')
     })
 
+    it('marks nothing when the listed qadam is not the step\'s qadam', () => {
+        const imported = importFlow({ unresolved: [{ stepName: 'step_1', qadamName: '@aiqadam/qadam-other', pin: '^1.3.0' }] })
+
+        expect(JSON.stringify(imported)).not.toContain('exportedUnresolvedPin')
+    })
+
+    it('drops a marker the file brought: only the importer writes one', () => {
+        const request = importRequest({ unresolved: [unresolvedStep({ stepName: 'step_1', pin: '^1.3.0' })] })
+        const carried = findStepIn({ trigger: request.trigger, name: 'step_2' })
+        if (carried?.type === FlowActionType.PIECE) {
+            carried.settings.exportedUnresolvedPin = '1.2.0'
+        }
+
+        const imported = operationsFor({ request }).reduce((version, operation) => flowOperations.apply(version, operation), storedFlowVersion())
+
+        expect(findAction({ version: imported, name: 'step_2' })?.settings.exportedUnresolvedPin).toBeUndefined()
+        expect(findAction({ version: imported, name: 'step_1' })?.settings.exportedUnresolvedPin).toBe('1.3.0')
+    })
+
     it('imports a flow with no list exactly as before', () => {
         const imported = importFlow({ unresolved: undefined })
 
@@ -83,6 +102,19 @@ function importFlow({ unresolved }: { unresolved: ImportFlowRequest['exportedUnr
     return operations.reduce((version, operation) => flowOperations.apply(version, operation), target)
 }
 
+function operationsFor({ request }: { request: ImportFlowRequest }): ReturnType<typeof _importFlow> {
+    return _importFlow(storedFlowVersion(), request)
+}
+
+function findStepIn({ trigger, name }: { trigger: FlowTrigger, name: string }): FlowAction | undefined {
+    for (let current: FlowAction | undefined = trigger.nextAction; current; current = current.nextAction) {
+        if (current.name === name) {
+            return current
+        }
+    }
+    return undefined
+}
+
 function importRequest({ unresolved }: { unresolved: ImportFlowRequest['exportedUnresolved'] }): ImportFlowRequest {
     return {
         displayName: 'Imported',
@@ -93,8 +125,8 @@ function importRequest({ unresolved }: { unresolved: ImportFlowRequest['exported
     }
 }
 
-function unresolvedStep({ stepName, pin }: { stepName: string, pin: string }): { stepName: string, qadamName: string, pin: string } {
-    return { stepName, qadamName: '@aiqadam/qadam-tables', pin }
+function unresolvedStep({ stepName, pin }: { stepName: string, pin: string }): { stepName: string, qadamName: string, pin: string, reason: 'no-compatible-release' } {
+    return { stepName, qadamName: '@aiqadam/qadam-tables', pin, reason: 'no-compatible-release' }
 }
 
 function findAction({ version, name }: { version: FlowVersion, name: string }): (FlowAction & { type: FlowActionType.PIECE }) | undefined {

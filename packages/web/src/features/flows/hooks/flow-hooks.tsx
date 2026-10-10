@@ -187,7 +187,10 @@ export const flowHooks = {
             t('unresolvedPinsExported', {
               count: unresolved.length,
               steps: unresolved
-                .map((step) => `${step.stepName} (${step.qadamName})`)
+                .map(
+                  (step) =>
+                    `${step.flowName}: ${step.stepName} (${step.qadamName})`,
+                )
                 .join(', '),
             }),
             { duration: Infinity, closeButton: true },

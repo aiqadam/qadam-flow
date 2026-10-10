@@ -14,8 +14,8 @@ import { QadamVersionCatalogueSource, qadamVersionCatalogueSource } from '../cat
 // the one place that fetches it; #806-#808 replace it with the store-and-catalogue resolution, and
 // the export rule is unchanged.
 //
-// Every method answers "unknown" (`[]` or `null`) rather than throwing, and an export treats
-// unknown as "no release passes": a pin is never moved on information the instance does not have.
+// Every method answers "unknown" (`null`) rather than throwing, and an export treats unknown as
+// "no release passes": a pin is never moved on information the instance does not have.
 export const snapshotExportSources = {
     forInstance: ({ log, catalogueSource = defaultCatalogueSource() }: ForInstanceParams): SnapshotExportSources => {
         // One catalogue read per export, however many pins it resolves.
@@ -25,8 +25,8 @@ export const snapshotExportSources = {
             return catalogue
         }
         return {
-            releases: async ({ name }) => (await readCatalogue())?.versions({ name }) ?? [],
-            releaseMetadata: async ({ name, version }) => {
+            releases: async ({ name }) => (await readCatalogue())?.versions({ name }) ?? null,
+            releaseMetadata: async ({ name, version }): Promise<unknown> => {
                 const result = await (await readCatalogue())?.readMetadata({ name, version })
                 return result?.status === 'ok' ? result.metadata : null
             },
@@ -74,8 +74,9 @@ type ForInstanceParams = {
 }
 
 export type SnapshotExportSources = {
-    // Released versions of an official qadam, in no particular order; `[]` when unknown.
-    releases: (params: { name: string }) => Promise<string[]>
+    // Released versions of an official qadam, in no particular order; `null` when the catalogue
+    // cannot be read, `[]` when it lists none.
+    releases: (params: { name: string }) => Promise<string[] | null>
     // The release's own `metadata.json`; `null` when unknown.
     releaseMetadata: (params: { name: string, version: string }) => Promise<unknown>
     // The `metadata.json` of a snapshot this instance holds; `null` when it holds none.

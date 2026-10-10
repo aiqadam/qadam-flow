@@ -1,6 +1,7 @@
 import {
     FlowCreatorType,
     FlowOperationType,
+    flowQadamUtil,
     FlowVersionTemplate,
     isNil,
     McpToolContext,
@@ -117,11 +118,11 @@ export const apImportFlowTool = ({ mcp, userId }: McpToolContext, log: FastifyBa
 }
 
 function describeMarkedSteps({ flowTemplate }: { flowTemplate: FlowVersionTemplate }): string {
-    const marked = flowTemplate.exportedUnresolved ?? []
+    const marked = flowQadamUtil.getMarkableUnresolved({ trigger: flowTemplate.trigger, steps: flowTemplate.exportedUnresolved })
     if (marked.length === 0) {
         return ''
     }
-    return `\n\n${marked.length} step(s) were exported from a pre-release build with no compatible release and are marked "update this step": ${marked.map((step) => mcpUtils.wrapUntrustedValue(step.stepName)).join(', ')}. Pick a version for each before relying on it.`
+    return `\n\n${marked.length} step(s) were exported from a pre-release build with no release that could be confirmed compatible and are marked "update this step": ${marked.map((step) => mcpUtils.wrapUntrustedValue(step.stepName)).join(', ')}. Pick a version for each before relying on it.`
 }
 
 function validateTemplateShape(template: Record<string, unknown>): ValidateTemplateShapeResult {

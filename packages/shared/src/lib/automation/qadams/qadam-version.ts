@@ -12,6 +12,9 @@ const CORE_SOURCE = `${NUMBER}\\.${NUMBER}\\.${NUMBER}`
 const CAPTURED_CORE_SOURCE = `(${NUMBER})\\.(${NUMBER})\\.(${NUMBER})`
 const VERSION_SOURCE = `${CAPTURED_CORE_SOURCE}(?:-${SNAPSHOT_CHANNEL}\\.(${NUMBER}))?`
 
+// The longest string the grammar accepts: `999999999.999999999.999999999-main.999999999`.
+export const QADAM_VERSION_MAX_LENGTH = `${'9'.repeat(9)}.${'9'.repeat(9)}.${'9'.repeat(9)}-${SNAPSHOT_CHANNEL}.${'9'.repeat(9)}`.length
+
 export const QADAM_VERSION_PATTERN = `^${VERSION_SOURCE}$`
 export const QADAM_RELEASE_PATTERN = `^${CORE_SOURCE}$`
 // The one capturing pattern of a pin: group 1 is the optional `^` or `~`, groups 2-5 the version.

@@ -1,8 +1,8 @@
-import { FlowAction, FlowActionType, flowStructureUtil, FlowTrigger, FlowTriggerType, FlowVersion, FlowVersionState } from '@aiqadam/shared'
+import { AgentToolType, FlowAction, FlowActionType, flowStructureUtil, FlowTrigger, FlowTriggerType, FlowVersion, FlowVersionState } from '@aiqadam/shared'
 import pino from 'pino'
 import { describe, expect, it, vi } from 'vitest'
 import { SnapshotExportSources } from '../../../../src/app/qadams/snapshot-export/snapshot-export-sources'
-import { SnapshotExportMode, snapshotPinExport } from '../../../../src/app/qadams/snapshot-export/snapshot-pin-export'
+import { MAX_RELEASE_FETCHES_PER_EXPORT, MAX_RELEASES_CHECKED_PER_PIN, SnapshotExportMode, snapshotPinExport } from '../../../../src/app/qadams/snapshot-export/snapshot-pin-export'
 
 // ADR-0004 "Export and import". The sources are a fake catalogue and a fake instance store: the
 // catalogue is not wired at run time yet, so these are the contract the real binding must meet.
@@ -15,7 +15,7 @@ describe('snapshotPinExport.apply, rewrite (an export that leaves the instance)'
     it('moves a snapshot pin to the newest release at or above its base, inside its caret range, that passes the props check', async () => {
         const sources = fakeSources({
             releases: { [TABLES]: ['1.2.9', '1.3.0', '1.3.1', '1.3.2', '1.4.0', '2.0.0', '1.3.3-main.9'] },
-            release: { '1.3.0': compatible(), '1.3.1': compatible(), '1.3.2': incompatible(), '1.4.0': incompatible(), '2.0.0': compatible(), '1.2.9': compatible() },
+            release: { '1.3.0': compatible(), '1.3.1': compatible(), '1.3.2': incompatible(), '1.4.0': incompatible(), '2.0.0': compatible(), '1.2.9': compatible(), '1.3.3-main.9': compatible() },
         })
 
         const exported = await rewrite({ pin: SNAPSHOT, sources })
@@ -36,7 +36,7 @@ describe('snapshotPinExport.apply, rewrite (an export that leaves the instance)'
         const exported = await rewrite({ pin: SNAPSHOT, sources })
 
         expect(pinOf({ version: exported, name: 'step_1' })).toBe('^1.3.0')
-        expect(exported.exportedUnresolved).toEqual([{ stepName: 'step_1', qadamName: TABLES, pin: SNAPSHOT }])
+        expect(exported.exportedUnresolved).toEqual([{ stepName: 'step_1', qadamName: TABLES, pin: SNAPSHOT, reason: 'no-compatible-release' }])
     })
 
     it('on 0.x stays inside the minor', async () => {
@@ -57,18 +57,19 @@ describe('snapshotPinExport.apply, rewrite (an export that leaves the instance)'
         const exported = await rewrite({ pin: SNAPSHOT, sources })
 
         expect(pinOf({ version: exported, name: 'step_1' })).toBe('^1.3.0')
-        expect(exported.exportedUnresolved).toEqual([{ stepName: 'step_1', qadamName: TABLES, pin: SNAPSHOT }])
+        expect(exported.exportedUnresolved).toEqual([{ stepName: 'step_1', qadamName: TABLES, pin: SNAPSHOT, reason: 'no-compatible-release' }])
     })
 
     it.each([
-        ['the instance holds no metadata for the snapshot', fakeSources({ snapshot: null, releases: { [TABLES]: ['1.3.0'] }, release: { '1.3.0': compatible() } })],
-        ['the catalogue lists no release of the qadam', fakeSources({ releases: {}, release: {} })],
-        ['the catalogue has no metadata for the release', fakeSources({ releases: { [TABLES]: ['1.3.0'] }, release: {} })],
-    ])('flags the step when %s: a pin is never moved on information the instance lacks', async (_label, sources) => {
+        ['the instance holds no metadata for the snapshot', fakeSources({ snapshot: null, releases: { [TABLES]: ['1.3.0'] }, release: { '1.3.0': compatible() } }), 'metadata-unavailable'],
+        ['the catalogue cannot be read', fakeSources({ releases: null, release: {} }), 'catalogue-unavailable'],
+        ['the catalogue lists no release of the qadam', fakeSources({ releases: {}, release: {} }), 'no-compatible-release'],
+        ['the catalogue has no metadata for the release', fakeSources({ releases: { [TABLES]: ['1.3.0'] }, release: {} }), 'metadata-unavailable'],
+    ])('flags the step when %s: a pin is never moved on information the instance lacks', async (_label, sources, reason) => {
         const exported = await rewrite({ pin: SNAPSHOT, sources })
 
         expect(pinOf({ version: exported, name: 'step_1' })).toBe('^1.3.0')
-        expect(exported.exportedUnresolved).toHaveLength(1)
+        expect(exported.exportedUnresolved).toEqual([{ stepName: 'step_1', qadamName: TABLES, pin: SNAPSHOT, reason }])
     })
 
     it('flags a step whose action is not named, because the check has nothing to compare', async () => {
@@ -136,7 +137,7 @@ describe('snapshotPinExport.apply, rewrite (an export that leaves the instance)'
 
         await rewrite({ pin: SNAPSHOT, sources })
 
-        expect(sources.releaseMetadata).toHaveBeenCalledTimes(25)
+        expect(sources.releaseMetadata).toHaveBeenCalledTimes(MAX_RELEASES_CHECKED_PER_PIN)
     })
 })
 
@@ -165,6 +166,9 @@ describe('snapshotPinExport.apply, keep snapshots (the explicit opt-in)', () => 
 
         expect(exported.trigger).toEqual(version.trigger)
         expect(Object.keys(exported.snapshotMetadata ?? {})).toEqual([`${TABLES}@${SNAPSHOT}`])
+        expect(exported.snapshotMetadata?.[`${TABLES}@${SNAPSHOT}`]).toMatchObject({ name: TABLES, version: SNAPSHOT, actions: { insert: { props: { a: { type: 'SHORT_TEXT' } } } } })
+        expect(sources.snapshotMetadata).toHaveBeenCalledTimes(1)
+        expect(sources.releases).not.toHaveBeenCalled()
         expect(exported.exportedUnresolved).toBeUndefined()
     })
 
@@ -185,6 +189,126 @@ describe('snapshotPinExport.apply, keep snapshots (the explicit opt-in)', () => 
         const exported = await snapshotPinExport.apply({ flowVersion: version, mode: SnapshotExportMode.KEEP, sources: fakeSources({ releases: {}, release: {} }), log })
 
         expect(exported).toEqual(version)
+    })
+})
+
+describe('snapshotPinExport.apply, the cost of one export', () => {
+    it('fetches each release metadata at most once however many actions of one snapshot the flow uses', async () => {
+        const actions = Array.from({ length: 10 }, (_, index) => `action_${index}`)
+        const sources = fakeSources({ snapshot: compatible({ actions }), releases: { [TABLES]: ['1.3.1', '1.3.2', '1.3.3'] }, release: { '1.3.1': incompatible(), '1.3.2': incompatible(), '1.3.3': incompatible() } })
+        const version = flowVersion({ steps: actions.map((actionName, index) => ({ name: `step_${index + 1}`, qadamName: TABLES, qadamVersion: SNAPSHOT, actionName })) })
+
+        const exported = await snapshotPinExport.apply({ flowVersion: version, mode: SnapshotExportMode.REWRITE, sources, log })
+
+        expect(exported.exportedUnresolved).toHaveLength(10)
+        expect(sources.snapshotMetadata).toHaveBeenCalledTimes(1)
+        expect(sources.releaseMetadata).toHaveBeenCalledTimes(3)
+    })
+
+    it('fetches no release at all for an action the snapshot does not describe', async () => {
+        const sources = fakeSources({ releases: { [TABLES]: ['1.3.1'] }, release: { '1.3.1': compatible() } })
+        const version = flowVersion({ steps: Array.from({ length: 5 }, (_, index) => ({ name: `step_${index + 1}`, qadamName: TABLES, qadamVersion: SNAPSHOT, actionName: `made_up_${index}` })) })
+
+        const exported = await snapshotPinExport.apply({ flowVersion: version, mode: SnapshotExportMode.REWRITE, sources, log })
+
+        expect(exported.exportedUnresolved?.map((step) => step.reason)).toEqual(Array(5).fill('not-describable'))
+        expect(sources.releases).not.toHaveBeenCalled()
+        expect(sources.releaseMetadata).not.toHaveBeenCalled()
+    })
+
+    it('stops fetching when the budget of the export is spent, and exports the remaining pins as unresolved', async () => {
+        const qadams = ['@aiqadam/qadam-a', '@aiqadam/qadam-b', '@aiqadam/qadam-c']
+        const versions = Array.from({ length: MAX_RELEASES_CHECKED_PER_PIN }, (_, index) => `1.3.${index + 1}`)
+        const sources = fakeSources({
+            releases: Object.fromEntries(qadams.map((name) => [name, versions])),
+            release: Object.fromEntries(versions.map((version) => [version, incompatible()])),
+        })
+        const version = flowVersion({ steps: qadams.map((qadamName, index) => ({ name: `step_${index + 1}`, qadamName, qadamVersion: SNAPSHOT, actionName: 'insert' })) })
+
+        const exported = await snapshotPinExport.apply({ flowVersion: version, mode: SnapshotExportMode.REWRITE, sources, log })
+
+        expect(sources.releaseMetadata.mock.calls.length).toBeLessThanOrEqual(MAX_RELEASE_FETCHES_PER_EXPORT)
+        expect(exported.exportedUnresolved).toHaveLength(3)
+        expect(exported.exportedUnresolved?.map((step) => step.reason)).toContain('metadata-unavailable')
+        expect(['step_1', 'step_2', 'step_3'].map((name) => pinOf({ version: exported, name }))).toEqual(['^1.3.0', '^1.3.0', '^1.3.0'])
+    })
+})
+
+describe('snapshotPinExport.apply, the pin range', () => {
+    it('keeps a tilde pin on its minor, and its tilde on the fallback', async () => {
+        const sources = fakeSources({ releases: { [TABLES]: ['1.3.5', '1.4.0'] }, release: { '1.3.5': compatible(), '1.4.0': compatible() } })
+
+        expect(pinOf({ version: await rewrite({ pin: '~1.3.0-main.5', sources }), name: 'step_1' })).toBe('~1.3.5')
+
+        const noMinorRelease = fakeSources({ releases: { [TABLES]: ['1.4.0'] }, release: { '1.4.0': compatible() } })
+        const exported = await rewrite({ pin: '~1.3.0-main.5', sources: noMinorRelease })
+
+        expect(pinOf({ version: exported, name: 'step_1' })).toBe('~1.3.0')
+        expect(exported.exportedUnresolved).toHaveLength(1)
+    })
+})
+
+describe('snapshotPinExport.apply, agent tools', () => {
+    const tool = (qadamVersion: string, actionName = 'insert'): unknown => ({ type: AgentToolType.PIECE, toolName: 'insert_row', qadamMetadata: { qadamName: TABLES, qadamVersion, actionName } })
+    const agentStep = (tools: unknown[]): StepFixture => ({ name: 'agent_1', qadamName: '@aiqadam/qadam-ai', qadamVersion: '0.5.0', actionName: 'run_agent', tools })
+    const toolsOf = ({ version }: { version: FlowVersion }): unknown[] => {
+        const step = flowStructureUtil.getAllSteps(version.trigger).find((candidate) => candidate.name === 'agent_1')
+        return step?.type === FlowActionType.PIECE && Array.isArray(step.settings.input['agentTools']) ? step.settings.input['agentTools'] : []
+    }
+
+    it('rewrites a snapshot pin in an agent tool like a step, and leaves the others', async () => {
+        const sources = fakeSources({ releases: { [TABLES]: ['1.3.1'] }, release: { '1.3.1': compatible() } })
+        const version = flowVersion({ steps: [agentStep([tool(SNAPSHOT), tool('1.2.0'), { type: 'MCP', toolName: 'x' }, 'junk'])] })
+
+        const exported = await snapshotPinExport.apply({ flowVersion: version, mode: SnapshotExportMode.REWRITE, sources, log })
+
+        expect(toolsOf({ version: exported })).toEqual([tool('1.3.1'), tool('1.2.0'), { type: 'MCP', toolName: 'x' }, 'junk'])
+        expect(exported.exportedUnresolved).toBeUndefined()
+    })
+
+    it('lists a tool no release could be confirmed for, and exports it as ^<base>', async () => {
+        const sources = fakeSources({ releases: { [TABLES]: ['1.3.1'] }, release: { '1.3.1': incompatible() } })
+
+        const exported = await snapshotPinExport.apply({ flowVersion: flowVersion({ steps: [agentStep([tool(SNAPSHOT)])] }), mode: SnapshotExportMode.REWRITE, sources, log })
+
+        expect(toolsOf({ version: exported })).toEqual([tool('^1.3.0')])
+        expect(exported.exportedUnresolved).toEqual([{ stepName: 'agent_1', qadamName: TABLES, pin: SNAPSHOT, reason: 'no-compatible-release' }])
+    })
+
+    it('keeps a tool pin as it is when snapshots are kept, and embeds its metadata', async () => {
+        const version = flowVersion({ steps: [agentStep([tool(SNAPSHOT)])] })
+
+        const exported = await snapshotPinExport.apply({ flowVersion: version, mode: SnapshotExportMode.KEEP, sources: fakeSources({ releases: {}, release: {} }), log })
+
+        expect(toolsOf({ version: exported })).toEqual([tool(SNAPSHOT)])
+        expect(Object.keys(exported.snapshotMetadata ?? {})).toEqual([`${TABLES}@${SNAPSHOT}`])
+    })
+
+    it('does not touch the stored flow', async () => {
+        const version = flowVersion({ steps: [agentStep([tool(SNAPSHOT)])] })
+        const before = JSON.stringify(version)
+
+        await snapshotPinExport.apply({ flowVersion: version, mode: SnapshotExportMode.REWRITE, sources: fakeSources({ releases: {}, release: {} }), log })
+
+        expect(JSON.stringify(version)).toBe(before)
+    })
+})
+
+describe('snapshotPinExport.apply, markers', () => {
+    it.each([SnapshotExportMode.REWRITE, SnapshotExportMode.KEEP])('drops a marker the flow carried when it leaves the instance (%s)', async (mode) => {
+        const version = flowVersion({ steps: [{ name: 'step_1', qadamName: TABLES, qadamVersion: '1.2.0', actionName: 'insert', marker: '1.2.0' }] })
+
+        const exported = await snapshotPinExport.apply({ flowVersion: version, mode, sources: fakeSources({ releases: {}, release: {} }), log })
+
+        expect(JSON.stringify(exported)).not.toContain('exportedUnresolvedPin')
+    })
+
+    it('keeps it on a template that stays on the instance', async () => {
+        const version = flowVersion({ steps: [{ name: 'step_1', qadamName: TABLES, qadamVersion: '1.2.0', actionName: 'insert', marker: '1.2.0' }] })
+
+        const exported = await snapshotPinExport.apply({ flowVersion: version, mode: SnapshotExportMode.SAME_INSTANCE, sources: fakeSources({ releases: {}, release: {} }), log })
+
+        expect(JSON.stringify(exported)).toContain('exportedUnresolvedPin')
     })
 })
 
@@ -215,17 +339,18 @@ function pinOf({ version, name }: { version: FlowVersion, name: string }): strin
     return step?.type === FlowActionType.PIECE ? step.settings.qadamVersion : undefined
 }
 
-function compatible(): unknown {
-    return { actions: { insert: { props: { a: { type: 'SHORT_TEXT', required: false } } } }, triggers: {} }
+function compatible({ actions = [] }: { actions?: string[] } = {}): unknown {
+    const props = { a: { type: 'SHORT_TEXT', required: false } }
+    return { actions: Object.fromEntries(['insert', ...actions].map((name) => [name, { props }])), triggers: {} }
 }
 
 function incompatible(): unknown {
     return { actions: { insert: { props: {} } }, triggers: {} }
 }
 
-function fakeSources({ snapshot = compatible(), releases, release }: { snapshot?: unknown, releases: Record<string, string[]>, release: Record<string, unknown> }): FakeSources {
+function fakeSources({ snapshot = compatible(), releases, release }: { snapshot?: unknown, releases: Record<string, string[]> | null, release: Record<string, unknown> }): FakeSources {
     return {
-        releases: vi.fn(async ({ name }: { name: string }) => releases[name] ?? []),
+        releases: vi.fn(async ({ name }: { name: string }) => releases === null ? null : releases[name] ?? []),
         releaseMetadata: vi.fn(async ({ version }: { name: string, version: string }) => release[version] ?? null),
         snapshotMetadata: vi.fn(async ({ name, version }: { name: string, version: string }) => {
             const own = typeof snapshot === 'object' && snapshot !== null && 'actions' in snapshot ? { name, version, ...snapshot } : snapshot
@@ -241,7 +366,7 @@ function flowVersion({ trigger, steps }: { trigger?: { qadamName: string, qadamV
         valid: true,
         displayName: step.name,
         lastUpdatedDate: '2026-10-10T00:00:00.000Z',
-        settings: { qadamName: step.qadamName, qadamVersion: step.qadamVersion, actionName: step.actionName, propertySettings: {}, input: {}, errorHandlingOptions: {} },
+        settings: { qadamName: step.qadamName, qadamVersion: step.qadamVersion, actionName: step.actionName, propertySettings: {}, input: step.tools === undefined ? {} : { agentTools: step.tools }, errorHandlingOptions: {}, exportedUnresolvedPin: step.marker },
         nextAction: next,
     }), undefined)
     const root: FlowTrigger = {
@@ -272,12 +397,12 @@ function flowVersion({ trigger, steps }: { trigger?: { qadamName: string, qadamV
     }
 }
 
-type StepFixture = { name: string, qadamName: string, qadamVersion: string, actionName: string | undefined }
+type StepFixture = { name: string, qadamName: string, qadamVersion: string, actionName: string | undefined, tools?: unknown[], marker?: string }
 
 type ExportResult = Awaited<ReturnType<typeof snapshotPinExport.apply>>
 
 type FakeSources = {
-    releases: ReturnType<typeof vi.fn<(params: { name: string }) => Promise<string[]>>>
+    releases: ReturnType<typeof vi.fn<(params: { name: string }) => Promise<string[] | null>>>
     releaseMetadata: ReturnType<typeof vi.fn<(params: { name: string, version: string }) => Promise<unknown>>>
     snapshotMetadata: ReturnType<typeof vi.fn<(params: { name: string, version: string }) => Promise<unknown>>>
 } & SnapshotExportSources

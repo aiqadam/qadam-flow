@@ -1,6 +1,7 @@
 import {
   ExportedUnresolvedStep,
   PopulatedFlow,
+  SharedTemplate,
   FlowTriggerType,
   LongPollingStatus,
   isNil,
@@ -22,21 +23,22 @@ import { formatUtils } from '@/lib/format-utils';
 import { flowsApi } from '../api/flows-api';
 
 // An export leaves the instance, so the server rewrites a pre-release qadam pin to a release unless
-// the person chose to keep it (ADR-0004). The steps it could not rewrite come back with the file.
+// the person chose to keep it (ADR-0004). The pins it could not rewrite come back with the file,
+// each tagged with the flow it is in.
 const downloadFlow = async ({
   flowId,
   keepSnapshots,
 }: {
   flowId: string;
   keepSnapshots: boolean;
-}): Promise<ExportedUnresolvedStep[]> => {
+}): Promise<UnresolvedExportedStep[]> => {
   const template = await flowsApi.getTemplate(flowId, { keepSnapshots });
-  downloadFile({
+  await downloadFile({
     obj: JSON.stringify(template, null, 2),
     fileName: template.name,
     extension: 'json',
   });
-  return template.flows?.flatMap((flow) => flow.exportedUnresolved ?? []) ?? [];
+  return collectUnresolved({ template, flowName: template.name });
 };
 
 const zipFlows = async ({
@@ -46,20 +48,40 @@ const zipFlows = async ({
   flows: PopulatedFlow[];
   keepSnapshots: boolean;
 }) => {
+  const templates = await Promise.all(
+    flows.map((flow) => flowsApi.getTemplate(flow.id, { keepSnapshots })),
+  );
   const zip = new JSZip();
-  const unresolved: ExportedUnresolvedStep[] = [];
-  for (const flow of flows) {
-    const template = await flowsApi.getTemplate(flow.id, { keepSnapshots });
-    unresolved.push(
-      ...(template.flows?.flatMap((item) => item.exportedUnresolved ?? []) ??
-        []),
-    );
+  for (const [index, flow] of flows.entries()) {
     zip.file(
       `${flow.version.displayName}_${flow.id}.json`,
-      JSON.stringify(template, null, 2),
+      JSON.stringify(templates[index], null, 2),
     );
   }
-  return { zip, unresolved };
+  return {
+    zip,
+    unresolved: templates.flatMap((template, index) =>
+      collectUnresolved({
+        template,
+        flowName: flows[index].version.displayName,
+      }),
+    ),
+  };
+};
+
+const collectUnresolved = ({
+  template,
+  flowName,
+}: {
+  template: SharedTemplate;
+  flowName: string;
+}): UnresolvedExportedStep[] =>
+  (template.flows ?? []).flatMap((flow) =>
+    (flow.exportedUnresolved ?? []).map((step) => ({ ...step, flowName })),
+  );
+
+export type UnresolvedExportedStep = ExportedUnresolvedStep & {
+  flowName: string;
 };
 
 /**

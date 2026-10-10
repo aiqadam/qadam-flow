@@ -29,6 +29,20 @@ describe('templateUtils.parseTemplate and the export fields', () => {
     ['metadata that is not metadata', { snapshotMetadata: { [`${NAME}@${VERSION}`]: 'x' } }],
   ])('rejects a file with %s', (_label, flow) => {
     expect(templateUtils.parseTemplate(file(flow))).toBeNull();
+    expect(templateUtils.extractFlow(file(flow))).toBeNull();
+  });
+
+  it('extracts a flow with valid export fields, as parsed', () => {
+    const flow = {
+      exportedUnresolved: [
+        { stepName: 'step_1', qadamName: NAME, pin: VERSION, reason: 'not-describable' },
+      ],
+    };
+
+    expect(templateUtils.extractFlow(file(flow))?.exportedUnresolved).toEqual(
+      flow.exportedUnresolved,
+    );
+    expect(templateUtils.parseTemplate(file(flow))?.flows?.[0]).toMatchObject(flow);
   });
 });
 

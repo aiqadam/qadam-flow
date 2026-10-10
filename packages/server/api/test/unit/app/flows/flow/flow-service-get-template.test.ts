@@ -16,7 +16,7 @@ describe('flowService.getTemplate and snapshot pins', () => {
         const { template } = await getTemplate({ mode: SnapshotExportMode.REWRITE, releases: ['1.3.2'] })
 
         expect(pinsOf({ version: template.flows?.[0] })).toEqual(['1.3.2', '^1.3.0'])
-        expect(template.flows?.[0]?.exportedUnresolved).toEqual([{ stepName: 'step_2', qadamName: TABLES, pin: SNAPSHOT }])
+        expect(template.flows?.[0]?.exportedUnresolved).toEqual([{ stepName: 'step_2', qadamName: TABLES, pin: SNAPSHOT, reason: 'no-compatible-release' }])
     })
 
     it('leaves the pins of a template that stays on the instance, and asks nothing of the catalogue', async () => {

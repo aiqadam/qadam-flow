@@ -37,7 +37,19 @@ describe('qadamPropsCompatibility.check', () => {
     it('refuses metadata it cannot read, rather than guessing', () => {
         expect(qadamPropsCompatibility.check({ from: null, to: metadata({ props: {} }), target: ACTION }).compatible).toBe(false)
         expect(qadamPropsCompatibility.check({ from: metadata({ props: {} }), to: 'x', target: ACTION }).compatible).toBe(false)
-        expect(qadamPropsCompatibility.check({ from: metadata({ props: { a: {} } }), to: metadata({ props: {} }), target: ACTION }).compatible).toBe(false)
+        expect(qadamPropsCompatibility.check({ from: metadata({ props: { a: {} } }), to: metadata({ props: { a: {} } }), target: ACTION }).compatible).toBe(false)
+    })
+
+    it('sees a required prop named like an inherited key, and an action named like one', () => {
+        expect(check({ from: { name: text() }, to: { name: text(), constructor: text({ required: true }) } }).compatible).toBe(false)
+        expect(check({ from: { constructor: text() }, to: { constructor: text() } })).toEqual({ compatible: true })
+        expect(qadamPropsCompatibility.describes({ metadata: { actions: {}, triggers: {} }, target: { kind: 'action', name: 'toString' } })).toBe(false)
+    })
+
+    it('says whether a version describes the action or trigger a step uses', () => {
+        expect(qadamPropsCompatibility.describes({ metadata: metadata({ props: {} }), target: ACTION })).toBe(true)
+        expect(qadamPropsCompatibility.describes({ metadata: metadata({ props: {} }), target: { kind: 'trigger', name: 'insert' } })).toBe(false)
+        expect(qadamPropsCompatibility.describes({ metadata: 'x', target: ACTION })).toBe(false)
     })
 
     it('checks a trigger against triggers, not actions', () => {

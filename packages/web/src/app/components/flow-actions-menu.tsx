@@ -312,10 +312,15 @@ const FlowActionMenu: React.FC<FlowActionMenuProps> = ({
           )}
           {!embedState.hideExportAndImportFlow && canKeepSnapshots && (
             <DropdownMenuItem
+              disabled={isExportPending}
               onClick={() => exportFlow({ flows: [flow], keepSnapshots: true })}
             >
               <div className="flex cursor-pointer  flex-row gap-2 items-center">
-                <Download className="h-4 w-4" />
+                {isExportPending ? (
+                  <LoadingSpinner />
+                ) : (
+                  <Download className="h-4 w-4" />
+                )}
                 <span>{t('exportKeepingPrereleasePins')}</span>
               </div>
             </DropdownMenuItem>

@@ -12,6 +12,10 @@ import { z } from 'zod'
 // so it parses what it needs leniently and answers "not compatible" for anything it cannot read.
 // What it cannot see, like gate 2: output shape and behaviour.
 export const qadamPropsCompatibility = {
+    // Whether a version's metadata describes the action or trigger at all, so a caller can stop
+    // before it fetches anything to compare it with.
+    describes: ({ metadata, target }: { metadata: unknown, target: StepTarget }): boolean => findProps({ metadata, target }) !== null,
+
     check: ({ from, to, target }: CheckParams): PropsCompatibilityResult => {
         const before = findProps({ metadata: from, target })
         const after = findProps({ metadata: to, target })
@@ -22,7 +26,7 @@ export const qadamPropsCompatibility = {
             return incompatible({ reason: `the later version has no ${target.kind} ${target.name}` })
         }
         for (const [name, was] of Object.entries(before)) {
-            const now = after[name]
+            const now = Object.hasOwn(after, name) ? after[name] : undefined
             if (isNil(now)) {
                 return incompatible({ reason: `prop ${name} was removed` })
             }
@@ -36,7 +40,7 @@ export const qadamPropsCompatibility = {
                 return incompatible({ reason: `prop ${name} lost a dropdown value` })
             }
         }
-        const added = Object.entries(after).find(([name, now]) => isNil(before[name]) && mustBeSet({ prop: now }))
+        const added = Object.entries(after).find(([name, now]) => !Object.hasOwn(before, name) && mustBeSet({ prop: now }))
         return isNil(added) ? { compatible: true } : incompatible({ reason: `prop ${added[0]} was added as required with no default` })
     },
 }
@@ -47,7 +51,7 @@ function findProps({ metadata, target }: { metadata: unknown, target: StepTarget
         return null
     }
     const owners = target.kind === 'action' ? parsed.data.actions : parsed.data.triggers
-    return owners[target.name]?.props ?? null
+    return Object.hasOwn(owners, target.name) ? owners[target.name].props : null
 }
 
 function mustBeSet({ prop }: { prop: Prop }): boolean {

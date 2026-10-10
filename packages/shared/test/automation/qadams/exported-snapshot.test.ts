@@ -2,7 +2,7 @@ import {
     EMBEDDED_SNAPSHOT_METADATA_MAX_BYTES,
     EMBEDDED_SNAPSHOT_METADATA_MAX_ENTRIES,
     EmbeddedSnapshotMetadataMap,
-    FlowVersionTemplate,
+    ExportedUnresolvedStep,
     GetFlowTemplateRequestQuery,
 } from '../../../src'
 
@@ -41,6 +41,12 @@ describe('EmbeddedSnapshotMetadataMap', () => {
         expect(EmbeddedSnapshotMetadataMap.safeParse({ [`${NAME}@${VERSION}`]: metadata({ actions: big }) }).success).toBe(false)
     })
 
+    it('measures the size in bytes, not characters', () => {
+        const wide = { a: { props: { p: { type: 'SHORT_TEXT', description: '\u00e9'.repeat(EMBEDDED_SNAPSHOT_METADATA_MAX_BYTES / 2) } } } }
+
+        expect(EmbeddedSnapshotMetadataMap.safeParse({ [`${NAME}@${VERSION}`]: metadata({ actions: wide }) }).success).toBe(false)
+    })
+
     it('rejects more entries than the bound', () => {
         const entries = Object.fromEntries(Array.from({ length: EMBEDDED_SNAPSHOT_METADATA_MAX_ENTRIES + 1 }, (_, index) => {
             const version = `1.3.0-main.${index + 1}`
@@ -51,10 +57,13 @@ describe('EmbeddedSnapshotMetadataMap', () => {
     })
 })
 
-describe('a template flow', () => {
-    it('stays valid without either optional field', () => {
-        expect(FlowVersionTemplate.shape.exportedUnresolved.safeParse(undefined).success).toBe(true)
-        expect(FlowVersionTemplate.shape.snapshotMetadata.safeParse(undefined).success).toBe(true)
+describe('ExportedUnresolvedStep', () => {
+    it('carries an optional reason, from a closed set', () => {
+        const step = { stepName: 'step_1', qadamName: NAME, pin: VERSION }
+
+        expect(ExportedUnresolvedStep.safeParse(step).success).toBe(true)
+        expect(ExportedUnresolvedStep.safeParse({ ...step, reason: 'metadata-unavailable' }).success).toBe(true)
+        expect(ExportedUnresolvedStep.safeParse({ ...step, reason: 'because' }).success).toBe(false)
     })
 })
 

@@ -164,20 +164,19 @@ function removeAnySubsequentAction(action: FlowAction): FlowAction {
     return clonedAction
 }
 
-// ADR-0004: the exporter listed these steps because no release passed its props check, so each is
-// marked "update this step", even when the release its caret names exists. The list is untrusted:
-// a name that is not a qadam step of this flow marks nothing.
+// ADR-0004: the exporter listed these steps because it could not confirm a compatible release, so
+// each is marked "update this step", even when the release its caret names exists. The importer is
+// the only writer of the mark: any marker the file brought is dropped first, and a listed name whose
+// qadam is not the step's marks nothing.
 function markExportedUnresolved({ trigger, steps }: { trigger: FlowTrigger, steps: ImportFlowRequest['exportedUnresolved'] }): FlowTrigger {
-    if (isNil(steps) || steps.length === 0) {
-        return trigger
-    }
-    const names = new Set(steps.map((step) => step.stepName))
-    const marked: FlowTrigger = JSON.parse(JSON.stringify(trigger))
+    const marked: FlowTrigger = structuredClone(trigger)
+    const markable = flowQadamUtil.getMarkableUnresolved({ trigger: marked, steps })
     for (const step of flowStructureUtil.getAllSteps(marked)) {
-        if (!names.has(step.name)) {
+        if (step.type !== FlowActionType.PIECE && step.type !== FlowTriggerType.PIECE) {
             continue
         }
-        if (step.type === FlowActionType.PIECE || step.type === FlowTriggerType.PIECE) {
+        delete step.settings.exportedUnresolvedPin
+        if (markable.some((entry) => entry.stepName === step.name && entry.qadamName === step.settings.qadamName)) {
             step.settings.exportedUnresolvedPin = flowQadamUtil.getExactVersion(step.settings.qadamVersion)
         }
     }

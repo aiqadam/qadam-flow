@@ -48,7 +48,7 @@ describe('snapshotExportSources.forInstance', () => {
     it('lists the released versions of a qadam and reads a release metadata from the catalogue', async () => {
         const sources = forInstance()
 
-        expect((await sources.releases({ name: TABLES })).sort()).toEqual(['1.3.0', '1.3.1', '1.4.0'])
+        expect((await sources.releases({ name: TABLES }))?.sort()).toEqual(['1.3.0', '1.3.1', '1.4.0'])
         expect(await sources.releases({ name: '@aiqadam/qadam-none' })).toEqual([])
         expect(await sources.releaseMetadata({ name: TABLES, version: '1.3.1' })).toMatchObject({ name: TABLES, version: '1.3.1' })
         expect(await sources.releaseMetadata({ name: TABLES, version: '9.9.9' })).toBeNull()
@@ -65,7 +65,7 @@ describe('snapshotExportSources.forInstance', () => {
         const sources = snapshotExportSources.forInstance({ log: logger, catalogueSource: qadamVersionCatalogueSource.directory({ root: join(tempDir, 'missing') }) })
         process.env[STORE_ENV] = join(tempDir, 'no-store')
 
-        expect(await sources.releases({ name: TABLES })).toEqual([])
+        expect(await sources.releases({ name: TABLES })).toBeNull()
         expect(await sources.releaseMetadata({ name: TABLES, version: '1.3.0' })).toBeNull()
         expect(await sources.snapshotMetadata({ name: TABLES, version: SNAPSHOT })).toBeNull()
         expect(warn).toHaveBeenCalledWith(expect.objectContaining({ status: 'unavailable' }), expect.stringContaining('catalogue is unavailable'))
