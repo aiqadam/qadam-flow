@@ -65,6 +65,9 @@ describe('qadamVersionStoreLayout', () => {
         ['a non-canonical version', { platformId: null, name: '@aiqadam/qadam-csv', version: 'v0.6.0' }],
         ['build metadata', { platformId: null, name: '@aiqadam/qadam-csv', version: '0.6.0+abc' }],
         ['a partial version', { platformId: null, name: '@aiqadam/qadam-csv', version: '0.6' }],
+        ['a prerelease other than a main snapshot (ADR-0004)', { platformId: null, name: '@aiqadam/qadam-csv', version: '1.0.0-beta.1' }],
+        ['a snapshot without its counter', { platformId: null, name: '@aiqadam/qadam-csv', version: '1.0.0-main' }],
+        ['a leading zero', { platformId: null, name: '@aiqadam/qadam-csv', version: '1.00.0' }],
     ])('refuses %s', (_label, coordinates) => {
         expect(qadamVersionStoreLayout.validateCoordinates(coordinates).valid).toBe(false)
         expect(() => qadamVersionStoreLayout.versionDir({ root, coordinates })).toThrow()

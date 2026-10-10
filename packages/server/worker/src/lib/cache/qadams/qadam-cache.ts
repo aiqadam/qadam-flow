@@ -1,5 +1,5 @@
 import path from 'path'
-import { ApEnvironment, EXACT_VERSION_REGEX, NPM_PACKAGE_NAME_REGEX, PackageType, QadamPackage, QadamType, WorkerToApiContract } from '@aiqadam/shared'
+import { ApEnvironment, NPM_PACKAGE_NAME_REGEX, PackageType, QadamPackage, QadamType, qadamVersionParser, WorkerToApiContract } from '@aiqadam/shared'
 import { trace } from '@opentelemetry/api'
 import { Logger } from 'pino'
 import { workerSettings } from '../../config/worker-settings'
@@ -16,7 +16,7 @@ export const qadamCache = (log: Logger, apiClient: WorkerToApiContract) => ({
         if (!NPM_PACKAGE_NAME_REGEX.test(qadamName)) {
             throw new PieceNotFoundError(qadamName, qadamVersion)
         }
-        const isExactVersion = EXACT_VERSION_REGEX.test(qadamVersion)
+        const isExactVersion = qadamVersionParser.isExact({ version: qadamVersion })
 
         if (!isExactVersion) {
             return getQadamPackage({ qadamName, qadamVersion, platformId }, apiClient)

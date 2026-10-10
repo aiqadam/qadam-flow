@@ -1,14 +1,24 @@
 import { assertNotNullOrUndefined } from '../../core/common'
 import { ErrorCode, QadamFlowError } from '../../core/common/qadam-flow-error'
+import { qadamVersionParser } from './qadam-version'
 
 export const OFFICIAL_QADAM_SCOPE_PREFIX = '@aiqadam/'
 
 /**
  * @param {string} qadamName - starts with `@aiqadam/qadam-`
  * @param {string} qadamVersion - the version of the qadam
- * @returns {string} the package alias for the qadam, e.g. `@aiqadam/qadam-activepieces-0.0.1`
+ * @returns {string} the package alias for the qadam, e.g. `@aiqadam/qadam-activepieces@0.0.1`
  */
 export const getPackageAliasForQadam = (params: GetPackageAliasForQadamParams): string => {
+    const { qadamName, qadamVersion } = params
+    return `${qadamName}@${qadamVersion}`
+}
+
+/**
+ * The alias the workspace directories `qadams/<name>-<version>` were named after before ADR-0004
+ * moved the separator to `@`. Only a compatibility read path builds it; nothing writes a new one.
+ */
+export const getLegacyPackageAliasForQadam = (params: GetPackageAliasForQadamParams): string => {
     const { qadamName, qadamVersion } = params
     return `${qadamName}-${qadamVersion}`
 }
@@ -27,11 +37,12 @@ export const getQadamNameFromAlias = (alias: string): string => {
 }
 
 /**
- * @param {string} alias - e.g. `@aiqadam/qadam-activepieces-0.0.1`
- * @returns {string} the qadam name, e.g. `@aiqadam/qadam-activepieces`
+ * @param {string} alias - `@aiqadam/qadam-activepieces@0.0.1`, or the legacy `@aiqadam/qadam-activepieces-0.0.1`
+ * @returns {string} the qadam name, e.g. `@aiqadam/qadam-activepieces`; an alias that carries no
+ * version is returned as it is
  */
 export const trimVersionFromAlias = (alias: string): string => {
-    return alias.split('-').slice(0, -1).join('-')
+    return qadamVersionParser.parseAlias({ alias })?.name ?? alias
 }
 
 /**

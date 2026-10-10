@@ -115,4 +115,57 @@ describe('qadamLoader.getQadamPath — installed copy under a bundled name (#503
 
         expect(resolvedPath).toBe(installedIndex)
     })
+
+    // ADR-0004 / #850 (each test its own version: the loader caches a resolved path per alias): the alias is `name@version`; `qadams/<name>-<version>` is the layout of
+    // workspaces installed before it, read but never written.
+    it('should find an installed copy in the qadams/<name>@<version> directory of the alias', async () => {
+        const installedIndex = await installCopy(`${BUNDLED_NAME}@9.9.9`)
+
+        const resolvedPath = await qadamLoader.getQadamPath({ packageName: `${BUNDLED_NAME}@9.9.9`, devQadams: [] })
+
+        expect(resolvedPath).toBe(installedIndex)
+    })
+
+    it('should find an installed copy in a legacy qadams/<name>-<version> directory from the new alias', async () => {
+        const installedIndex = await installCopy(`${BUNDLED_NAME}-9.9.1`)
+
+        const resolvedPath = await qadamLoader.getQadamPath({ packageName: `${BUNDLED_NAME}@9.9.1`, devQadams: [] })
+
+        expect(resolvedPath).toBe(installedIndex)
+    })
+
+    it('should prefer the qadams/<name>@<version> directory when both layouts hold the version', async () => {
+        await installCopy(`${BUNDLED_NAME}-9.9.2`)
+        const currentIndex = await installCopy(`${BUNDLED_NAME}@9.9.2`)
+
+        const resolvedPath = await qadamLoader.getQadamPath({ packageName: `${BUNDLED_NAME}@9.9.2`, devQadams: [] })
+
+        expect(resolvedPath).toBe(currentIndex)
+    })
+
+    it('should find an installed snapshot copy, keeping -main.<n> in the version instead of trimming it', async () => {
+        const snapshotAlias = `${BUNDLED_NAME}@9.9.3-main.7`
+        const installedIndex = await installCopy(snapshotAlias)
+
+        expect(await qadamLoader.getQadamPath({ packageName: snapshotAlias, devQadams: [] })).toBe(installedIndex)
+    })
+
+    it('should prefer the bundled build over an installed copy at the same name@version, written with @', async () => {
+        const alias = `${BUNDLED_NAME}@${bundledVersion}`
+        const installedIndex = await installCopy(alias)
+
+        const resolvedPath = await qadamLoader.getQadamPath({ packageName: alias, devQadams: [] })
+
+        expect(resolvedPath).not.toBe(installedIndex)
+        expect(resolvedPath).toContain(path.join('packages', 'qadams', 'core', 'subflows', 'dist'))
+    })
+
+    it('should not take a snapshot of the bundled version for the bundled release', async () => {
+        const alias = `${BUNDLED_NAME}@${bundledVersion}-main.7`
+        const installedIndex = await installCopy(alias)
+
+        const resolvedPath = await qadamLoader.getQadamPath({ packageName: alias, devQadams: [] })
+
+        expect(resolvedPath).toBe(installedIndex)
+    })
 })

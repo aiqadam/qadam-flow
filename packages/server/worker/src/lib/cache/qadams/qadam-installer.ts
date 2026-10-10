@@ -1,8 +1,11 @@
+import { existsSync } from 'node:fs'
 import { readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path, { dirname, join } from 'node:path'
 import { fileLock, fileSystemUtils } from '@aiqadam/server-utils'
 import {
     ExecutionMode,
+    getLegacyPackageAliasForQadam,
+    getPackageAliasForQadam,
     getQadamNameFromAlias,
     groupBy,
     isEmpty,
@@ -105,7 +108,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
     }
     log.info({
         rootWorkspace,
-        qadamsToInstall: qadamsToInstall.map(piece => `${piece.qadamName}-${piece.qadamVersion}`),
+        qadamsToInstall: qadamsToInstall.map(piece => getPackageAliasForQadam(piece)),
     }, '[qadamInstaller] Installing qadams in workspace')
 
     // rootWorkspace is a shared cache directory bind-mounted into every worker replica
@@ -126,7 +129,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
             }
             log.info({
                 rootWorkspace,
-                pieces: qadamsToInstall.map(piece => `${piece.qadamName}-${piece.qadamVersion}`),
+                pieces: qadamsToInstall.map(piece => getPackageAliasForQadam(piece)),
             }, '[qadamInstaller] acquired lock and starting to install qadams')
 
             // Read before this install writes any member of its own, so every member without a
@@ -191,7 +194,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
 
                     log.warn({
                         rootWorkspace,
-                        pieces: qadamsToInstall.map(piece => `${piece.qadamName}-${piece.qadamVersion}`),
+                        pieces: qadamsToInstall.map(piece => getPackageAliasForQadam(piece)),
                         error: batchError,
                     }, '[qadamInstaller] Batch install failed, retrying qadams individually')
 
@@ -265,7 +268,7 @@ function assertWorkspaceLockHeld({ isCompromised, rootWorkspace }: AssertWorkspa
 
 // Every rollback writes the shared workspace: it removes qadam directories and restores or removes
 // `bun.lock`. Once the lock is lost those are the new holder's files, so a rollback would delete
-// its half-written `qadams/<name>-<version>` (which its `markQadamsAsUsed` then recreates holding
+// its half-written `qadams/<name>@<version>` (which its `markQadamsAsUsed` then recreates holding
 // only a `ready` marker) or write an older snapshot over the `bun.lock` its own `bun install` just
 // wrote, before its verification reads it (#593). The rollback is skipped instead and the caller
 // throws its own error.
@@ -742,6 +745,8 @@ async function createQadamPackageJson({ rootWorkspace, qadamPackage }: {
 }): Promise<void> {
     const packageJsonPath = join(qadamPath({ rootWorkspace, piece: qadamPackage }), 'package.json')
 
+    // Not the `name@version` alias: a workspace member's `name` has to stay a valid package name,
+    // and `@` is only legal in a name's scope. Hyphen-joined, a snapshot's `-main.<n>` is still valid.
     const packageJson = {
         'name': `${qadamPackage.qadamName}-${qadamPackage.qadamVersion}`,
         'version': `${qadamPackage.qadamVersion}`,
@@ -815,12 +820,22 @@ function qadamPath({ rootWorkspace, piece }: QadamPathParams): string {
     if (!isSinglePathSegment(piece.qadamVersion)) {
         throw new Error(`[qadamInstaller] Refusing qadam version ${JSON.stringify(piece.qadamVersion)} for ${piece.qadamName}: it is not a single path segment`)
     }
-    const member = join(rootWorkspace, QADAMS_DIR, `${piece.qadamName}-${piece.qadamVersion}`)
+    const member = join(rootWorkspace, QADAMS_DIR, memberDirectoryName({ rootWorkspace, piece }))
     const membersRoot = path.resolve(rootWorkspace, QADAMS_DIR)
     if (!path.resolve(member).startsWith(`${membersRoot}${path.sep}`)) {
         throw new Error(`[qadamInstaller] Refusing ${piece.qadamName}@${piece.qadamVersion}: its directory resolves outside ${membersRoot}`)
     }
     return member
+}
+
+// ADR-0004: a member directory is named after the alias `name@version`. A workspace installed
+// before it holds `name-version` instead, and a qadam already there keeps its directory: a second
+// member would carry the same package name, which bun refuses in one workspace. Nothing creates a
+// legacy directory; it is read for as long as it exists. Synchronous on purpose: every caller of
+// `qadamPath` is a plain path computation, and the probe is one `stat`.
+function memberDirectoryName({ rootWorkspace, piece }: QadamPathParams): string {
+    const legacyName = getLegacyPackageAliasForQadam(piece)
+    return existsSync(join(rootWorkspace, QADAMS_DIR, legacyName, 'package.json')) ? legacyName : getPackageAliasForQadam(piece)
 }
 
 // The same two checks `qadamPath` throws on, for callers that would rather set such a qadam

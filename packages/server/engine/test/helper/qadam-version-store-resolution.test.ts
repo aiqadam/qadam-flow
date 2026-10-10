@@ -11,6 +11,8 @@ import { qadamLoader } from '../../src/lib/helper/qadam-loader'
 // `@aiqadam/*` and `zod` to it.
 const PROBE = '@aiqadam/qadam-store-probe'
 const SUBFLOWS = '@aiqadam/qadam-subflows'
+// A snapshot of the probe, the version a build from `main` gives a changed qadam (ADR-0004).
+const SNAPSHOT = '1.3.0-main.412'
 const PLATFORM_ID = 'AAAAAAAAAAAAAAAAAAAAA'
 const STORE_LOG: QadamVersionStoreLogger = { info: () => undefined, warn: () => undefined }
 
@@ -62,6 +64,7 @@ beforeAll(async () => {
     store = opened.store
     subflowsVersion = await readVersion('packages/qadams/core/subflows/package.json')
     await storeVersion({ name: PROBE, version: '1.2.3', entrySource: PROBE_SOURCE })
+    await storeVersion({ name: PROBE, version: SNAPSHOT, entrySource: PROBE_SOURCE })
     await storeVersion({ platformId: PLATFORM_ID, name: 'acme-crm', version: '1.0.0', entrySource: PROBE_SOURCE })
     // The same version the image bundles: the store's copy wins.
     await storeVersion({ name: SUBFLOWS, version: subflowsVersion, entrySource: PROBE_SOURCE })
@@ -98,6 +101,29 @@ describe('qadamLoader with a qadam version store', () => {
         expect(qadamAction.name).toBe('probe')
         const line = logSpy.mock.calls.map((call) => String(call[0])).find((text) => text.startsWith(`[qadamLoader] cold load {"qadam":"${PROBE}@1.2.3"`))
         expect(JSON.parse(String(line).slice('[qadamLoader] cold load '.length))).toMatchObject({ resolvedVersion: '1.2.3', source: 'store' })
+    })
+
+    it('loads a stored snapshot pinned as name@x.y.z-main.<n>, and finds no other version in its alias', async () => {
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+
+        const { qadamAction } = await qadamLoader.getQadamAndActionOrThrow({ qadamName: PROBE, qadamVersion: SNAPSHOT, actionName: 'probe', devQadams: [] })
+
+        expect(qadamAction.name).toBe('probe')
+        const resolved = await qadamLoader.getQadamPath({ packageName: `${PROBE}@${SNAPSHOT}`, devQadams: [] })
+        expect(resolved).toBe(path.join(root, 'qadams', PROBE, SNAPSHOT, 'src', 'index.js'))
+        const line = logSpy.mock.calls.map((call) => String(call[0])).find((text) => text.startsWith(`[qadamLoader] cold load {"qadam":"${PROBE}@${SNAPSHOT}"`))
+        expect(JSON.parse(String(line).slice('[qadamLoader] cold load '.length))).toMatchObject({ resolvedVersion: SNAPSHOT, source: 'store' })
+    })
+
+    it('still reads the legacy name-version alias of a stored snapshot', async () => {
+        const resolved = await qadamLoader.getQadamPath({ packageName: `${PROBE}-${SNAPSHOT}`, devQadams: [] })
+
+        expect(resolved).toBe(path.join(root, 'qadams', PROBE, SNAPSHOT, 'src', 'index.js'))
+    })
+
+    it('does not stand a stored release in for a snapshot the store does not hold', async () => {
+        await expect(qadamLoader.getQadamPath({ packageName: `${PROBE}@1.3.0-main.411`, devQadams: [] })).rejects.toThrow('Qadam not found')
+        await expect(qadamLoader.getQadamPath({ packageName: `${PROBE}@1.3.0`, devQadams: [] })).rejects.toThrow('Qadam not found')
     })
 
     it('gives a stored version the platform\'s one copy of the framework, common and zod', async () => {

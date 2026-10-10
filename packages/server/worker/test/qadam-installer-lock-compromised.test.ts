@@ -406,7 +406,7 @@ describe('qadamInstaller after an install that stopped without rolling back', ()
         const slashed = makeQadam('acme/tools')
         const bareAt = makeQadam('@foo')
         const outer = makeQadam('@acme/qadam-outer')
-        const nested = { ...makeQadam(`${outer.qadamName}-${outer.qadamVersion}/inner`), qadamVersion: '2.0.0' }
+        const nested = { ...makeQadam(`${outer.qadamName}@${outer.qadamVersion}/inner`), qadamVersion: '2.0.0' }
         const bareAtLeftover = makeQadam('@bar')
         await writeReadyMember({ qadam: slashed })
         await writeReadyMember({ qadam: bareAt })
@@ -485,7 +485,7 @@ function lockfilePath(): string {
 }
 
 function qadamDirPath(qadam: QadamPackage): string {
-    return join(testWorkspace, 'qadams', `${qadam.qadamName}-${qadam.qadamVersion}`)
+    return join(testWorkspace, 'qadams', `${qadam.qadamName}@${qadam.qadamVersion}`)
 }
 
 function newHolderFilePath(qadam: QadamPackage): string {

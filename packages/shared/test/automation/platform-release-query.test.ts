@@ -1,6 +1,6 @@
 import { ListQadamsRequestQuery, RegistryQadamsRequestQuery } from '../../src/lib/automation/qadams/dto/qadam-requests'
 
-// ADR-0001 / #798: images built from `main` report `<next>-main.<n>`, and the builder sends that
+// ADR-0001 / #798, on the one parser of ADR-0004 / #850: images built from `main` report `<next>-main.<n>`, and the builder sends that
 // version as `release` to GET /v1/qadams/registry. Before #798 the query only took `x.y.z`, so every
 // `main` image answered the builder's version list with 400.
 describe('the platform release in qadam queries', () => {
@@ -8,14 +8,15 @@ describe('the platform release in qadam queries', () => {
         ['1.1.0', 'a release'],
         ['2.0.0-main.1234', 'a main build'],
         ['2.1.0-main.0', 'a main build with counter 0'],
-        ['2.1.0-rc.1', 'a release-candidate tag'],
-        ['2.1.0-alpha-1.x.7', 'hyphens and alphanumeric identifiers'],
     ])('accepts %s (%s)', (release) => {
         expect(RegistryQadamsRequestQuery.safeParse({ release }).success).toBe(true)
         expect(ListQadamsRequestQuery.safeParse({ release }).success).toBe(true)
     })
 
     it.each([
+        ['2.1.0-rc.1', 'a prerelease other than a main snapshot (ADR-0004)'],
+        ['2.1.0-alpha-1.x.7', 'a prerelease other than a main snapshot'],
+        ['2.1.0-main', 'a snapshot without its counter'],
         ['2.1.0-main.05', 'a numeric identifier with a leading zero'],
         ['2.1.0-', 'an empty prerelease'],
         ['2.1.0-main..5', 'an empty identifier'],

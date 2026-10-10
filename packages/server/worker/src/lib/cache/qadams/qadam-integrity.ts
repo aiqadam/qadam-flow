@@ -349,7 +349,7 @@ const assertBatchIsCovered = ({ resolved, installed }: { resolved: ResolvedPacka
 //     which `buildInstallBunfig` already refuses to exempt from quarantine for the same
 //     shadowing reason. The operator's fix is to rename it.
 //
-// A workspace member is a one-element entry and is skipped: those are the `qadams/<name>-<ver>`
+// A workspace member is a one-element entry and is skipped: those are the `qadams/<name>@<ver>` (`qadams/<name>-<ver>` before ADR-0004)
 // directories this installer writes itself, and they were never published.
 const classifyEntry = ({ key, entry }: { key: string, entry: unknown }): ResolvedPackage | Refusal | undefined => {
     const keyName = lockfileKeyName(key)

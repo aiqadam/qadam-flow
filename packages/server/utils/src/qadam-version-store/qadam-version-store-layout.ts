@@ -1,6 +1,5 @@
 import path from 'node:path'
-import { isNil, NPM_PACKAGE_NAME_REGEX } from '@aiqadam/shared'
-import semver from 'semver'
+import { isNil, NPM_PACKAGE_NAME_REGEX, qadamVersionParser } from '@aiqadam/shared'
 
 // The on-disk format of the qadam version store (ADR-0003 "Store"). Later releases must read it,
 // so every name here is part of a format, not a detail:
@@ -99,12 +98,8 @@ const OFFICIAL_SCOPE_PREFIX = '@aiqadam/'
 const OFFICIAL_QADAM_NAME_PREFIX = '@aiqadam/qadam-'
 // npm's own limit on a package name.
 const MAX_NAME_LENGTH = 214
-const MAX_VERSION_LENGTH = 64
 // `ApId` in `@aiqadam/shared`: 21 characters of [0-9a-zA-Z].
 const PLATFORM_ID_PATTERN = /^[0-9a-zA-Z]{21}$/
-// What remains of a canonical semver once build metadata is refused: a version directory name is
-// then exactly the version npm and the flow pin carry.
-const VERSION_CHARACTERS = /^[0-9A-Za-z.-]+$/
 
 function describeNameProblem({ name }: { name: string }): string | null {
     if (name.length === 0 || name.length > MAX_NAME_LENGTH) {
@@ -119,13 +114,12 @@ function describeNameProblem({ name }: { name: string }): string | null {
     return null
 }
 
+// A version directory name is exactly the version the flow pins: a release or a `-main.<n>`
+// snapshot (ADR-0004), as `qadamVersionParser` reads it. Anything else would be a second
+// directory for the same code or a path nobody pinned.
 function describeVersionProblem({ version }: { version: string }): string | null {
-    if (version.length === 0 || version.length > MAX_VERSION_LENGTH || !VERSION_CHARACTERS.test(version)) {
-        return 'qadam version is not a valid semver version'
-    }
-    // Canonical only: `v1.0.0` or `=1.0.0` would be a second directory for the same version.
-    if (semver.valid(version) !== version) {
-        return 'qadam version is not a canonical semver version'
+    if (qadamVersionParser.parse({ version }) === null) {
+        return 'qadam version is not a release or a main snapshot'
     }
     return null
 }

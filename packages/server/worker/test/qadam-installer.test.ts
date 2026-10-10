@@ -1,9 +1,9 @@
-import { access, glob, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
+import { access, glob, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { PackageType, QadamType } from '@aiqadam/shared'
+import { NPM_PACKAGE_NAME_REGEX, PackageType, QadamType } from '@aiqadam/shared'
 import type { OfficialQadamPackage, QadamPackage } from '@aiqadam/shared'
 import type { Logger } from 'pino'
 import { qadamInstaller } from '../src/lib/cache/qadams/qadam-installer'
@@ -81,7 +81,7 @@ function makeOfficialQadam(name: string, version = '1.0.0'): OfficialQadamPackag
 }
 
 function qadamDirPath(qadam: QadamPackage): string {
-    return join(testWorkspace, 'qadams', `${qadam.qadamName}-${qadam.qadamVersion}`)
+    return join(testWorkspace, 'qadams', `${qadam.qadamName}@${qadam.qadamVersion}`)
 }
 
 function readyFilePath(qadam: QadamPackage): string {
@@ -184,8 +184,8 @@ describe('qadamInstaller', () => {
         // whole cache.
         expect(mockInstall.mock.calls[0]?.[0]).toMatchObject({
             filtersPath: [
-                expect.stringContaining(`${qadam1.qadamName}-${qadam1.qadamVersion}`),
-                expect.stringContaining(`${qadam2.qadamName}-${qadam2.qadamVersion}`),
+                expect.stringContaining(`${qadam1.qadamName}@${qadam1.qadamVersion}`),
+                expect.stringContaining(`${qadam2.qadamName}@${qadam2.qadamVersion}`),
             ],
         })
         expect(await pathExists(readyFilePath(qadam1))).toBe(true)
@@ -310,7 +310,7 @@ describe('qadamInstaller', () => {
 
         expect(mockInstall).toHaveBeenCalledOnce()
         expect(mockInstall.mock.calls[0]?.[0]).toMatchObject({
-            filtersPath: [expect.stringContaining(`${official.qadamName}-${official.qadamVersion}`)],
+            filtersPath: [expect.stringContaining(`${official.qadamName}@${official.qadamVersion}`)],
         })
         expect(await pathExists(readyFilePath(official))).toBe(true)
     })
@@ -491,6 +491,67 @@ describe('qadamInstaller', () => {
         expect(await pathExists(readyFilePath(qadam2))).toBe(true)
     })
 
+    // ADR-0004 / #850: the member directory is `qadams/<name>@<version>`. A workspace installed
+    // before it holds `qadams/<name>-<version>`, which is read as the install it is.
+    describe('the member directory of the name@version alias', () => {
+        const legacyDirPath = (qadam: QadamPackage): string => join(testWorkspace, 'qadams', `${qadam.qadamName}-${qadam.qadamVersion}`)
+
+        async function writeLegacyReadyMember({ qadam }: { qadam: QadamPackage }): Promise<void> {
+            await mkdir(join(legacyDirPath(qadam), 'node_modules'), { recursive: true })
+            await writeFile(join(legacyDirPath(qadam), 'package.json'), JSON.stringify({ name: `${qadam.qadamName}-${qadam.qadamVersion}` }))
+            await writeFile(join(legacyDirPath(qadam), 'ready'), 'true')
+        }
+
+        it('installs into qadams/<name>@<version>, with a package name that is still a valid package name', async () => {
+            const qadam = makeQadam('@acme/qadam-pinned', '1.3.0')
+            mockInstall.mockImplementation(simulateBunInstall)
+
+            await qadamInstaller(fakeLog, fakeApiClient).install({ pieces: [qadam], includeFilters: true })
+
+            expect(await pathExists(readyFilePath(qadam))).toBe(true)
+            expect(await pathExists(legacyDirPath(qadam))).toBe(false)
+            const member: unknown = JSON.parse(await readFile(join(qadamDirPath(qadam), 'package.json'), 'utf8'))
+            const memberName = typeof member === 'object' && member !== null && 'name' in member ? member.name : undefined
+            expect(typeof memberName === 'string' && NPM_PACKAGE_NAME_REGEX.test(memberName)).toBe(true)
+        })
+
+        it('keeps a qadam installed under the legacy directory there: no second member, no reinstall', async () => {
+            const qadam = makeQadam('@acme/qadam-legacy', '1.3.0')
+            await writeLegacyReadyMember({ qadam })
+
+            await qadamInstaller(fakeLog, fakeApiClient).install({ pieces: [qadam], includeFilters: true })
+
+            expect(mockInstall).not.toHaveBeenCalled()
+            expect(await pathExists(qadamDirPath(qadam))).toBe(false)
+        })
+
+        it('reinstalls into the legacy directory when it lost its node_modules, instead of adding a member of the same package name', async () => {
+            const qadam = makeQadam('@acme/qadam-legacy-broken', '1.3.0')
+            await writeLegacyReadyMember({ qadam })
+            await rm(join(legacyDirPath(qadam), 'node_modules'), { recursive: true })
+            mockInstall.mockImplementation(simulateBunInstall)
+
+            await qadamInstaller(fakeLog, fakeApiClient).install({ pieces: [qadam], includeFilters: true })
+
+            expect(mockInstall).toHaveBeenCalledOnce()
+            expect(await pathExists(join(legacyDirPath(qadam), 'node_modules'))).toBe(true)
+            expect(await pathExists(qadamDirPath(qadam))).toBe(false)
+        })
+
+        it('installs a snapshot version next to a legacy directory of another version', async () => {
+            const released = makeQadam('@acme/qadam-both', '1.3.0')
+            const snapshot = makeQadam('@acme/qadam-both', '1.3.0-main.412')
+            await writeLegacyReadyMember({ qadam: released })
+            mockInstall.mockImplementation(simulateBunInstall)
+
+            await qadamInstaller(fakeLog, fakeApiClient).install({ pieces: [released, snapshot], includeFilters: true })
+
+            expect(await pathExists(readyFilePath(snapshot))).toBe(true)
+            expect(await pathExists(legacyDirPath(released))).toBe(true)
+            expect(await pathExists(qadamDirPath(released))).toBe(false)
+        })
+    })
+
     it('individual fallback always passes --filter path regardless of includeFilters', async () => {
         const qadam1 = makeQadam('@aiqadam/qadam-filter-a')
         const qadam2 = makeQadam('@aiqadam/qadam-filter-b')
@@ -511,10 +572,10 @@ describe('qadamInstaller', () => {
 
         // Individual calls must always include the --filter path (sequential order)
         expect(mockInstall.mock.calls[1]?.[0]).toMatchObject({
-            filtersPath: [expect.stringContaining(`${qadam1.qadamName}-${qadam1.qadamVersion}`)],
+            filtersPath: [expect.stringContaining(`${qadam1.qadamName}@${qadam1.qadamVersion}`)],
         })
         expect(mockInstall.mock.calls[2]?.[0]).toMatchObject({
-            filtersPath: [expect.stringContaining(`${qadam2.qadamName}-${qadam2.qadamVersion}`)],
+            filtersPath: [expect.stringContaining(`${qadam2.qadamName}@${qadam2.qadamVersion}`)],
         })
     })
 

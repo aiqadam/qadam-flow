@@ -3,21 +3,18 @@ import { ApMultipartFile } from '../../../core/common'
 import { OptionalArrayFromQuery, OptionalBooleanFromQuery } from '../../../core/common/base-model'
 import { formErrors } from '../../../form-errors'
 import { PackageType, QadamCategory } from '../qadam'
+import { QADAM_PIN_PATTERN, QADAM_RELEASE_PATTERN, QADAM_VERSION_PATTERN } from '../qadam-version'
 
-export const EXACT_VERSION_PATTERN = '^[0-9]+\\.[0-9]+\\.[0-9]+$'
-export const EXACT_VERSION_REGEX = new RegExp(EXACT_VERSION_PATTERN)
-const VERSION_PATTERN = '^([~^])?[0-9]+\\.[0-9]+\\.[0-9]+$'
-// A semver prerelease identifier: a number without a leading zero, or alphanumerics and hyphens.
-const PRERELEASE_IDENTIFIER = '(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
-// The platform version as `apVersionUtil.getCurrentRelease()` reports it: a release, or a prerelease
-// such as `2.1.0-main.5` on images built from `main` (ADR-0001, #798). Never build metadata.
-const PLATFORM_RELEASE_PATTERN = `^[0-9]+\\.[0-9]+\\.[0-9]+(-${PRERELEASE_IDENTIFIER}(\\.${PRERELEASE_IDENTIFIER})*)?$`
+// One grammar for every version a qadam request or a stored step carries (ADR-0004): see
+// `qadamVersionParser`. A pin may lead with `^` or `~`.
+export const VersionType = z.string().regex(new RegExp(QADAM_PIN_PATTERN))
 
-export const ExactVersionType = z.string().regex(new RegExp(EXACT_VERSION_PATTERN))
+// What a custom qadam is installed at. A `-main.<n>` number names an official snapshot only.
+export const ReleaseVersionType = z.string().regex(new RegExp(QADAM_RELEASE_PATTERN))
 
-export const VersionType = z.string().regex(new RegExp(VERSION_PATTERN))
-
-const PlatformReleaseType = z.string().regex(new RegExp(PLATFORM_RELEASE_PATTERN))
+// The platform version as `apVersionUtil.getCurrentRelease()` reports it: a release, or
+// `<next>-main.<n>` on images built from `main` (ADR-0001, #798).
+const PlatformReleaseType = z.string().regex(new RegExp(QADAM_VERSION_PATTERN))
 
 // The npm package-name shape (lower-case, optional `@scope/`, no leading `.` or `_`). A qadam name
 // becomes a directory under the worker's install workspace, a key in its bunfig.toml and a
@@ -112,14 +109,14 @@ export const AddQadamRequestBody = z.union([
         packageType: z.literal(PackageType.ARCHIVE),
         scope: z.literal(QadamScope.PLATFORM),
         qadamName: QadamPackageName,
-        qadamVersion: ExactVersionType,
+        qadamVersion: ReleaseVersionType,
         qadamArchive: ApMultipartFile,
     }).describe('Private Qadam'),
     z.object({
         packageType: z.literal(PackageType.REGISTRY),
         scope: z.literal(QadamScope.PLATFORM),
         qadamName: QadamPackageName,
-        qadamVersion: ExactVersionType,
+        qadamVersion: ReleaseVersionType,
     }).describe('NPM Qadam'),
 ])
 

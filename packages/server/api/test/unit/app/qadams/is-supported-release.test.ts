@@ -3,7 +3,9 @@ import { isSupportedRelease } from '../../../../src/app/qadams/metadata/utils/qa
 
 // Images built from `main` report `<next>-main.<n>` (ADR-0001, #798). These pin how the catalogue
 // filter reads that number: in semver's own order, so a canary meets the floors of every release it
-// was built after and never claims the release it leads to.
+// was built after and never claims the release it leads to. #850 asked whether a floor equal to the
+// release it leads to (`<next>`) should count as met; ADR-0001 says a canary never claims a release it
+// is not, so it does not, and the `2.1.0` case below pins that decision.
 describe('isSupportedRelease with a main-build platform version', () => {
     const MAIN_BUILD = '2.1.0-main.5'
 

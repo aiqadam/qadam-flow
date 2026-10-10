@@ -4,7 +4,6 @@ import {
     apId,
     assertNotNullOrUndefined,
     ErrorCode,
-    EXACT_VERSION_REGEX,
     isNil,
     isOfficialQadamName,
     LocalesEnum,
@@ -18,6 +17,7 @@ import {
     QadamPackage,
     QadamSortBy,
     QadamType,
+    qadamVersionParser,
     SuggestionType,
 } from '@aiqadam/shared'
 import dayjs from 'dayjs'
@@ -124,7 +124,7 @@ export const qadamMetadataService = (log: FastifyBaseLogger) => {
             })
         },
         async resolveExactVersion({ name, version, platformId }: GetExactPieceVersionParams): Promise<string> {
-            const isExactVersion = EXACT_VERSION_REGEX.test(version)
+            const isExactVersion = qadamVersionParser.isExact({ version })
 
             if (isExactVersion) {
                 return version
