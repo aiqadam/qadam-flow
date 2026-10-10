@@ -58,7 +58,7 @@ import { SnapshotExportSources, snapshotExportSources } from '../../qadams/snaps
 import { SnapshotExportMode, snapshotPinExport } from '../../qadams/snapshot-export/snapshot-pin-export'
 import { eventPullerRegistry } from '../../trigger/long-polling/event-puller-registry'
 import { longPollingStatus } from '../../trigger/long-polling/long-polling-status'
-import { triggerSourceService } from '../../trigger/trigger-source/trigger-source-service'
+import { triggerSourceRepo, triggerSourceService } from '../../trigger/trigger-source/trigger-source-service'
 import { flowVersionMigrationService } from '../flow-version/flow-version-migration.service'
 import { flowVersionRepo, flowVersionService } from '../flow-version/flow-version.service'
 import { flowFolderService } from '../folder/folder.service'
@@ -540,7 +540,10 @@ export const flowService = (log: FastifyBaseLogger) => ({
             })
         }
 
-        const wasEnabled = flowToUpdate.status === FlowStatus.ENABLED && !isNil(flowToUpdate.publishedVersionId)
+        // Captured before the transaction: nothing below may read the previous state back from
+        // `flowToUpdate` after it has been given the new version.
+        const previousPublishedVersionId = flowToUpdate.publishedVersionId
+        const wasEnabled = flowToUpdate.status === FlowStatus.ENABLED && !isNil(previousPublishedVersionId)
         const published = await transaction(async (entityManager) => {
             // Read again under a row lock: locking saves the whole version, so a revert of a pin move
             // that committed since the move above (the disable before this is an external call) must
@@ -560,9 +563,7 @@ export const flowService = (log: FastifyBaseLogger) => ({
                 log,
             })
 
-            flowToUpdate.publishedVersionId = lockedFlowVersion.id
-            flowToUpdate.status = FlowStatus.DISABLED
-            const updatedFlow = await flowRepo(entityManager).save(flowToUpdate)
+            const updatedFlow = await flowRepo(entityManager).save({ ...flowToUpdate, publishedVersionId: lockedFlowVersion.id, status: FlowStatus.DISABLED })
             await flowExecutionCache(log).invalidate(updatedFlow.id)
             return {
                 ...updatedFlow,
@@ -573,7 +574,7 @@ export const flowService = (log: FastifyBaseLogger) => ({
             // published version's trigger source back, so a publish that fails leaves the flow running (#435).
             // Moving the disable after the transaction would change which version the disable hook sees.
             if (wasEnabled) {
-                await reenablePreviousTrigger({ flowToUpdate, log })
+                await reenablePreviousTrigger({ flowToUpdate, previousPublishedVersionId, log })
             }
             throw error
         })
@@ -820,13 +821,31 @@ async function moveUnavailableQadamPins({ flowVersion, projectId, platformId, us
     return data.flowVersion
 }
 
-async function reenablePreviousTrigger({ flowToUpdate, log }: { flowToUpdate: Flow, log: FastifyBaseLogger }): Promise<void> {
-    const { error } = await tryCatch(async () => {
-        const previous = await flowVersionService(log).getFlowVersionOrThrow({ flowId: flowToUpdate.id, versionId: flowToUpdate.publishedVersionId ?? undefined })
-        await triggerSourceService(log).enable({ flowVersion: previous, projectId: flowToUpdate.projectId, simulate: false, templateId: flowToUpdate.templateId ?? undefined })
-    })
+// Under the flow's status-change lock and from a fresh read: a person may have disabled the flow, or
+// another publish may have moved the published version, while this one failed. The trigger source is
+// registered again only when the flow still says ENABLED on the version it was on, and nothing
+// registered it meanwhile. No row lock is held across the external call.
+async function reenablePreviousTrigger({ flowToUpdate, previousPublishedVersionId, log }: { flowToUpdate: Flow, previousPublishedVersionId: FlowVersionId | null, log: FastifyBaseLogger }): Promise<void> {
+    const flowId = flowToUpdate.id
+    const { error } = await tryCatch(() => distributedLock(log).runExclusive({
+        key: `flow-status-change-${flowId}`,
+        timeoutInSeconds: system.getNumberOrThrow(AppSystemProp.TRIGGER_TIMEOUT_SECONDS) + 30,
+        fn: async () => {
+            const fresh = await flowRepo().findOneBy({ id: flowId, projectId: flowToUpdate.projectId })
+            if (isNil(fresh) || fresh.status !== FlowStatus.ENABLED || isNil(previousPublishedVersionId) || fresh.publishedVersionId !== previousPublishedVersionId) {
+                log.info({ flowId }, '[flowService] a publish failed; the flow was changed meanwhile, so its previous trigger source is not registered again')
+                return
+            }
+            const active = await triggerSourceRepo().findOneBy({ flowId, projectId: flowToUpdate.projectId, simulate: false })
+            if (!isNil(active)) {
+                return
+            }
+            const previous = await flowVersionService(log).getFlowVersionOrThrow({ flowId, versionId: previousPublishedVersionId })
+            await triggerSourceService(log).enable({ flowVersion: previous, projectId: flowToUpdate.projectId, simulate: false, templateId: flowToUpdate.templateId ?? undefined })
+        },
+    }))
     if (!isNil(error)) {
-        log.error({ err: error, flowId: flowToUpdate.id }, '[flowService] a publish failed after the flow\'s trigger source was disabled and it could not be enabled again; enable the flow to do it')
+        log.error({ err: error, flowId }, '[flowService] a publish failed after the flow\'s trigger source was disabled and it could not be enabled again; enable the flow to do it')
     }
 }
 

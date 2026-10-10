@@ -49,3 +49,4 @@ export type QadamPinMoveStatus = z.infer<typeof QadamPinMoveStatus>
 export type QadamPinMoveCause = z.infer<typeof QadamPinMoveCause>
 export type QadamPinMovePropsCheck = z.infer<typeof QadamPinMovePropsCheck>
 export type ListQadamPinMovesRequestQuery = z.infer<typeof ListQadamPinMovesRequestQuery>
+export type RevertedQadamPinMove = z.infer<typeof RevertedQadamPinMove>

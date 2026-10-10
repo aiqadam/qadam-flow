@@ -304,6 +304,7 @@ describe('qadamPinMoveService.revert', () => {
         const { moved } = await moveWith({ ctx, flowVersion, seams: fakeSeams({ imageVersion: '0.4.5' }) })
         await db.update('flow_version', flowVersion.id, { state: FlowVersionState.LOCKED })
         await db.update('flow', flow.id, { publishedVersionId: flowVersion.id })
+        await db.update('flow_version', flowVersion.id, { updatedBy: null })
 
         const reverted = await qadamPinMoveService({ log: app.log }).revert({ id: moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })
 
@@ -314,6 +315,7 @@ describe('qadamPinMoveService.revert', () => {
         expect(drafts).toHaveLength(1)
         expect(pinsOf({ flowVersion: drafts[0] })).toEqual(['0.4.2'])
         expect(drafts[0].id).not.toBe(flowVersion.id)
+        expect(drafts[0].updatedBy).toBe(ctx.user.id)
     })
 
     it('refuses when neither a draft nor the published version carries the moved pin', async () => {
@@ -330,6 +332,22 @@ describe('qadamPinMoveService.revert', () => {
         await expect(qadamPinMoveService({ log: app.log }).revert({ id: moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })).rejects.toMatchObject({ error: { code: 'VALIDATION' } })
 
         expect(await db.findOneByOrFail<QadamPinMove>('qadam_pin_move', { id: moved[0].id })).toMatchObject({ status: 'APPLIED' })
+    })
+
+    it('makes only one draft when two reverts of one flow run together', async () => {
+        const ctx = await createTestContext(app)
+        const { flow, flowVersion } = await seedFlow({ ctx, pins: ['0.4.2', '0.4.2'] })
+        const { moved } = await moveWith({ ctx, flowVersion, seams: fakeSeams({ imageVersion: '0.4.5' }) })
+        await db.update('flow_version', flowVersion.id, { state: FlowVersionState.LOCKED })
+        await db.update('flow', flow.id, { publishedVersionId: flowVersion.id })
+        const service = qadamPinMoveService({ log: app.log })
+
+        const results = await Promise.allSettled(moved.map((record) => service.revert({ id: record.id, platformId: ctx.platform.id, userId: ctx.user.id })))
+
+        expect(results.map((result) => result.status)).toEqual(['fulfilled', 'fulfilled'])
+        const drafts = await db.find<FlowVersion>('flow_version', { flowId: flow.id, state: FlowVersionState.DRAFT })
+        expect(drafts).toHaveLength(1)
+        expect(pinsOf({ flowVersion: drafts[0] })).toEqual(['0.4.2', '0.4.2'])
     })
 
     it('does not move a locked version', async () => {
