@@ -3,6 +3,7 @@ import {
     BranchExecutionType,
     FlowActionType,
     flowCanvasUtils,
+    flowQadamUtil,
     flowStructureUtil,
     FlowTriggerType,
     isNil,
@@ -14,6 +15,7 @@ import {
     Note,
     Permission,
     ProjectScopedMcpServer,
+    qadamVersionParser,
     StepLocationRelativeToParent,
     tryCatch,
 } from '@aiqadam/shared'
@@ -44,6 +46,10 @@ type StepInfo = {
     input: Record<string, unknown> | null
     qadamPin?: string
     qadamVersionResolvable?: boolean
+    // Only carried when the step's pin is a snapshot (`x.y.z-main.<n>`, a build from `main`), so the
+    // default case adds no noise (ADR-0004). It is a fact, not a fault: the pin resolves and the
+    // step runs it, so this is a plain label, never one of the `qadamPinWarning` marks above.
+    preReleaseBuild?: true
     // The PIECE tools of an agent step, each with whether its pin resolves. Only carried by a step
     // that has some: the worker provisions them like steps, so a dead one fails the flow (#779).
     agentToolPins?: AgentToolPinInfo[]
@@ -84,7 +90,7 @@ function getConfigStatus(step: Step): string {
 // the lookup errored) precisely so a caller that must not conflate the last two — the heal
 // migration — can tell them apart. This is a read-only report, not a persister, so it passes the
 // raw tri-state value straight through; `qadamPinWarning` below is where the collapse happens.
-function qadamPinInfo({ step, qadamResolutions, unsupportedPins }: { step: Step, qadamResolutions: Map<string, boolean | undefined>, unsupportedPins: Map<string, PinFrameworkSupport> }): Pick<StepInfo, 'qadamPin' | 'qadamVersionResolvable' | 'frameworkVersionSupported' | 'agentToolPins'> {
+function qadamPinInfo({ step, qadamResolutions, unsupportedPins }: { step: Step, qadamResolutions: Map<string, boolean | undefined>, unsupportedPins: Map<string, PinFrameworkSupport> }): Pick<StepInfo, 'qadamPin' | 'qadamVersionResolvable' | 'preReleaseBuild' | 'frameworkVersionSupported' | 'agentToolPins'> {
     const agentToolPins = qadamPinUtil.getAgentToolPinsOfStep({ step }).map((tool): AgentToolPinInfo => {
         const pin = qadamPinUtil.pinOfTool({ tool })
         return { toolName: tool.toolName, qadamPin: pin, qadamVersionResolvable: qadamResolutions.get(pin) }
@@ -101,6 +107,8 @@ function qadamPinInfo({ step, qadamResolutions, unsupportedPins }: { step: Step,
         qadamPin: pin,
         qadamVersionResolvable: qadamResolutions.get(pin),
         ...(agentToolPins.length > 0 ? { agentToolPins } : {}),
+        // The stored pin may carry a `^` or `~` range; the parser wants the exact version.
+        ...(qadamVersionParser.isSnapshot({ version: flowQadamUtil.getExactVersion(step.settings.qadamVersion) }) ? { preReleaseBuild: true as const } : {}),
         // Only the negative is reported: a step whose framework version is still run carries
         // nothing, so the default case adds no noise (the `logFlags` pattern).
         ...(unsupportedPins.has(pin) ? { frameworkVersionSupported: false as const } : {}),
@@ -114,6 +122,17 @@ const FRAMEWORK_VERSION_LABEL = 'FRAMEWORK VERSION NO LONGER SUPPORTED: update t
 
 function frameworkVersionWarning(step: StepInfo): string {
     return step.frameworkVersionSupported === false ? ` ⚠️ ${FRAMEWORK_VERSION_LABEL}` : ''
+}
+
+// ADR-0004: a snapshot-pinned step runs a build from `main`. The label shares its wording with
+// `ap_validate_flow` via `mcpUtils.preReleaseBuildIssue`, so the two tools agree. It is appended
+// without a warning glyph: unlike `frameworkVersionWarning` and `qadamPinWarning`, there is nothing
+// to fix — the pin resolves and the step runs it.
+function preReleaseBuildLabel(step: StepInfo): string {
+    if (step.preReleaseBuild !== true || isNil(step.qadamPin)) {
+        return ''
+    }
+    return ` [${mcpUtils.preReleaseBuildIssue({ pin: step.qadamPin }).label}]`
 }
 
 // Wording is shared with `ap_validate_flow` via `mcpUtils.qadamPinIssue`, so the two tools cannot
@@ -403,7 +422,7 @@ function formatFlowStructure(
             if (fullStep && fullStep.type === FlowTriggerType.PIECE && fullStep.settings.qadamName) {
                 triggerDetail = ` (qadam: ${mcpUtils.wrapUntrustedValue(fullStep.settings.qadamName)}, trigger: ${fullStep.settings.triggerName ? mcpUtils.wrapUntrustedValue(fullStep.settings.triggerName) : 'not set'})`
             }
-            lines.push(`- [TRIGGER] ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${triggerDetail}${qadamPinWarning(step)}${frameworkVersionWarning(step)} | parent: — | ${step.configStatus}${sampleLabel}${skipLabel}${logLabel}${canvasLabel}`)
+            lines.push(`- [TRIGGER] ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${triggerDetail}${preReleaseBuildLabel(step)}${qadamPinWarning(step)}${frameworkVersionWarning(step)} | parent: — | ${step.configStatus}${sampleLabel}${skipLabel}${logLabel}${canvasLabel}`)
             if (fullStep) {
                 lines.push(...formatStepSettings(fullStep, includeInput))
             }
@@ -418,7 +437,7 @@ function formatFlowStructure(
             if (s?.qadamName) stepDetail = ` (qadam: ${mcpUtils.wrapUntrustedValue(s.qadamName)}, action: ${s.actionName ? mcpUtils.wrapUntrustedValue(s.actionName) : 'not set'})`
         }
 
-        lines.push(`- ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${stepDetail}${qadamPinWarning(step)}${frameworkVersionWarning(step)} | parent: ${step.parentName} | ${rel} | ${step.configStatus}${sampleLabel}${skipLabel}${logLabel}${canvasLabel}`)
+        lines.push(`- ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${stepDetail}${preReleaseBuildLabel(step)}${qadamPinWarning(step)}${frameworkVersionWarning(step)} | parent: ${step.parentName} | ${rel} | ${step.configStatus}${sampleLabel}${skipLabel}${logLabel}${canvasLabel}`)
 
         if (fullStep) {
             lines.push(...formatStepSettings(fullStep, includeInput))
@@ -512,7 +531,7 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
     return {
         title: 'ap_flow_structure',
         permission: Permission.READ_FLOW,
-        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), valid insert locations for ap_add_step, the flow\'s localeSource, whether each step\'s pinned qadam version, and the pinned qadam of each agent tool, is still available on this installation, and whether a step\'s pinned qadam needs a framework version this release no longer supports. Pass includeInput=true to also get each step\'s full untruncated input in structuredContent; text input: lines are returned untruncated too.',
+        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), valid insert locations for ap_add_step, the flow\'s localeSource, whether each step\'s pinned qadam version, and the pinned qadam of each agent tool, is still available on this installation, whether a step runs a pre-release build from main, and whether a step\'s pinned qadam needs a framework version this release no longer supports. Pass includeInput=true to also get each step\'s full untruncated input in structuredContent; text input: lines are returned untruncated too.',
         inputSchema: {
             flowId: z.string().describe('The id of the flow'),
             includeInput: z.boolean().optional().describe('When true, include the full step input (untruncated) in structuredContent.steps[].input and render text input: lines untruncated'),
@@ -573,6 +592,7 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
                             configStatus: s.configStatus,
                             ...(includeInput && s.input !== null ? { input: s.input } : {}),
                             ...(s.qadamPin !== undefined ? { qadamPin: s.qadamPin, qadamVersionResolvable: s.qadamVersionResolvable } : {}),
+                            ...(s.preReleaseBuild === true ? { preReleaseBuild: true } : {}),
                             ...(s.agentToolPins !== undefined ? { agentToolPins: s.agentToolPins } : {}),
                             ...(s.frameworkVersionSupported === false ? { frameworkVersionSupported: false } : {}),
                         })),

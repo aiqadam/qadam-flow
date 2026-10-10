@@ -2268,5 +2268,7 @@
   "unresolvedPinsExported": "{count, plural, =1 {1 ta qadam pre-release buildga bog'langan va mos reliz topilmadi. U asosiy relizning ^ oralig'i sifatida eksport qilinadi va import paytida \"bu qadamni yangilang\" deb belgilanadi: {steps}} other {# ta qadam pre-release buildlarga bog'langan va mos reliz topilmadi. Ular asosiy relizlarning ^ oraliqlari sifatida eksport qilinadi va import paytida \"bu qadamni yangilang\" deb belgilanadi: {steps}}}",
   "exportKeepingPrereleasePins": "Pre-release versiyalar bilan eksport qilish",
   "snapshotMetadataInvalid": "Ichiga joylangan pre-release metadata yaroqsiz",
-  "snapshotMetadataTooLarge": "Ichiga joylangan pre-release metadata juda katta"
+  "snapshotMetadataTooLarge": "Ichiga joylangan pre-release metadata juda katta",
+  "Pre-release build": "Pre-reliz build",
+  "This step is pinned to a build from main, not a released version. It runs that exact build until its version is updated.": "Bu qadam chiqarilgan versiyaga emas, main'dan olingan buildga bog'langan. Versiya yangilanmaguncha aynan shu buildni ishlatadi."
 }

@@ -2,6 +2,7 @@ import { PauseBehaviour, QadamMetadataModel } from '@aiqadam/qadams-framework'
 import {
     extractMustacheTokens,
     FlowActionType,
+    flowQadamUtil,
     flowStructureUtil,
     FlowTriggerType,
     isNil,
@@ -12,6 +13,7 @@ import {
     parseTranslationToken,
     Permission,
     ProjectScopedMcpServer,
+    qadamVersionParser,
     RouterActionSettingsWithValidation,
     Step,
     TRANSLATION_KEY_REGEX,
@@ -77,15 +79,17 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                         log,
                     }),
                 ])
-                const allIssues = [...structural.issues, ...qadamVersionIssues, ...frameworkVersionIssues, ...callFlowIssues, ...concurrentLoopIssues, ...translationIssues]
+                const allIssues = [...structural.issues, ...qadamVersionIssues, ...frameworkVersionIssues, ...validatePreReleaseBuilds({ trigger: flow.version.trigger }), ...callFlowIssues, ...concurrentLoopIssues, ...translationIssues]
                 const result = { ...structural, issues: allIssues }
                 // A warning is reported in the output but never blocks `valid` or counts toward
                 // "invalid" in the summary — today that is exactly (and only) the translation
                 // categories that describe something the run can recover from at run time (a
                 // fallback locale, a self-referential localeSource), never the ones that will
-                // actually throw.
-                const errorIssues = allIssues.filter((issue) => issue.severity !== 'warning')
-                const warningIssues = allIssues.filter((issue) => issue.severity === 'warning')
+                // actually throw. An informational issue (`info`, currently only the ADR-0004
+                // pre-release build note) is weaker still: a fact about the step, never a defect.
+                const errorIssues = allIssues.filter((issue) => issueSeverity(issue) === 'error')
+                const warningIssues = allIssues.filter((issue) => issueSeverity(issue) === 'warning')
+                const informationalIssues = allIssues.filter((issue) => issueSeverity(issue) === 'info')
                 const valid = errorIssues.length === 0 && result.validSteps > 0
                 return {
                     content: [{ type: 'text', text: formatValidationResult({ result, valid, flowDisplayName: flow.version.displayName }) }],
@@ -97,6 +101,7 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                         skippedSteps: result.skippedSteps,
                         issues: errorIssues.map(i => ({ category: i.category, stepName: i.stepName, message: i.message })),
                         warnings: warningIssues.map(i => ({ category: i.category, stepName: i.stepName, message: i.message })),
+                        informational: informationalIssues.map(i => ({ category: i.category, stepName: i.stepName, message: i.message })),
                     },
                 }
             }
@@ -247,6 +252,27 @@ async function validatePinnedQadamVersions({ trigger, platformId, log }: {
         }]
     })
     return [...stepIssues, ...toolIssues]
+}
+
+// ADR-0004: a step pinned to a snapshot (`x.y.z-main.<n>`) runs a build from `main`, not a release.
+// That is a fact about where the step comes from, not a defect — the version resolves and the step
+// runs it — so it is reported at `severity: 'info'`, the lowest this tool has: visible to a flow
+// owner, never blocking publishing, and never counted as a warning. "Update available" and the
+// `follow` hold state are later slices.
+function validatePreReleaseBuilds({ trigger }: { trigger: Step }): ValidationIssue[] {
+    return qadamPinUtil.getQadamSteps({ trigger }).flatMap((step): ValidationIssue[] => {
+        // The stored pin may carry a `^` or `~` range; the parser wants the exact version.
+        if (!qadamVersionParser.isSnapshot({ version: flowQadamUtil.getExactVersion(step.settings.qadamVersion) })) {
+            return []
+        }
+        const issue = mcpUtils.preReleaseBuildIssue({ pin: qadamPinUtil.pinOf({ step }) })
+        return [{
+            category: 'pre_release_build' as const,
+            stepName: step.name,
+            severity: 'info' as const,
+            message: `${mcpUtils.wrapUntrustedValue(step.displayName)} ${issue.message}`,
+        }]
+    })
 }
 
 // ADR-0002 (#803): once a release retires a framework context version, a step pinned to a qadam
@@ -943,10 +969,11 @@ const CONDITIONAL_PAUSE_EVALUATORS: Record<string, (step: QadamStep) => string |
     [`${ASSEMBLYAI_QADAM}:${ASSEMBLYAI_TRANSCRIBE_ACTION}`]: readTranscribePauseReason,
 }
 
-const CATEGORY_ORDER: ValidationIssue['category'][] = ['step_validity', 'qadam_version', 'framework_version', 'template_reference', 'translation_key', 'translation_default_locale', 'translation_locale', 'empty_branch', 'subflow_payload', 'inline_pause', 'concurrent_pause']
+const CATEGORY_ORDER: ValidationIssue['category'][] = ['step_validity', 'qadam_version', 'pre_release_build', 'framework_version', 'template_reference', 'translation_key', 'translation_default_locale', 'translation_locale', 'empty_branch', 'subflow_payload', 'inline_pause', 'concurrent_pause']
 const CATEGORY_LABELS: Record<ValidationIssue['category'], string> = {
     step_validity: 'Step Validity',
     qadam_version: 'Unavailable Qadam Versions',
+    pre_release_build: 'Pre-Release Builds',
     framework_version: 'Unsupported Framework Versions',
     template_reference: 'Template References',
     translation_key: 'Unknown Translation Keys',
@@ -956,6 +983,13 @@ const CATEGORY_LABELS: Record<ValidationIssue['category'], string> = {
     subflow_payload: 'Subflow Payloads',
     inline_pause: 'Inline Subflows That Pause',
     concurrent_pause: 'Pausing Steps In Concurrent Loops',
+}
+
+// The single place the "omitted means error" default is applied. Every filter above and in
+// `formatValidationResult` goes through this, so a new severity can never silently fall on the
+// wrong side of "blocks publishing" in one of the two computations and not the other.
+function issueSeverity(issue: ValidationIssue): 'error' | 'warning' | 'info' {
+    return issue.severity ?? 'error'
 }
 
 // `valid` is the SAME boolean the tool's `structuredContent.valid` reports, computed once by the
@@ -972,10 +1006,11 @@ const CATEGORY_LABELS: Record<ValidationIssue['category'], string> = {
 // "invalid" — it gets its own labeled section below the blocking issues instead, so it stays
 // visible without being confused for something that will fail the run.
 function formatValidationResult({ result, valid, flowDisplayName }: { result: ValidationResult, valid: boolean, flowDisplayName: string }): string {
-    const errors = result.issues.filter((issue) => issue.severity !== 'warning')
-    const warnings = result.issues.filter((issue) => issue.severity === 'warning')
+    const errors = result.issues.filter((issue) => issueSeverity(issue) === 'error')
+    const warnings = result.issues.filter((issue) => issueSeverity(issue) === 'warning')
+    const informational = result.issues.filter((issue) => issueSeverity(issue) === 'info')
 
-    if (valid && warnings.length === 0) {
+    if (valid && warnings.length === 0 && informational.length === 0) {
         const skippedNote = result.skippedSteps > 0 ? `, ${result.skippedSteps} skipped` : ''
         return `✅ Flow ${mcpUtils.wrapUntrustedValue(flowDisplayName)} is ready to publish (${result.totalSteps} steps, ${result.validSteps} valid${skippedNote}).`
     }
@@ -984,13 +1019,17 @@ function formatValidationResult({ result, valid, flowDisplayName }: { result: Va
         return `⚠️ Flow ${mcpUtils.wrapUntrustedValue(flowDisplayName)} has no valid steps (${result.totalSteps} total). Configure the trigger and actions before publishing.`
     }
 
+    const notes = [
+        ...(warnings.length > 0 ? [`${warnings.length} warning(s)`] : []),
+        ...(informational.length > 0 ? [`${informational.length} note(s)`] : []),
+    ]
     const lines: string[] = []
     if (valid) {
         const skippedNote = result.skippedSteps > 0 ? `, ${result.skippedSteps} skipped` : ''
-        lines.push(`✅ Flow ${mcpUtils.wrapUntrustedValue(flowDisplayName)} is ready to publish (${result.totalSteps} steps, ${result.validSteps} valid${skippedNote}), with ${warnings.length} warning(s):`)
+        lines.push(`✅ Flow ${mcpUtils.wrapUntrustedValue(flowDisplayName)} is ready to publish (${result.totalSteps} steps, ${result.validSteps} valid${skippedNote}), with ${notes.join(' and ')}:`)
     }
     else {
-        lines.push(`⚠️ Flow ${mcpUtils.wrapUntrustedValue(flowDisplayName)} has ${errors.length} issue(s)${warnings.length > 0 ? ` and ${warnings.length} warning(s)` : ''}:`)
+        lines.push(`⚠️ Flow ${mcpUtils.wrapUntrustedValue(flowDisplayName)} has ${errors.length} issue(s)${notes.length > 0 ? ` and ${notes.join(' and ')}` : ''}:`)
     }
     lines.push('')
 
@@ -998,6 +1037,10 @@ function formatValidationResult({ result, valid, flowDisplayName }: { result: Va
     if (warnings.length > 0) {
         lines.push('Warnings (do not block publishing):')
         lines.push(...formatIssueGroups(warnings))
+    }
+    if (informational.length > 0) {
+        lines.push('Notes (informational):')
+        lines.push(...formatIssueGroups(informational))
     }
 
     lines.push(`Summary: ${result.totalSteps} total, ${result.validSteps} valid, ${result.invalidSteps} invalid, ${result.skippedSteps} skipped`)
@@ -1026,7 +1069,7 @@ function formatIssueGroups(issues: ValidationIssue[]): string[] {
 }
 
 type ValidationIssue = {
-    category: 'step_validity' | 'qadam_version' | 'framework_version' | 'template_reference' | 'translation_key' | 'translation_locale' | 'translation_default_locale' | 'empty_branch' | 'subflow_payload' | 'inline_pause' | 'concurrent_pause'
+    category: 'step_validity' | 'qadam_version' | 'pre_release_build' | 'framework_version' | 'template_reference' | 'translation_key' | 'translation_locale' | 'translation_default_locale' | 'empty_branch' | 'subflow_payload' | 'inline_pause' | 'concurrent_pause'
     stepName: string
     message: string
     // Omitted (or 'error') blocks `structuredContent.valid` and counts toward "invalid" in the
@@ -1035,8 +1078,10 @@ type ValidationIssue = {
     // (no usable locale for this `$t` reference) is an error for every trigger except subflows'
     // Callable Flow, where it is a warning — that trigger can inherit a real locale from its caller
     // at run time, which this static check cannot rule out, so it is not a guaranteed failure there
-    // the way it is for every other trigger type.
-    severity?: 'error' | 'warning'
+    // the way it is for every other trigger type. 'info' is even weaker than a warning: a fact about
+    // the flow (currently only the ADR-0004 pre-release build note) that is neither a defect nor a
+    // risk, reported under its own "Notes" section and never counted as a warning or an issue.
+    severity?: 'error' | 'warning' | 'info'
 }
 
 type QadamStep = Extract<Step, { type: FlowActionType.PIECE }>
