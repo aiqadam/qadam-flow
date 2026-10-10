@@ -32,37 +32,43 @@ const NPM_SIGNING_KEYS: Record<string, string> = {
     'SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U': 'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEY6Ya7W++7aUPzvMTrezH6Ycx3c+HOKYCcNGybJZSCJq/fd7Qa8uuAKtdIkUQtQiEKERhAmE5lMMJhP8OkDOa2g==',
 }
 
-export const npmPackageSignature = {
-    // The `dist.signatures` of a registry version document, as far as it has the expected shape.
-    // The document is external data of unknown shape, so it is walked key by key rather than cast.
-    readSignatures: ({ versionDocument }: { versionDocument: unknown }): NpmPackageSignature[] => {
-        const signatures = readProperty({ source: readProperty({ source: versionDocument, key: 'dist' }), key: 'signatures' })
-        if (!Array.isArray(signatures)) {
-            return []
-        }
-        return signatures.flatMap((entry): NpmPackageSignature[] => {
-            const keyid = readProperty({ source: entry, key: 'keyid' })
-            const sig = readProperty({ source: entry, key: 'sig' })
-            return typeof keyid === 'string' && typeof sig === 'string' ? [{ keyid, sig }] : []
-        })
-    },
+export const npmPackageSignature: NpmPackageSignatureVerifier = createNpmPackageSignatureVerifier({ trustedKeys: NPM_SIGNING_KEYS })
 
-    // The signatures under a key this platform pins. Everything else is ignored before anything is
-    // verified, so an entry the registry added of its own never even gets a verification attempt.
-    // Doing it the other way round — verify each entry, then ask whether its key was pinned — is the
-    // same answer with a much easier mistake available in it.
-    pinned: ({ signatures, trustedKeys = NPM_SIGNING_KEYS }: PinnedParams): NpmPackageSignature[] => {
+// For this package's own tests, which sign with a key of their own. Not exported from `index.ts`.
+export function createNpmPackageSignatureVerifier({ trustedKeys }: { trustedKeys: NpmTrustedKeys }): NpmPackageSignatureVerifier {
+    const pinned = ({ signatures }: { signatures: NpmPackageSignature[] }): NpmPackageSignature[] => {
         return signatures.filter(({ keyid }) => !isNil(findKey({ trustedKeys, keyid })))
-    },
+    }
+    return {
+        // The `dist.signatures` of a registry version document, as far as it has the expected shape.
+        // The document is external data of unknown shape, so it is walked key by key rather than cast.
+        readSignatures: ({ versionDocument }): NpmPackageSignature[] => {
+            const signatures = readProperty({ source: readProperty({ source: versionDocument, key: 'dist' }), key: 'signatures' })
+            if (!Array.isArray(signatures)) {
+                return []
+            }
+            return signatures.flatMap((entry): NpmPackageSignature[] => {
+                const keyid = readProperty({ source: entry, key: 'keyid' })
+                const sig = readProperty({ source: entry, key: 'sig' })
+                return typeof keyid === 'string' && typeof sig === 'string' ? [{ keyid, sig }] : []
+            })
+        },
 
-    // The signatures that verify for exactly this name, version and integrity, under a pinned key.
-    // Any one is enough; npmjs publishes two entries under one key id for some packages. The
-    // payload binds all three values, so neither a substituted tarball (different integrity) nor a
-    // replayed signature from another release (different version) verifies.
-    verifying: ({ name, version, integrity, signatures, trustedKeys = NPM_SIGNING_KEYS }: VerifyingParams): NpmPackageSignature[] => {
-        const payload = Buffer.from(`${name}@${version}:${integrity}`)
-        return npmPackageSignature.pinned({ signatures, trustedKeys }).filter((signature) => signatureVerifies({ signature, payload, trustedKeys }))
-    },
+        // The signatures under a key this platform pins. Everything else is ignored before anything is
+        // verified, so an entry the registry added of its own never even gets a verification attempt.
+        // Doing it the other way round — verify each entry, then ask whether its key was pinned — is the
+        // same answer with a much easier mistake available in it.
+        pinned,
+
+        // The signatures that verify for exactly this name, version and integrity, under a pinned key.
+        // Any one is enough; npmjs publishes two entries under one key id for some packages. The
+        // payload binds all three values, so neither a substituted tarball (different integrity) nor a
+        // replayed signature from another release (different version) verifies.
+        verifying: ({ name, version, integrity, signatures }): NpmPackageSignature[] => {
+            const payload = Buffer.from(`${name}@${version}:${integrity}`)
+            return pinned({ signatures }).filter((signature) => signatureVerifies({ signature, payload, trustedKeys }))
+        },
+    }
 }
 
 // `verify` throws on a malformed key or signature rather than returning false, and a malformed
@@ -97,21 +103,13 @@ export type NpmPackageSignature = {
     sig: string
 }
 
-// A key id to a base64 SPKI DER public key. Production callers leave it out and get the pinned
-// npmjs keys; a test supplies its own.
+// A key id to a base64 SPKI DER public key.
 export type NpmTrustedKeys = Record<string, string>
 
-type PinnedParams = {
-    signatures: NpmPackageSignature[]
-    trustedKeys?: NpmTrustedKeys
-}
-
-type VerifyingParams = {
-    name: string
-    version: string
-    integrity: string
-    signatures: NpmPackageSignature[]
-    trustedKeys?: NpmTrustedKeys
+export type NpmPackageSignatureVerifier = {
+    readSignatures: (params: { versionDocument: unknown }) => NpmPackageSignature[]
+    pinned: (params: { signatures: NpmPackageSignature[] }) => NpmPackageSignature[]
+    verifying: (params: { name: string, version: string, integrity: string, signatures: NpmPackageSignature[] }) => NpmPackageSignature[]
 }
 
 type SignatureVerifiesParams = {

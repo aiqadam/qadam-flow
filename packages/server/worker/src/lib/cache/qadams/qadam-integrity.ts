@@ -79,11 +79,8 @@ export const qadamIntegrity = (log: Logger) => ({
             return
         }
 
-        // What an earlier process verified is answered from the ledger beside `bun.lock`, offline:
-        // each persisted signature is checked again against the pinned keys for exactly this name,
-        // version and integrity, so a restart does not need the registry for any of it (#780). A
-        // package the ledger cannot answer for — never verified, edited record, a different
-        // integrity, a key no longer pinned, an unusable file — goes to the registry below.
+        // Answered offline from the ledger beside `bun.lock` where it can be (see the header); the rest
+        // goes to the registry below.
         const ledger = qadamSignatureLedger.open({ dir: rootWorkspace, log })
         const fromLedger = await ledger.check({ packages: unverified })
         for (const pkg of fromLedger.verified) {

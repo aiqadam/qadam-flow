@@ -3,8 +3,8 @@ import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFi
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { npmPackageSignature, NpmPackageSignature, NpmTrustedKeys } from '../src/npm-package-signature'
-import { QadamSignatureLedger, qadamSignatureLedger, QadamSignatureProof, QadamSignatureUnverified } from '../src/qadam-version-store/qadam-signature-ledger'
+import { createNpmPackageSignatureVerifier, npmPackageSignature, NpmPackageSignature, NpmTrustedKeys } from '../src/npm-package-signature'
+import { createQadamSignatureLedger, QadamSignatureLedger, QadamSignatureProof, QadamSignatureUnverified } from '../src/qadam-version-store/qadam-signature-ledger'
 
 // The ledger verifies every persisted signature again against the keys it is given, so these tests
 // sign with a key of their own and trust it. (The pinned npmjs key is exercised against npmjs's real
@@ -14,6 +14,7 @@ const OTHER_KEY_ID = 'SHA256:another-key'
 const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
 const other = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
 const TRUSTED: NpmTrustedKeys = { [KEY_ID]: spki(publicKey) }
+const verifier = createNpmPackageSignatureVerifier({ trustedKeys: TRUSTED })
 
 const TABLES = { name: '@aiqadam/qadam-tables', version: '0.5.1', integrity: 'sha512-AAAA' }
 const CSV = { name: '@aiqadam/qadam-csv', version: '0.6.0', integrity: 'sha512-BBBB' }
@@ -84,7 +85,7 @@ describe('qadamSignatureLedger', () => {
         expect(entry?.signatures).toHaveLength(4)
         expect(entry?.signatures[0]).toEqual(good)
         expect(new Set(entry?.signatures.map(({ sig }) => sig)).size).toBe(4)
-        expect(npmPackageSignature.verifying({ ...TABLES, signatures: entry?.signatures ?? [], trustedKeys: TRUSTED })).toHaveLength(4)
+        expect(verifier.verifying({ ...TABLES, signatures: entry?.signatures ?? [] })).toHaveLength(4)
     })
 
     describe('a record that was edited', () => {
@@ -159,7 +160,7 @@ describe('qadamSignatureLedger', () => {
     it('stops answering for a record whose signing key is no longer trusted', async () => {
         await openLedger().record({ proofs: [proofFor(TABLES)] })
 
-        const rotated = qadamSignatureLedger.open({ dir, log, trustedKeys: { [OTHER_KEY_ID]: spki(other.publicKey) } })
+        const rotated = createQadamSignatureLedger({ dir, log, verifier: createNpmPackageSignatureVerifier({ trustedKeys: { [OTHER_KEY_ID]: spki(other.publicKey) } }) })
         const checked = await rotated.check({ packages: [TABLES] })
 
         expect(checked.unverified.map(({ reason }) => reason)).toEqual([QadamSignatureUnverified.SIGNATURE_DOES_NOT_VERIFY])
@@ -222,7 +223,7 @@ describe('qadamSignatureLedger', () => {
         })
 
         it('reports a directory it cannot write to, and does not throw', async () => {
-            const missing = qadamSignatureLedger.open({ dir: join(dir, 'does-not-exist'), log, trustedKeys: TRUSTED })
+            const missing = createQadamSignatureLedger({ dir: join(dir, 'does-not-exist'), log, verifier })
 
             const recorded = await missing.record({ proofs: [proofFor(TABLES)] })
 
@@ -247,7 +248,7 @@ describe('qadamSignatureLedger', () => {
         })
 
         it('keeps the newest records when it would hold more than it is allowed', async () => {
-            const small = qadamSignatureLedger.open({ dir, log, trustedKeys: TRUSTED, maxEntries: 2 })
+            const small = createQadamSignatureLedger({ dir, log, verifier, maxEntries: 2 })
             const third = { name: '@aiqadam/qadam-http', version: '1.0.0', integrity: 'sha512-DDDD' }
             await small.record({ proofs: [proofFor(TABLES)] })
             await small.record({ proofs: [proofFor(CSV)] })
@@ -281,9 +282,9 @@ describe('npmPackageSignature', () => {
     it('verifies for exactly the name, version and integrity that were signed', () => {
         const signatures = [signatureFor(TABLES)]
 
-        expect(npmPackageSignature.verifying({ ...TABLES, signatures, trustedKeys: TRUSTED })).toEqual(signatures)
+        expect(verifier.verifying({ ...TABLES, signatures })).toEqual(signatures)
         for (const changed of [{ name: CSV.name }, { version: '0.5.2' }, { integrity: 'sha512-CCCC' }]) {
-            expect(npmPackageSignature.verifying({ ...TABLES, ...changed, signatures, trustedKeys: TRUSTED })).toEqual([])
+            expect(verifier.verifying({ ...TABLES, ...changed, signatures })).toEqual([])
         }
     })
 
@@ -297,7 +298,7 @@ describe('npmPackageSignature', () => {
 })
 
 function openLedger(): QadamSignatureLedger {
-    return qadamSignatureLedger.open({ dir, log, trustedKeys: TRUSTED })
+    return createQadamSignatureLedger({ dir, log, verifier })
 }
 
 function proofFor(pkg: { name: string, version: string, integrity: string }): QadamSignatureProof {

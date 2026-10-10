@@ -3,8 +3,8 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { NpmPackageSignature, npmPackageSignature, NpmTrustedKeys } from '../src/npm-package-signature'
-import { QadamSignatureLedger, qadamSignatureLedger, QadamSignatureUnverified } from '../src/qadam-version-store/qadam-signature-ledger'
+import { createNpmPackageSignatureVerifier, NpmPackageSignature, NpmTrustedKeys } from '../src/npm-package-signature'
+import { createQadamSignatureLedger, QadamSignatureLedger, QadamSignatureUnverified } from '../src/qadam-version-store/qadam-signature-ledger'
 import { QadamVersionOrigin, QadamVersionPutStatus, QadamVersionReadStatus, qadamVersionStore, QadamVersionStore } from '../src/qadam-version-store/qadam-version-store'
 import { QadamVersionCoordinates, qadamVersionStoreLayout } from '../src/qadam-version-store/qadam-version-store-layout'
 import { qadamVersionStoreReader } from '../src/qadam-version-store/qadam-version-store-read'
@@ -22,6 +22,7 @@ import { tarFixtures } from './qadam-version-store-fixtures'
 const KEY_ID = 'SHA256:test-signing-key'
 const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
 const TRUSTED: NpmTrustedKeys = { [KEY_ID]: publicKey.export({ type: 'spki', format: 'der' }).toString('base64') }
+const verifier = createNpmPackageSignatureVerifier({ trustedKeys: TRUSTED })
 const CSV = { platformId: null, name: '@aiqadam/qadam-csv', version: '0.6.0' }
 const TABLES = { platformId: null, name: '@aiqadam/qadam-tables', version: '0.5.1' }
 const SEEDED = { platformId: null, name: '@aiqadam/qadam-delay', version: '1.2.0' }
@@ -144,7 +145,7 @@ describe('a restart with no network and a warm volume', () => {
         })
     })
 
-    it('binds a stored version to the integrity of its own tarball, and gives an image seed or a custom qadam no npm signature', async () => {
+    it('binds a stored version to the integrity of its own tarball, and exempts an image seed and a custom qadam', async () => {
         await warmTheVolume()
         const { store, ledger } = await reopen()
         const read = async (coordinates: QadamVersionCoordinates): Promise<Parameters<QadamSignatureLedger['checkStored']>[0]['version']> => {
@@ -156,38 +157,49 @@ describe('a restart with no network and a warm volume', () => {
         }
 
         expect(await ledger.checkStored({ version: await read(CSV) })).toEqual({ verified: true })
-        expect(await ledger.checkStored({ version: await read(SEEDED) })).toEqual({ verified: false, reason: QadamSignatureUnverified.NO_TARBALL_INTEGRITY })
+        // A seed carries the tarball integrity the store recorded, and is exempt all the same.
+        const seeded = await read(SEEDED)
+        expect(seeded.integrity.origin.tarballIntegrity).not.toBeNull()
+        expect(await ledger.checkStored({ version: seeded })).toEqual({ verified: false, reason: QadamSignatureUnverified.IMAGE_SEED, exempt: true })
 
         const custom = { platformId: 'AAAAAAAAAAAAAAAAAAAAA', name: 'acme-crm', version: '1.0.0' }
         const staging = await store.createStaging()
         await tarFixtures.writeFiles({ dir: staging, files: tarFixtures.bundleFiles({ name: custom.name, version: custom.version }) })
         await store.commit({ coordinates: custom, stagingDir: staging, origin: { kind: QadamVersionOrigin.ARCHIVE, tarballIntegrity: 'sha512-AAAA' } })
-        expect(await ledger.checkStored({ version: await read(custom) })).toEqual({ verified: false, reason: QadamSignatureUnverified.NOT_OFFICIAL })
+        expect(await ledger.checkStored({ version: await read(custom) })).toEqual({ verified: false, reason: QadamSignatureUnverified.NOT_OFFICIAL, exempt: true })
+
+        // An official version with no tarball integrity recorded has nothing a signature can be bound
+        // to, and is not exempt.
+        const upload = { platformId: null, name: '@aiqadam/qadam-uploaded', version: '1.0.0' }
+        const uploading = await store.createStaging()
+        await tarFixtures.writeFiles({ dir: uploading, files: tarFixtures.bundleFiles({ name: upload.name, version: upload.version }) })
+        await store.commit({ coordinates: upload, stagingDir: uploading, origin: { kind: QadamVersionOrigin.ARCHIVE, tarballIntegrity: null } })
+        expect(await ledger.checkStored({ version: await read(upload) })).toEqual({ verified: false, reason: QadamSignatureUnverified.NO_TARBALL_INTEGRITY, exempt: false })
     })
 })
 
-// What the app's start-up sweep over the store is: read each version fully, and have each one that
-// came from a registry vouched for by a persisted signature, asking the registry for the rest.
-// `outcome` names what would happen to the version.
+// What the app's start-up sweep over the store is: read each version fully, ask the ledger about all
+// of them at once, and ask the registry only about what the ledger cannot vouch for and no exemption
+// covers. `outcome` names what would happen to the version.
 async function restartAndSweep(): Promise<SweepEntry[]> {
     const { store, ledger } = await reopen()
-    const versions = await store.listVersions({ platformId: null })
-    return Promise.all(versions.map(async (coordinates): Promise<SweepEntry> => {
-        const qadam = `${coordinates.name}@${coordinates.version}`
-        const read = await store.read({ coordinates, verify: true })
+    const coordinates = await store.listVersions({ platformId: null })
+    const reads = await Promise.all(coordinates.map(async (one) => ({ one, read: await store.read({ coordinates: one, verify: true }) })))
+    const present = reads.flatMap(({ read }) => read.status === QadamVersionReadStatus.PRESENT ? [read.version] : [])
+    const checks = await ledger.checkStoredVersions({ versions: present })
+    return Promise.all(reads.map(async ({ one, read }): Promise<SweepEntry> => {
+        const qadam = `${one.name}@${one.version}`
         if (read.status !== QadamVersionReadStatus.PRESENT) {
             return { qadam, outcome: read.status }
         }
-        if (read.version.integrity.origin.kind === QadamVersionOrigin.IMAGE_SEED) {
-            return { qadam, outcome: 'image-seed' }
-        }
-        const persisted = await ledger.checkStored({ version: read.version })
-        if (persisted.verified) {
+        const checked = checks[present.indexOf(read.version)]
+        if (checked?.verified) {
             return { qadam, outcome: 'verified' }
         }
-        const integrity = read.version.integrity.origin.tarballIntegrity ?? ''
-        const asked = await askRegistry({ coordinates, integrity })
-        return { qadam, outcome: asked }
+        if (checked?.exempt) {
+            return { qadam, outcome: checked.reason }
+        }
+        return { qadam, outcome: await askRegistry({ coordinates: one, integrity: read.version.integrity.origin.tarballIntegrity ?? '' }) }
     }))
 }
 
@@ -196,7 +208,7 @@ async function askRegistry({ coordinates, integrity }: { coordinates: QadamVersi
     if (asked === null) {
         return 'refused: registry unreachable'
     }
-    const verifying = npmPackageSignature.verifying({ name: coordinates.name, version: coordinates.version, integrity, signatures: asked.signatures, trustedKeys: TRUSTED })
+    const verifying = verifier.verifying({ name: coordinates.name, version: coordinates.version, integrity, signatures: asked.signatures })
     return verifying.length > 0 ? 'verified' : 'refused: not signed by the registry'
 }
 
@@ -206,27 +218,32 @@ async function warmTheVolume(): Promise<void> {
     for (const coordinates of [CSV, TABLES]) {
         expect(await storeFromRegistry({ coordinates, signed: true })).toBe(QadamVersionPutStatus.STORED)
     }
+    // The image seeds through the store's tarball path like everything else, so the record carries the
+    // integrity of the tarball that was extracted; the seed rule must not rely on it being absent.
     const { store } = await reopen()
-    const staging = await store.createStaging()
-    await tarFixtures.writeFiles({ dir: staging, files: tarFixtures.bundleFiles({ name: SEEDED.name, version: SEEDED.version }) })
-    const seeded = await store.commit({ coordinates: SEEDED, stagingDir: staging, origin: { kind: QadamVersionOrigin.IMAGE_SEED, tarballIntegrity: null } })
+    const seeded = await putTarball({ store, coordinates: SEEDED, origin: QadamVersionOrigin.IMAGE_SEED })
     expect(seeded.status).toBe(QadamVersionPutStatus.STORED)
 }
 
 async function storeFromRegistry({ coordinates, signed }: { coordinates: QadamVersionCoordinates, signed: boolean }): Promise<QadamVersionPutStatus> {
     const { store, ledger } = await reopen()
+    const put = await putTarball({ store, coordinates, origin: QadamVersionOrigin.REGISTRY })
+    if (signed && put.integrity !== null) {
+        const signatures = await registry.signaturesFor({ name: coordinates.name, version: coordinates.version })
+        const recorded = await ledger.record({ proofs: [{ name: coordinates.name, version: coordinates.version, integrity: put.integrity, signatures }] })
+        expect(recorded).toEqual({ ok: true, recorded: 1, rejected: 0 })
+    }
+    return put.status
+}
+
+async function putTarball({ store, coordinates, origin }: { store: QadamVersionStore, coordinates: QadamVersionCoordinates, origin: QadamVersionOrigin }): Promise<{ status: QadamVersionPutStatus, integrity: string | null }> {
     const data = tarFixtures.tarball({ entries: tarFixtures.artifactEntries({ files: tarFixtures.bundleFiles({ name: coordinates.name, version: coordinates.version }) }) })
     const tarballPath = join(tempDir, `${coordinates.version}-${Math.random().toString(36).slice(2)}.tgz`)
     await writeFile(tarballPath, data)
     const integrity = tarFixtures.integrity({ data })
     registry.publish({ name: coordinates.name, version: coordinates.version, integrity })
-    const put = await store.putTarball({ coordinates, tarballPath, expectedIntegrity: integrity, origin: { kind: QadamVersionOrigin.REGISTRY } })
-    if (signed) {
-        const signatures = await registry.signaturesFor({ name: coordinates.name, version: coordinates.version })
-        const recorded = await ledger.record({ proofs: [{ name: coordinates.name, version: coordinates.version, integrity, signatures }] })
-        expect(recorded).toEqual({ ok: true, recorded: 1, rejected: 0 })
-    }
-    return put.status
+    const put = await store.putTarball({ coordinates, tarballPath, expectedIntegrity: integrity, origin: { kind: origin } })
+    return { status: put.status, integrity }
 }
 
 // The restart: nothing but the directory survives it.
@@ -235,7 +252,7 @@ async function reopen(): Promise<{ store: QadamVersionStore, ledger: QadamSignat
     if (!opened.ok) {
         throw new Error(opened.reason)
     }
-    return { store: opened.store, ledger: qadamSignatureLedger.open({ dir: opened.store.root, log, trustedKeys: TRUSTED }) }
+    return { store: opened.store, ledger: createQadamSignatureLedger({ dir: opened.store.root, log, verifier }) }
 }
 
 async function readIntegrityFile({ coordinates }: { coordinates: QadamVersionCoordinates }): Promise<IntegrityFile> {
