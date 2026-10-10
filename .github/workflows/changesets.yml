@@ -106,6 +106,30 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
 
+      # THE RELEASE GUARD MUST READ THE PLAN BEFORE THE ACTION RUNS (#852). changesets/action checks
+      # out `changeset-release/main` and runs the version script, which CONSUMES every pending
+      # `.changeset/*.md`; the working tree the later steps see has none left. A guard run after the
+      # action would read an empty plan and report SAFE every time — a fail-open that voids both
+      # limits. So the verdict is taken here, on the tree that still has the changesets, and handed
+      # to the merge step as outputs. The step always exits 0: refusing is the later step's job.
+      - name: Run the release guard on the pending changesets
+        id: guard
+        if: steps.pending.outputs.count != '0'
+        env:
+          MAX_QADAMS_PER_RELEASE: '30'
+        run: |
+          set +e
+          reason="$(node tools/ci/release-guard.mjs --max-qadams "$MAX_QADAMS_PER_RELEASE" 2>&1)"
+          status=$?
+          set -e
+          echo "$reason"
+          {
+            echo "status=${status}"
+            echo 'reason<<RELEASE_GUARD_EOF'
+            echo "$reason"
+            echo 'RELEASE_GUARD_EOF'
+          } >> "$GITHUB_OUTPUT"
+
       # Pinned to the commit of v2.1.2: a third-party action that is handed a write token.
       # `push-with-git-cli: true` so the commit is authored by the identity above; through the
       # GitHub API it would be attributed to the PAT's owner and fail DCO.
@@ -123,7 +147,7 @@ jobs:
             Signed-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
 
       # THE ZERO-TOUCH PUBLISH LOOP, PART 1 (#852). The release PR is merged with no person: the
-      # guard below decides whether it MAY leave, and native auto-merge (squash — the `main protect`
+      # guard (run above, before the action) decides whether it MAY leave, and native auto-merge (squash — the `main protect`
       # ruleset's only allowed method) merges it the moment the four required checks pass.
       #
       # WHY A GUARD AND NOT A REVIEWER. The loop's two invariants cannot rest on someone reading the
@@ -141,13 +165,15 @@ jobs:
       #
       # IDEMPOTENT BY DESIGN: this step runs on every push to main while changesets are pending, so
       # it re-checks an already-armed auto-merge rather than re-arming it.
-      - name: Guard the release PR and enable auto-merge
+      - name: Enable auto-merge on the release PR, if the guard allowed it
         if: steps.pending.outputs.count != '0'
         env:
           GH_TOKEN: ${{ secrets.CHANGESETS_TOKEN }}
           ISSUES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TRACKING_ISSUE: ${{ vars.PUBLISH_LOOP_TRACKING_ISSUE || '852' }}
           MAX_QADAMS_PER_RELEASE: '30'
+          GUARD_STATUS: ${{ steps.guard.outputs.status }}
+          GUARD_REASON: ${{ steps.guard.outputs.reason }}
         run: |
           set -uo pipefail
           pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --head changeset-release/main --state open --json number --jq '.[0].number // empty')"
@@ -156,13 +182,12 @@ jobs:
             exit 0
           fi
 
-          set +e
-          reason="$(node tools/ci/release-guard.mjs --max-qadams "$MAX_QADAMS_PER_RELEASE" 2>&1)"
-          guard_status=$?
-          set -e
+          # A missing verdict (the guard step skipped or died) is a refusal, never a pass.
+          reason="${GUARD_REASON:-the release guard produced no verdict}"
+          guard_status="${GUARD_STATUS:-unknown}"
           echo "$reason"
 
-          if [ "$guard_status" -ne 0 ]; then
+          if [ "$guard_status" != '0' ]; then
             body="$(printf '%s\n' \
               '<!-- publish-loop-guard -->' \
               "The zero-touch publish loop (#852) refused to auto-merge release PR #${pr}." \

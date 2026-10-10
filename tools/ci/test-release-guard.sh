@@ -130,6 +130,14 @@ run_guard --root "$d" --json
 check '--json prints parseable JSON' "$(node -e "JSON.parse(require('fs').readFileSync(0,'utf8')); console.log('ok')" <<<"$out")" 'ok'
 check 'and reports safe:true with one qadam' "$(node -e "const r=JSON.parse(require('fs').readFileSync(0,'utf8')); console.log(r.safe+' '+r.qadams.length)" <<<"$out")" 'true 1'
 
+# The guard must run BEFORE changesets/action: the action's version step consumes every pending
+# changeset, so a guard run after it reads an empty plan and always reports SAFE.
+workflow="$here/../../.github/workflows/changesets.yml"
+guard_line="$(grep -n 'release-guard.mjs --max-qadams' "$workflow" | head -1 | cut -d: -f1)"
+action_line="$(grep -n 'uses: changesets/action@' "$workflow" | head -1 | cut -d: -f1)"
+check 'changesets.yml runs the guard before changesets/action' "$([ -n "$guard_line" ] && [ -n "$action_line" ] && [ "$guard_line" -lt "$action_line" ] && echo before || echo wrong)" 'before'
+check 'changesets.yml calls the guard exactly once' "$(grep -c 'node tools/ci/release-guard.mjs' "$workflow")" '1'
+
 echo
 if [ "$fail" -gt 0 ]; then
   echo "release-guard tests FAILED: ${pass} passed, ${fail} failed"
