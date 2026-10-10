@@ -12,6 +12,11 @@ import { isNil, NPM_PACKAGE_NAME_REGEX, qadamVersionParser } from '@aiqadam/shar
 //                                                            directory, never from inside itself (#779)
 //   <root>/.staging/<ms>-<uuid>/                             a version being written, renamed into place
 //   <root>/.trash/<ms>-<uuid>/                               a damaged version moved aside, then removed
+//   <root>/qadam-signatures.json                             the npm signatures verified for stored
+//                                                            versions (`QadamSignatureLedger`, #780): a
+//                                                            cache of proofs beside the store, never part
+//                                                            of a version, so it adds nothing to a version's
+//                                                            digest and no version's record changes
 //
 // A version directory holds the artifact (`package.json`, its entry point, and for some formats
 // `node_modules`), `metadata.json`, and `integrity.json`, which the store writes last.
@@ -25,6 +30,7 @@ export const QADAM_VERSION_STORE_LAYOUT = {
     platformModulesDir: 'node_modules',
     stagingDir: '.staging',
     trashDir: '.trash',
+    signatureLedgerFile: 'qadam-signatures.json',
     integrityFile: 'integrity.json',
     metadataFile: 'metadata.json',
     packageJsonFile: 'package.json',
