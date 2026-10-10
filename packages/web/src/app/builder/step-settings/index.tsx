@@ -42,6 +42,7 @@ import { CodeSettings } from './code-settings';
 import EditableStepName from './editable-step-name';
 import { LoopsSettings } from './loops-settings';
 import { PieceSettings } from './piece-settings';
+import { PreReleaseBuildLabel } from './pre-release-build-label';
 import { RouterSettings } from './router-settings';
 import { StepNavigationButtons } from './step-navigation-buttons';
 import { useStepSettingsContext } from './step-settings-context';
@@ -182,6 +183,10 @@ const StepSettingsContainer = () => {
           GAP_SIZE_FOR_STEP_SETTINGS,
         )}
       >
+        {(modifiedStep.type === FlowActionType.PIECE ||
+          modifiedStep.type === FlowTriggerType.PIECE) && (
+          <PreReleaseBuildLabel step={modifiedStep} />
+        )}
         {modifiedStep.type === FlowActionType.LOOP_ON_ITEMS && (
           <LoopsSettings readonly={readonly}></LoopsSettings>
         )}

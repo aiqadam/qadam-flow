@@ -421,3 +421,49 @@ describe('ap_flow_structure — framework version mark (#803)', () => {
         expect(log.warn).toHaveBeenCalled()
     })
 })
+
+// ADR-0004 (#855): a snapshot pin (`x.y.z-main.<n>`) runs a build from `main`. It is a fact, not a
+// fault — the pin resolves and the step runs it — so it is a plain label on the step line and a
+// positive flag in structuredContent, never one of the `qadamPinWarning` marks.
+describe('ap_flow_structure — pre-release build label (ADR-0004, #855)', () => {
+    const SNAPSHOT_VERSION = '1.3.0-main.412'
+
+    beforeEach(() => {
+        vi.clearAllMocks()
+        mockUnsupportedPins.mockResolvedValue(new Map())
+        mockGetPlatformId.mockResolvedValue('platform-1')
+        mockGet.mockResolvedValue({ name: '@aiqadam/qadam-test-email', version: SNAPSHOT_VERSION })
+    })
+
+    it('labels a snapshot-pinned step and carries the flag, without a warning', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: SNAPSHOT_VERSION }) }))
+
+        const result = await callTool()
+
+        const text = (result.content?.[0] as { text: string }).text
+        expect(text).toContain('[PRE-RELEASE BUILD]')
+        expect(text).not.toContain('PINNED VERSION UNAVAILABLE')
+        const steps = result.structuredContent?.steps as Record<string, unknown>[]
+        expect(steps.find(s => s.name === 'step_1')).toMatchObject({ preReleaseBuild: true })
+    })
+
+    it('labels a caret-prefixed snapshot pin too', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: `~${SNAPSHOT_VERSION}` }) }))
+
+        const result = await callTool()
+
+        expect((result.content?.[0] as { text: string }).text).toContain('[PRE-RELEASE BUILD]')
+        const steps = result.structuredContent?.steps as Record<string, unknown>[]
+        expect(steps.find(s => s.name === 'step_1')).toMatchObject({ preReleaseBuild: true })
+    })
+
+    it('says nothing about a release-pinned step', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: HEALTHY_VERSION }) }))
+
+        const result = await callTool()
+
+        const text = (result.content?.[0] as { text: string }).text
+        expect(text).not.toContain('PRE-RELEASE BUILD')
+        expect(JSON.stringify(result.structuredContent?.steps)).not.toContain('preReleaseBuild')
+    })
+})

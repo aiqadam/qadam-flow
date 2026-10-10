@@ -604,6 +604,19 @@ function qadamPinIssue({ pin, resolvable, subject = 'step' }: { pin: string, res
     }
 }
 
+// ADR-0004: a step pinned to a snapshot (`x.y.z-main.<n>`, the version a build from `main` gives a
+// changed qadam). Unlike `qadamPinIssue`'s two severities this is not a fault — the version resolves
+// like any other and the step runs exactly what it names — so it is not one of them. It is a fact
+// the two pin-reporting tools state the same way: `ap_flow_structure` labels the step line with
+// `label`, and `ap_validate_flow` reports `message` at its lowest severity, informational, which
+// never blocks publishing. "Update available" and the `follow` hold state are later slices.
+function preReleaseBuildIssue({ pin }: { pin: string }): PreReleaseBuildIssue {
+    return {
+        label: 'PRE-RELEASE BUILD',
+        message: `is pinned to ${wrapUntrustedValue(pin)}, a pre-release build from main that no released version names yet. It runs exactly that build.`,
+    }
+}
+
 function extractOptionsArray(options: unknown): Array<{ label: string, value: unknown }> | null {
     if (Array.isArray(options)) return options
 
@@ -643,6 +656,7 @@ export const mcpUtils = {
     normalizeAgentFlowToolIds,
     extractOptionsArray,
     qadamPinIssue,
+    preReleaseBuildIssue,
     RESOLVE_TIMEOUT_MS,
     STEP_REFERENCE_HINT,
     LOOP_COLLECT_INPUT_SCHEMA,
@@ -656,7 +670,7 @@ export const mcpUtils = {
     BRANCH_CONDITIONS_INPUT_SCHEMA,
 }
 
-export type { PropSummary, QadamPinIssue }
+export type { PropSummary, QadamPinIssue, PreReleaseBuildIssue }
 
 type ExtractQadamFlowErrorDetailParams = {
     err: unknown
@@ -722,5 +736,10 @@ type ResolveLatestQadamVersionResult =
 
 type QadamPinIssue = {
     severity: 'unavailable' | 'unverified'
+    message: string
+}
+
+type PreReleaseBuildIssue = {
+    label: string
     message: string
 }

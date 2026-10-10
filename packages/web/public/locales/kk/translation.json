@@ -2268,5 +2268,7 @@
   "unresolvedPinsExported": "{count, plural, =1 {1 қадам pre-release құрастыруына бекітілген, үйлесімді релиз табылмады. Ол негізгі релиздің ^ аралығы ретінде экспортталады және импорт кезінде \"осы қадамды жаңартыңыз\" деп белгіленеді: {steps}} other {# қадам pre-release құрастыруларына бекітілген, үйлесімді релиз табылмады. Олар негізгі релиздердің ^ аралықтары ретінде экспортталады және импорт кезінде \"осы қадамды жаңартыңыз\" деп белгіленеді: {steps}}}",
   "exportKeepingPrereleasePins": "Pre-release нұсқаларымен экспорттау",
   "snapshotMetadataInvalid": "Ендірілген pre-release метадеректері жарамсыз",
-  "snapshotMetadataTooLarge": "Ендірілген pre-release метадеректері тым үлкен"
+  "snapshotMetadataTooLarge": "Ендірілген pre-release метадеректері тым үлкен",
+  "Pre-release build": "Pre-release құрастыру",
+  "This step is pinned to a build from main, not a released version. It runs that exact build until its version is updated.": "Бұл қадам шығарылған нұсқаға емес, main-нан алынған құрастыруға бекітілген. Нұсқа жаңартылғанша дәл осы құрастыруды орындайды."
 }
