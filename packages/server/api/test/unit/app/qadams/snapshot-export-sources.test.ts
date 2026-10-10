@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { qadamVersionStore, qadamVersionStoreSeed } from '@aiqadam/server-utils'
+import { qadamVersionStore, qadamVersionStoreReader, qadamVersionStoreSeed } from '@aiqadam/server-utils'
 import { FlowActionType, FlowTriggerType, FlowVersion, FlowVersionState } from '@aiqadam/shared'
 import pino from 'pino'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -69,6 +69,18 @@ describe('snapshotExportSources.forInstance', () => {
         expect(await sources.releaseMetadata({ name: TABLES, version: '1.3.0' })).toBeNull()
         expect(await sources.snapshotMetadata({ name: TABLES, version: SNAPSHOT })).toBeNull()
         expect(warn).toHaveBeenCalledWith(expect.objectContaining({ status: 'unavailable' }), expect.stringContaining('catalogue is unavailable'))
+    })
+
+    it('opens the store once per export, however many snapshots it reads', async () => {
+        const open = vi.spyOn(qadamVersionStoreReader, 'open')
+        const sources = forInstance()
+
+        await sources.snapshotMetadata({ name: TABLES, version: SNAPSHOT })
+        await sources.snapshotMetadata({ name: TABLES, version: '1.3.0-main.1' })
+        await sources.snapshotMetadata({ name: TABLES, version: SNAPSHOT })
+
+        expect(open).toHaveBeenCalledTimes(1)
+        open.mockRestore()
     })
 
     it('reads the catalogue once per export', async () => {

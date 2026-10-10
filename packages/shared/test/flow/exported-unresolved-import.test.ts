@@ -64,6 +64,36 @@ describe('importing a flow with exported-unresolved steps', () => {
         expect(findAction({ version: imported, name: 'step_1' })?.settings.exportedUnresolvedPin).toBe('1.3.0')
     })
 
+    it('keeps a mark the flow already has when the request carries no list (a draft made from a published version, a duplicate)', () => {
+        const request = { ...importRequest({ unresolved: undefined }) }
+        const carried = findStepIn({ trigger: request.trigger, name: 'step_1' })
+        if (carried?.type === FlowActionType.PIECE) {
+            carried.settings.exportedUnresolvedPin = '1.3.0'
+        }
+
+        const imported = operationsFor({ request }).reduce((version, operation) => flowOperations.apply(version, operation), storedFlowVersion())
+
+        expect(findAction({ version: imported, name: 'step_1' })?.settings.exportedUnresolvedPin).toBe('1.3.0')
+    })
+
+    it('marks the agent step for an entry listed under the qadam of one of its tools, and not for another qadam', () => {
+        const tool = { type: 'PIECE', toolName: 'insert_row', qadamMetadata: { qadamName: '@aiqadam/qadam-csv', qadamVersion: '^0.4.1', actionName: 'insert' } }
+        const withTool = ({ unresolved }: { unresolved: ImportFlowRequest['exportedUnresolved'] }): FlowVersion => {
+            const request = importRequest({ unresolved })
+            const agent = findStepIn({ trigger: request.trigger, name: 'step_2' })
+            if (agent?.type === FlowActionType.PIECE) {
+                agent.settings.input = { agentTools: [tool] }
+            }
+            return operationsFor({ request }).reduce((version, operation) => flowOperations.apply(version, operation), storedFlowVersion())
+        }
+
+        const marked = withTool({ unresolved: [{ stepName: 'step_2', qadamName: '@aiqadam/qadam-csv', pin: '^0.4.1' }] })
+        const other = withTool({ unresolved: [{ stepName: 'step_2', qadamName: '@aiqadam/qadam-other', pin: '^0.4.1' }] })
+
+        expect(findAction({ version: marked, name: 'step_2' })?.settings.exportedUnresolvedPin).toBe('1.2.0')
+        expect(JSON.stringify(other)).not.toContain('exportedUnresolvedPin')
+    })
+
     it('imports a flow with no list exactly as before', () => {
         const imported = importFlow({ unresolved: undefined })
 

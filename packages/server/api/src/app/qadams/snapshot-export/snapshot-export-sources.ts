@@ -24,13 +24,22 @@ export const snapshotExportSources = {
             catalogue ??= loadCatalogue({ source: catalogueSource, log })
             return catalogue
         }
+        // One open of the store per export, however many snapshots it reads.
+        let store: Promise<StoreReader | null> | undefined
+        const readStore = (): Promise<StoreReader | null> => {
+            store ??= openStore({ log })
+            return store
+        }
         return {
             releases: async ({ name }) => (await readCatalogue())?.versions({ name }) ?? null,
             releaseMetadata: async ({ name, version }): Promise<unknown> => {
                 const result = await (await readCatalogue())?.readMetadata({ name, version })
                 return result?.status === 'ok' ? result.metadata : null
             },
-            snapshotMetadata: ({ name, version }) => readStoredMetadata({ name, version, log }),
+            snapshotMetadata: async ({ name, version }): Promise<unknown> => {
+                const reader = await readStore()
+                return reader === null ? null : readStoredMetadata({ reader, name, version })
+            },
         }
     },
 }
@@ -46,13 +55,8 @@ async function loadCatalogue({ source, log }: { source: QadamVersionCatalogueSou
 
 // Read-only, bounded and symlink-safe: the store's own reader finds the version, and the catalogue's
 // directory source reads `metadata.json` out of it.
-async function readStoredMetadata({ name, version, log }: { name: string, version: string, log: FastifyBaseLogger }): Promise<unknown> {
-    const opened = await qadamVersionStoreReader.open({ root: system.getOrThrow(AppSystemProp.QADAM_VERSION_STORE_PATH) })
-    if (!opened.ok) {
-        log.debug({ reason: opened.reason }, '[snapshotExport] The qadam version store cannot be read')
-        return null
-    }
-    const stored = await opened.reader.read({ coordinates: { platformId: null, name, version } })
+async function readStoredMetadata({ reader, name, version }: { reader: StoreReader, name: string, version: string }): Promise<unknown> {
+    const stored = await reader.read({ coordinates: { platformId: null, name, version } })
     if (stored.status !== 'present') {
         return null
     }
@@ -63,9 +67,20 @@ async function readStoredMetadata({ name, version, log }: { name: string, versio
     return tryCatchSync((): unknown => JSON.parse(file.bytes.toString('utf8'))).data
 }
 
+async function openStore({ log }: { log: FastifyBaseLogger }): Promise<StoreReader | null> {
+    const opened = await qadamVersionStoreReader.open({ root: system.getOrThrow(AppSystemProp.QADAM_VERSION_STORE_PATH) })
+    if (!opened.ok) {
+        log.debug({ reason: opened.reason }, '[snapshotExport] The qadam version store cannot be read')
+        return null
+    }
+    return opened.reader
+}
+
 function defaultCatalogueSource(): QadamVersionCatalogueSource {
     return qadamVersionCatalogueSource.http({ baseUrl: QADAM_VERSION_CATALOGUE_DEFAULT_URL })
 }
+
+type StoreReader = Extract<Awaited<ReturnType<typeof qadamVersionStoreReader.open>>, { ok: true }>['reader']
 
 type ForInstanceParams = {
     log: FastifyBaseLogger

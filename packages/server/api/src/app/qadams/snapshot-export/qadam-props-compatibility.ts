@@ -45,12 +45,29 @@ export const qadamPropsCompatibility = {
     },
 }
 
-function findProps({ metadata, target }: { metadata: unknown, target: StepTarget }): Record<string, Prop> | null {
-    const parsed = Surface.safeParse(metadata)
-    if (!parsed.success) {
+// A metadata file is parsed once per object: a flow can ask about thousands of actions of one
+// snapshot, and the file is up to hundreds of KB.
+const parsedSurfaces = new WeakMap<object, Surface | null>()
+
+function parseSurface({ metadata }: { metadata: unknown }): Surface | null {
+    if (typeof metadata !== 'object' || metadata === null) {
         return null
     }
-    const owners = target.kind === 'action' ? parsed.data.actions : parsed.data.triggers
+    if (parsedSurfaces.has(metadata)) {
+        return parsedSurfaces.get(metadata) ?? null
+    }
+    const parsed = Surface.safeParse(metadata)
+    const surface = parsed.success ? parsed.data : null
+    parsedSurfaces.set(metadata, surface)
+    return surface
+}
+
+function findProps({ metadata, target }: { metadata: unknown, target: StepTarget }): Record<string, Prop> | null {
+    const surface = parseSurface({ metadata })
+    if (surface === null) {
+        return null
+    }
+    const owners = target.kind === 'action' ? surface.actions : surface.triggers
     return Object.hasOwn(owners, target.name) ? owners[target.name].props : null
 }
 
@@ -92,6 +109,8 @@ const Surface = z.looseObject({
 })
 
 type Prop = z.infer<typeof Prop>
+
+type Surface = z.infer<typeof Surface>
 
 type CheckParams = {
     // The version the step was built on (a snapshot) and the version it would move to (a release).

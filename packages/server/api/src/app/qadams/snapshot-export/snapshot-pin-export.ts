@@ -55,7 +55,7 @@ export const snapshotPinExport = {
         }
         const unresolved = await rewritePins({ sites, session })
         if (session.state.exhausted) {
-            log.warn({ budget: MAX_RELEASE_FETCHES_PER_EXPORT }, '[snapshotExport] The fetch budget of this export ran out; the remaining snapshot pins are exported as unresolved')
+            log.warn({ budget: MAX_RELEASE_FETCHES_PER_EXPORT }, '[snapshotExport] The fetch or read budget of this export ran out; the remaining snapshot pins are exported as unresolved')
         }
         return unresolved.length === 0 ? { ...flowVersion, trigger } : { ...flowVersion, trigger, exportedUnresolved: unresolved }
     },
@@ -71,9 +71,12 @@ export enum SnapshotExportMode {
 // ones worth trying, and a flow cannot make a single request fetch without limit.
 export const MAX_RELEASES_CHECKED_PER_PIN = 25
 export const MAX_RELEASE_FETCHES_PER_EXPORT = 50
+export const MAX_SNAPSHOT_READS_PER_EXPORT = 64
 
 async function rewritePins({ sites, session }: { sites: PinSite[], session: Session }): Promise<ExportedUnresolvedStep[]> {
     const snapshotSites = sites.filter((site) => isSnapshot({ pin: site.pin }))
+    // Pins resolve together, so which of them the fetch budget reaches first is not fixed; every
+    // pin it does not reach is listed, never moved.
     const resolutions = await Promise.all(snapshotSites.map((site) => resolve({ site, session })))
     const unresolved: ExportedUnresolvedStep[] = []
     for (const [index, site] of snapshotSites.entries()) {
@@ -112,7 +115,7 @@ async function newestPassingRelease({ site, session }: { site: PinSite, session:
         return unresolvedBecause('metadata-unavailable')
     }
     // Before any release is listed or fetched: a step that names an action the snapshot does not
-    // have costs nothing, however many such steps a flow carries.
+    // have costs no fetch, and the parsed metadata is shared, so it costs a lookup.
     if (!qadamPropsCompatibility.describes({ metadata: snapshotMetadata, target })) {
         return unresolvedBecause('not-describable')
     }
@@ -220,7 +223,7 @@ function collectToolSites({ stepName, input }: { stepName: string, input: Record
             pin,
             target: { kind: 'action', name: actionName },
             write: ({ version }): void => {
-                tools[index] = { ...raw, qadamMetadata: { ...parsed.data.qadamMetadata, qadamVersion: version } }
+                tools[index] = { ...raw, qadamMetadata: { ...(isRecord(raw['qadamMetadata']) ? raw['qadamMetadata'] : parsed.data.qadamMetadata), qadamVersion: version } }
             },
         }]
     })
@@ -236,7 +239,17 @@ function createSession({ sources, log }: { sources: SnapshotExportSources, log: 
     return {
         state,
         resolutions: new Map(),
-        snapshotMetadata: (params) => memoise({ cache: snapshots, key: embeddedSnapshotMetadataUtil.key(params), load: () => sources.snapshotMetadata(params) }),
+        snapshotMetadata: (params) => memoise({
+            cache: snapshots,
+            key: embeddedSnapshotMetadataUtil.key(params),
+            load: async () => {
+                if (snapshots.size >= MAX_SNAPSHOT_READS_PER_EXPORT) {
+                    state.exhausted = true
+                    return null
+                }
+                return sources.snapshotMetadata(params)
+            },
+        }),
         releases: (params) => memoise({ cache: releases, key: params.name, load: () => sources.releases(params) }),
         releaseMetadata: (params) => memoise({
             cache: releaseMetadata,

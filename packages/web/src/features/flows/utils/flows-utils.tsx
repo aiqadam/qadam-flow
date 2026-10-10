@@ -1,4 +1,5 @@
 import {
+  chunk,
   ExportedUnresolvedStep,
   PopulatedFlow,
   SharedTemplate,
@@ -21,6 +22,8 @@ import { downloadFile } from '@/lib/dom-utils';
 import { formatUtils } from '@/lib/format-utils';
 
 import { flowsApi } from '../api/flows-api';
+
+const EXPORT_PARALLELISM = 4;
 
 // An export leaves the instance, so the server rewrites a pre-release qadam pin to a release unless
 // the person chose to keep it (ADR-0004). The pins it could not rewrite come back with the file,
@@ -48,9 +51,15 @@ const zipFlows = async ({
   flows: PopulatedFlow[];
   keepSnapshots: boolean;
 }) => {
-  const templates = await Promise.all(
-    flows.map((flow) => flowsApi.getTemplate(flow.id, { keepSnapshots })),
-  );
+  // A few at a time: each template can cost the server catalogue fetches.
+  const templates: SharedTemplate[] = [];
+  for (const batch of chunk(flows, EXPORT_PARALLELISM)) {
+    templates.push(
+      ...(await Promise.all(
+        batch.map((flow) => flowsApi.getTemplate(flow.id, { keepSnapshots })),
+      )),
+    );
+  }
   const zip = new JSZip();
   for (const [index, flow] of flows.entries()) {
     zip.file(
@@ -79,10 +88,6 @@ const collectUnresolved = ({
   (template.flows ?? []).flatMap((flow) =>
     (flow.exportedUnresolved ?? []).map((step) => ({ ...step, flowName })),
   );
-
-export type UnresolvedExportedStep = ExportedUnresolvedStep & {
-  flowName: string;
-};
 
 /**
  * A flow served by the long-polling host can be on, published and still receiving nothing — a
@@ -180,4 +185,8 @@ export const flowsUtils = {
       }
     }
   },
+};
+
+type UnresolvedExportedStep = ExportedUnresolvedStep & {
+  flowName: string;
 };

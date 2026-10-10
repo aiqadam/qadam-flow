@@ -52,6 +52,17 @@ describe('qadamPropsCompatibility.check', () => {
         expect(qadamPropsCompatibility.describes({ metadata: 'x', target: ACTION })).toBe(false)
     })
 
+    it('parses a metadata file once, however many actions are asked about', () => {
+        const big = { actions: Object.fromEntries(Array.from({ length: 2_000 }, (_, index) => [`action_${index}`, { props: { a: text() } }])), triggers: {} }
+        const startedAt = performance.now()
+
+        for (let index = 0; index < 20_000; index++) {
+            qadamPropsCompatibility.describes({ metadata: big, target: { kind: 'action', name: `made_up_${index}` } })
+        }
+
+        expect(performance.now() - startedAt).toBeLessThan(1_000)
+    })
+
     it('checks a trigger against triggers, not actions', () => {
         const from = { actions: {}, triggers: { new_row: { props: { a: text() } } } }
         const to = { actions: {}, triggers: { new_row: { props: { a: text() } } } }

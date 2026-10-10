@@ -2,7 +2,7 @@ import { AgentToolType, FlowAction, FlowActionType, flowStructureUtil, FlowTrigg
 import pino from 'pino'
 import { describe, expect, it, vi } from 'vitest'
 import { SnapshotExportSources } from '../../../../src/app/qadams/snapshot-export/snapshot-export-sources'
-import { MAX_RELEASE_FETCHES_PER_EXPORT, MAX_RELEASES_CHECKED_PER_PIN, SnapshotExportMode, snapshotPinExport } from '../../../../src/app/qadams/snapshot-export/snapshot-pin-export'
+import { MAX_RELEASE_FETCHES_PER_EXPORT, MAX_RELEASES_CHECKED_PER_PIN, MAX_SNAPSHOT_READS_PER_EXPORT, SnapshotExportMode, snapshotPinExport } from '../../../../src/app/qadams/snapshot-export/snapshot-pin-export'
 
 // ADR-0004 "Export and import". The sources are a fake catalogue and a fake instance store: the
 // catalogue is not wired at run time yet, so these are the contract the real binding must meet.
@@ -234,6 +234,20 @@ describe('snapshotPinExport.apply, the cost of one export', () => {
     })
 })
 
+describe('snapshotPinExport.apply, snapshot reads', () => {
+    it('reads at most the allowed number of distinct snapshots, and lists the pins it did not read', async () => {
+        const count = MAX_SNAPSHOT_READS_PER_EXPORT + 6
+        const steps = Array.from({ length: count }, (_, index) => ({ name: `step_${index + 1}`, qadamName: TABLES, qadamVersion: `1.3.0-main.${index + 1}`, actionName: 'insert' }))
+        const sources = fakeSources({ releases: { [TABLES]: ['1.3.1'] }, release: { '1.3.1': compatible() } })
+
+        const exported = await snapshotPinExport.apply({ flowVersion: flowVersion({ steps }), mode: SnapshotExportMode.REWRITE, sources, log })
+
+        expect(sources.snapshotMetadata).toHaveBeenCalledTimes(MAX_SNAPSHOT_READS_PER_EXPORT)
+        expect(exported.exportedUnresolved).toHaveLength(6)
+        expect(new Set(exported.exportedUnresolved?.map((step) => step.reason))).toEqual(new Set(['metadata-unavailable']))
+    })
+})
+
 describe('snapshotPinExport.apply, the pin range', () => {
     it('keeps a tilde pin on its minor, and its tilde on the fallback', async () => {
         const sources = fakeSources({ releases: { [TABLES]: ['1.3.5', '1.4.0'] }, release: { '1.3.5': compatible(), '1.4.0': compatible() } })
@@ -282,6 +296,15 @@ describe('snapshotPinExport.apply, agent tools', () => {
 
         expect(toolsOf({ version: exported })).toEqual([tool(SNAPSHOT)])
         expect(Object.keys(exported.snapshotMetadata ?? {})).toEqual([`${TABLES}@${SNAPSHOT}`])
+    })
+
+    it('keeps stray keys of the stored tool when it rewrites the pin', async () => {
+        const sources = fakeSources({ releases: { [TABLES]: ['1.3.1'] }, release: { '1.3.1': compatible() } })
+        const stray = { type: AgentToolType.PIECE, toolName: 'insert_row', note: 'kept', qadamMetadata: { qadamName: TABLES, qadamVersion: SNAPSHOT, actionName: 'insert', extra: 1 } }
+
+        const exported = await snapshotPinExport.apply({ flowVersion: flowVersion({ steps: [agentStep([stray])] }), mode: SnapshotExportMode.REWRITE, sources, log })
+
+        expect(toolsOf({ version: exported })).toEqual([{ ...stray, qadamMetadata: { ...stray.qadamMetadata, qadamVersion: '1.3.1' } }])
     })
 
     it('does not touch the stored flow', async () => {
