@@ -240,8 +240,15 @@ describe('snapshotPinExport.apply, snapshot reads', () => {
         const steps = Array.from({ length: count }, (_, index) => ({ name: `step_${index + 1}`, qadamName: TABLES, qadamVersion: `1.3.0-main.${index + 1}`, actionName: 'insert' }))
         const sources = fakeSources({ releases: { [TABLES]: ['1.3.1'] }, release: { '1.3.1': compatible() } })
 
+        const warn = vi.spyOn(log, 'warn')
+
         const exported = await snapshotPinExport.apply({ flowVersion: flowVersion({ steps }), mode: SnapshotExportMode.REWRITE, sources, log })
 
+        expect(warn).toHaveBeenCalledWith(
+            expect.objectContaining({ exhausted: ['snapshot-reads'], maxReleaseFetches: MAX_RELEASE_FETCHES_PER_EXPORT, maxSnapshotReads: MAX_SNAPSHOT_READS_PER_EXPORT }),
+            expect.stringContaining('budget'),
+        )
+        warn.mockRestore()
         expect(sources.snapshotMetadata).toHaveBeenCalledTimes(MAX_SNAPSHOT_READS_PER_EXPORT)
         expect(exported.exportedUnresolved).toHaveLength(6)
         expect(new Set(exported.exportedUnresolved?.map((step) => step.reason))).toEqual(new Set(['metadata-unavailable']))

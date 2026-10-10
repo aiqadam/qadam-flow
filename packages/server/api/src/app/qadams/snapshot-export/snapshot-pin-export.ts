@@ -54,8 +54,13 @@ export const snapshotPinExport = {
             return isNil(snapshotMetadata) ? { ...flowVersion, trigger } : { ...flowVersion, trigger, snapshotMetadata }
         }
         const unresolved = await rewritePins({ sites, session })
-        if (session.state.exhausted) {
-            log.warn({ budget: MAX_RELEASE_FETCHES_PER_EXPORT }, '[snapshotExport] The fetch or read budget of this export ran out; the remaining snapshot pins are exported as unresolved')
+        const { exhausted } = session.state
+        if (exhausted.fetches || exhausted.reads) {
+            log.warn({
+                exhausted: [...(exhausted.fetches ? ['release-metadata-fetches'] : []), ...(exhausted.reads ? ['snapshot-reads'] : [])],
+                maxReleaseFetches: MAX_RELEASE_FETCHES_PER_EXPORT,
+                maxSnapshotReads: MAX_SNAPSHOT_READS_PER_EXPORT,
+            }, '[snapshotExport] A budget of this export ran out; the remaining snapshot pins are exported as unresolved')
         }
         return unresolved.length === 0 ? { ...flowVersion, trigger } : { ...flowVersion, trigger, exportedUnresolved: unresolved }
     },
@@ -232,7 +237,7 @@ function collectToolSites({ stepName, input }: { stepName: string, input: Record
 // Everything one export fetches is remembered for that export: a release's metadata is read once
 // however many pins or actions ask for it, and the budget counts the reads that went out.
 function createSession({ sources, log }: { sources: SnapshotExportSources, log: FastifyBaseLogger }): Session {
-    const state = { remaining: MAX_RELEASE_FETCHES_PER_EXPORT, exhausted: false }
+    const state = { remaining: MAX_RELEASE_FETCHES_PER_EXPORT, exhausted: { fetches: false, reads: false } }
     const snapshots = new Map<string, Promise<unknown>>()
     const releases = new Map<string, Promise<string[] | null>>()
     const releaseMetadata = new Map<string, Promise<ReleaseMetadataResult>>()
@@ -244,7 +249,7 @@ function createSession({ sources, log }: { sources: SnapshotExportSources, log: 
             key: embeddedSnapshotMetadataUtil.key(params),
             load: async () => {
                 if (snapshots.size >= MAX_SNAPSHOT_READS_PER_EXPORT) {
-                    state.exhausted = true
+                    state.exhausted.reads = true
                     return null
                 }
                 return sources.snapshotMetadata(params)
@@ -256,7 +261,7 @@ function createSession({ sources, log }: { sources: SnapshotExportSources, log: 
             key: embeddedSnapshotMetadataUtil.key(params),
             load: async () => {
                 if (state.remaining <= 0) {
-                    state.exhausted = true
+                    state.exhausted.fetches = true
                     return { status: 'unavailable' }
                 }
                 state.remaining -= 1
@@ -336,7 +341,7 @@ type ReleaseMetadataResult =
     | { status: 'unavailable' }
 
 type Session = {
-    state: { remaining: number, exhausted: boolean }
+    state: { remaining: number, exhausted: { fetches: boolean, reads: boolean } }
     resolutions: Map<string, Promise<Resolution>>
     snapshotMetadata: (params: { name: string, version: string }) => Promise<unknown>
     releases: (params: { name: string }) => Promise<string[] | null>

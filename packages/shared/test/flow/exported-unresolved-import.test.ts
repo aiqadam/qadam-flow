@@ -51,7 +51,7 @@ describe('importing a flow with exported-unresolved steps', () => {
         expect(JSON.stringify(imported)).not.toContain('exportedUnresolvedPin')
     })
 
-    it('drops a marker the file brought: only the importer writes one', () => {
+    it('with a list, replaces the marks the file carried by the listed ones (no list keeps them, see below)', () => {
         const request = importRequest({ unresolved: [unresolvedStep({ stepName: 'step_1', pin: '^1.3.0' })] })
         const carried = findStepIn({ trigger: request.trigger, name: 'step_2' })
         if (carried?.type === FlowActionType.PIECE) {

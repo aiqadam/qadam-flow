@@ -53,14 +53,23 @@ describe('qadamPropsCompatibility.check', () => {
     })
 
     it('parses a metadata file once, however many actions are asked about', () => {
-        const big = { actions: Object.fromEntries(Array.from({ length: 2_000 }, (_, index) => [`action_${index}`, { props: { a: text() } }])), triggers: {} }
-        const startedAt = performance.now()
+        let reads = 0
+        const counted = {
+            get actions(): Record<string, unknown> {
+                reads += 1
+                return { insert: { props: { a: text() } } }
+            },
+            triggers: {},
+        }
+        qadamPropsCompatibility.describes({ metadata: counted, target: ACTION })
+        const readsForOneParse = reads
 
-        for (let index = 0; index < 20_000; index++) {
-            qadamPropsCompatibility.describes({ metadata: big, target: { kind: 'action', name: `made_up_${index}` } })
+        for (let index = 0; index < 1_000; index++) {
+            qadamPropsCompatibility.describes({ metadata: counted, target: { kind: 'action', name: `made_up_${index}` } })
         }
 
-        expect(performance.now() - startedAt).toBeLessThan(1_000)
+        expect(readsForOneParse).toBeGreaterThan(0)
+        expect(reads).toBe(readsForOneParse)
     })
 
     it('checks a trigger against triggers, not actions', () => {
