@@ -31,15 +31,14 @@
 
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { copyFile, readdir, readFile, stat, writeFile, mkdir } from 'node:fs/promises'
-import { join, relative, resolve, sep } from 'node:path'
+import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { basename, join, relative, resolve, sep } from 'node:path'
 import { parseArgs } from 'node:util'
 import { releaseArchive } from '../snapshot/release-archive.mjs'
 import { SNAPSHOT_ORIGIN, snapshotPlan } from '../snapshot/snapshot-plan.mjs'
 import { ARTIFACT_STATUS, qadamArtifact } from './qadam-artifact.mjs'
 
 const REPO_ROOT = resolve(import.meta.dirname, '..', '..', '..', '..')
-const OFFICIAL_QADAM_ROOTS = ['packages/qadams/core', 'packages/qadams/community']
 const DEFAULT_CONFIG_PATH = join(import.meta.dirname, 'qadam-artifact-config.json')
 
 const main = async () => {
@@ -72,12 +71,17 @@ const main = async () => {
     const allQadams = await findOfficialQadams()
     const selected = values.all ? allQadams : selectQadams({ allQadams, wanted: values.qadams.split(',').map((q) => q.trim()).filter(Boolean) })
 
+    if (values['release-archive'] !== undefined && values['snapshot-plan'] === undefined) {
+        console.error('--release-archive only applies with --snapshot-plan: the plan says which qadams come from it')
+        process.exit(2)
+    }
     const snapshot = values['snapshot-plan'] === undefined
         ? null
-        : await readSnapshotPlan({ file: resolve(values['snapshot-plan']), selected, archiveDir: values['release-archive'], pack: values.pack && loadCheck })
+        : await readSnapshotPlan({ file: resolve(values['snapshot-plan']), selected, archiveDir: values['release-archive'], pack: values.pack, loadCheck })
 
     await mkdir(outRoot, { recursive: true })
     const host = loadCheck ? await qadamArtifact.provisionHost({ outRoot, repoRoot: REPO_ROOT }) : null
+    const builtAgainst = await qadamArtifact.readBuiltAgainst({ repoRoot: REPO_ROOT, platformVersion: snapshot?.platformVersion })
     const packDestination = join(outRoot, 'archive')
     const startedAt = Date.now()
     const results = await runPool({
@@ -96,7 +100,7 @@ const main = async () => {
                     pack: values.pack && loadCheck,
                     packDestination,
                     version: entry?.version,
-                    platformVersion: snapshot?.platformVersion,
+                    builtAgainst,
                 })
             const result = await build.catch((e) => ({ name: qadam.packageName, version: null, source: relative(REPO_ROOT, qadam.dir), status: ARTIFACT_STATUS.BUILD_ERROR, error: String(e?.message ?? e), durationMs: 0 }))
             console.info(`[${index + 1}/${selected.length}] ${result.name}@${result.version} ${result.status} ${result.kind ?? ''} ${result.durationMs}ms${result.error ? ` — ${result.error}` : ''}`)
@@ -146,10 +150,15 @@ const writeArchiveIndex = async ({ results, packDestination, commit }) => {
 
 const isFailure = (result) => result.status !== ARTIFACT_STATUS.OK && result.status !== ARTIFACT_STATUS.FROM_ARCHIVE
 
-// The plan the artifact versions come from (ADR-0004, #851). Every selected qadam must be in it: a
-// qadam built at a version nobody planned is exactly what the plan exists to prevent.
-const readSnapshotPlan = async ({ file, selected, archiveDir, pack }) => {
-    const parsed = snapshotPlan.parse({ text: await readFile(file, 'utf8').catch(() => '') })
+// The plan the artifact versions come from (ADR-0004, #851). Every selected qadam must be in it, at
+// the released version this tree holds: a qadam built at a version nobody planned, or from a plan
+// made at another commit, is exactly what the plan exists to prevent.
+const readSnapshotPlan = async ({ file, selected, archiveDir, pack, loadCheck }) => {
+    const text = await readFile(file, 'utf8').catch((error) => {
+        console.error(`--snapshot-plan ${file} cannot be read (${error?.code ?? error?.message})`)
+        return process.exit(2)
+    })
+    const parsed = snapshotPlan.parse({ text })
     if (!parsed.ok) {
         console.error(`--snapshot-plan ${file}: ${parsed.error}`)
         process.exit(2)
@@ -159,9 +168,18 @@ const readSnapshotPlan = async ({ file, selected, archiveDir, pack }) => {
         console.error(`not in the snapshot plan: ${missing.map((qadam) => qadam.packageName).join(', ')}`)
         process.exit(2)
     }
+    const stale = selected.filter((qadam) => parsed.find({ name: qadam.packageName }).released !== qadam.version)
+    if (stale.length > 0) {
+        console.error(`the snapshot plan was made for other versions of this tree: ${stale.map((qadam) => `${qadam.packageName} is ${qadam.version}, the plan says ${parsed.find({ name: qadam.packageName }).released}`).join('; ')}`)
+        process.exit(2)
+    }
     const archived = selected.filter((qadam) => parsed.find({ name: qadam.packageName }).origin === SNAPSHOT_ORIGIN.ARCHIVE)
-    if (archived.length > 0 && (archiveDir === undefined || !pack)) {
-        console.error(`the plan takes ${archived.length} qadam(s) from the release archive (${archived.map((qadam) => qadam.packageName).join(', ')}): pass --release-archive <dir> and --pack`)
+    if (archived.length > 0 && archiveDir === undefined) {
+        console.error(`the plan takes ${archived.length} qadam(s) from the release archive (${archived.map((qadam) => qadam.packageName).join(', ')}): pass --release-archive <dir>`)
+        process.exit(2)
+    }
+    if (archived.length > 0 && !(pack && loadCheck)) {
+        console.error(`the plan takes ${archived.length} qadam(s) from the release archive: it is copied into the archive that --pack writes, so pass --pack and not --no-load-check (a build without the load check writes no archive)`)
         process.exit(2)
     }
     return {
@@ -178,40 +196,34 @@ const takeFromArchive = async ({ archive, entry, source, packDestination }) => {
     const base = { name: entry.name, version: entry.version, source, durationMs: 0 }
     const archived = archive?.find({ name: entry.name, version: entry.version }) ?? null
     if (archived === null) {
-        return { ...base, status: ARTIFACT_STATUS.BUILD_ERROR, error: `the release archive has no ${entry.name}@${entry.version}` }
+        const why = archive?.available === false ? ` (${archive.reason})` : ''
+        return { ...base, status: ARTIFACT_STATUS.BUILD_ERROR, error: `the release archive has no ${entry.name}@${entry.version}${why}` }
     }
-    const from = join(archive.dir, archived.file)
-    const bytes = await readFile(from)
+    const bytes = await readFile(join(archive.dir, archived.file))
     const integrity = `sha512-${createHash('sha512').update(bytes).digest('base64')}`
     if (integrity !== archived.integrity) {
         return { ...base, status: ARTIFACT_STATUS.BUILD_ERROR, error: `${archived.file} does not match the integrity its archive index records` }
     }
+    // The bytes that were hashed are the bytes written: a second read of the file could be another file.
     await mkdir(packDestination, { recursive: true })
-    await copyFile(from, join(packDestination, archived.file))
+    await writeFile(join(packDestination, archived.file), bytes)
     return {
         ...base,
         status: ARTIFACT_STATUS.FROM_ARCHIVE,
         kind: archived.kind ?? null,
         commit: archived.commit,
-        tarball: { file: archived.file, integrity, shasum: archived.shasum, size: (await stat(from)).size },
+        tarball: { file: archived.file, integrity, shasum: archived.shasum, size: bytes.length },
     }
 }
 
+// The set the plan covers, from the same discovery, so the two cannot disagree on what is official.
 const findOfficialQadams = async () => {
-    const perRoot = await Promise.all(OFFICIAL_QADAM_ROOTS.map(async (root) => {
-        const entries = await readdir(join(REPO_ROOT, root), { withFileTypes: true })
-        const dirs = await Promise.all(entries.filter((e) => e.isDirectory()).map(async (e) => {
-            const dir = join(REPO_ROOT, root, e.name)
-            const hasManifest = await stat(join(dir, 'package.json')).then(() => true, () => false)
-            if (!hasManifest) {
-                return null
-            }
-            const { name } = JSON.parse(await readFile(join(dir, 'package.json'), 'utf8'))
-            return { dir, directoryName: e.name, packageName: name }
-        }))
-        return dirs.filter(Boolean)
-    }))
-    return perRoot.flat().sort((a, b) => a.packageName.localeCompare(b.packageName))
+    const discovered = snapshotPlan.discover({ root: REPO_ROOT })
+    if (!discovered.ok) {
+        console.error(discovered.error)
+        process.exit(2)
+    }
+    return discovered.packages.map((pkg) => ({ dir: join(REPO_ROOT, pkg.directory), directoryName: basename(pkg.directory), packageName: pkg.name, version: pkg.version }))
 }
 
 const selectQadams = ({ allQadams, wanted }) => {

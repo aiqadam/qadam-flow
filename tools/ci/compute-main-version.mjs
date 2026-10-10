@@ -41,7 +41,6 @@ import { changesetGate } from './check-changesets.mjs'
 
 const PLATFORM_PACKAGE = '@aiqadam/platform'
 const PLATFORM_MANIFEST = 'packages/platform/package.json'
-const CHANGESET_DIR = '.changeset'
 const COUNTER = /^(0|[1-9]\d*)$/
 
 export const isBuildCounter = ({ counter }) => COUNTER.test(counter ?? '')
@@ -72,13 +71,9 @@ const compute = ({ root }) => {
   if (platform !== released) {
     return { error: `${PLATFORM_MANIFEST} is '${platform}' but the root package.json is '${released}' — they must agree (check-changesets fails a PR that splits them)` }
   }
-  const plan = changesetPlan.read({ root })
+  const plan = changesetPlan.read({ root, names: [PLATFORM_PACKAGE] })
   if (!plan.ok) {
     return { error: plan.error }
-  }
-  const grouped = [...(plan.config.fixed ?? []), ...(plan.config.linked ?? [])].some((group) => Array.isArray(group) && group.includes(PLATFORM_PACKAGE))
-  if (grouped) {
-    return { error: `${CHANGESET_DIR}/config.json puts ${PLATFORM_PACKAGE} in a fixed/linked group; the release plan is then not its own changesets alone` }
   }
   const level = changesetGate.pendingLevel({ changesets: plan.changesets, name: PLATFORM_PACKAGE })
   const next = changesetGate.bumpVersion({ version: released, level: level === 'none' ? 'patch' : level })

@@ -99,7 +99,7 @@ add_archive "$tmp/archive-known" notion 1.3.4
 run_plan --root "$d" --counter 412 --archive "$tmp/archive-known" --platform-version 1.2.0-main.412
 check 'exit 0' "$rc" '0'
 check 'no warning when nothing falls back' "$(plan_field 'p.warnings.length')" '0'
-check 'own patch changeset: next patch snapshot' "$(entry slack version)" '0.5.0-main.412'
+check 'own patch + minor changesets on 0.4.15: the highest level wins, 0.5.0' "$(entry slack version)" '0.5.0-main.412'
 check 'the highest own level across changesets wins (patch + minor)' "$(entry slack level)" 'minor'
 check 'own minor changeset on 0.x' "$(entry tables version)" '0.6.0-main.412'
 check 'own major changeset on 0.x is what the author declared' "$(entry discord version)" '1.0.0-main.412'
@@ -174,16 +174,86 @@ add_archive "$tmp/archive-release" notion 1.3.4
 run_plan --root "$d5" --mode release --archive "$tmp/archive-release"
 check 'exit 0 with plan and archive' "$rc" '0'
 check 'versions stay the released ones: no snapshot in a release' "$(entry slack version) $(entry notion version)" '0.4.15 1.3.4'
-check 'an archived release comes from the archive, the rest from the tree' "$(entry notion origin) $(entry slack origin)" 'archive tree'
+check 'an archived release comes from the archive, a 0.x qadam from the tree' "$(entry notion origin) $(entry slack origin)" 'archive tree'
 check 'a release records no counter' "$(plan_field 'p.counter')" 'null'
 run_plan --root "$d5" --mode release
 check 'no archive: exit 1' "$rc" '1'
 check 'no archive: says so' "$(printf '%s' "$err" | grep -c 'a release build needs the release archive')" '1'
 check 'no archive: no plan written' "$(test -e "$plan_file" && echo written || echo none)" 'none'
+
+# A >=1.0.0 qadam the archive cannot give is never rebuilt from git: each way the archive can fail to
+# hold it ends the release build, naming the qadam.
+refused_for() { # <label> <archive dir>
+  run_plan --root "$d5" --mode release --archive "$2"
+  check "$1: exit 1" "$rc" '1'
+  check "$1: names the qadam" "$(printf '%s' "$err" | grep -c 'qadam-notion')" '1'
+  check "$1: no plan written" "$(test -e "$plan_file" && echo written || echo none)" 'none'
+}
+write "$tmp/archive-empty/archive-index.json" '{ "formatVersion": 1, "artifacts": [] }'
+refused_for 'an empty index' "$tmp/archive-empty"
+add_archive "$tmp/archive-gone" notion 1.3.4
+rm "$tmp/archive-gone/aiqadam-qadam-notion-1.3.4.tgz"
+refused_for 'a tarball that is gone' "$tmp/archive-gone"
+add_archive "$tmp/archive-otherversion" notion 1.3.3
+refused_for 'a version absent from the index' "$tmp/archive-otherversion"
+write "$tmp/archive-malformed/archive-index.json" '{ "formatVersion": 1, "artifacts": [ { "name": "@aiqadam/qadam-notion", "version": "1.3.4" } ] }'
+refused_for 'a malformed entry (the whole archive is unusable, naming the entry)' "$tmp/archive-malformed"
+check 'a malformed entry: the reason names it' "$(printf '%s' "$err" | grep -c 'entry 0')" '1'
+add_archive "$tmp/archive-dup" notion 1.3.4
+add_archive "$tmp/archive-dup" notion 1.3.4
+run_plan --root "$d5" --mode release --archive "$tmp/archive-dup"
+check 'a duplicate entry makes the archive unusable' "$rc $(printf '%s' "$err" | grep -c 'twice')" '1 1'
+
+run_plan --root "$d5" --mode release --archive "$tmp/archive-empty" --produced @aiqadam/qadam-notion
+check 'named as produced by this release: built from the tree, exit 0' "$rc $(entry notion origin) $(entry notion reason) $(entry notion version)" '0 tree release-produced 1.3.4'
+run_plan --root "$d5" --mode release --archive "$tmp/archive-release" --produced @aiqadam/qadam-notion
+check 'named as produced but already archived: a released version is never rebuilt' "$rc $(printf '%s' "$err" | grep -c 'never rebuilt')" '1 1'
+run_plan --root "$d5" --mode release --archive "$tmp/archive-empty" --produced @aiqadam/qadam-nothing
+check 'a produced name that is not in the tree is refused' "$rc" '1'
+run_plan --root "$d5" --counter 3 --produced @aiqadam/qadam-notion
+check '--produced is for release mode only' "$rc" '2'
 write "$d5/.changeset/pre.json" '{ "mode": "pre", "tag": "rc" }'
 run_plan --root "$d5" --mode release --archive "$tmp/archive-release"
 check 'no plan: exit 1' "$rc" '1'
 check 'no plan: says so' "$(printf '%s' "$err" | grep -c 'a release build needs the changesets plan')" '1'
+
+echo "== the tree and the changesets, read defensively =="
+
+run_plan --root "$tmp/does-not-exist" --counter 5
+check 'a root with no qadams is exit 2, not a plan of nothing' "$rc" '2'
+d7="$(new_tree badmanifest)"
+add_qadam "$d7" core slack 0.4.15
+write "$d7/packages/qadams/core/broken/package.json" '{ not json'
+run_plan --root "$d7" --counter 5
+check 'a manifest that is not JSON: exit 2, naming it' "$rc $(printf '%s' "$err" | grep -c 'core/broken/package.json')" '2 1'
+write "$d7/packages/qadams/core/broken/package.json" '{ "name": "@aiqadam/qadam-broken" }'
+run_plan --root "$d7" --counter 5
+check 'a manifest with no version: exit 2' "$rc" '2'
+d8="$(new_tree onlycore)"
+rmdir "$d8/packages/qadams/community"
+add_qadam "$d8" core slack 0.4.15
+run_plan --root "$d8" --counter 5
+check 'a tree without the community root is fine' "$rc" '0'
+d9="$(new_tree grouped)"
+add_qadam "$d9" core slack 0.4.15
+write "$d9/.changeset/config.json" '{ "baseBranch": "main", "fixed": [["@aiqadam/qadam-slack", "@aiqadam/qadam-other"]], "ignore": [] }'
+changeset "$d9" a $'---\n"@aiqadam/qadam-slack": minor\n---\n\nChanged.'
+run_plan --root "$d9" --counter 5
+check 'a qadam in a fixed group: its own changesets are not its plan, so the plan is unavailable' "$(entry slack reason) $(entry slack version)" 'no-plan 0.4.16-main.5'
+d10="$(new_tree unreadable)"
+add_qadam "$d10" core slack 0.4.15
+mkdir "$d10/.changeset/isdir.md"
+run_plan --root "$d10" --counter 5
+check 'a changeset that cannot be read makes the plan unavailable instead of throwing' "$rc $(entry slack reason)" '0 no-plan'
+run_plan --root "$d10" --counter 5 --out "$tmp/no/such/dir/plan.json"
+check 'a plan that cannot be written is exit 2' "$rc" '2'
+
+d11="$(new_tree injection)"
+add_qadam "$d11" core slack 0.4.15
+write "$d11/.changeset/a%b.md" 'broken'
+err="$(GITHUB_ACTIONS=true node "$cli" --root "$d11" --counter 5 --out "$plan_file" 2>&1 >/dev/null)"
+check 'a workflow-command annotation escapes %' "$(printf '%s' "$err" | grep '^::warning' | grep -c 'a%25b.md')" '1'
+check 'and no raw % of the file name survives in it' "$(printf '%s' "$err" | grep '^::warning' | grep -c 'a%b.md')" '0'
 
 echo "== unusable input (exit 2) =="
 
@@ -205,10 +275,15 @@ check 'a manifest that is not a released version' "$rc" '2'
 echo "== every version against the one parser (qadamVersionParser) =="
 
 run_plan --root "$d" --counter 412
-if command -v bun >/dev/null 2>&1 && [ -f "$parser" ]; then
-  parsed="$(PLAN="$plan_file" PARSER="$parser" bun --eval "
+if [ ! -f "$parser" ]; then
+  fail=$((fail + 1)); printf 'FAIL  the parser moved: %s does not exist; update this test\n' "$parser"
+elif ! command -v bun >/dev/null 2>&1; then
+  fail=$((fail + 1)); printf 'FAIL  parser cross-check needs bun (as the rest of verify does)\n'
+else
+  parsed="$(PLAN="$plan_file" PARSER="$parser" SNAPSHOT_PLAN="$repo_root/tools/scripts/qadams/snapshot/snapshot-plan.mjs" bun --eval "
     import { readFileSync } from 'node:fs'
     const { qadamVersionParser } = await import(process.env.PARSER)
+    const { snapshotPlan } = await import(process.env.SNAPSHOT_PLAN)
     const plan = JSON.parse(readFileSync(process.env.PLAN, 'utf8'))
     const bad = plan.packages.filter((entry) => {
       const parsed = qadamVersionParser.parse({ version: entry.version })
@@ -216,17 +291,49 @@ if command -v bun >/dev/null 2>&1 && [ -f "$parser" ]; then
       return parsed === null || (isSnapshot ? parsed.snapshot !== 412 : parsed.snapshot !== null)
     })
     console.log(bad.length)
+    // The plan's own copy of the grammar must accept and refuse exactly what the parser does.
+    const candidates = ['1.2.3', '0.0.0', '1.2.3-main.4', '1.2.3-main.0', '01.2.3', '1.02.3', '1.2.3-rc.1', '1.2.3-main.04', '1.2.3-main.', '1.2.3-main', '^1.2.3', '~1.2.3', 'v1.2.3', '../../x', '1.2.3+b', ' 1.2.3', '1.2.3 ', '1234567890.0.0', '999999999.999999999.999999999-main.999999999', '999999999.999999999.999999999-main.9999999999', '1.2', '']
+    const differing = candidates.filter((version) => {
+      const entry = { name: 'n', version, released: '1.0.0', origin: 'tree', directory: 'd' }
+      const planOk = snapshotPlan.parse({ text: JSON.stringify({ formatVersion: 1, packages: [entry] }) }).ok
+      return planOk !== (qadamVersionParser.parse({ version }) !== null)
+    })
+    console.log(differing.length === 0 ? 'same' : 'differ: ' + JSON.stringify(differing))
   " 2>&1)"
-  check 'every planned version parses; a snapshot carries the counter, a release none' "$parsed" '0'
-else
-  printf 'SKIP  parser cross-check: needs bun\n'
+  check 'every planned version parses; a snapshot carries the counter, a release none' "$(printf '%s' "$parsed" | sed -n 1p)" '0'
+  check 'the plan file reader accepts and refuses the same versions as qadamVersionParser' "$(printf '%s' "$parsed" | sed -n 2p)" 'same'
 fi
+
+echo "== a plan file is data (what the artifact builder reads) =="
+
+plan_parse() { # <entries JSON> -> ok | the reason
+  ENTRIES="$1" node --input-type=module -e "
+    import { snapshotPlan } from '$repo_root/tools/scripts/qadams/snapshot/snapshot-plan.mjs'
+    const r = snapshotPlan.parse({ text: JSON.stringify({ formatVersion: 1, packages: JSON.parse(process.env.ENTRIES) }) })
+    console.log(r.ok ? 'ok' : r.error)
+  "
+}
+good='{ "name": "@aiqadam/qadam-a", "version": "0.1.1-main.5", "released": "0.1.0", "origin": "tree", "directory": "packages/qadams/core/a" }'
+check 'a good entry' "$(plan_parse "[$good]")" 'ok'
+check 'a version that is a path is refused' "$(plan_parse '[{ "name": "n", "version": "../../../../tmp/x", "released": "0.1.0", "origin": "tree", "directory": "d" }]' | grep -c 'version is not a release or a main snapshot')" '1'
+check 'a tree entry needs a directory' "$(plan_parse '[{ "name": "n", "version": "0.1.1-main.5", "released": "0.1.0", "origin": "tree" }]' | grep -c 'no directory')" '1'
+check 'released must be a release' "$(plan_parse '[{ "name": "n", "version": "0.1.1-main.5", "released": "0.1.0-main.1", "origin": "tree", "directory": "d" }]' | grep -c 'released is not')" '1'
+check 'a name twice is refused' "$(plan_parse "[$good, $good]" | grep -c 'twice')" '1'
 
 echo "== this tree =="
 
 run_plan --root "$repo_root" --counter 7
 check 'the repository plans without error' "$rc" '0'
-check 'every official qadam is in the plan' "$(plan_field 'p.packages.length === require("fs").readdirSync("'"$repo_root"'/packages/qadams/core").concat(require("fs").readdirSync("'"$repo_root"'/packages/qadams/community")).length')" 'true'
+expected="$(node -e "
+  const fs = require('fs'), path = require('path')
+  const names = ['core', 'community'].flatMap((group) => {
+    const dir = path.join('$repo_root', 'packages', 'qadams', group)
+    return fs.readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && fs.existsSync(path.join(dir, e.name, 'package.json')))
+      .map((e) => JSON.parse(fs.readFileSync(path.join(dir, e.name, 'package.json'), 'utf8')).name)
+  })
+  console.log(names.sort().join(','))")"
+check 'the plan holds exactly the qadams that have a package.json' "$(plan_field 'p.packages.map(e => e.name).sort().join(",")')" "$expected"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

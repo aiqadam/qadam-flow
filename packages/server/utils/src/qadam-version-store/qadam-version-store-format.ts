@@ -113,8 +113,9 @@ const GLIBC_PATTERN = /^glibc (\d+)\.(\d+)/
 
 // What an artifact was built against (ADR-0004, decision 8): informational, so a value this reader
 // does not understand is dropped instead of refusing a version that runs.
-const BuiltAgainst = z.object({
+export const QadamVersionBuiltAgainst = z.object({
     framework: z.string(),
+    // The platform version of the build that made the artifact, when the builder knew it.
     platform: z.string().optional(),
 })
 
@@ -268,7 +269,7 @@ function hostPlatform(): HostPlatform {
 // (ADR-0002 governs breaks, ADR-0004 accepts the rest as a known limitation) and the record is how
 // that stays traceable. Both numbers are versions the parser knows: a release or a `-main.<n>`.
 function readBuiltAgainst({ marker }: { marker: z.infer<typeof ArtifactMarker> | undefined }): QadamVersionBuiltAgainst | null {
-    const parsed = BuiltAgainst.safeParse(marker?.builtAgainst)
+    const parsed = QadamVersionBuiltAgainst.safeParse(marker?.builtAgainst)
     if (!parsed.success) {
         return null
     }
@@ -296,11 +297,7 @@ type InspectParams = {
 // `unsupported`: not damaged, only not runnable by this release on this host (see the header).
 export type FormatProblem = { ok: false, reason: string, unsupported: boolean }
 
-export type QadamVersionBuiltAgainst = {
-    framework: string
-    // The platform version of the build that made the artifact, when the builder knew it.
-    platform?: string
-}
+export type QadamVersionBuiltAgainst = z.infer<typeof QadamVersionBuiltAgainst>
 
 type InspectResult =
     | { ok: true, format: QadamArtifactFormat, kind: QadamArtifactKind | null, entryPoint: string, builtAgainst: QadamVersionBuiltAgainst | null }

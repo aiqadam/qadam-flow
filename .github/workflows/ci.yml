@@ -934,10 +934,24 @@ jobs:
           PLATFORM_VERSION: ${{ steps.version.outputs.version }}
         run: |
           plan="$RUNNER_TEMP/qadam-snapshot-plan.json"
-          node tools/scripts/qadams/snapshot/compute-snapshot-plan.mjs --counter "$GITHUB_RUN_NUMBER" --platform-version "$PLATFORM_VERSION" --out "$plan"
+          failed() {
+            echo "::warning title=Qadam snapshot plan::computation failed"
+            echo "### Qadam snapshot plan: computation failed (see this step's log)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          }
+          node tools/scripts/qadams/snapshot/compute-snapshot-plan.mjs --counter "$GITHUB_RUN_NUMBER" --platform-version "$PLATFORM_VERSION" --out "$plan" || failed
+          summary="$(jq -r '
+            (.packages // []) as $all
+            | ($all | map(select(.version != .released))) as $snapshots
+            | "\($snapshots | length) of \($all | length) qadams get a snapshot version in this build.",
+              "",
+              ((.warnings // [])[] | "- warning: \(.)"),
+              ($snapshots[:40][] | "- `\(.name)` \(.released) -> `\(.version)` (\(.reason))"),
+              (if ($snapshots | length) > 40 then "- ... and \(($snapshots | length) - 40) more" else empty end)
+          ' "$plan")" || failed
           {
             echo "### Qadam snapshot plan (ADR-0004, not applied to the image yet)"
-            jq -r '"\(.packages | map(select(.version != .released)) | length) of \(.packages | length) qadams get a snapshot version in this build.", "", (.warnings[] | "- warning: \(.)"), (.packages | map(select(.version != .released)) | .[:40] | .[] | "- `\(.name)` \(.released) -> `\(.version)` (\(.reason))")' "$plan"
+            echo "$summary"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Kept on PRs: it is the only place the Dockerfile path itself is built, including the

@@ -24,7 +24,7 @@
 import { execFile } from 'node:child_process'
 import { cp, mkdir, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { builtinModules, createRequire } from 'node:module'
-import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { build } from 'esbuild'
 
@@ -61,15 +61,21 @@ export const qadamArtifact = {
     // `version` is the version this artifact is built and named as, when it is not the one in the
     // qadam's package.json: a `-main.<n>` snapshot of a build from `main` (ADR-0004, #851). It is
     // written into the artifact's `package.json`, from which `metadata.json` takes it, and names the
-    // artifact's directory. `platformVersion` is recorded next to the framework version the artifact
-    // is built against.
-    build: async ({ qadamDir, outRoot, repoRoot, config, loadCheck, pack, packDestination, version: versionOverride, platformVersion }) => {
+    // artifact's directory. `builtAgainst` is what `readBuiltAgainst` returns, read once by the caller
+    // for the whole run.
+    build: async ({ qadamDir, outRoot, repoRoot, config, loadCheck, pack, packDestination, version: versionOverride, builtAgainst }) => {
         const startedAt = Date.now()
         const sourcePackageJson = JSON.parse(await readFile(join(qadamDir, 'package.json'), 'utf8'))
         const { name } = sourcePackageJson
         const version = versionOverride ?? sourcePackageJson.version
         const qadamConfig = normalizeQadamConfig({ raw: config.qadams?.[name] })
         const artifactDir = join(outRoot, name, version)
+        // The directory is removed and rebuilt below, so it must be exactly `<out>/<name>/<version>`:
+        // a version such as `../../../x` would otherwise point that `rm` anywhere.
+        const placed = relative(join(outRoot, name), artifactDir)
+        if (placed !== version || placed === '' || placed.includes(sep) || isAbsolute(placed)) {
+            throw new Error(`'${version}' is not a directory name under ${name}`)
+        }
         const base = {
             name,
             version,
@@ -136,7 +142,7 @@ export const qadamArtifact = {
                 kind,
                 peerDependencies,
                 nodeModules,
-                builtAgainst: await readBuiltAgainst({ repoRoot, platformVersion }),
+                builtAgainst,
             }), null, 2) + '\n')
 
             const withFiles = { ...common, i18nLocales, peerDependencies, nodeModules: Object.keys(nodeModules).length }
@@ -163,6 +169,15 @@ export const qadamArtifact = {
             await rm(artifactDir, { recursive: true, force: true })
             throw e
         }
+    },
+
+    // The framework version the artifacts of this run are built against, and the platform version of
+    // the build when it is known (ADR-0004, decision 8). Read once per run: it is the same for every
+    // qadam, and a run must not record two different answers. In a build from `main` the framework's
+    // number is its last release, so the platform version says which framework code that was.
+    readBuiltAgainst: async ({ repoRoot, platformVersion }) => {
+        const { version } = JSON.parse(await readFile(join(repoRoot, PLATFORM_PROVIDED_PACKAGES['@aiqadam/qadams-framework'], 'package.json'), 'utf8'))
+        return { framework: version, ...(platformVersion === undefined || platformVersion === null ? {} : { platform: platformVersion }) }
     },
 
     // The platform's copies, where a store would keep them: `<outRoot>/node_modules`. Only the load
@@ -437,15 +452,6 @@ const computePeerDependencies = async ({ peers, repoRoot }) => {
         return [peer, `^${version}`]
     }))
     return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)))
-}
-
-// The framework version the artifact was built against, for the store to record next to the version
-// (ADR-0004 decision 8: a framework change alters what a snapshot does, and the number says which
-// framework it ran with). In a build from `main` the framework's number is its last release, so the
-// platform version of the same build says which framework code that was.
-const readBuiltAgainst = async ({ repoRoot, platformVersion }) => {
-    const { version } = JSON.parse(await readFile(join(repoRoot, PLATFORM_PROVIDED_PACKAGES['@aiqadam/qadams-framework'], 'package.json'), 'utf8'))
-    return { framework: version, ...(platformVersion === undefined || platformVersion === null ? {} : { platform: platformVersion }) }
 }
 
 const buildArtifactPackageJson = ({ sourcePackageJson, version, kind, peerDependencies, nodeModules, builtAgainst }) => {

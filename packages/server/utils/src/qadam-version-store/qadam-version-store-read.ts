@@ -3,7 +3,7 @@ import path from 'node:path'
 import { isNil, tryCatch } from '@aiqadam/shared'
 import { z } from 'zod'
 import { fileSystemUtils } from '../file-system-utils'
-import { QadamArtifactFormat, QadamArtifactKind, qadamVersionStoreFormat } from './qadam-version-store-format'
+import { QadamArtifactFormat, QadamArtifactKind, QadamVersionBuiltAgainst, qadamVersionStoreFormat } from './qadam-version-store-format'
 import { qadamVersionStoreFs } from './qadam-version-store-fs'
 import { QADAM_VERSION_STORE_LAYOUT, QadamVersionCoordinates, qadamVersionStoreLayout } from './qadam-version-store-layout'
 import { QadamVersionStoreLimits, qadamVersionStoreTree } from './qadam-version-store-tree'
@@ -192,7 +192,7 @@ const QadamVersionIntegrity = z.object({
     // The framework (and platform) version the artifact was built against, from the artifact's own
     // `package.json` (ADR-0004, decision 8). Absent on records written before it, and `null` for a
     // version that does not say (a legacy npm package).
-    builtAgainst: z.object({ framework: z.string(), platform: z.string().optional() }).nullable().optional(),
+    builtAgainst: QadamVersionBuiltAgainst.nullable().optional(),
     origin: z.object({
         kind: z.enum(QadamVersionOrigin),
         tarballIntegrity: z.string().nullable(),
