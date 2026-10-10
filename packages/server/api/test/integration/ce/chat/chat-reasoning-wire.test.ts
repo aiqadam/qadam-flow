@@ -289,7 +289,7 @@ async function enableProvider({ providerCase, reasoning }: { providerCase: Provi
     // outbound request left is the completion itself.
     modelsCache.set({
         key: `${id}-${new Date(ROW_UPDATED).getTime()}`,
-        models: [{ id: providerCase.modelId, name: providerCase.modelId, type: AIProviderModelType.TEXT }],
+        models: [{ id: providerCase.modelId, name: providerCase.modelId, type: AIProviderModelType.TEXT, capabilities: { inputModalities: ['text'], outputModalities: ['text'], chat: true, tools: true } }],
     })
 }
 

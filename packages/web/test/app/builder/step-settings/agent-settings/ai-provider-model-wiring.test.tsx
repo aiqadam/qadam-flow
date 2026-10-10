@@ -38,8 +38,26 @@ vi.mock('@/features/agents/ai-model/hooks', () => ({
     }),
     useGetModelsForProvider: () => ({
       data: [
-        { id: 'deepseek-chat', name: 'deepseek-chat' },
-        { id: 'deepseek-reasoner', name: 'deepseek-reasoner' },
+        {
+          id: 'deepseek-chat',
+          name: 'deepseek-chat',
+          capabilities: {
+            inputModalities: ['text'],
+            outputModalities: ['text'],
+            chat: true,
+            tools: true,
+          },
+        },
+        {
+          id: 'deepseek-reasoner',
+          name: 'deepseek-reasoner',
+          capabilities: {
+            inputModalities: ['text'],
+            outputModalities: ['text'],
+            chat: true,
+            tools: true,
+          },
+        },
       ],
       isLoading: false,
     }),

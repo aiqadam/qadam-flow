@@ -1,4 +1,4 @@
-import { AIProviderName, isNil } from '@aiqadam/shared';
+import { AIProviderName, isNil, pickDefaultChatModel } from '@aiqadam/shared';
 import { t } from 'i18next';
 import { Check, ChevronsUpDown, Loader2 } from 'lucide-react';
 import * as React from 'react';
@@ -71,7 +71,10 @@ export function AIModelSelector({
     if (!isNil(selectedModel) && models.some((m) => m.id === selectedModel)) {
       return;
     }
-    const fallback = models[0].id;
+    const fallback = pickDefaultChatModel(models)?.id;
+    if (isNil(fallback)) {
+      return;
+    }
     setSelectedModel(fallback);
     onChange(
       {

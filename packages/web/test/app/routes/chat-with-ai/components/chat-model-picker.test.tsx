@@ -20,6 +20,12 @@ const textModel = (id: string): AIProviderModel => ({
   id,
   name: id,
   type: AIProviderModelType.TEXT,
+  capabilities: {
+    inputModalities: ['text'],
+    outputModalities: ['text'],
+    chat: true,
+    tools: true,
+  },
 });
 
 let providers: AIProviderWithoutSensitiveData[] = [];

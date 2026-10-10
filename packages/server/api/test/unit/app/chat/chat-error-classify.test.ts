@@ -74,6 +74,26 @@ describe('classifyChatError (#265 DoD 3)', () => {
         expect(code).toBe(CHAT_ERROR_CODES.UNKNOWN)
     })
 
+    // #848: the provider's own text (which can name a replacement model, or echo a proxy's body) never
+    // reaches the user. The classified hint says where to look instead.
+    it('keeps the provider\'s own text out of the message when a model is not served', () => {
+        const { code, message } = classifyChatError({
+            name: 'AI_APICallError',
+            message: 'This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash.',
+            statusCode: 404,
+        })
+        expect(code).toBe(CHAT_ERROR_CODES.PROVIDER_MODEL_NOT_FOUND)
+        expect(message).toContain('does not know this model')
+        expect(message).not.toContain('gemini-3.8-flash')
+        expect(message).not.toContain('\n\n')
+    })
+
+    it('keeps a fixed string for the classes whose provider message names no fix', () => {
+        const { code, message } = classifyChatError(new Error('connect ECONNREFUSED 127.0.0.1:11434'))
+        expect(code).toBe(CHAT_ERROR_CODES.PROVIDER_UNREACHABLE)
+        expect(message).not.toContain('ECONNREFUSED')
+    })
+
     it('keeps the generic message for anything else, with the UNKNOWN code', () => {
         const { code, message } = classifyChatError(new Error('provider exploded'))
         expect(code).toBe(CHAT_ERROR_CODES.UNKNOWN)

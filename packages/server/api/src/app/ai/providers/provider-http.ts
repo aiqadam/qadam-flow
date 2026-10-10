@@ -34,7 +34,7 @@ export const providerHttp = {
         }))
 
         // `response` cannot be null while `error` is, but destructuring drops the discriminant
-        // that says so, so both are checked — the same shape as `firstTextModelFromProvider`.
+        // that says so, so both are checked — the same shape as `firstChatModelFromProvider`.
         if (!isNil(error) || isNil(response)) {
             throw new Error(describeTransportFailure(error))
         }

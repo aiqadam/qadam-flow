@@ -3,10 +3,12 @@ import { chatAiUtils } from '@aiqadam/server-utils'
 import {
     AIProviderConfig,
     AIProviderModel,
-    AIProviderModelType,
     AIProviderName,
+    buildAIProviderModel,
+    capabilitiesFromModelType,
     ErrorCode,
     isNil,
+    pickDefaultChatModel,
     QadamFlowError,
     tryCatch,
 } from '@aiqadam/shared'
@@ -32,10 +34,10 @@ export const chatModel = {
         }
 
         const chosen = isNil(modelName)
-            ? firstTextModelFromConfig(chatProvider.config) ?? await firstTextModelFromProvider({ platformId, providerId: chatProvider.id, log })
+            ? firstChatModelFromConfig(chatProvider.config) ?? await firstChatModelFromProvider({ platformId, providerId: chatProvider.id, log })
             : await validateRequestedModel({ platformId, providerId: chatProvider.id, modelName, log })
         if (isNil(chosen)) {
-            // Only reached when the provider itself reports no text model. Guessing a default here
+            // Only reached when the provider itself reports no chat model. Guessing a default here
             // would hardcode a model name, which is the thing this feature exists not to do.
             throw new QadamFlowError({
                 code: ErrorCode.AI_MODEL_NOT_SUPPORTED,
@@ -70,7 +72,11 @@ export const chatModel = {
 // memoised in `ai-provider-service.ts` per provider row, invalidated when that row is edited, and
 // cleared once a day — so this costs one lookup per provider per instance per day. A provider that is unreachable throws, and
 // that is the right answer — the chat cannot run against a provider it cannot talk to.
-async function firstTextModelFromProvider({ platformId, providerId, log }: FirstTextModelParams): Promise<ChosenModel | null> {
+//
+// The model is picked by `pickDefaultChatModel`, the same function the web picker uses to choose
+// its initial selection, so the model the chat runs with no explicit pick is the one the picker
+// shows.
+async function firstChatModelFromProvider({ platformId, providerId, log }: FirstChatModelParams): Promise<ChosenModel | null> {
     const { data: models, error } = await tryCatch(() => aiProviderService(log).listModels({ platformId, ref: providerId }))
     if (!isNil(error) || isNil(models)) {
         throw new QadamFlowError({
@@ -80,18 +86,20 @@ async function firstTextModelFromProvider({ platformId, providerId, log }: First
             },
         })
     }
-    const textModel = models.find((model) => model.type === AIProviderModelType.TEXT)
-    return isNil(textModel) ? null : fromListedModel(textModel)
+    const chatModel = pickDefaultChatModel(models)
+    return isNil(chatModel) ? null : fromListedModel(chatModel)
 }
 
 // A caller-supplied `modelName` is a value a chat user picked through the model picker (#377) — it
 // must be checked against the provider's own catalogue before it reaches `createChatModel`, or an
 // authenticated platform user could pin an arbitrary string as the model id: the most expensive
-// model the operator's key can reach (the frontend's own allow-list is not enforced here otherwise),
+// model the operator's key can reach (the frontend's own filtering is not enforced here otherwise),
 // or for GOOGLE/AZURE, a string interpolated into the request *path* the AI SDK builds. `listModels`
-// is the same memoised lookup `firstTextModelFromProvider` already uses, so a previously-resolved
-// pick costs a cache hit rather than a fresh network call. Returns null rather than throwing so the
-// caller folds an invalid pick into the same AI_MODEL_NOT_SUPPORTED path as "provider has no model".
+// is the same memoised lookup `firstChatModelFromProvider` already uses, so a previously-resolved
+// pick costs a cache hit rather than a fresh network call. The pick must be a chat model — the same
+// test the picker offered it under — so an image-only or embedding model the provider lists cannot
+// be pinned. Returns null rather than throwing so the caller folds an invalid pick into the same
+// AI_MODEL_NOT_SUPPORTED path as "provider has no model".
 async function validateRequestedModel({ platformId, providerId, modelName, log }: ValidateRequestedModelParams): Promise<ChosenModel | null> {
     const { data: models, error } = await tryCatch(() => aiProviderService(log).listModels({ platformId, ref: providerId }))
     if (!isNil(error) || isNil(models)) {
@@ -102,25 +110,34 @@ async function validateRequestedModel({ platformId, providerId, modelName, log }
             },
         })
     }
-    const match = models.find((model) => model.id === modelName && model.type === AIProviderModelType.TEXT)
+    const match = models.find((model) => model.id === modelName && model.capabilities.chat)
     return isNil(match) ? null : fromListedModel(match)
 }
 
 // Only the gateway-style providers carry a model catalogue in their config; the rest have to be
-// asked over the network, which is what `firstTextModelFromProvider` is for.
-function firstTextModelFromConfig(config: AIProviderConfig): ChosenModel | null {
+// asked over the network, which is what `firstChatModelFromProvider` is for. The operator's
+// `modelType` is turned into capabilities so the config path picks the default the same way the
+// provider path and the web picker do (preview demotion included), instead of always the first
+// text row.
+function firstChatModelFromConfig(config: AIProviderConfig): ChosenModel | null {
     if (!('models' in config)) {
         return null
     }
-    const textModel = config.models.find((model) => model.modelType === AIProviderModelType.TEXT)
-    return isNil(textModel) ? null : { modelId: textModel.modelId, contextWindowTokens: textModel.contextWindowTokens ?? null }
+    const models = config.models.map((model) => buildAIProviderModel({
+        id: model.modelId,
+        name: model.modelName,
+        capabilities: capabilitiesFromModelType({ modelType: model.modelType }),
+        contextWindowTokens: model.contextWindowTokens,
+    }))
+    const chatModel = pickDefaultChatModel(models)
+    return isNil(chatModel) ? null : fromListedModel(chatModel)
 }
 
 function fromListedModel(model: AIProviderModel): ChosenModel {
     return { modelId: model.id, contextWindowTokens: model.contextWindowTokens ?? null }
 }
 
-type FirstTextModelParams = {
+type FirstChatModelParams = {
     platformId: string
     providerId: string
     log: FastifyBaseLogger

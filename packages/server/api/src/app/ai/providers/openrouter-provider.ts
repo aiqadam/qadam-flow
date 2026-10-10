@@ -1,4 +1,4 @@
-import { AIProviderModel, AIProviderModelType, OpenRouterProviderAuthConfig, OpenRouterProviderConfig, parseModelContextWindowTokens, spreadIfDefined } from '@aiqadam/shared'
+import { AIProviderModel, buildAIProviderModel, OpenRouterProviderAuthConfig, OpenRouterProviderConfig, parseModelContextWindowTokens } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { AIProviderStrategy } from './ai-provider'
 import { providerHttp } from './provider-http'
@@ -24,12 +24,23 @@ export const openRouterProvider: AIProviderStrategy<OpenRouterProviderAuthConfig
             },
         })
 
-        return data.map((model: OpenRouterModel) => ({
-            id: model.id,
-            name: model.name,
-            type: model.architecture.output_modalities.includes('image') ? AIProviderModelType.IMAGE : AIProviderModelType.TEXT,
-            ...spreadIfDefined('contextWindowTokens', parseModelContextWindowTokens(model.context_length)),
-        }))
+        return data.map((model: OpenRouterModel) => {
+            const inputModalities = model.architecture?.input_modalities ?? []
+            const outputModalities = model.architecture?.output_modalities ?? []
+            return buildAIProviderModel({
+                id: model.id,
+                name: model.name,
+                capabilities: {
+                    inputModalities,
+                    outputModalities,
+                    // A model that answers in text can hold the chat; one that only draws an image
+                    // (`output_modalities: ["image"]`) cannot.
+                    chat: outputModalities.includes('text'),
+                    tools: (model.supported_parameters ?? []).includes('tools'),
+                },
+                contextWindowTokens: parseModelContextWindowTokens(model.context_length),
+            })
+        })
     },
 }
 
@@ -38,7 +49,10 @@ type OpenRouterModel = {
     name: string
     // Required but nullable in OpenRouter's OpenAPI `Model` schema.
     context_length?: number | null
-    architecture: {
-        output_modalities: string[]
+    architecture?: {
+        input_modalities?: string[]
+        output_modalities?: string[]
     }
+    // What the model accepts in a request body; `tools` means function calling.
+    supported_parameters?: string[]
 }

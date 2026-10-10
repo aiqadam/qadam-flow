@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { BaseModelSchema } from '../../core/common/base-model'
 import { tryCatchSync } from '../../core/common/try-catch'
-import { omit } from '../../core/common/utils/object-utils'
+import { omit, spreadIfDefined } from '../../core/common/utils/object-utils'
 import { formErrors } from '../../form-errors'
 
 export enum AIProviderName {
@@ -474,15 +474,87 @@ export const AIProviderListItem = z.object({
 })
 export type AIProviderListItem = z.infer<typeof AIProviderListItem>
 
+// A model described by what it can do rather than by one type. `chat` is what the chat and the
+// agent step filter on; `tools` records whether the model supports function calling (reported for
+// the admin and for a future consumer, not filtered on yet); the modality arrays are what the
+// image and text actions read. Modalities are plain strings on purpose: a provider that reports
+// one this repo has not heard of (`file`, `video`) is carried through instead of being dropped by
+// an enum.
+export const AIProviderModelCapabilities = z.object({
+    inputModalities: z.array(z.string()),
+    outputModalities: z.array(z.string()),
+    chat: z.boolean(),
+    tools: z.boolean(),
+})
+export type AIProviderModelCapabilities = z.infer<typeof AIProviderModelCapabilities>
+
 export const AIProviderModel = z.object({
     id: z.string(),
     name: z.string(),
+    // Derived from `capabilities` (see `deriveAIProviderModelType`) and kept on the wire only for
+    // the pinned qadam versions that still filter the catalogue on it; new readers use
+    // `capabilities`. It cannot be removed without breaking every already-published qadam, whose
+    // model dropdowns read it straight from this response.
     type: z.nativeEnum(AIProviderModelType),
+    capabilities: AIProviderModelCapabilities,
     // Absent when neither the provider's model list nor the operator's own catalogue says; the
     // reader then falls back to `DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS`.
     contextWindowTokens: z.int().optional(),
 })
 export type AIProviderModel = z.infer<typeof AIProviderModel>
+
+// The single place the legacy `type` is derived, so the field and the capability it stands for can
+// never disagree. A model that can put out an image reads as IMAGE — the rule OpenRouter and
+// Bedrock already used — which keeps a pinned qadam's image/text filter behaving as before for the
+// common families; OpenAI and Google image detection is now prefix/method-based and slightly
+// broader than the old name list.
+export function deriveAIProviderModelType({ capabilities }: { capabilities: AIProviderModelCapabilities }): AIProviderModelType {
+    return capabilities.outputModalities.includes('image') ? AIProviderModelType.IMAGE : AIProviderModelType.TEXT
+}
+
+// What an operator-declared catalogue row means in capabilities. CUSTOM and Cloudflare Gateway make
+// no network call — `modelType` is typed by hand, so it is the whole capability statement. `tools`
+// is optimistic on a text row, matching what the pickers already offered for those rows.
+export function capabilitiesFromModelType({ modelType }: { modelType: AIProviderModelType }): AIProviderModelCapabilities {
+    return modelType === AIProviderModelType.IMAGE
+        ? { inputModalities: ['text'], outputModalities: ['image'], chat: false, tools: false }
+        : { inputModalities: ['text'], outputModalities: ['text'], chat: true, tools: true }
+}
+
+// Assembles a wire model from the capabilities a strategy knows, deriving the legacy `type`.
+export function buildAIProviderModel({ id, name, capabilities, contextWindowTokens }: BuildAIProviderModelParams): AIProviderModel {
+    return {
+        id,
+        name,
+        type: deriveAIProviderModelType({ capabilities }),
+        capabilities,
+        ...spreadIfDefined('contextWindowTokens', contextWindowTokens),
+    }
+}
+
+// Whether a model can hold a conversation — the one test the chat and the agent step model picker
+// share. `chat` is set from what the provider reports (Google's `generateContent`, Mistral's
+// `completion_chat`, a text output modality) and defaults to true for the models of a provider that
+// reports nothing, so a new chat model is offered the day the provider lists it.
+export function isChatModel({ capabilities }: { capabilities: AIProviderModelCapabilities }): boolean {
+    return capabilities.chat
+}
+
+// The zero-config default and the picker's initial choice, so the model shown before anyone opens
+// the picker is the one the chat actually runs. Preview builds are demoted so a stable model wins;
+// otherwise the provider's own order stands, since no provider reports a release date consistently
+// enough to rank on. The preview test is a best-effort heuristic on the id — no provider reports
+// "this is a preview" — and an admin-set default per row is deliberately out of scope here (see
+// #848).
+export function pickDefaultChatModel(models: AIProviderModel[]): AIProviderModel | null {
+    const chatModels = models.filter(isChatModel)
+    if (chatModels.length === 0) {
+        return null
+    }
+    return chatModels.find((model) => !PREVIEW_MODEL_ID_RE.test(model.id)) ?? chatModels[0]
+}
+
+const PREVIEW_MODEL_ID_RE = /preview|experimental/i
 
 export const CreateAIProviderRequest = ProviderConfigUnion.and(z.object({
     enabledForChat: z.boolean().optional(),
@@ -518,6 +590,7 @@ export const AIErrorResponse = z.object({
 })
 
 export type AIErrorResponse = z.infer<typeof AIErrorResponse>
+
 /**
  * Resolves the effective provider and model for capability decisions. For direct providers
  * this is the same pair that came in. For Cloudflare Gateway (which tunnels to a submodel
@@ -529,16 +602,6 @@ export type AIErrorResponse = z.infer<typeof AIErrorResponse>
  * prefixes or missing input fall back to the raw inputs so callers never end up with a
  * wrong-but-confident answer.
  */
-const OPENAI_CHAT_MODELS = ['gpt-5.5', 'gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-4.1', 'gpt-4.1-mini'] as const
-const ANTHROPIC_CHAT_MODELS = ['claude-sonnet-4-6', 'claude-opus-4-7', 'claude-haiku-4-5'] as const
-const GOOGLE_CHAT_MODELS = ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-3.1-pro-preview', 'gemini-3-flash-preview'] as const
-
-export const ALLOWED_CHAT_MODELS_BY_PROVIDER: Partial<Record<AIProviderName, readonly string[]>> = {
-    [AIProviderName.OPENAI]: OPENAI_CHAT_MODELS,
-    [AIProviderName.ANTHROPIC]: ANTHROPIC_CHAT_MODELS,
-    [AIProviderName.GOOGLE]: GOOGLE_CHAT_MODELS,
-}
-
 export function getEffectiveProviderAndModel({
     provider,
     model,
@@ -619,5 +682,12 @@ export function splitCloudflareGatewayModelId(modelId: string): {
         model: rest,
         publisher: undefined,
     }
+}
+
+type BuildAIProviderModelParams = {
+    id: string
+    name: string
+    capabilities: AIProviderModelCapabilities
+    contextWindowTokens?: number
 }
 

@@ -1,4 +1,4 @@
-import { AIProviderModel, OpenAICompatibleProviderAuthConfig, OpenAICompatibleProviderConfig, spreadIfDefined } from '@aiqadam/shared'
+import { AIProviderModel, buildAIProviderModel, capabilitiesFromModelType, OpenAICompatibleProviderAuthConfig, OpenAICompatibleProviderConfig } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { AIProviderStrategy } from './ai-provider'
 
@@ -8,11 +8,11 @@ export const openAICompatibleProvider: AIProviderStrategy<OpenAICompatibleProvid
         // No validation needed for OpenAI Compatible provider
     },
     async listModels(_authConfig: OpenAICompatibleProviderAuthConfig, config: OpenAICompatibleProviderConfig): Promise<AIProviderModel[]> {
-        return config.models.map(m => ({
+        return config.models.map(m => buildAIProviderModel({
             id: m.modelId,
             name: m.modelName,
-            type: m.modelType,
-            ...spreadIfDefined('contextWindowTokens', m.contextWindowTokens),
+            capabilities: capabilitiesFromModelType({ modelType: m.modelType }),
+            contextWindowTokens: m.contextWindowTokens,
         }))
     },
 }

@@ -1,4 +1,4 @@
-import { AIProviderModelType, AIProviderName, McpToolDefinition, ProjectScopedMcpServer } from '@aiqadam/shared'
+import { AIProviderName, McpToolDefinition, ProjectScopedMcpServer } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
 import { aiProviderService } from '../../ai/ai-provider-service'
@@ -51,8 +51,8 @@ export const apListAiModelsTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                     filteredProviders.map(async (p) => {
                         try {
                             const models = await service.listModels({ platformId, ref: p.id })
-                            const textModels = models.filter(m => m.type === AIProviderModelType.TEXT)
-                            const capped = textModels.slice(0, MAX_MODELS_PER_PROVIDER)
+                            const chatModels = models.filter(m => m.capabilities.chat)
+                            const capped = chatModels.slice(0, MAX_MODELS_PER_PROVIDER)
                             structuredProviders.push({
                                 id: p.id,
                                 provider: p.provider,
@@ -73,11 +73,11 @@ export const apListAiModelsTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                             // `structuredContent` above for the model to copy back.
                             const modelLines = capped.length > 0
                                 ? capped.map(m => `    - ${mcpUtils.wrapUntrustedValue(m.name)} (id: ${mcpUtils.wrapUntrustedValue(m.id)})`).join('\n')
-                                : '    (no text models available)'
-                            const overflow = textModels.length > MAX_MODELS_PER_PROVIDER
-                                ? `\n    ... and ${textModels.length - MAX_MODELS_PER_PROVIDER} more${filterProvider ? '' : ` (use provider="${p.provider}" to see all)`}`
+                                : '    (no chat models available)'
+                            const overflow = chatModels.length > MAX_MODELS_PER_PROVIDER
+                                ? `\n    ... and ${chatModels.length - MAX_MODELS_PER_PROVIDER} more${filterProvider ? '' : ` (use provider="${p.provider}" to see all)`}`
                                 : ''
-                            return `- ${mcpUtils.wrapUntrustedValue(p.name)} (${p.provider}, id: ${p.id}) — ${textModels.length} text model(s)\n  Models:\n${modelLines}${overflow}`
+                            return `- ${mcpUtils.wrapUntrustedValue(p.name)} (${p.provider}, id: ${p.id}) — ${chatModels.length} chat model(s)\n  Models:\n${modelLines}${overflow}`
                         }
                         catch (err) {
                             log.warn({ err, provider: p.provider }, 'ap_list_ai_models: failed to fetch models for provider')

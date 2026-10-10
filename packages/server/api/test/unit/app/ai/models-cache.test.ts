@@ -2,7 +2,7 @@ import { AIProviderModelType } from '@aiqadam/shared'
 import { afterEach, describe, expect, it } from 'vitest'
 import { MODELS_CACHE_MAX_ENTRIES, modelsCache } from '../../../../src/app/ai/models-cache'
 
-const models = (id: string) => [{ id, name: id, type: AIProviderModelType.TEXT }]
+const models = (id: string) => [{ id, name: id, type: AIProviderModelType.TEXT, capabilities: { inputModalities: ['text'], outputModalities: ['text'], chat: true, tools: true } }]
 
 const fill = (count: number, prefix = 'key') => {
     for (let index = 0; index < count; index++) {

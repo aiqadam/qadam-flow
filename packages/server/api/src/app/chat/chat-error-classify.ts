@@ -25,7 +25,10 @@ const CONNECTION_RE = /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ECONNRESET|EHOSTUNREACH|
 export function classifyChatError(error: unknown): ClassifiedChatError {
     const { message, statusCode } = describeChatError(error)
     const rule = RULES.find((candidate) => candidate.matches({ message, statusCode }))
-    return rule?.result ?? UNKNOWN_RESULT
+    const result = rule?.result ?? UNKNOWN_RESULT
+    // The provider's own text stays server-side: it can name a model the user must not be steered to,
+    // and a proxy's error body is not ours to echo into the chat bubble (#848).
+    return { code: result.code, message: result.message }
 }
 
 // The one place the fields above are read off a provider error, shared with the loop's log line so
