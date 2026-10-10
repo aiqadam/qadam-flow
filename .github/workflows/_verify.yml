@@ -457,6 +457,12 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: npm run check-framework-support
 
+      # ADR-0004 gate 9 (#852): the comparison of a `0.x` qadam's tree build with its npm tarball,
+      # the measurement script and the advisory gate. Against a stub registry, no network; the gate
+      # itself runs in ci.yml's `qadam-divergence` job, which needs the registry and a built tree.
+      - name: Test the qadam divergence check
+        run: tools/ci/test-qadam-divergence.sh
+
       # _pack-framework-packages.yml's `pack-framework-packages` job trusts a custom
       # workspace:* rewrite instead of bun's own (see that job's header for why). Needs
       # ts-node and the transform's own runtime deps (axios, via package-pre-publish-checks.ts) from

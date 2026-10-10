@@ -42,6 +42,7 @@ jobs:
       e2e_relevant: ${{ steps.e2e.outputs.e2e_relevant }}
       sandbox_relevant: ${{ steps.sandbox.outputs.sandbox_relevant }}
       release_relevant: ${{ steps.release.outputs.release_relevant }}
+      qadam_divergence_relevant: ${{ steps.divergence.outputs.qadam_divergence_relevant }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -292,6 +293,54 @@ jobs:
           echo "Diff touches none of the release or packaging paths."
           emit false
 
+      # Same shape and the same fail-open reasoning as the E2E gate above, for the advisory
+      # `qadam-divergence` job (ADR-0004 gate 9, #852): its answer can only change when an official
+      # qadam's source, a changeset (a pending release is what makes a divergent qadam a `-main.<n>`
+      # build), the check itself or this workflow changes. Whole trees, not a file list. A wrong
+      # `true` costs one advisory job; a wrong `false` leaves a divergence unreported on that PR.
+      - name: Detect changes the qadam divergence check reads
+        id: divergence
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+
+          emit() {
+            echo "qadam_divergence_relevant=$1" >> "$GITHUB_OUTPUT"
+            echo "::notice::qadam_divergence_relevant=$1"
+            exit 0
+          }
+
+          if [ -z "${BASE_SHA:-}" ] || [ -z "${HEAD_SHA:-}" ]; then
+            echo "::warning::Missing base/head SHA; running the qadam divergence check."
+            emit true
+          fi
+
+          if ! merge_base="$(git merge-base "$BASE_SHA" "$HEAD_SHA" 2>/dev/null)"; then
+            echo "::warning::Could not compute merge-base; running the qadam divergence check."
+            emit true
+          fi
+
+          if ! changed="$(git diff --name-only --no-renames "$merge_base" "$HEAD_SHA" 2>/dev/null)"; then
+            echo "::warning::git diff failed; running the qadam divergence check."
+            emit true
+          fi
+
+          # A here-string, not `printf … | grep -q`: under `pipefail` the early `grep -q` exit sends
+          # SIGPIPE to `printf` and fails the step on a run that matched (see the execution-mode
+          # assertion in `e2e-execution-modes`). The list is what moves a `0.x` qadam's build or the
+          # set of pending releases: the qadams, `.changeset/`, the root manifest and lockfile (a
+          # dependency version changes the emitted tarball's manifest and the install), the compiler
+          # config every qadam extends, the changeset parser the check imports, the check itself.
+          if grep -qE '^(packages/qadams/(core|community)/|\.changeset/|package\.json$|bun\.lock$|tsconfig\.base\.json$|tools/ci/(qadam-divergence|measure-qadam-divergence|check-qadam-divergence|check-changesets)\.mjs$|\.github/workflows/ci\.yml$)' <<<"$changed"; then
+            emit true
+          fi
+
+          echo "Diff touches no official qadam, changeset, or the divergence check."
+          emit false
+
   # Calls the reusable workflow instead of inlining the steps, so ci.yml and
   # release.yml cannot drift (#64). This job is NOT the required status check:
   # a called workflow reports its check as "<caller job> / <inner job>", i.e.
@@ -539,6 +588,80 @@ jobs:
           fi
 
           echo "Packed ${actual} framework package(s), marked unpublishable. ✅"
+
+  # ADR-0004 gate 9 (#852), ADVISORY: every `0.x` official qadam either builds from the tree to the
+  # tarball npm serves for the same version, or has a pending changeset (which makes the next `main`
+  # build give it its own `-main.<n>` version). A divergence with no changeset is reported as a
+  # `::warning::` annotation and in the run summary; the script exits 0 on it. ADR-0004 rolls the
+  # gate out in steps: measure (tools/ci/measure-qadam-divergence.mjs), advisory while the changesets
+  # land in batches under the npm publish cap, required when the divergences reach zero, which
+  # `v2.0.0` waits for. Making it required is a different change: add `--required` below and put an
+  # always-reporting gate job in front of it, the way `verify` and `integration` are built, because
+  # a skipped required context wedges every PR (.agents/docs/verification-pitfalls.md).
+  #
+  # `continue-on-error` on top of the script's own exit 0: this job also installs and builds the
+  # whole catalogue, and an infrastructure failure there must not read as a verdict on the PR, the
+  # same reason `osv-scan` carries it. NOT one of the four contexts the `main protect` ruleset
+  # requires.
+  #
+  # Runs on every push to main (the running count) and on PRs where `changes` says the answer can
+  # have moved. It reads the registry, so it is the one job here whose result depends on a service
+  # outside the repository; the check retries transient errors and reports "could not be measured"
+  # rather than guessing.
+  qadam-divergence:
+    name: Qadam divergence (ADR-0004 gate 9, advisory)
+    needs: changes
+    # No `docs_only` condition, deliberately: classify-changed-paths.sh files `.changeset/*.md` as docs,
+    # and a changeset-only PR (the batches that shrink the list, or one that deletes a changeset) is
+    # exactly what this job has to see. `qadam_divergence_relevant` is the narrower filter, and on a
+    # push or a dispatch there is no diff to narrow by.
+    if: github.event_name != 'pull_request' || needs.changes.outputs.qadam_divergence_relevant == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        id: node
+        with:
+          node-version: 24
+
+      - uses: oven-sh/setup-bun@v2
+        id: bun
+        with:
+          bun-version: 1.3.14
+
+      # Restore-only, same key `_verify.yml`'s `verify` job writes; the `refresh-cache` label skips
+      # it as it does in `pack-smoke`.
+      - name: Restore built node_modules
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'refresh-cache') }}
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            packages/*/*/node_modules
+            packages/*/*/*/node_modules
+          key: node-modules-${{ vars.NODE_MODULES_CACHE_EPOCH || 'v1' }}-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-bun${{ steps.bun.outputs.bun-version }}-${{ hashFiles('bun.lock', 'bunfig.toml', 'package.json', '.npmrc', 'tools/ci/install-deps.sh') }}
+
+      - name: Install dependencies
+        run: tools/ci/install-deps.sh
+
+      - name: Verify native addons load
+        run: tools/ci/verify-native-modules.sh
+
+      # The same build the pack job packs from: `dist/` of every official qadam, which is what
+      # the check compares with the registry's tarball.
+      - name: Build the official qadams
+        run: npx turbo run build --filter='@aiqadam/qadam-*'
+
+      - name: Compare 0.x qadams with npm (ADR-0004 gate 9, advisory)
+        run: node tools/ci/check-qadam-divergence.mjs
 
   # Advisory OSV scan of the text `bun.lock`. osv-scanner lists `bun.lock` under JavaScript
   # (<https://google.github.io/osv-scanner/supported-languages-and-lockfiles/>), so the lockfile

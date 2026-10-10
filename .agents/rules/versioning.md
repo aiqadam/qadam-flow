@@ -83,4 +83,10 @@ is [ADR-0004](../../adr/0004-main-builds-give-changed-packages-their-own-prerele
 accepted on 2026-10-10 and binding (snapshot `-main.<n>` versions, the `follow`/`pin` snapshot policy, export rewriting, gate 9). `@aiqadam/shared` is private and bundled
 into `qadams-framework` (#799). Gates 1–7 (#797) and gate 8 (#801, landed) are required; the maintainer-only
 `semver-override` label bypasses gate 2 alone, when CI over-estimates the level.
+Gate 9 (ADR-0004, #852) is **advisory** until the `0.x` clean-up is done: ci.yml's `qadam-divergence` job
+runs `tools/ci/check-qadam-divergence.mjs`, which warns when a `0.x` qadam's tree build differs from its
+npm tarball under the same version and no pending changeset covers it. `tools/ci/measure-qadam-divergence.mjs`
+prints the full list (it needs a built tree and the registry). It becomes required when that list is empty,
+before `v2.0.0` is tagged. Until then a PR is not blocked by it. A changeset for a divergent qadam
+shrinks the gate's list at once; the measurement's list shrinks once the release publishes that qadam.
 
