@@ -1,7 +1,7 @@
 import fs from 'fs/promises'
 import path from 'path'
 import { Action, Qadam, QadamPropertyMap, Trigger } from '@aiqadam/qadams-framework'
-import { EngineGenericError, ErrorCode, extractQadamFromModule, getPackageAliasForQadam, getQadamNameFromAlias, isNil, QadamFlowError, trimVersionFromAlias, tryCatch, tryCatchSync } from '@aiqadam/shared'
+import { EngineGenericError, ErrorCode, extractQadamFromModule, getLegacyPackageAliasForQadam, getPackageAliasForQadam, getQadamNameFromAlias, isNil, QadamFlowError, qadamVersionParser, trimVersionFromAlias, tryCatch, tryCatchSync } from '@aiqadam/shared'
 import { z } from 'zod'
 import { utils } from '../utils'
 import { qadamDistIndex } from './qadam-dist-index'
@@ -19,11 +19,6 @@ const qadamPathCache = new Map<string, Promise<ResolvedQadam>>()
 // synchronously right after `getQadamPath` resolves and before any further `await`, so two calls
 // racing on the same brand-new path cannot both observe it as cold.
 const loggedColdQadamPaths = new Set<string>()
-// Exact `x.y.z` aliases only (`name-1.2.3`): that is the shape the API accepts for a pinned
-// version (`ExactVersionType`), and `trimVersionFromAlias` splits on the last hyphen, so a
-// prerelease tail could not be recovered here anyway. A dev qadam is resolved by bare name and
-// has no version to compare.
-const EXACT_VERSION_PATTERN = /^\d+\.\d+\.\d+$/
 const resolvedQadamPackageJsonSchema = z.object({ version: z.string() })
 
 export const qadamLoader = {
@@ -295,10 +290,12 @@ async function resolveQadamPath({ packageName, isDevQadam }: ResolveQadamPathPar
     throw new EngineGenericError('QadamNotFoundError', `Qadam not found for package: ${packageName}`)
 }
 
+// A release `name@1.2.3` or a snapshot `name@1.3.0-main.412` (ADR-0004), or the legacy
+// `name-1.2.3` an older caller may still hand over. A dev qadam is resolved by bare name and has no
+// version to compare.
 function splitExactAlias(packageName: string): ExactPin | null {
-    const name = trimVersionFromAlias(packageName)
-    const version = packageName.slice(name.length + 1)
-    return EXACT_VERSION_PATTERN.test(version) ? { name, version } : null
+    const alias = qadamVersionParser.parseAlias({ alias: packageName })
+    return isNil(alias) ? null : { name: alias.name, version: alias.version }
 }
 
 async function findBundledBuildAtVersion({ name, version }: ExactPin): Promise<string | null> {
@@ -318,10 +315,14 @@ async function findInDistFolder({ packageName, refreshIndex }: FindInDistFolderP
 
 async function traverseAllParentFoldersToFindQadam(packageName: string): Promise<string | null> {
     const customPaths = (process.env.AP_CUSTOM_PIECES_PATHS ?? '').split(':').filter(Boolean)
+    const memberDirectoryNames = listWorkspaceMemberDirectoryNames({ packageName })
+    const qadamName = trimVersionFromAlias(packageName)
     for (const customPath of customPaths) {
-        const qadamPath = path.resolve(customPath, 'qadams', packageName, 'node_modules', trimVersionFromAlias(packageName))
-        if (await utils.folderExists(qadamPath)) {
-            return path.join(qadamPath, 'src', 'index.js')
+        for (const memberDirectoryName of memberDirectoryNames) {
+            const qadamPath = path.resolve(customPath, 'qadams', memberDirectoryName, 'node_modules', qadamName)
+            if (await utils.folderExists(qadamPath)) {
+                return path.join(qadamPath, 'src', 'index.js')
+            }
         }
     }
 
@@ -329,10 +330,11 @@ async function traverseAllParentFoldersToFindQadam(packageName: string): Promise
     let currentDir = __dirname
     const maxIterations = currentDir.split(path.sep).length
     for (let i = 0; i < maxIterations; i++) {
-        const qadamPath = path.resolve(currentDir, 'qadams', packageName, 'node_modules', trimVersionFromAlias(packageName))
-
-        if (await utils.folderExists(qadamPath)) {
-            return path.join(qadamPath, 'src', 'index.js')
+        for (const memberDirectoryName of memberDirectoryNames) {
+            const qadamPath = path.resolve(currentDir, 'qadams', memberDirectoryName, 'node_modules', qadamName)
+            if (await utils.folderExists(qadamPath)) {
+                return path.join(qadamPath, 'src', 'index.js')
+            }
         }
 
         const parentDir = path.dirname(currentDir)
@@ -342,6 +344,20 @@ async function traverseAllParentFoldersToFindQadam(packageName: string): Promise
         currentDir = parentDir
     }
     return null
+}
+
+// The worker installs a qadam into `qadams/<name>@<version>`; workspaces installed before ADR-0004
+// hold `qadams/<name>-<version>`. The current name is tried first, the legacy one is a read path
+// only: nothing here ever creates it.
+function listWorkspaceMemberDirectoryNames({ packageName }: { packageName: string }): string[] {
+    const alias = qadamVersionParser.parseAlias({ alias: packageName })
+    if (isNil(alias)) {
+        return [packageName]
+    }
+    return [
+        getPackageAliasForQadam({ qadamName: alias.name, qadamVersion: alias.version }),
+        getLegacyPackageAliasForQadam({ qadamName: alias.name, qadamVersion: alias.version }),
+    ]
 }
 
 // Where a loaded qadam came from, on the cold-load line. Never the path itself (see below).
