@@ -137,3 +137,32 @@ describe('executeTriggerHookJob — unavailable pinned qadam', () => {
         expect(result.errorMessage).toBeUndefined()
     })
 })
+
+// #781: ON_DISABLE must survive ANY provisioning failure, not only a missing pin. An install, quota,
+// signature or registry error raised out of provisioning used to propagate out of the job and fail
+// the hook, which made the API's disable path (ignoreError: false) refuse to disable the flow.
+describe('executeTriggerHookJob — provisioning throws', () => {
+    beforeEach(() => {
+        mockGetVersion.mockReset()
+        mockProvisionFlowPieces.mockReset()
+        mockGetVersion.mockResolvedValue(makeFlowVersion())
+        mockProvisionFlowPieces.mockRejectedValue(new Error('registry is unreachable'))
+    })
+
+    it('still reports ON_DISABLE as OK', async () => {
+        const result = await executeTriggerHookJob.execute(makeContext(), makeJobData(TriggerHookType.ON_DISABLE))
+
+        expect(result.status).toBe(EngineResponseStatus.OK)
+        expect(result.errorMessage).toBeUndefined()
+    })
+
+    it('propagates the failure for ON_ENABLE', async () => {
+        await expect(executeTriggerHookJob.execute(makeContext(), makeJobData(TriggerHookType.ON_ENABLE)))
+            .rejects.toThrow('registry is unreachable')
+    })
+
+    it('propagates the failure for RENEW', async () => {
+        await expect(executeTriggerHookJob.execute(makeContext(), makeJobData(TriggerHookType.RENEW)))
+            .rejects.toThrow('registry is unreachable')
+    })
+})
