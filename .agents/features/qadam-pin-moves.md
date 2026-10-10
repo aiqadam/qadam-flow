@@ -1,0 +1,39 @@
+# Qadam Pin Moves
+
+## Summary
+ADR-0003's "Unavailable version" and "Versions that were never published" (#808, first slice). A step stores the exact version of the qadam it was built with. When the instance cannot have that version (the #411 / #422 / #432 population: pins to builds that were never published, so neither the store nor the image holds them), the step is **moved** to the image's version, and only when all of these hold: the image's version is inside the pin's caret range (ADR-0001, prereleases counted, ADR-0004), the props are compatible where metadata for the pinned version exists, and the target loaded successfully. The move is one audit record plus the rewrite of the step's pin in the flow version, committed together, and a platform admin can revert it. A step that is not moved stays as it is, with the reason; no flow is ever disabled (#435). The marking in the builder, MCP and runs ("update this step"), the start-up pass, the catalogue read and replacing the v31 heal are later slices.
+
+## Key Files
+- `packages/server/utils/src/qadam-pin-fallback-decision.ts` — the decision, pure and without I/O. `decide` answers `{ move: true, from, to, propsCheck }` or `{ move: false, reason, detail }` and names the first check that failed (`outside-caret`, `props-incompatible`, `snapshot-without-metadata`, `target-not-loaded`, ...). `checkNet` is the stricter run-time rule (below). The engine takes it through the alias `@aiqadam/server-utils/qadam-pin-fallback-decision` (esbuild, vitest, `tsconfig.base.json`), like the store's reader.
+- `packages/server/api/src/app/qadams/pin-moves/qadam-pin-move.service.ts` — `moveUnavailablePins({ flowVersion, projectId, platformId, cause, actorUserId })` plans (which pins are unavailable, what the image ships, the decision per step) and commits in one transaction on a locked flow-version row: the trigger is read again under the lock, a step edited since the plan is dropped and reported (`changed-meanwhile`), never overwritten. Also `list`, `getOneOrThrow` and `revert`.
+- `packages/server/api/src/app/qadams/pin-moves/qadam-pin-fallback-seams.ts` — what the service needs from outside, as named seams: `imageBuild` (the bundled build; presence in the loaded list is the load check, see below), `pinMetadata` (the pinned version's `metadata.json`; none yet) and `propsChecker` (a stand-in that refuses every comparison until #880's checker replaces it). Tests pass fakes as the service's second argument.
+- `packages/server/api/src/app/qadams/pin-moves/qadam-pin-rewrite.ts` — the one write a move and its revert make: a step's `qadamVersion`; answers null when the step is not where the caller expects it.
+- `packages/server/api/src/app/qadams/pin-moves/qadam-pin-move.{entity,dto,controller,module}.ts` — the `qadam_pin_move` table and `/v1/qadam-pin-moves`.
+- `packages/server/api/src/app/database/migration/postgres/1791625957069-AddQadamPinMove.ts` — the table; additive.
+- `packages/server/api/src/app/flows/flow/flow.service.ts` — `moveUnavailableQadamPins`, called when a flow is published (the draft, before it is locked) and when it is enabled (its published version, inside the status-change lock). A failure is logged and the flow carries on with its version as it was.
+- `packages/server/api/src/app/qadams/metadata/qadam-metadata-service.ts` — `isPinAvailable` (the pin itself, no stand-in) and `findBundledFallback`, the run-time net.
+- `packages/server/engine/src/lib/helper/qadam-pin-fallback.ts` — the engine's run-time net.
+
+## Domain Terms
+- **Pin move** — the audited rewrite of one step's pinned version; the row in `qadam_pin_move`.
+- **Run-time net** — the in-memory stand-in that still runs a stale release pin on the image's build inside its caret range (`checkNet`: API `findBundledFallback`, engine `qadamPinFallback`): loud, read-only, no audit and no revert, a snapshot pin never gets one and a release pin never gets a snapshot build. It stays until the move covers every path that can notice a stale pin (start-up, import); deleting it makes the remaining unavailable pins fail with the pin named.
+- **Held** — a step whose move a person reverted. The same flow, step, qadam and version are not moved again.
+
+## Behaviour
+- **When.** `LOCK_AND_PUBLISH` (cause `PUBLISH`) and a `CHANGE_STATUS` to `ENABLED` (cause `ENABLE`, no actor). Not on disable, not on import yet.
+- **Which pins.** PIECE steps and triggers with an exact pin (`x.y.z` or `x.y.z-main.<n>`) that `qadamMetadataService.isPinAvailable` answers `false` for. A lookup that errors is not "unavailable". Range pins (`^`, `~`) resolve against what the instance holds and are left alone. Agent-tool pins are not steps and are not rewritten.
+- **The image.** The bundled build of the same name that passes the platform and release filters. Custom qadams have none, so their steps are never moved.
+- **The checks, in order.** Caret range → props → load; the first failure is the reason. Props: the pinned version's metadata is not read by anything yet (the catalogue, #806 / #807), so a release pin gets `propsCheck = 'not-checked-no-metadata'` (ADR-0003: no metadata, no props check) and a snapshot pin is not moved (ADR-0004: no exception to ADR-0003). When metadata is supplied, the `propsChecker` seam compares it with the image's for the step's own action or trigger; the stand-in refuses, so a move that would need it fails closed. Load: the loaded bundle list holds only builds whose module loaded (the manifest writer refuses a partial catalogue, the scan skips a failed load), so "the image ships it" is the load check, and it catches a bundle that cannot be loaded (the prototype's `crypto`). It does not run an action: a target that loads but fails at run time (activepieces#15957) is what the revert is for.
+- **The write.** One transaction: the flow-version row is locked, each planned step is rewritten only if it is still at the version the plan saw, the audit rows are inserted. The flow-execution cache is invalidated by the publish / status-change path that follows, and by `revert`.
+- **Revert.** `POST /v1/qadam-pin-moves/:id/revert` (platform admin). It puts the pin back to `fromVersion` only if the step is still at `toVersion`; a step edited since refuses with a conflict and the record stays `APPLIED`. A second revert is refused.
+- **Data isolation.** Every read and write filters by `platformId`; the service also checks the flow belongs to the project and the project to the platform before it moves anything. Another platform's record answers 404.
+
+## API
+| Route | Access | What |
+| --- | --- | --- |
+| `GET /v1/qadam-pin-moves` | platform admin | the platform's records, newest first; `flowId`, `status` (`APPLIED` / `REVERTED`), `cursor`, `limit` |
+| `GET /v1/qadam-pin-moves/:id` | platform admin | one record |
+| `POST /v1/qadam-pin-moves/:id/revert` | platform admin | revert it |
+
+## Not done yet (#808)
+The "update this step" / "version unavailable" marking in the builder, MCP (`ap_flow_structure`, `ap_validate_flow`) and runs, with project-level read and revert; the start-up pass and the import path; the catalogue read for the pinned version's metadata and #880's props checker; replacing the one-shot v31 heal (#474, still crosses the caret range) and the per-lookup net; the never-published rewrite beyond what the same path does today; removing the #843 stopgaps.

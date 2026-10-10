@@ -37,7 +37,7 @@ ADR disagree, the ADR wins. The procedure — choosing a level, applying it — 
 
 A version inside `^` of a pin (`^1.2.3` → `<2.0.0`, `^0.3.1` → `<0.4.0`) is a drop-in replacement at
 the contract level. Anything that moves a pin automatically may move it only inside that range —
-#424's bundled fallback (`satisfiesRequestedRange`) is the model. Moving a pin across it is a user
+`qadamPinFallbackDecision` (`packages/server/utils/src/qadam-pin-fallback-decision.ts`, #808) is the one place that rule is written for a move. Moving a pin across it is a user
 action in the builder, never a resolver, migration or job. The only exception since this rule is the
 one-off heal `migrate-v31-heal-unresolvable-qadam-pins.ts` (#474), which still runs once per flow
 version and may cross the range; the legacy `v24`–`v30` republish migrations
