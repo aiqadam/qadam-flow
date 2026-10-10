@@ -1,5 +1,0 @@
----
-"@aiqadam/platform": minor
----
-
-A step pinned to a qadam version this instance cannot have (one that was never published, the stale pins an image upgrade strands) is now moved to the image's build of the same qadam in the draft being published when its flow is published, instead of only running on it (ADR-0003, #808, first slice). The move happens only when the image's version is inside the pin's caret range, the props are compatible where metadata for the pinned version exists, and the target loaded; each move is written to an audit record (new `qadam_pin_move` table) together with the rewrite of the step's pin, and a platform admin can list the records and revert a move through `/v1/qadam-pin-moves`, which restores the old pin in a draft (the published version keeps running until it is published). A step that is not moved keeps its pin, and no flow is disabled. The run-time stand-in that runs a stale release pin on the image's build inside its caret range is unchanged for flows that have not been published since, and enabling a flow does not move pins.
