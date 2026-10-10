@@ -57,7 +57,14 @@
 // FAIL CLOSED
 // ---------------------------------------------------------------------------
 // A qadam that cannot be measured (registry unreachable, a tarball that fails its integrity check,
-// a tree that was not built) has status `unknown`; neither CLI turns that into "identical".
+// a tree that was not built, a tarball holding a symlink or a hardlink, a changeset that does not
+// parse) has status `unknown`; neither CLI turns that into "identical".
+//
+// UNTRUSTED INPUT: a tarball's member names and a registry's error text reach the log, the
+// `::warning::` annotations and the step summary. `sanitize` strips control characters and `::` from
+// everything taken from there, so a file named `x\n::error::...` cannot inject a workflow command.
+// The tarball is listed before it is extracted and refused if it holds a symlink or a hardlink, which
+// a read of the extracted tree would follow out of the scratch directory.
 //
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -67,16 +74,27 @@ import path from 'node:path'
 import semver from 'semver'
 import { changesetGate } from './check-changesets.mjs'
 
-export const QADAM_ROOTS = ['packages/qadams/core', 'packages/qadams/community']
-export const NPM_REGISTRY = 'https://registry.npmjs.org'
-
+const QADAM_ROOTS = ['packages/qadams/core', 'packages/qadams/community']
+const NPM_REGISTRY = 'https://registry.npmjs.org'
 // Dependencies the platform provides (ADR-0003), or that no qadam may declare any more.
 const PLATFORM_CHAIN = new Set(['@aiqadam/qadams-framework', '@aiqadam/qadams-common', '@aiqadam/shared'])
 const DEPENDENCY_SECTIONS = ['dependencies', 'peerDependencies', 'optionalDependencies']
 const REQUEST_TIMEOUT_MS = 30_000
+// A registry that asks for longer than this is treated as down for this run, not waited for.
+const MAX_RETRY_AFTER_MS = 60_000
+
+export const qadamDivergence = {
+  listQadams: (...args) => listQadams(...args),
+  isZeroX: (...args) => isZeroX(...args),
+  readChangesets: (...args) => readChangesets(...args),
+  measureQadams: (...args) => measureQadams(...args),
+  classify: (...args) => classify(...args),
+  readCommonOptions: (...args) => readCommonOptions(...args),
+  sanitize: (...args) => sanitize(...args),
+}
 
 // Every official qadam under packages/qadams/{core,community}, read from its package.json.
-export const listQadams = ({ root }) => {
+const listQadams = ({ root }) => {
   return QADAM_ROOTS.flatMap((qadamRoot) => listDirs({ dir: path.join(root, qadamRoot) }))
     .filter((dir) => fs.existsSync(path.join(dir, 'package.json')))
     .map((dir) => {
@@ -86,34 +104,50 @@ export const listQadams = ({ root }) => {
     .sort((a, b) => a.name.localeCompare(b.name))
 }
 
-// The qadams still on `0.x`. A qadam with no valid semver version is returned too, with `version`
-// as written, so the caller can report it rather than lose it.
-export const isZeroX = ({ version }) => typeof version !== 'string' || !semver.valid(version) || semver.major(version) === 0
+// The qadams still on `0.x`. A qadam with no valid semver version is kept too, with `version` as
+// written, so the caller can report it rather than lose it.
+const isZeroX = ({ version }) => typeof version !== 'string' || !semver.valid(version) || semver.major(version) === 0
 
-// name -> highest pending level, from `.changeset/*.md`. `none` does not release anything, so it
-// is not a pending release.
-export const readPendingReleases = ({ root }) => {
+// Every `.changeset/*.md`, parsed by the changesets gate's own parser, and the problems it found. A
+// changeset that does not parse cannot be read as "covers nothing" — it may be the one that covers a
+// qadam — so the caller fails on `problems` the way compute-main-version.mjs does.
+const readChangesets = ({ root }) => {
   const dir = path.join(root, '.changeset')
-  const pending = new Map()
   if (!fs.existsSync(dir)) {
-    return pending
+    return { changesets: [], problems: [] }
   }
-  const rank = { patch: 1, minor: 2, major: 3 }
-  for (const file of fs.readdirSync(dir).filter((entry) => entry.endsWith('.md') && entry !== 'README.md').sort()) {
-    const { releases } = changesetGate.parseChangeset({ text: fs.readFileSync(path.join(dir, file), 'utf8') })
-    for (const { name, level } of releases) {
-      if (level !== 'none' && (rank[level] ?? 0) > (rank[pending.get(name)] ?? 0)) {
-        pending.set(name, level)
-      }
-    }
+  const files = fs.readdirSync(dir).filter((name) => name.endsWith('.md') && name.toLowerCase() !== 'readme.md').sort()
+  const changesets = files.map((name) => ({ name, ...changesetGate.parseChangeset({ text: fs.readFileSync(path.join(dir, name), 'utf8') }) }))
+  const problems = changesets.filter((changeset) => changeset.problems.length > 0).map((changeset) => sanitize({ text: `.changeset/${changeset.name}: ${changeset.problems.join('; ')}` }))
+  return { changesets, problems }
+}
+
+// Sorts measured results into the buckets both CLIs report, and splits the divergent ones by
+// whether a pending release (patch, minor or major; `none` releases nothing) already covers them.
+// `levelOf(name)` is the pending level, or null.
+const classify = ({ results, changesets }) => {
+  const by = (status) => results.filter((result) => result.status === status)
+  const levelOf = (name) => {
+    const level = changesetGate.pendingLevel({ changesets, name })
+    return level === 'none' ? null : level
   }
-  return pending
+  const divergent = by('divergent')
+  return {
+    identical: by('identical'),
+    divergent,
+    uncovered: divergent.filter((result) => levelOf(result.name) === null),
+    covered: divergent.filter((result) => levelOf(result.name) !== null),
+    unpublished: by('unpublished'),
+    skipped: by('skipped'),
+    unknown: by('unknown'),
+    levelOf,
+  }
 }
 
 // Measures every given qadam. Returns one result per qadam, in the order given:
 //   { name, version, dir, status, differences, reason }
 // status: 'identical' | 'divergent' | 'unpublished' | 'skipped' | 'unknown'
-export const measureQadams = async ({ qadams, registry = NPM_REGISTRY, concurrency = 8, declarations = false, maxAttempts = 4, retryBaseMs = 1000 }) => {
+const measureQadams = async ({ qadams, registry = NPM_REGISTRY, concurrency = 8, declarations = false, maxAttempts = 4, retryBaseMs = 1000 }) => {
   const results = new Array(qadams.length)
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'qadam-divergence-'))
   try {
@@ -132,6 +166,42 @@ export const measureQadams = async ({ qadams, registry = NPM_REGISTRY, concurren
   return results
 }
 
+// The options both CLIs share, from argv. Returns { options } or { error }. A bare flag, or one
+// followed by another flag, is rejected rather than guessed.
+const readCommonOptions = ({ argv }) => {
+  const read = ({ flag, fallback }) => {
+    const index = argv.indexOf(flag)
+    if (index === -1) {
+      return { value: fallback }
+    }
+    const value = argv[index + 1]
+    return value === undefined || value.startsWith('--') ? { error: `${flag} needs a value` } : { value }
+  }
+  const root = read({ flag: '--root', fallback: process.cwd() })
+  const registry = read({ flag: '--registry', fallback: NPM_REGISTRY })
+  const concurrency = read({ flag: '--concurrency', fallback: '8' })
+  const maxAttempts = read({ flag: '--max-attempts', fallback: '4' })
+  const retryBaseMs = read({ flag: '--retry-base-ms', fallback: '1000' })
+  const failed = [root, registry, concurrency, maxAttempts, retryBaseMs].find((option) => option.error !== undefined)
+  if (failed) {
+    return { error: failed.error }
+  }
+  const numbers = { concurrency: Number(concurrency.value), maxAttempts: Number(maxAttempts.value), retryBaseMs: Number(retryBaseMs.value) }
+  if (!Number.isInteger(numbers.concurrency) || numbers.concurrency < 1 || !Number.isInteger(numbers.maxAttempts) || numbers.maxAttempts < 1 || !Number.isInteger(numbers.retryBaseMs) || numbers.retryBaseMs < 0) {
+    return { error: '--concurrency and --max-attempts must be positive integers and --retry-base-ms a non-negative one' }
+  }
+  return {
+    options: { root: path.resolve(root.value), registry: registry.value, declarations: argv.includes('--declarations'), ...numbers },
+  }
+}
+
+// Text that came from a tarball, a registry or a package.json, made safe to print into a log line,
+// a workflow command or a markdown table: control characters (newlines included) and `::` go, so
+// nothing in it can start a `::error::` command or break out of a line.
+const sanitize = ({ text }) => {
+  return String(text).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, '?').replace(/::/g, ': :')
+}
+
 const measureOne = async ({ qadam, registry, scratch, declarations, maxAttempts, retryBaseMs }) => {
   const base = { name: qadam.name, version: qadam.version, dir: qadam.dir, differences: [] }
   try {
@@ -144,11 +214,13 @@ const measureOne = async ({ qadam, registry, scratch, declarations, maxAttempts,
     if (qadam.private) {
       return { ...base, status: 'skipped', reason: 'private package, never published' }
     }
-    const treeFiles = readTreeFiles({ dir: qadam.dir, declarations })
+    // The registry first: a version that is not on npm has nothing to compare with, whether or not
+    // the tree was built.
     const published = await fetchPublished({ registry, name: qadam.name, version: qadam.version, maxAttempts, retryBaseMs })
     if (published === null) {
       return { ...base, status: 'unpublished', reason: `${qadam.name}@${qadam.version} is not on ${registry}` }
     }
+    const treeFiles = readTreeFiles({ dir: qadam.dir, declarations })
     const tarball = await downloadTarball({ registry, published, maxAttempts, retryBaseMs })
     const packageDir = extractTarball({ tarball, scratch, label: `${qadam.name}@${qadam.version}` })
     const npmFiles = readTarballFiles({ packageDir, declarations })
@@ -156,11 +228,11 @@ const measureOne = async ({ qadam, registry, scratch, declarations, maxAttempts,
     const differences = [
       ...compareFiles({ tree: treeFiles, npm: npmFiles }),
       ...compareManifests({ tree: qadam.manifest, npm: npmManifest }),
-    ]
+    ].map((difference) => sanitize({ text: difference }))
     return { ...base, status: differences.length === 0 ? 'identical' : 'divergent', differences }
   }
   catch (error) {
-    return { ...base, status: 'unknown', reason: error instanceof Error ? error.message : String(error) }
+    return { ...base, status: 'unknown', reason: sanitize({ text: error instanceof Error ? error.message : String(error) }) }
   }
 }
 
@@ -169,11 +241,12 @@ const measureOne = async ({ qadam, registry, scratch, declarations, maxAttempts,
 // relative path (as in the tarball) -> sha256 of the bytes
 const readTreeFiles = ({ dir, declarations }) => {
   const built = path.join(dir, 'dist', 'src')
-  if (!fs.existsSync(built) || listFiles({ dir: built }).length === 0) {
-    throw new Error(`no build output at ${path.join(dir, 'dist', 'src')} — build first (npx turbo run build --filter='@aiqadam/qadam-*')`)
+  const builtFiles = listFiles({ dir: built })
+  if (builtFiles.length === 0) {
+    throw new Error(`no build output at ${built} — build first (npx turbo run build --filter='@aiqadam/qadam-*')`)
   }
   const files = new Map()
-  for (const file of listFiles({ dir: built })) {
+  for (const file of builtFiles) {
     addFile({ files, rel: path.posix.join('src', toPosix(path.relative(built, file))), file, declarations })
   }
   // `prepareQadamDistForPublish` copies src/i18n/* into dist/src/i18n; compare the source it copies.
@@ -259,9 +332,21 @@ const extractTarball = ({ tarball, scratch, label }) => {
   const dir = fs.mkdtempSync(path.join(scratch, 'pkg-'))
   const file = path.join(dir, 'package.tgz')
   fs.writeFileSync(file, tarball)
+  // Listed first: a symlink member could redirect a later member's write, or a read of the
+  // extracted tree, outside the scratch directory. A published qadam has no reason to carry either.
+  const listing = execFileSync('tar', ['tvzf', file], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] })
+  const links = listing.split('\n').filter((line) => line.startsWith('l') || line.startsWith('h'))
+  if (links.length > 0) {
+    throw new Error(`the tarball of ${label} holds ${links.length} symlink or hardlink member(s), which this check does not follow: ${sanitize({ text: links[0] })}`)
+  }
   const out = path.join(dir, 'out')
   fs.mkdirSync(out)
   execFileSync('tar', ['xzf', file, '-C', out, '--no-same-owner', '--no-same-permissions'], { stdio: ['ignore', 'ignore', 'pipe'] })
+  // And checked again on what was written, by lstat, which does not follow.
+  const linked = findLinks({ dir: out })
+  if (linked.length > 0) {
+    throw new Error(`the extracted tarball of ${label} holds a symlink or hardlink: ${sanitize({ text: path.relative(out, linked[0]) })}`)
+  }
   const packageDir = path.join(out, 'package')
   if (!fs.existsSync(path.join(packageDir, 'package.json'))) {
     throw new Error(`the tarball of ${label} has no package/package.json`)
@@ -269,29 +354,57 @@ const extractTarball = ({ tarball, scratch, label }) => {
   return packageDir
 }
 
+const findLinks = ({ dir }) => {
+  return fs.readdirSync(dir).flatMap((entry) => {
+    const full = path.join(dir, entry)
+    const stat = fs.lstatSync(full)
+    if (stat.isSymbolicLink() || (stat.isFile() && stat.nlink > 1)) {
+      return [full]
+    }
+    return stat.isDirectory() ? findLinks({ dir: full }) : []
+  })
+}
+
 // A GET with retries for what is worth retrying: network errors, timeouts, 429 and 5xx. A 404 is an
-// answer when `allowNotFound`; any other status is an error, not a retry.
+// answer when `allowNotFound`; any other status is an error, not a retry. A `Retry-After` on the
+// answer is honoured (at least that long, at most MAX_RETRY_AFTER_MS), and a body that is not read
+// is cancelled so the connection is freed.
 const request = async ({ url, accept, maxAttempts, retryBaseMs, allowNotFound }) => {
   for (let attempt = 1; ; attempt++) {
     let failure
     try {
       const response = await fetch(url, { headers: { accept }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
       if (response.status === 404 && allowNotFound) {
+        await response.body?.cancel()
         return null
       }
       if (response.ok) {
         return Buffer.from(await response.arrayBuffer())
       }
-      failure = { retryable: response.status === 429 || response.status >= 500, message: `answered ${response.status}` }
+      await response.body?.cancel()
+      failure = { retryable: response.status === 429 || response.status >= 500, message: `answered ${response.status}`, retryAfterMs: parseRetryAfter({ header: response.headers.get('retry-after') }) }
     }
     catch (error) {
-      failure = { retryable: true, message: describe({ error }) }
+      failure = { retryable: true, message: describe({ error }), retryAfterMs: 0 }
     }
     if (!failure.retryable || attempt >= maxAttempts) {
       throw new Error(`could not read ${url} (attempt ${attempt}/${maxAttempts}): ${failure.message}`)
     }
-    await new Promise((resolve) => setTimeout(resolve, Math.pow(4, attempt - 1) * retryBaseMs))
+    const backoff = Math.pow(4, attempt - 1) * retryBaseMs
+    await new Promise((resolve) => setTimeout(resolve, Math.max(backoff, Math.min(failure.retryAfterMs, MAX_RETRY_AFTER_MS))))
   }
+}
+
+// `Retry-After` as seconds or as an HTTP date; 0 when absent or unreadable.
+const parseRetryAfter = ({ header }) => {
+  if (header === null || header === undefined) {
+    return 0
+  }
+  if (/^\d+$/.test(header.trim())) {
+    return Number(header.trim()) * 1000
+  }
+  const date = Date.parse(header)
+  return Number.isNaN(date) ? 0 : Math.max(0, date - Date.now())
 }
 
 const describe = ({ error }) => {
@@ -317,7 +430,7 @@ const compareFiles = ({ tree, npm }) => {
 // What a consumer installs, after the rewrite the publish applies to the tree's manifest: a
 // `workspace:` spec becomes the exact version of the workspace package at pack time, which the tree
 // does not know, so such a dependency is left out of both sides; `^` and `~` are stripped.
-export const installedDependencies = ({ manifest, section, exclude = new Set() }) => {
+const installedDependencies = ({ manifest, section, exclude = new Set() }) => {
   const entries = Object.entries(manifest?.[section] ?? {}).filter(([name, spec]) => !PLATFORM_CHAIN.has(name) && !exclude.has(name) && typeof spec === 'string')
   return Object.fromEntries(entries.map(([name, spec]) => [name, spec.replace(/^[\^~]/, '')]))
 }
@@ -359,33 +472,4 @@ const listFiles = ({ dir }) => {
     }
     return entry.isFile() ? [full] : []
   })
-}
-
-// The options both CLIs share, from argv. Returns { options } or { error }. A bare flag, or one
-// followed by another flag, is rejected rather than guessed.
-export const readCommonOptions = ({ argv }) => {
-  const read = ({ flag, fallback }) => {
-    const index = argv.indexOf(flag)
-    if (index === -1) {
-      return { value: fallback }
-    }
-    const value = argv[index + 1]
-    return value === undefined || value.startsWith('--') ? { error: `${flag} needs a value` } : { value }
-  }
-  const root = read({ flag: '--root', fallback: process.cwd() })
-  const registry = read({ flag: '--registry', fallback: NPM_REGISTRY })
-  const concurrency = read({ flag: '--concurrency', fallback: '8' })
-  const maxAttempts = read({ flag: '--max-attempts', fallback: '4' })
-  const retryBaseMs = read({ flag: '--retry-base-ms', fallback: '1000' })
-  const failed = [root, registry, concurrency, maxAttempts, retryBaseMs].find((option) => option.error !== undefined)
-  if (failed) {
-    return { error: failed.error }
-  }
-  const numbers = { concurrency: Number(concurrency.value), maxAttempts: Number(maxAttempts.value), retryBaseMs: Number(retryBaseMs.value) }
-  if (!Number.isInteger(numbers.concurrency) || numbers.concurrency < 1 || !Number.isInteger(numbers.maxAttempts) || numbers.maxAttempts < 1 || !Number.isInteger(numbers.retryBaseMs) || numbers.retryBaseMs < 0) {
-    return { error: '--concurrency and --max-attempts must be positive integers and --retry-base-ms a non-negative one' }
-  }
-  return {
-    options: { root: path.resolve(root.value), registry: registry.value, declarations: argv.includes('--declarations'), ...numbers },
-  }
 }

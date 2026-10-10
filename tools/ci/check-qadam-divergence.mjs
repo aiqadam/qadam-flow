@@ -43,11 +43,12 @@
 // from node_modules, so it runs after `bun install`.
 //
 // Exit: advisory 0 always (bad arguments 2). With --required: 0 pass, 1 divergent qadam without a
-// pending changeset, 2 UNKNOWN.
+// pending changeset, 2 UNKNOWN (a qadam that could not be measured, no 0.x qadams found, a changeset
+// that does not parse).
 //
 // Tested by tools/ci/test-qadam-divergence.sh.
 import fs from 'node:fs'
-import { isZeroX, listQadams, measureQadams, readCommonOptions, readPendingReleases } from './qadam-divergence.mjs'
+import { qadamDivergence } from './qadam-divergence.mjs'
 
 const TITLE = 'Qadam divergence (ADR-0004 gate 9)'
 const MAX_ANNOTATIONS = 10
@@ -55,7 +56,7 @@ const MAX_ANNOTATIONS = 10
 const main = async () => {
   const argv = process.argv.slice(2)
   const required = argv.includes('--required')
-  const common = readCommonOptions({ argv })
+  const common = qadamDivergence.readCommonOptions({ argv })
   if (common.error) {
     console.error(`[check-qadam-divergence] UNKNOWN — ${common.error}.`)
     process.exitCode = 2
@@ -63,52 +64,61 @@ const main = async () => {
   }
   const { root, registry, concurrency, declarations, maxAttempts, retryBaseMs } = common.options
 
-  const qadams = listQadams({ root }).filter(isZeroX)
+  const qadams = qadamDivergence.listQadams({ root }).filter(qadamDivergence.isZeroX)
   if (qadams.length === 0) {
     const message = `no 0.x qadams under packages/qadams/{core,community} in ${root}, so nothing was measured`
-    return finish({ required, unknown: true, lines: [`UNKNOWN — ${message}.`], annotations: [{ level: required ? 'error' : 'warning', message }] })
+    return finish({ required, unknown: true, headline: `UNKNOWN — ${message}.`, lines: [], annotations: [{ level: level({ required }), message }] })
   }
-  const results = await measureQadams({ qadams, registry, concurrency, declarations, maxAttempts, retryBaseMs })
-  const pending = readPendingReleases({ root })
-  const by = (status) => results.filter((result) => result.status === status)
-  const divergent = by('divergent')
-  const uncovered = divergent.filter((result) => !pending.has(result.name))
-  const covered = divergent.filter((result) => pending.has(result.name))
-  const unknown = by('unknown')
+  const { changesets, problems } = qadamDivergence.readChangesets({ root })
+  if (problems.length > 0) {
+    const message = `a changeset does not parse, so which qadams it covers is unknown: ${problems.join(' | ')}`
+    return finish({ required, unknown: true, headline: `UNKNOWN — ${message}.`, lines: [], annotations: [{ level: level({ required }), message }] })
+  }
 
-  const lines = [
-    `${results.length} 0.x qadam(s) compared with ${registry}: ${by('identical').length} identical, ${divergent.length} divergent (${uncovered.length} without a pending changeset, ${covered.length} with one), ${by('unpublished').length} not on npm, ${by('skipped').length} skipped, ${unknown.length} could not be measured.`,
-  ]
+  const results = await qadamDivergence.measureQadams({ qadams, registry, concurrency, declarations, maxAttempts, retryBaseMs })
+  const { identical, divergent, uncovered, covered, unpublished, skipped, unknown } = qadamDivergence.classify({ results, changesets })
+
+  const lines = []
   const annotations = []
   for (const result of uncovered) {
-    const detail = `${result.name}@${result.version} differs from npm under the same version and has no pending changeset, so an image would run different code under a released number. Add a changeset for it (ADR-0004, #852). ${summarize({ differences: result.differences })}`
     lines.push(`  divergent, no changeset: ${result.name}@${result.version}`)
     for (const difference of result.differences) {
       lines.push(`      ${difference}`)
     }
-    annotations.push({ level: required ? 'error' : 'warning', message: detail })
+    annotations.push({ level: level({ required }), message: `${result.name}@${result.version} differs from npm under the same version and has no pending changeset, so an image would run different code under a released number. Add a changeset for it (ADR-0004, #852). ${summarize({ differences: result.differences })}` })
   }
   for (const result of unknown) {
     lines.push(`  UNKNOWN ${result.name}@${result.version}: ${result.reason}`)
-    annotations.push({ level: required ? 'error' : 'warning', message: `${result.name}@${result.version} could not be compared with npm: ${result.reason}` })
+    annotations.push({ level: level({ required }), message: `${result.name}@${result.version} could not be compared with npm: ${result.reason}` })
   }
-  for (const result of by('unpublished')) {
+  for (const result of unpublished) {
     lines.push(`  not on npm: ${result.name}@${result.version} (nothing to compare with, not counted)`)
   }
   if (uncovered.length === 0 && unknown.length === 0) {
     lines.push('OK — every divergent 0.x qadam (if any) has a pending changeset.')
   }
-  finish({ required, unknown: unknown.length > 0, failed: uncovered.length > 0, lines, annotations, uncovered, covered, unknownResults: unknown })
+  const headline = `${results.length} 0.x qadam(s) compared with ${registry}: ${identical.length} identical, ${divergent.length} divergent (${uncovered.length} without a pending changeset, ${covered.length} with one), ${unpublished.length} not on npm, ${skipped.length} skipped, ${unknown.length} could not be measured.`
+  finish({ required, unknown: unknown.length > 0, failed: uncovered.length > 0, headline, lines, annotations, uncovered, unknownResults: unknown })
 }
+
+const level = ({ required }) => (required ? 'error' : 'warning')
 
 const summarize = ({ differences }) => {
   const shown = differences.slice(0, 3).join('; ')
   return differences.length > 3 ? `${shown}; and ${differences.length - 3} more.` : `${shown}.`
 }
 
-const finish = ({ required, unknown = false, failed = false, lines, annotations = [], uncovered = [], covered = [], unknownResults = [] }) => {
+// The one place a workflow command is written. Everything that reaches it came, at some remove, from
+// a tarball, a registry or a package.json: control characters and `::` are stripped, so no line of it
+// can start another command.
+const annotate = ({ level: annotationLevel, message }) => {
+  console.log(`::${annotationLevel} title=${TITLE}::${qadamDivergence.sanitize({ text: message })}`)
+}
+
+const finish = ({ required, unknown = false, failed = false, headline, lines, annotations = [], uncovered = [], unknownResults = [] }) => {
   const write = required && (unknown || failed) ? console.error : console.log
   write(`[check-qadam-divergence] ${required ? 'REQUIRED' : 'ADVISORY (does not fail the pull request)'}`)
+  write(headline)
   for (const line of lines) {
     write(line)
   }
@@ -116,34 +126,48 @@ const finish = ({ required, unknown = false, failed = false, lines, annotations 
   // itself. The last visible one says how many more there are; the full list is in the log above
   // and in the run summary.
   const shown = annotations.length > MAX_ANNOTATIONS ? annotations.slice(0, MAX_ANNOTATIONS - 1) : annotations
-  for (const { level, message } of shown) {
-    console.log(`::${level} title=${TITLE}::${message.replace(/\r?\n/g, ' ')}`)
+  for (const annotation of shown) {
+    annotate(annotation)
   }
   if (shown.length < annotations.length) {
-    console.log(`::${annotations[0].level} title=${TITLE}::and ${annotations.length - shown.length} more qadam(s) — the full list is in the log and the run summary of this job`)
+    annotate({ level: annotations[0].level, message: `and ${annotations.length - shown.length} more qadam(s) — the full list is in the log and the run summary of this job` })
   }
-  writeStepSummary({ required, uncovered, covered, unknownResults })
-  process.exitCode = required ? (unknown ? 2 : failed ? 1 : 0) : 0
+  writeStepSummary({ required, unknown, headline, uncovered, unknownResults })
+  if (!required) {
+    process.exitCode = 0
+    return
+  }
+  if (unknown) {
+    process.exitCode = 2
+    return
+  }
+  process.exitCode = failed ? 1 : 0
 }
 
 // GitHub renders this file on the run's summary page; it carries the full list, where annotations
 // are capped at ten per step.
-const writeStepSummary = ({ required, uncovered, covered, unknownResults }) => {
+const writeStepSummary = ({ required, unknown, headline, uncovered, unknownResults }) => {
   const file = process.env.GITHUB_STEP_SUMMARY
   if (!file) {
     return
   }
-  const rows = (results) => results.map((result) => `| \`${result.name}@${result.version}\` | ${result.differences.length} | ${result.differences.slice(0, 3).map((difference) => `\`${difference}\``).join('<br>')} |`)
+  const cell = (text) => qadamDivergence.sanitize({ text }).replace(/[|`]/g, "'")
   const parts = [`### ${TITLE} — ${required ? 'REQUIRED' : 'ADVISORY'}`, '']
-  parts.push(`${uncovered.length} divergent qadam(s) without a pending changeset, ${covered.length} with one, ${unknownResults.length} that could not be measured.`, '')
+  parts.push(unknown && uncovered.length === 0 && unknownResults.length === 0 ? `**${cell(headline)}**` : cell(headline), '')
   if (uncovered.length > 0) {
-    parts.push('| Qadam | Differences | First differences |', '| --- | --- | --- |', ...rows(uncovered), '')
+    parts.push('Divergent, no pending changeset:', '', '| Qadam | Differences | First differences |', '| --- | --- | --- |')
+    parts.push(...uncovered.map((result) => `| \`${cell(`${result.name}@${result.version}`)}\` | ${result.differences.length} | ${result.differences.slice(0, 3).map((difference) => `\`${cell(difference)}\``).join('<br>')} |`), '')
+  }
+  if (unknownResults.length > 0) {
+    parts.push('Could not be measured:', '', '| Qadam | Reason |', '| --- | --- |')
+    parts.push(...unknownResults.map((result) => `| \`${cell(`${result.name}@${result.version}`)}\` | ${cell(result.reason)} |`), '')
   }
   fs.appendFileSync(file, `${parts.join('\n')}\n`)
 }
 
 main().catch((error) => {
+  const message = error instanceof Error ? error.message : String(error)
   console.error(`[check-qadam-divergence] UNKNOWN — ${error instanceof Error ? error.stack : String(error)}`)
-  console.log(`::warning title=${TITLE}::the check itself failed: ${error instanceof Error ? error.message : String(error)}`)
+  annotate({ level: 'warning', message: `the check itself failed: ${message}` })
   process.exitCode = process.argv.includes('--required') ? 2 : 0
 })

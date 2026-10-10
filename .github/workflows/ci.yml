@@ -328,8 +328,13 @@ jobs:
             emit true
           fi
 
-          if printf '%s\n' "$changed" \
-            | grep -qE '^(packages/qadams/(core|community)/|\.changeset/|tools/ci/(qadam-divergence\.mjs|measure-qadam-divergence\.mjs|check-qadam-divergence\.mjs)$|\.github/workflows/ci\.yml$)'; then
+          # A here-string, not `printf … | grep -q`: under `pipefail` the early `grep -q` exit sends
+          # SIGPIPE to `printf` and fails the step on a run that matched (see the execution-mode
+          # assertion in `e2e-execution-modes`). The list is what moves a `0.x` qadam's build or the
+          # set of pending releases: the qadams, `.changeset/`, the root manifest and lockfile (a
+          # dependency version changes the emitted tarball's manifest and the install), the compiler
+          # config every qadam extends, the changeset parser the check imports, the check itself.
+          if grep -qE '^(packages/qadams/(core|community)/|\.changeset/|package\.json$|bun\.lock$|tsconfig\.base\.json$|tools/ci/(qadam-divergence|measure-qadam-divergence|check-qadam-divergence|check-changesets)\.mjs$|\.github/workflows/ci\.yml$)' <<<"$changed"; then
             emit true
           fi
 

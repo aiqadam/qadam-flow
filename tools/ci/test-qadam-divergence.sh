@@ -18,6 +18,11 @@
 
 set -uo pipefail
 
+# The gate appends to the step summary when this is set; running the tests inside a workflow step
+# would otherwise put a dozen fake "Gate 9" sections on the run's summary page. The summary test
+# below sets its own path.
+unset GITHUB_STEP_SUMMARY GITHUB_OUTPUT
+
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 measure="${here}/measure-qadam-divergence.mjs"
 gate="${here}/check-qadam-divergence.mjs"
@@ -35,7 +40,8 @@ last_rc=0
 # ---- the stub registry ---------------------------------------------------------------------
 # GET /<name with %2f>          -> packument; `__REGISTRY__` in it is replaced with the real origin
 # GET /-/<file>.tgz             -> the tarball
-# routes.json overrides either: path -> scripted responses, consumed in order, the last repeats.
+# routes.json overrides either: path -> scripted responses ({ status, body, headers }), consumed in
+# order, the last repeats. requests.log.times holds `<epoch ms> <path>` per request.
 mkdir -p "$tmp/registry/-"
 echo '{}' > "$tmp/routes.json"
 cat > "$tmp/server.js" <<'JS'
@@ -46,11 +52,12 @@ const [dir, routesFile, logFile, portFile] = process.argv.slice(2)
 const served = {}
 const server = http.createServer((req, res) => {
   fs.appendFileSync(logFile, `${req.url}\n`)
+  fs.appendFileSync(`${logFile}.times`, `${Date.now()} ${req.url}\n`)
   const routes = JSON.parse(fs.readFileSync(routesFile, 'utf8'))
   const script = routes[req.url]
   if (script) {
     const i = Math.min(served[req.url] = (served[req.url] ?? -1) + 1, script.length - 1)
-    res.writeHead(script[i].status, { 'content-type': 'application/json' })
+    res.writeHead(script[i].status, { 'content-type': 'application/json', ...(script[i].headers ?? {}) })
     res.end(script[i].body ?? '{}')
     return
   }
@@ -73,7 +80,7 @@ registry="http://127.0.0.1:$(cat "$tmp/port")"
 write() { mkdir -p "$(dirname "$1")"; printf '%s\n' "$2" > "$1"; }
 
 # A one-file-per-concern qadam: its built output, its i18n source, its manifest. The registry copy
-# (`publish`) starts as an exact image of it plus the files and manifest fields the publish adds.
+# (`new_package`) starts as an exact image of it plus the files and manifest fields the publish adds.
 #   tree_qadam <tree> <short-name> <version> [extra package.json fields, e.g. '"private": true,']
 tree_qadam() {
   local dir="$1/packages/qadams/community/$2"
@@ -88,7 +95,7 @@ tree_qadam() {
 }
 
 # The registry copy of a qadam, as the publish would have produced it from that tree.
-#   publish <short-name> <version>        -> $tmp/pkg-<short-name>/package, ready to edit, not yet served
+#   new_package <short-name> <version>    -> $tmp/pkg-<short-name>/package, ready to edit, not yet served
 new_package() {
   local src="$tmp/tree/packages/qadams/community/$1" pkg="$tmp/pkg-$1/package"
   rm -rf "$tmp/pkg-$1"
@@ -111,7 +118,7 @@ serve() {
     "$name" "$version" "$name" "$version" "$name" "$version" "$integrity" > "$tmp/registry/@aiqadam%2fqadam-$name.json"
 }
 
-# A fresh tree. `published_same` serves an exact copy of every qadam given.
+# A fresh tree, registry and routes. Add qadams with `qadam_published` (an identical registry copy).
 new_tree() {
   rm -rf "$tmp/tree" "$tmp/pkg-"* "$tmp/registry/"*.json "$tmp/registry/-/"*; echo '{}' > "$tmp/routes.json"
   mkdir -p "$tmp/tree/.changeset"
@@ -286,6 +293,62 @@ expect 'a bare --root' 2 'UNKNOWN' '--root needs a value'
 run "$measure" "${args[@]}" --concurrency 0
 expect '--concurrency 0' 2 'UNKNOWN'
 
+new_tree; qadam_published a 0.1.0
+run "$measure" "${args[@]}" --qadams a,nonexistent,@aiqadam/qadam-also-missing
+expect '--qadams names that match no 0.x qadam are reported and the run exits 2' 2 'UNKNOWN' 'nonexistent' 'qadam-also-missing'
+tree_qadam "$tmp/tree" stable 1.2.0
+run "$measure" "${args[@]}" --qadams stable
+expect '--qadams naming a 1.x qadam matches no 0.x qadam either' 2 'UNKNOWN' 'stable'
+
+new_tree; tree_qadam "$tmp/tree" notbuilt 0.1.0
+rm -rf "$tmp/tree/packages/qadams/community/notbuilt/dist"
+run "$measure" "${args[@]}"
+expect 'the registry is asked first: an unpublished qadam is "not on npm" even when its tree was never built' 0 'not on npm         1' 'could not measure  0'
+
+new_tree; qadam_published ok 0.1.0
+write "$tmp/tree/.changeset/broken.md" $'---\n"@aiqadam/qadam-ok": sideways\n---\n\nNope.'
+run "$measure" "${args[@]}"
+expect 'a changeset that does not parse is UNKNOWN, not "covers nothing"' 2 'UNKNOWN' 'broken.md'
+
+echo "== a 429 with Retry-After is waited out =="
+new_tree; qadam_published slow 0.1.0
+printf '%s\n' '{ "/@aiqadam%2fqadam-slow": [{ "status": 429, "headers": { "retry-after": "1" } }, { "status": 200, "body": "{ \"versions\": {} }" }] }' > "$tmp/routes.json"
+rm -f "$tmp/requests.log.times"
+run "$measure" "${args[@]}"
+expect 'the request is retried after a 429' 0 'not on npm         1' 'could not measure  0'
+first="$(sed -n 1p "$tmp/requests.log.times" | cut -d' ' -f1)"; second="$(sed -n 2p "$tmp/requests.log.times" | cut -d' ' -f1)"
+if [ -n "$first" ] && [ -n "$second" ] && [ $((second - first)) -ge 900 ]; then ok; else fail_case "the retry came ${first:-?} -> ${second:-?}, less than the 1 s Retry-After after the 429 (retry-base-ms is 0)"; fi
+
+echo "== --build keeps --json on stdout parseable =="
+new_tree; qadam_published b 0.1.0
+mkdir -p "$tmp/bin"
+printf '#!/bin/sh\necho "turbo noise on stdout"\necho "turbo noise on stderr" >&2\n' > "$tmp/bin/npx"; chmod +x "$tmp/bin/npx"
+json="$(PATH="$tmp/bin:$PATH" timeout 120 node "$measure" "${args[@]}" --build --json 2>/dev/null)"
+if printf '%s' "$json" | node -e "const j = JSON.parse(require('fs').readFileSync(0, 'utf8')); process.exit(j.measured === 1 ? 0 : 1)"; then ok; else fail_case "--build --json did not leave valid JSON on stdout: $json"; fi
+if PATH="$tmp/bin:$PATH" timeout 120 node "$measure" "${args[@]}" --build 2>&1 >/dev/null | grep -qF 'turbo noise on stdout'; then ok; else fail_case "--build did not send turbo's stdout to stderr"; fi
+
+echo "== tarballs that must not be followed =="
+new_tree; qadam_published sym 0.1.0
+ln -s /etc/hostname "$tmp/pkg-sym/package/src/leak.js"; serve sym 0.1.0
+run "$measure" "${args[@]}"
+expect 'a tarball holding a symlink is UNKNOWN, never followed' 2 'could not measure  1' 'symlink or hardlink'
+
+new_tree; qadam_published hard 0.1.0
+ln "$tmp/pkg-hard/package/src/lib/action.js" "$tmp/pkg-hard/package/src/lib/copy.js"; serve hard 0.1.0
+run "$measure" "${args[@]}"
+expect 'a tarball holding a hardlink is UNKNOWN' 2 'could not measure  1' 'symlink or hardlink'
+
+echo "== member names are untrusted =="
+new_tree; qadam_published evil 0.1.0
+evil_name=$'x\n::error title=pwned::injected.js'
+write "$tmp/pkg-evil/package/src/lib/$evil_name" "exports.e = 1"; serve evil 0.1.0
+run "$gate" "${args[@]}"
+if printf '%s\n' "$last_out" | grep -q '^::error'; then fail_case 'a file name with a newline and ::error:: started a workflow command'; else ok; fi
+if printf '%s\n' "$last_out" | grep -q '^::error title=pwned'; then fail_case 'injected command at the start of a line'; else ok; fi
+expect 'the name is still reported, flattened' 0 'only on npm: src/lib/x?: :error title=pwned: :injected.js'
+run "$measure" "${args[@]}"
+expect 'the measurement prints it flattened too' 0 'only on npm: src/lib/x?: :error title=pwned: :injected.js'
+
 echo "== --json =="
 new_tree; qadam_published same 0.1.0; qadam_published diff 0.1.0
 write "$tmp/pkg-diff/package/src/lib/action.js" "exports.a = 'x'"; serve diff 0.1.0
@@ -354,11 +417,30 @@ expect '12 findings: 9 annotations and one that says how many more' 0 '12 withou
 [ "$(printf '%s\n' "$last_out" | grep -c '^::warning')" -eq 10 ] && ok || fail_case 'the annotation count is capped at ten'
 [ "$(printf '%s\n' "$last_out" | grep -c '^  divergent, no changeset:')" -eq 12 ] && ok || fail_case 'the log still lists all twelve'
 
+new_tree; qadam_published ok 0.1.0
+write "$tmp/tree/.changeset/broken.md" $'---\n"@aiqadam/qadam-ok": sideways\n---\n\nNope.'
+run "$gate" "${args[@]}"
+expect 'advisory: a changeset that does not parse is a warning, exit 0, never OK' 0 'does not parse' '::warning'
+refuse 'never OK on an unparsable changeset' 'OK —'
+run "$gate" "${args[@]}" --required
+expect 'required: the same is UNKNOWN, exit 2' 2 'does not parse'
+
 echo "== gate 9: step summary =="
 new_tree; qadam_published bad 0.1.0
 write "$tmp/pkg-bad/package/src/lib/action.js" "exports.a = 'x'"; serve bad 0.1.0
 GITHUB_STEP_SUMMARY="$tmp/summary.md" run "$gate" "${args[@]}"
 if grep -qF '`@aiqadam/qadam-bad@0.1.0`' "$tmp/summary.md" && grep -qF 'ADVISORY' "$tmp/summary.md"; then ok; else fail_case 'the run summary lists the divergent qadam'; fi
+
+new_tree; qadam_published down 0.1.0
+echo '{ "/@aiqadam%2fqadam-down": [{ "status": 500 }] }' > "$tmp/routes.json"
+rm -f "$tmp/summary.md"
+GITHUB_STEP_SUMMARY="$tmp/summary.md" run "$gate" "${args[@]}" --max-attempts 1
+if grep -qF 'Could not be measured' "$tmp/summary.md" && grep -qF '`@aiqadam/qadam-down@0.1.0`' "$tmp/summary.md" && grep -qF 'answered 500' "$tmp/summary.md"; then ok; else fail_case 'the run summary lists the qadam that could not be measured, with the reason'; fi
+
+new_tree
+rm -f "$tmp/summary.md"
+GITHUB_STEP_SUMMARY="$tmp/summary.md" run "$gate" "${args[@]}"
+if grep -qF 'UNKNOWN' "$tmp/summary.md" && ! grep -qF '0 divergent' "$tmp/summary.md"; then ok; else fail_case 'with no 0.x qadams the summary says UNKNOWN and does not read like a pass'; cat "$tmp/summary.md" 2>&1 | sed 's/^/        | /'; fi
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
