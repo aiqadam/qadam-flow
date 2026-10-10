@@ -49,6 +49,7 @@ import { StepNavigationButtons } from './step-navigation-buttons';
 import { useStepSettingsContext } from './step-settings-context';
 import { UpdateAvailableLabel } from './update-available-label';
 import { UpdatePieceVersionDialog } from './update-qadam-version-dialog/update-qadam-version-dialog';
+import { UpdateThisStepLabel } from './update-this-step-label';
 
 const StepSettingsContainer = () => {
   const { selectedStep, qadamModel, formSchema } = useStepSettingsContext();
@@ -196,6 +197,10 @@ const StepSettingsContainer = () => {
         {(modifiedStep.type === FlowActionType.PIECE ||
           modifiedStep.type === FlowTriggerType.PIECE) && (
           <HeldStepLabel step={modifiedStep} flowId={flowVersion.flowId} />
+        )}
+        {(modifiedStep.type === FlowActionType.PIECE ||
+          modifiedStep.type === FlowTriggerType.PIECE) && (
+          <UpdateThisStepLabel step={modifiedStep} readonly={readonly} />
         )}
         {modifiedStep.type === FlowActionType.LOOP_ON_ITEMS && (
           <LoopsSettings readonly={readonly}></LoopsSettings>

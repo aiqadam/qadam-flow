@@ -2272,6 +2272,9 @@
   "Pre-release build": "Pre-release build",
   "This step is pinned to a build from main, not a released version. It runs that exact build until its version is updated.": "This step is pinned to a build from main, not a released version. It runs that exact build until its version is updated.",
   "Update available": "Update available",
+  "Update this step": "Update this step",
+  "This step was imported with a pre-release build that could not be moved to a released version. Update its version.": "This step was imported with a pre-release build that could not be moved to a released version. Update its version.",
+  "This step was imported with an agent tool pinned to a pre-release build that could not be moved to a released version. Update that tool.": "This step was imported with an agent tool pinned to a pre-release build that could not be moved to a released version. Update that tool.",
   "A released version of this Qadam is available: v{version}.": "A released version of this Qadam is available: v{version}.",
   "Held step": "Held step",
   "A version change for this step was reverted, so a publish will not move it again until you change its version.": "A version change for this step was reverted, so a publish will not move it again until you change its version."

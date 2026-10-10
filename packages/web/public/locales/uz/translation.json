@@ -2272,6 +2272,9 @@
   "Pre-release build": "Pre-reliz build",
   "This step is pinned to a build from main, not a released version. It runs that exact build until its version is updated.": "Bu qadam chiqarilgan versiyaga emas, main'dan olingan buildga bog'langan. Versiya yangilanmaguncha aynan shu buildni ishlatadi.",
   "Update available": "Yangilanish mavjud",
+  "Update this step": "Bu qadamni yangilang",
+  "This step was imported with a pre-release build that could not be moved to a released version. Update its version.": "Bu qadam chiqarilgan versiyaga almashtirib bo‘lmagan oldindan chiqarilgan build bilan import qilingan. Uning versiyasini yangilang.",
+  "This step was imported with an agent tool pinned to a pre-release build that could not be moved to a released version. Update that tool.": "Bu qadam chiqarilgan versiyaga almashtirib bo‘lmagan oldindan chiqarilgan buildga bog‘langan agent vositasi bilan import qilingan. Shu vositani yangilang.",
   "A released version of this Qadam is available: v{version}.": "Bu Qadamning chiqarilgan versiyasi mavjud: v{version}.",
   "Held step": "Qadam ushlab turilgan",
   "A version change for this step was reverted, so a publish will not move it again until you change its version.": "Bu qadam uchun versiya o'zgarishi qaytarildi, shuning uchun siz versiyani o'zgartirmaguningizcha nashr uni qayta ko'chirmaydi."
