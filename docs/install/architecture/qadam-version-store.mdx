@@ -77,9 +77,12 @@ qadam-versions/
   qadams/
     @aiqadam/qadam-tables/0.5.1/          an official qadam version
     _platform/<platformId>/<name>/1.0.0/  a custom qadam of one platform
+  qadam-signatures.json                   npm signatures verified for fetched versions (#806)
 ```
 
 Each version directory holds the qadam's code (`package.json`, its entry point, and `node_modules` when the version needs it), `metadata.json`, and `integrity.json`. The store writes a version in a staging directory and renames it into place, so a version is either complete or absent. It never overwrites a version: a version is never republished (see [Qadam versioning](/build-qadams/qadam-reference/qadam-versioning)). `integrity.json` records a sha512 digest of every file. Only a damaged version — its record missing or not readable as JSON, or naming another version — is replaced the next time the server stores that version. A version written by a later release, built for another host, or that the server cannot read because of a filesystem error is never replaced.
+
+`qadam-signatures.json` is where the server keeps the npm signature of each official version it verifies when it fetches one ([#806](https://github.com/aiqadam/qadam-flow/issues/806); nothing fetches yet, so the file does not exist today), so a restart does not need the registry to know that version was signed. It holds the signature itself rather than a yes: each time it is read the signature is checked again against npm's public keys that ship in the image, for exactly that version and the integrity of the tarball it came from. If the file is deleted, edited or unreadable, or a version has no record, the server asks the registry again, and without a registry that version is not accepted as verified. Versions seeded from the image are trusted as the image is, and no npm signature is asked of them. Losing the file costs registry reads, never a version.
 
 Custom qadams get a directory per platform, so one platform's qadams are never found under another platform's name. Nothing writes custom qadams to the store yet; they are installed as described in [Manage qadams](/admin-guide/guides/manage-qadams) until resolution moves to the store.
 
