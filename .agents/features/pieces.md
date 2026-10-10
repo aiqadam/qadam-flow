@@ -270,8 +270,11 @@ qadam, Store Entry): say "qadam version store".
   so a version fetched into the store later is seen by the next load. A stored version that is not
   PRESENT/ABSENT is skipped with one `console.warn` per version and process. The cold-load line
   carries `source` (`store` / `bundled` / `bundled-fallback` / `installed` / `dev`). The worker
-  provisions agent-tool qadams (a PIECE step's `agentTools` array, `extractQadamPackages`) through
-  the same `qadamCache.getPiece` check as steps, and `needsInstalling` never installs a snapshot
+  provisions agent-tool qadams (a PIECE step's `agentTools` array, read by `agentToolPins` in
+  `@aiqadam/server-utils`, which the API's `qadamPinUtil.getAgentToolPins` uses too, so
+  `ap_validate_flow` and `ap_flow_structure` report tool pins; `extractQadamPackages`) through
+  the same `qadamCache.getPiece` check as steps (a version that is no pin is `PieceNotFoundError`,
+  carrying `usedBy` for the error text), and `needsInstalling` never installs a snapshot
   from a registry. The API resolves an exact pin by equality, and gives a snapshot pin no bundled
   stand-in (`findExactVersion`).
   **Platform-provided libraries** (`qadam-platform-modules.ts`): before the first stored version

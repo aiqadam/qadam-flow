@@ -160,7 +160,7 @@ describe('an agent PIECE tool calling @aiqadam/qadam-subflows callFlow', () => {
         const executionState = withLoop.forkForIteration({ loopName: 'loop', iteration: 0, concurrent })
 
         const result = await qadamExecutor.handle({
-            action: buildQadamAction({ name: 'agent_step', qadamName: FAKE_AGENT_QADAM, actionName: 'run_agent', input: {} }),
+            action: buildQadamAction({ name: 'agent_step', qadamName: FAKE_AGENT_QADAM, actionName: 'run_agent', input: {}, isMockQadam: true }),
             executionState,
             constants: parentConstants(),
         })

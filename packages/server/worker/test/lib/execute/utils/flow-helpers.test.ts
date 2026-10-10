@@ -108,7 +108,7 @@ describe('extractQadamPackages', () => {
             ...qadamTrigger,
             nextAction: { ...qadamAction },
         })
-        const packages = await extractQadamPackages(fv, mockPlatformId, mockLog, mockApiClient)
+        const packages = await extractQadamPackages({ flowVersion: fv, platformId: mockPlatformId, log: mockLog, apiClient: mockApiClient })
         expect(packages).toHaveLength(2)
         expect(packages).toEqual([
             { qadamName: '@aiqadam/qadam-gmail', qadamVersion: '0.1.0', packageType: PackageType.REGISTRY, qadamType: QadamType.OFFICIAL },
@@ -126,7 +126,7 @@ describe('extractQadamPackages', () => {
             settings: {},
             nextAction: { ...codeAction },
         })
-        const packages = await extractQadamPackages(fv, mockPlatformId, mockLog, mockApiClient)
+        const packages = await extractQadamPackages({ flowVersion: fv, platformId: mockPlatformId, log: mockLog, apiClient: mockApiClient })
         expect(packages).toEqual([])
     })
 
@@ -138,7 +138,7 @@ describe('extractQadamPackages', () => {
                 nextAction: { ...qadamAction },
             },
         })
-        const packages = await extractQadamPackages(fv, mockPlatformId, mockLog, mockApiClient)
+        const packages = await extractQadamPackages({ flowVersion: fv, platformId: mockPlatformId, log: mockLog, apiClient: mockApiClient })
         expect(packages).toHaveLength(2)
         expect(packages[0].qadamName).toBe('@aiqadam/qadam-gmail')
         expect(packages[1].qadamName).toBe('@aiqadam/qadam-slack')
@@ -189,7 +189,7 @@ describe('extractQadamPackages — agent tools', () => {
             ],
         })
 
-        const packages = await extractQadamPackages(fv, mockPlatformId, mockLog, mockApiClient)
+        const packages = await extractQadamPackages({ flowVersion: fv, platformId: mockPlatformId, log: mockLog, apiClient: mockApiClient })
 
         expect(packages.map((p) => `${p.qadamName}@${p.qadamVersion}`)).toEqual([
             '@aiqadam/qadam-gmail@0.1.0',
@@ -207,7 +207,7 @@ describe('extractQadamPackages — agent tools', () => {
             ],
         })
 
-        await extractQadamPackages(fv, mockPlatformId, mockLog, mockApiClient)
+        await extractQadamPackages({ flowVersion: fv, platformId: mockPlatformId, log: mockLog, apiClient: mockApiClient })
 
         expect(mockGetPiece).toHaveBeenCalledTimes(2)
     })
@@ -220,7 +220,7 @@ describe('extractQadamPackages — agent tools', () => {
             ],
         })
 
-        const packages = await extractQadamPackages(fv, mockPlatformId, mockLog, mockApiClient)
+        const packages = await extractQadamPackages({ flowVersion: fv, platformId: mockPlatformId, log: mockLog, apiClient: mockApiClient })
 
         expect(packages.filter((p) => p.qadamName === '@aiqadam/qadam-tables').map((p) => p.qadamVersion)).toEqual(['0.5.0', '0.5.1'])
     })
@@ -236,8 +236,8 @@ describe('extractQadamPackages — agent tools', () => {
         })
         const fvWithVariable = flowWith({ agentTools: '{{trigger.tools}}' })
 
-        expect(await extractQadamPackages(fvWithOtherTools, mockPlatformId, mockLog, mockApiClient)).toHaveLength(2)
-        expect(await extractQadamPackages(fvWithVariable, mockPlatformId, mockLog, mockApiClient)).toHaveLength(2)
+        expect(await extractQadamPackages({ flowVersion: fvWithOtherTools, platformId: mockPlatformId, log: mockLog, apiClient: mockApiClient })).toHaveLength(2)
+        expect(await extractQadamPackages({ flowVersion: fvWithVariable, platformId: mockPlatformId, log: mockLog, apiClient: mockApiClient })).toHaveLength(2)
     })
 
     it('fails provisioning with the tool\'s pin named when the API does not know it', async () => {
@@ -259,7 +259,7 @@ describe('extractQadamPackages — agent tools', () => {
             apiClient: mockApiClient,
         })
 
-        expect(result).toEqual({ provisioned: false, unavailableQadam: '@aiqadam/qadam-tables@0.5.1' })
+        expect(result).toEqual({ provisioned: false, unavailableQadam: '@aiqadam/qadam-tables@0.5.1', usedBy: 'agent tool a of step agent' })
         expect(mockProvision).not.toHaveBeenCalled()
     })
 })
@@ -303,7 +303,7 @@ describe('extractCodeArtifacts', () => {
             },
         })
 
-        const packages = await extractQadamPackages(fv, mockPlatformId, mockLog, mockApiClient)
+        const packages = await extractQadamPackages({ flowVersion: fv, platformId: mockPlatformId, log: mockLog, apiClient: mockApiClient })
         const artifacts = extractCodeArtifacts(fv)
 
         expect(packages).toHaveLength(2)
@@ -366,7 +366,7 @@ describe('provisionFlowPieces', () => {
             log: mockLogger,
             apiClient,
         })
-        expect(result).toEqual({ provisioned: false, unavailableQadam: '@aiqadam/qadam-tables@0.3.1' })
+        expect(result).toEqual({ provisioned: false, unavailableQadam: '@aiqadam/qadam-tables@0.3.1', usedBy: 'step trigger_1' })
         expect(mockError).toHaveBeenCalledTimes(1)
         expect(mockError.mock.calls[0][0]).toMatchObject({ flowId: 'flow-1', projectId: 'project-1' })
         expect(String(mockError.mock.calls[0][0].error)).toContain('0.3.1')

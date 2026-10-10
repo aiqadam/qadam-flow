@@ -1,9 +1,10 @@
-import { apVersionUtil } from '@aiqadam/server-utils'
+import { agentToolPins, apVersionUtil } from '@aiqadam/server-utils'
 import {
     FlowActionType,
     flowStructureUtil,
     FlowTriggerType,
     isNil,
+    qadamVersionParser,
     Step,
     tryCatch,
     unique,
@@ -19,6 +20,10 @@ import { isNewerVersion } from './utils'
 // steps/pins/resolution shape the first two share; `getOrThrow` in the validator needs the
 // resolved piece's `actions`/`triggers`/`auth` for prop validation, not just a resolvability
 // answer, so it is left calling `qadamMetadataService` directly (#474).
+//
+// What the worker provisions is every PIECE step and every PIECE tool of an agent step
+// (`extractQadamPackages`), so a report of what would fail provisioning has to cover both:
+// `getQadamSteps` is the steps, `getAgentToolPins` the tools (#779).
 export const qadamPinUtil = {
     getQadamSteps({ trigger }: { trigger: Step }): QadamPinnedStep[] {
         return flowStructureUtil.getAllSteps(trigger)
@@ -28,8 +33,29 @@ export const qadamPinUtil = {
                 && !isNil(step.settings.qadamVersion))
     },
 
+    // The PIECE tools of every agent step, each with the step that holds it. Tools are not steps:
+    // nothing here may rewrite one (the heal migration reads `getQadamSteps` only).
+    getAgentToolPins({ trigger }: { trigger: Step }): AgentToolPinOfStep[] {
+        return flowStructureUtil.getAllSteps(trigger).flatMap((step) => qadamPinUtil.getAgentToolPinsOfStep({ step }))
+    },
+
+    getAgentToolPinsOfStep({ step }: { step: Step }): AgentToolPinOfStep[] {
+        if (step.type !== FlowActionType.PIECE) {
+            return []
+        }
+        return agentToolPins.fromInput({ input: step.settings.input }).map((tool) => ({
+            ...tool,
+            stepName: step.name,
+            stepDisplayName: step.displayName,
+        }))
+    },
+
     pinOf({ step }: { step: QadamPinnedStep }): string {
         return `${step.settings.qadamName}@${step.settings.qadamVersion}`
+    },
+
+    pinOfTool({ tool }: { tool: AgentToolPinOfStep }): string {
+        return `${tool.qadamName}@${tool.qadamVersion}`
     },
 
     // Scoped names carry their own `@`, so the pin is split on the LAST `@` rather than the first.
@@ -46,8 +72,11 @@ export const qadamPinUtil = {
 
     // Distinct (name, version) pairs only: a flow with twelve steps on one pin should cost one
     // resolution, not twelve, and the answer cannot differ between them.
-    collectDistinctPins({ steps }: { steps: QadamPinnedStep[] }): string[] {
-        return unique(steps.map(step => qadamPinUtil.pinOf({ step })))
+    collectDistinctPins({ steps, tools = [] }: { steps: QadamPinnedStep[], tools?: AgentToolPinOfStep[] }): string[] {
+        return unique([
+            ...steps.map(step => qadamPinUtil.pinOf({ step })),
+            ...tools.map(tool => qadamPinUtil.pinOfTool({ tool })),
+        ])
     },
 
     // The raw, throwing primitive: mirrors `qadamMetadataService.get()` itself — a miss returns
@@ -82,6 +111,12 @@ export const qadamPinUtil = {
     }): Promise<Map<string, boolean | undefined>> {
         return new Map(await Promise.all(pins.map(async (pin): Promise<[string, boolean | undefined]> => {
             const { name, version } = qadamPinUtil.splitPin({ pin })
+            // An agent tool's version is not validated when it is stored, so it can be no version at
+            // all ('latest'): a definite miss, not a failed lookup, and not something to ask the
+            // resolver (it throws on it).
+            if (qadamVersionParser.parsePin({ pin: version }) === null) {
+                return [pin, false]
+            }
             const { data: resolvedVersion, error } = await tryCatch(() => qadamPinUtil.resolvePinVersion({ name, version, platformId, log }))
             if (!isNil(error)) {
                 return [pin, undefined]
@@ -121,6 +156,14 @@ export const qadamPinUtil = {
             undefined,
         )
     },
+}
+
+export type AgentToolPinOfStep = {
+    toolName: string
+    qadamName: string
+    qadamVersion: string
+    stepName: string
+    stepDisplayName: string
 }
 
 export type QadamPinnedStep = Extract<Step, { settings: { qadamName: string, qadamVersion: string } }>

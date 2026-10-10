@@ -575,19 +575,23 @@ function readFlowToolReference(tool: unknown): string | null {
 // destructive remedy (delete-and-re-add) warranted. `undefined` means the check itself failed —
 // this must never claim the pin definitely does not exist, and must never advise destroying the
 // step's sample data based on a reading that was never actually verified (#474).
-function qadamPinIssue({ pin, resolvable }: { pin: string, resolvable: boolean | undefined }): QadamPinIssue | null {
+function qadamPinIssue({ pin, resolvable, subject = 'step' }: { pin: string, resolvable: boolean | undefined, subject?: 'step' | 'agent_tool' }): QadamPinIssue | null {
     if (resolvable === true) {
         return null
     }
     if (resolvable === false) {
         return {
             severity: 'unavailable',
-            message: `is pinned to ${wrapUntrustedValue(pin)}, which this installation does not have. Every run and every trigger provisioning attempt fails on it. Re-point it at an available version — delete and re-add the step with ap_add_step, or re-create the trigger with ap_update_trigger.`,
+            message: subject === 'agent_tool'
+                ? `is pinned to ${wrapUntrustedValue(pin)}, which this installation does not have. Every run and every trigger provisioning attempt of the flow fails on it. Remove that tool from the agent step and add it again at an available version with ap_update_step.`
+                : `is pinned to ${wrapUntrustedValue(pin)}, which this installation does not have. Every run and every trigger provisioning attempt fails on it. Re-point it at an available version — delete and re-add the step with ap_add_step, or re-create the trigger with ap_update_trigger.`,
         }
     }
     return {
         severity: 'unverified',
-        message: `is pinned to ${wrapUntrustedValue(pin)}, and this installation could not confirm right now whether that version is available (the check failed transiently). Re-run before acting on this — do not delete or re-add the step based on an unverified reading, since that loses its sample data.`,
+        message: subject === 'agent_tool'
+            ? `is pinned to ${wrapUntrustedValue(pin)}, and this installation could not confirm right now whether that version is available (the check failed transiently). Re-run before acting on this — do not remove and re-add the tool based on an unverified reading.`
+            : `is pinned to ${wrapUntrustedValue(pin)}, and this installation could not confirm right now whether that version is available (the check failed transiently). Re-run before acting on this — do not delete or re-add the step based on an unverified reading, since that loses its sample data.`,
     }
 }
 

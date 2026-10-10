@@ -192,6 +192,58 @@ describe('ap_flow_structure — pinned qadam version visibility (#474)', () => {
 // not resolve is guaranteed by construction (any bogus name will do) — turning the warning this
 // tool exists to print into a reliable, attacker-chosen slot inside text an agent reads as
 // trustworthy tool output rather than as flow-authored data.
+// #779: the worker provisions the PIECE tools of an agent step like steps, so a dead tool pin fails
+// the whole flow and has to be visible here too.
+describe('ap_flow_structure — agent tool pins (#779)', () => {
+    function agentStep({ agentTools }: { agentTools: unknown[] }): Record<string, unknown> {
+        const step = pieceStep({ name: 'agent', qadamName: '@aiqadam/qadam-test-email', qadamVersion: HEALTHY_VERSION })
+        return { ...step, settings: { ...(step.settings as Record<string, unknown>), input: { agentTools } } }
+    }
+
+    function tool({ toolName, qadamVersion }: { toolName: string, qadamVersion: string }): unknown {
+        return { type: 'PIECE', toolName, qadamMetadata: { qadamName: '@aiqadam/qadam-test-tool', qadamVersion, actionName: 'go' } }
+    }
+
+    beforeEach(() => {
+        vi.clearAllMocks()
+        mockUnsupportedPins.mockResolvedValue(new Map())
+        mockGetPlatformId.mockResolvedValue('platform-1')
+        mockGet.mockImplementation(async ({ version }: { version: string }) =>
+            version === HEALTHY_VERSION ? { name: '@aiqadam/qadam-test-email', version } : undefined)
+    })
+
+    it('flags a tool pinned to a version this installation does not have, and names the tool', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: agentStep({ agentTools: [tool({ toolName: 'lookup', qadamVersion: DEAD_VERSION })] }) }))
+
+        const result = await callTool()
+
+        const text = (result.content?.[0] as { text: string }).text
+        expect(text).toContain('AGENT TOOL PINNED VERSION UNAVAILABLE')
+        expect(text).toContain('lookup')
+        expect(text).toContain(`@aiqadam/qadam-test-tool@${DEAD_VERSION}`)
+        expect(text).not.toContain('delete and re-add the step')
+        expect(JSON.stringify(result.structuredContent?.steps)).toContain('"agentToolPins":[{"toolName":"lookup"')
+    })
+
+    it('reports a tool whose version is no version as unavailable without asking the resolver', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: agentStep({ agentTools: [tool({ toolName: 'lookup', qadamVersion: 'latest' })] }) }))
+
+        const result = await callTool()
+
+        expect((result.content?.[0] as { text: string }).text).toContain('AGENT TOOL PINNED VERSION UNAVAILABLE')
+        expect(mockGet).not.toHaveBeenCalledWith(expect.objectContaining({ name: '@aiqadam/qadam-test-tool' }))
+    })
+
+    it('says nothing about a tool whose pin resolves', async () => {
+        mockGet.mockResolvedValue({ name: '@aiqadam/qadam-test-tool', version: HEALTHY_VERSION })
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: agentStep({ agentTools: [tool({ toolName: 'lookup', qadamVersion: HEALTHY_VERSION })] }) }))
+
+        const result = await callTool()
+
+        expect((result.content?.[0] as { text: string }).text).not.toContain('AGENT TOOL PINNED VERSION')
+    })
+})
+
 describe('ap_flow_structure — flow-authored values cannot masquerade as tool instructions (#480)', () => {
     beforeEach(() => {
         vi.clearAllMocks()

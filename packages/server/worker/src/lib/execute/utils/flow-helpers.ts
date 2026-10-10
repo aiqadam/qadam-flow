@@ -1,4 +1,5 @@
-import { AgentQadamProps, AgentQadamTool, FlowActionType, flowStructureUtil, FlowTriggerType, FlowVersion, QadamPackage, tryCatch, WorkerToApiContract } from '@aiqadam/shared'
+import { agentToolPins } from '@aiqadam/server-utils'
+import { FlowActionType, flowStructureUtil, FlowTriggerType, FlowVersion, QadamPackage, tryCatch, WorkerToApiContract } from '@aiqadam/shared'
 import { Logger } from 'pino'
 import { CodeArtifact } from '../../cache/code/code-builder'
 import { provisioner } from '../../cache/provisioner'
@@ -14,7 +15,7 @@ export async function provisionFlowPieces(params: {
 }): Promise<ProvisionFlowQadamsResult> {
     const { flowVersion, platformId, flowId, projectId, log, apiClient } = params
     const { error } = await tryCatch(async () => {
-        const pieces = await extractQadamPackages(flowVersion, platformId, log, apiClient)
+        const pieces = await extractQadamPackages({ flowVersion, platformId, log, apiClient })
         const codeSteps = extractCodeArtifacts(flowVersion)
         await provisioner(log, apiClient).provision({ pieces, codeSteps })
     })
@@ -35,28 +36,41 @@ export async function provisionFlowPieces(params: {
         // `execute-polling`, `execute-webhook` and `renew-webhook` are fire-and-forget and skip
         // this tick, which is the one genuinely silent case — `ap_validate_flow` reports the pin so
         // it is visible without waiting for a tick that never fires.
-        log.error({ error: String(error), flowId, projectId }, 'Flow step is pinned to a qadam version this image does not have; skipping provisioning')
-        return { provisioned: false, unavailableQadam: `${error.qadamName}@${error.qadamVersion}` }
+        log.error({ error: String(error), flowId, projectId, usedBy: error.usedBy }, 'A flow step or agent tool is pinned to a qadam version this image does not have; skipping provisioning')
+        return { provisioned: false, unavailableQadam: `${error.qadamName}@${error.qadamVersion}`, usedBy: error.usedBy ?? 'a step or an agent tool' }
     }
     return { provisioned: true }
 }
 
-export async function extractQadamPackages(flowVersion: FlowVersion, platformId: string, log: Logger, apiClient: WorkerToApiContract): Promise<QadamPackage[]> {
+export async function extractQadamPackages({ flowVersion, platformId, log, apiClient }: ExtractQadamPackagesParams): Promise<QadamPackage[]> {
     const steps = flowStructureUtil.getAllSteps(flowVersion.trigger)
     const stepPins = steps
         .filter((step) => step.type === FlowActionType.PIECE || step.type === FlowTriggerType.PIECE)
-        .map((step) => ({ qadamName: step.settings.qadamName, qadamVersion: step.settings.qadamVersion }))
+        .map((step): QadamPin => ({ qadamName: step.settings.qadamName, qadamVersion: step.settings.qadamVersion, usedBy: `step ${step.name}` }))
     // The engine loads an agent tool's qadam by its own pin, like a step's, so it is provisioned like one (#779).
-    const toolPins = steps.flatMap((step) => step.type === FlowActionType.PIECE ? extractAgentToolPins({ input: step.settings.input }) : [])
+    const toolPins = steps
+        .filter((step) => step.type === FlowActionType.PIECE)
+        .flatMap((step) => agentToolPins.fromInput({ input: step.settings.input }).map((tool): QadamPin => ({
+            qadamName: tool.qadamName,
+            qadamVersion: tool.qadamVersion,
+            usedBy: `agent tool ${tool.toolName} of step ${step.name}`,
+        })))
 
     return Promise.all(
-        uniquePins({ pins: [...stepPins, ...toolPins] }).map((pin) =>
-            qadamCache(log, apiClient).getPiece({
+        uniquePins({ pins: [...stepPins, ...toolPins] }).map(async (pin) => {
+            const { data, error } = await tryCatch(() => qadamCache(log, apiClient).getPiece({
                 qadamName: pin.qadamName,
                 qadamVersion: pin.qadamVersion,
                 platformId,
-            }),
-        ),
+            }))
+            if (error instanceof PieceNotFoundError) {
+                throw new PieceNotFoundError(error.qadamName, error.qadamVersion, pin.usedBy)
+            }
+            if (error) {
+                throw error
+            }
+            return data
+        }),
     )
 }
 
@@ -71,20 +85,6 @@ export function extractCodeArtifacts(flowVersion: FlowVersion): CodeArtifact[] {
         }))
 }
 
-// A step's `agentTools` is a stored array, or a string the engine resolves at run time (a variable
-// reference): only the array can be provisioned ahead of the run, and only its PIECE tools name a
-// qadam. A malformed entry is skipped here; the agent's own validation reports it.
-function extractAgentToolPins({ input }: { input: Record<string, unknown> }): QadamPin[] {
-    const tools = input[AgentQadamProps.AGENT_TOOLS]
-    if (!Array.isArray(tools)) {
-        return []
-    }
-    return tools.flatMap((tool: unknown) => {
-        const parsedTool = AgentQadamTool.safeParse(tool)
-        return parsedTool.success ? [parsedTool.data.qadamMetadata] : []
-    })
-}
-
 function uniquePins({ pins }: { pins: QadamPin[] }): QadamPin[] {
     const byKey = new Map(pins.map((pin) => [`${pin.qadamName}@${pin.qadamVersion}`, pin]))
     return [...byKey.values()]
@@ -93,8 +93,17 @@ function uniquePins({ pins }: { pins: QadamPin[] }): QadamPin[] {
 type QadamPin = {
     qadamName: string
     qadamVersion: string
+    usedBy: string
+}
+
+type ExtractQadamPackagesParams = {
+    flowVersion: FlowVersion
+    platformId: string
+    log: Logger
+    apiClient: WorkerToApiContract
 }
 
 export type ProvisionFlowQadamsResult =
     | { provisioned: true }
-    | { provisioned: false, unavailableQadam: string }
+    // `usedBy` says what holds the pin: `step step_2` or `agent tool wait of step step_3`.
+    | { provisioned: false, unavailableQadam: string, usedBy: string }

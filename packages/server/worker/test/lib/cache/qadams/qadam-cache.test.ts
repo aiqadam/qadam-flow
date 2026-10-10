@@ -48,6 +48,24 @@ describe('qadamCache.getPiece', () => {
         expect(await readdir(cacheRoot)).toEqual([])
     })
 
+    // Agent tools carry a version nothing validated (#779); the API throws a plain Error on these,
+    // which provisioning rethrows, and ON_DISABLE and every tick would fail on it (#432).
+    it.each([
+        ['latest'],
+        [''],
+        ['1.0'],
+        ['^1.0.0 garbage'],
+        ['1.2.0-beta.1'],
+    ])('answers version %j, which is no pin, as not found without asking the API', async (qadamVersion) => {
+        const { apiClient, methods } = fakeApiClient()
+
+        await expect(qadamCache(log, apiClient).getPiece({ qadamName: '@acme/qadam-a', qadamVersion, platformId: 'platform_1' }))
+            .rejects.toBeInstanceOf(PieceNotFoundError)
+
+        expect(methods).toEqual([])
+        expect(await readdir(cacheRoot)).toEqual([])
+    })
+
     it('still resolves and caches a name inside the grammar', async () => {
         const { apiClient, methods } = fakeApiClient()
 

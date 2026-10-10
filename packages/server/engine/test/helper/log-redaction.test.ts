@@ -23,15 +23,15 @@ const buildStepOutput = ({ output }: { output?: unknown }) => GenericStepOutput.
 describe('logRedaction.buildStepLogPolicy', () => {
     it('collects flags from nested steps and skips steps without any', () => {
         const nested = {
-            ...buildQadamAction({ name: 'nested', qadamName: 'qadam', actionName: 'action', input: {} }),
+            ...buildQadamAction({ name: 'nested', qadamName: 'qadam', actionName: 'action', input: {}, isMockQadam: true }),
             logInput: false,
         }
         const loop = buildSimpleLoopAction({ name: 'loop', loopItems: '[]', firstLoopAction: nested })
         const flagged = {
-            ...buildQadamAction({ name: 'flagged', qadamName: 'qadam', actionName: 'action', input: {}, nextAction: loop }),
+            ...buildQadamAction({ name: 'flagged', qadamName: 'qadam', actionName: 'action', input: {}, isMockQadam: true, nextAction: loop }),
             logOutput: false,
         }
-        const unflagged = buildQadamAction({ name: 'unflagged', qadamName: 'qadam', actionName: 'action', input: {} })
+        const unflagged = buildQadamAction({ name: 'unflagged', qadamName: 'qadam', actionName: 'action', input: {}, isMockQadam: true })
 
         const policy = logRedaction.buildStepLogPolicy({
             trigger: buildTrigger({
@@ -73,7 +73,7 @@ describe('logRedaction.buildStepLogPolicy', () => {
     // even though a policy was set) and pass with a `Map`.
     it('makes a step literally named "__proto__" visible to hasPolicy, so its own opt-out is not silently defeated', () => {
         const flagged = {
-            ...buildQadamAction({ name: '__proto__', qadamName: 'qadam', actionName: 'action', input: {} }),
+            ...buildQadamAction({ name: '__proto__', qadamName: 'qadam', actionName: 'action', input: {}, isMockQadam: true }),
             logOutput: false,
         }
 

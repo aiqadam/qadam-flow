@@ -27,7 +27,7 @@ export const executeTriggerHookJob: JobHandler<ExecuteTriggerHookJobData, Synchr
 
         const provision = await ctx.timings.measure({ phase: 'provision', fn: () => provisionFlowPieces({ flowVersion, platformId: data.platformId, flowId: data.flowId, projectId: data.projectId, log: ctx.log, apiClient: ctx.apiClient }) })
         if (!provision.provisioned) {
-            ctx.log.info({ flowId: data.flowId, hookType: data.hookType, unavailableQadam: provision.unavailableQadam }, 'Failed to provision qadams for trigger hook')
+            ctx.log.info({ flowId: data.flowId, hookType: data.hookType, unavailableQadam: provision.unavailableQadam, usedBy: provision.usedBy }, 'Failed to provision qadams for trigger hook')
             // ON_DISABLE must still succeed: refusing to disable a flow whose pin is gone would make
             // the broken flow impossible to turn off, which is the opposite of what #432 wants. Every
             // other hook — ON_ENABLE above all — reports the failure, so `assertEngineResponseIsOk`
@@ -40,7 +40,7 @@ export const executeTriggerHookJob: JobHandler<ExecuteTriggerHookJobData, Synchr
                 kind: JobResultKind.SYNCHRONOUS,
                 status: EngineResponseStatus.INTERNAL_ERROR,
                 response: undefined,
-                errorMessage: `This flow has a step pinned to ${provision.unavailableQadam}, which this installation does not have. Re-point that step at an available version — ap_validate_flow lists it — then enable the flow again.`,
+                errorMessage: `This flow has ${provision.usedBy} pinned to ${provision.unavailableQadam}, which this installation does not have. Re-point it at an available version (a step or an agent tool) — ap_validate_flow lists it — then enable the flow again.`,
             }
         }
 

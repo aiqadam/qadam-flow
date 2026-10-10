@@ -195,6 +195,8 @@ async function resolveQadam({ packageName, devQadams }: GetQadamPathParams): Pro
     // A miss is not permanent: an ARCHIVE/CUSTOM qadam can be installed later in this process.
     void resolving.then(
         (resolved) => {
+            // Deliberately uncached until #806/#808: a pin that falls back is a pin the store is
+            // expected to gain (a fetch) or the fallback to move, and a cached answer would hide it.
             if (resolved.source === QadamSource.BUNDLED_FALLBACK) {
                 forget()
             }

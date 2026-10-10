@@ -16,6 +16,13 @@ export const qadamCache = (log: Logger, apiClient: WorkerToApiContract) => ({
         if (!NPM_PACKAGE_NAME_REGEX.test(qadamName)) {
             throw new PieceNotFoundError(qadamName, qadamVersion)
         }
+        // A pin that is no version at all ('latest', '', '1.0', a range with trailing text) is
+        // answered as not found here, like a malformed name: the API would throw a plain Error on
+        // it, which provisioning rethrows, and ON_DISABLE and every tick would fail on it (#432).
+        // Agent tools carry their version unvalidated, so they can reach this (#779).
+        if (qadamVersionParser.parsePin({ pin: qadamVersion }) === null) {
+            throw new PieceNotFoundError(qadamName, qadamVersion)
+        }
         const isExactVersion = qadamVersionParser.isExact({ version: qadamVersion })
 
         if (!isExactVersion) {
@@ -96,7 +103,8 @@ async function getQadamPackage(query: PieceCacheKey, apiClient: WorkerToApiContr
 }
 
 export class PieceNotFoundError extends Error {
-    constructor(public readonly qadamName: string, public readonly qadamVersion: string) {
+    // What pins it, when the caller knows: `step step_2` or `agent tool wait (step step_3)`.
+    constructor(public readonly qadamName: string, public readonly qadamVersion: string, public readonly usedBy?: string) {
         super(`Piece metadata not found for ${qadamName}@${qadamVersion}`)
         this.name = 'PieceNotFoundError'
     }

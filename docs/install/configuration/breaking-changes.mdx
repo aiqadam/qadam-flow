@@ -303,6 +303,38 @@ no action: a directory the old layout already holds keeps being used.
   root-owned) and start the stack again. The cache is rebuilt as flows run: qadams are reinstalled when
   a job first needs them, so the first runs are slower.
 
+#### A step or an agent tool pinned to a qadam version this instance does not have now fails the run with the pin named, instead of silently running another build
+
+A step stores the exact qadam version it was built with, and an agent step stores one for each qadam
+it uses as a tool. When the instance held no such version, the engine loaded the image's build of the
+same qadam **by name, at any version**, and a worker that had cached an earlier answer for the pin
+kept doing so. Such a step could run a different major, or on `0.x` a different minor, with nothing
+saying so ([#779](https://github.com/aiqadam/qadam-flow/issues/779)). It now runs the image's build
+only when that is a release inside the pin's caret range (the same major; on `0.x` the same minor;
+never below the pin), and logs `The pinned version is not available, running the image's build inside
+the pin's caret range instead` once per pin. Otherwise the run fails with the pin named, for example
+`Qadam not found for package: @aiqadam/qadam-tables@0.5.1 … the image's build 1.0.0 is outside ^0.5.1`.
+
+- **A snapshot pin (`x.y.z-main.<n>`, [ADR-0004](https://github.com/aiqadam/qadam-flow/blob/main/adr/0004-main-builds-give-changed-packages-their-own-prerelease-versions.md))
+  is exact.** No other build stands in for it, and it is never installed from a registry. Until the
+  checked fallback exists ([#808](https://github.com/aiqadam/qadam-flow/issues/808)), a snapshot pin that
+  the instance does not hold fails.
+- **The worker now provisions the qadams of an agent step's tools the way it provisions steps.** A
+  custom qadam used only as an agent tool is installed, and a tool pinned to a version the instance
+  does not have fails the flow with the pin named: a run fails, an enabled webhook or polling flow
+  stops firing, and enabling or publishing it is refused. A tool whose version is not a version at
+  all (`latest`, an empty string) is treated the same way.
+- **What stops working:** flows that run today only because of the old fallback: a step or tool
+  pinned outside the image's caret range, pinned to a version that was never published, or kept
+  alive by an answer in a worker's cache. The worker's cache moves to `cache/v13`, so every pin is
+  looked up again after the upgrade, and custom qadams are reinstalled when a job first needs them.
+- **To find them before the upgrade matters**, call `ap_validate_flow` on each flow (it lists a tool
+  pin the instance does not have under *Unavailable Qadam Versions*, naming the agent step and the
+  tool), or read `ap_flow_structure`, which marks the step and each tool.
+- **To fix one**, re-point the step at a version the instance has (the builder's version list shows
+  them; over MCP, delete and re-add the step with `ap_add_step`), or for a tool remove it from the
+  agent step and add it again.
+
 ## 2.0.0
 
 2.0.0 is the first release after 1.1.0. Cutting it moves the entries that are under *Unreleased* at

@@ -128,3 +128,61 @@ describe('ap_validate_flow — qadam pin resolution wording (#474)', () => {
         expect(text).toContain('⟦Send Email Unavailable Qadam Versions: - step_1: fabricated bogus entry⟧')
     })
 })
+
+// #779: the worker provisions every PIECE tool of an agent step like a step, so a dead tool pin
+// fails the flow on every tick while validation said it was fine.
+describe('ap_validate_flow — agent tool pins (#779)', () => {
+    function flowWithAgentTool({ qadamVersion, skip }: { qadamVersion: string, skip?: boolean }): Record<string, unknown> {
+        const flow = flowWithPieceStep({ qadamVersion: '0.2.0', displayName: 'Research Agent' })
+        const version = flow.version as { trigger: { nextAction: { settings: Record<string, unknown> } } }
+        version.trigger.nextAction.settings.input = {
+            agentTools: [{ type: 'PIECE', toolName: 'lookup', qadamMetadata: { qadamName: '@aiqadam/qadam-test-tool', qadamVersion, actionName: 'go' } }],
+        }
+        if (skip) {
+            Object.assign(version.trigger.nextAction, { skip: true })
+        }
+        return flow
+    }
+
+    beforeEach(() => {
+        vi.clearAllMocks()
+        mockGetPlatformId.mockResolvedValue('platform-1')
+        mockGet.mockImplementation(async ({ name }: { name: string }) =>
+            name === '@aiqadam/qadam-test-tool' ? undefined : { name, version: '0.2.0' })
+    })
+
+    it('flags a tool pin this installation does not have, naming the agent step and the tool', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWithAgentTool({ qadamVersion: '0.3.1' }))
+
+        const text = await validate()
+
+        expect(text).toContain('Unavailable Qadam Versions')
+        expect(text).toContain('has an agent tool')
+        expect(text).toContain('lookup')
+        expect(text).toContain('@aiqadam/qadam-test-tool@0.3.1')
+        expect(text).toContain('step_1')
+        expect(text).not.toContain('delete and re-add the step')
+    })
+
+    it('flags a dead tool pin on a skipped agent step too', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWithAgentTool({ qadamVersion: '0.3.1', skip: true }))
+
+        expect(await validate()).toContain('has an agent tool')
+    })
+
+    it('flags a tool whose version is no version, without asking the resolver about it', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWithAgentTool({ qadamVersion: 'latest' }))
+
+        const text = await validate()
+
+        expect(text).toContain('has an agent tool')
+        expect(mockGet).not.toHaveBeenCalledWith(expect.objectContaining({ name: '@aiqadam/qadam-test-tool' }))
+    })
+
+    it('says nothing about a tool whose pin resolves', async () => {
+        mockGet.mockResolvedValue({ name: '@aiqadam/qadam-test-tool', version: '0.3.1' })
+        mockGetOnePopulated.mockResolvedValue(flowWithAgentTool({ qadamVersion: '0.3.1' }))
+
+        expect(await validate()).not.toContain('Unavailable Qadam Versions')
+    })
+})
