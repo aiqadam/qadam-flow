@@ -102,7 +102,7 @@ describe('executeTriggerHookJob — unavailable pinned qadam', () => {
         mockGetVersion.mockReset()
         mockProvisionFlowPieces.mockReset()
         mockGetVersion.mockResolvedValue(makeFlowVersion())
-        mockProvisionFlowPieces.mockResolvedValue({ provisioned: false, unavailableQadam: '@aiqadam/qadam-tables@0.3.1', usedBy: 'agent tool wait of step step_2' })
+        mockProvisionFlowPieces.mockResolvedValue({ provisioned: false, unavailableQadam: '@aiqadam/qadam-tables@0.3.1', usedBy: 'agent tool of step step_2' })
     })
 
     it('fails ON_ENABLE and names the pin', async () => {
@@ -110,7 +110,7 @@ describe('executeTriggerHookJob — unavailable pinned qadam', () => {
 
         expect(result.status).toBe(EngineResponseStatus.INTERNAL_ERROR)
         expect(result.errorMessage).toContain('@aiqadam/qadam-tables@0.3.1')
-        expect(result.errorMessage).toContain('agent tool wait of step step_2')
+        expect(result.errorMessage).toContain('agent tool of step step_2')
     })
 
     it('fails RENEW as well', async () => {

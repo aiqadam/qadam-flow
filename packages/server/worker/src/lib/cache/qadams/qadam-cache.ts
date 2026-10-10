@@ -103,10 +103,15 @@ async function getQadamPackage(query: PieceCacheKey, apiClient: WorkerToApiContr
 }
 
 export class PieceNotFoundError extends Error {
-    // What pins it, when the caller knows: `step step_2` or `agent tool wait (step step_3)`.
-    constructor(public readonly qadamName: string, public readonly qadamVersion: string, public readonly usedBy?: string) {
+    // `usedBy` is what pins it, when the caller knows: `step step_2` or `agent tool of step step_3`.
+    // Built from step names only (they are checked), never from flow-authored free text such as a
+    // tool name, because it reaches an error an MCP client reads (#779).
+    public readonly usedBy: string | undefined
+
+    constructor(public readonly qadamName: string, public readonly qadamVersion: string, options?: { usedBy?: string }) {
         super(`Piece metadata not found for ${qadamName}@${qadamVersion}`)
         this.name = 'PieceNotFoundError'
+        this.usedBy = options?.usedBy
     }
 }
 

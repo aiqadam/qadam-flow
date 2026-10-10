@@ -7,7 +7,6 @@ import {
     qadamVersionParser,
     Step,
     tryCatch,
-    unique,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { qadamMetadataService } from './qadam-metadata-service'
@@ -73,10 +72,12 @@ export const qadamPinUtil = {
     // Distinct (name, version) pairs only: a flow with twelve steps on one pin should cost one
     // resolution, not twelve, and the answer cannot differ between them.
     collectDistinctPins({ steps, tools = [] }: { steps: QadamPinnedStep[], tools?: AgentToolPinOfStep[] }): string[] {
-        return unique([
+        // A Set of strings, not `unique`: that compares entries with `findIndex` and a stringify per
+        // entry, which is quadratic, and a member can save one agent step with a hundred thousand tools.
+        return [...new Set([
             ...steps.map(step => qadamPinUtil.pinOf({ step })),
             ...tools.map(tool => qadamPinUtil.pinOfTool({ tool })),
-        ])
+        ])]
     },
 
     // The raw, throwing primitive: mirrors `qadamMetadataService.get()` itself — a miss returns

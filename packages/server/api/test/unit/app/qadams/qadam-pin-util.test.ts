@@ -201,3 +201,24 @@ describe('qadamPinUtil.findResolvableVersion', () => {
         expect(version).toBeUndefined()
     })
 })
+
+// #779: a member can save one agent step with a very large `agentTools` array, and the pin reports
+// (`ap_validate_flow`, `ap_flow_structure`) collect its pins on the API's event loop.
+describe('qadamPinUtil — a very large agent tool list', () => {
+    it('collects 20,000 distinct tool pins in well under a second, and still dedupes', () => {
+        const tools = Array.from({ length: 20_000 }, (_, index) => ({
+            toolName: `tool_${index}`,
+            qadamName: `@acme/qadam-tool-${index % 10_000}`,
+            qadamVersion: '1.0.0',
+            stepName: 'agent',
+            stepDisplayName: 'Agent',
+        }))
+
+        const startedAt = performance.now()
+        const pins = qadamPinUtil.collectDistinctPins({ steps: [], tools })
+        const elapsedMs = performance.now() - startedAt
+
+        expect(pins).toHaveLength(10_000)
+        expect(elapsedMs).toBeLessThan(500)
+    })
+})

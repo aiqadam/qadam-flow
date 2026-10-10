@@ -512,7 +512,7 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
     return {
         title: 'ap_flow_structure',
         permission: Permission.READ_FLOW,
-        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), valid insert locations for ap_add_step, the flow\'s localeSource, whether each step\'s pinned qadam version is still available on this installation, and whether a step\'s pinned qadam needs a framework version this release no longer supports. Pass includeInput=true to also get each step\'s full untruncated input in structuredContent; text input: lines are returned untruncated too.',
+        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), valid insert locations for ap_add_step, the flow\'s localeSource, whether each step\'s pinned qadam version, and the pinned qadam of each agent tool, is still available on this installation, and whether a step\'s pinned qadam needs a framework version this release no longer supports. Pass includeInput=true to also get each step\'s full untruncated input in structuredContent; text input: lines are returned untruncated too.',
         inputSchema: {
             flowId: z.string().describe('The id of the flow'),
             includeInput: z.boolean().optional().describe('When true, include the full step input (untruncated) in structuredContent.steps[].input and render text input: lines untruncated'),
@@ -587,14 +587,14 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
     }
 }
 
-// The two per-pin signals `ap_flow_structure` decorates steps with: whether each pin resolves
-// (#474), and which pins need a retired framework context version (#803).
 type AgentToolPinInfo = {
     toolName: string
     qadamPin: string
     qadamVersionResolvable: boolean | undefined
 }
 
+// The two per-pin signals `ap_flow_structure` decorates steps with: whether each pin resolves
+// (#474), and which pins need a retired framework context version (#803).
 type PinSignals = {
     qadamResolutions: Map<string, boolean | undefined>
     unsupportedPins: Map<string, PinFrameworkSupport>

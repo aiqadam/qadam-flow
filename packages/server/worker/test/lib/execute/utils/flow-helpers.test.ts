@@ -259,7 +259,7 @@ describe('extractQadamPackages — agent tools', () => {
             apiClient: mockApiClient,
         })
 
-        expect(result).toEqual({ provisioned: false, unavailableQadam: '@aiqadam/qadam-tables@0.5.1', usedBy: 'agent tool a of step agent' })
+        expect(result).toEqual({ provisioned: false, unavailableQadam: '@aiqadam/qadam-tables@0.5.1', usedBy: 'agent tool of step agent' })
         expect(mockProvision).not.toHaveBeenCalled()
     })
 })

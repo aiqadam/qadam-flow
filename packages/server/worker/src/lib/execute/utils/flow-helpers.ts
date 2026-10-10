@@ -1,5 +1,5 @@
 import { agentToolPins } from '@aiqadam/server-utils'
-import { FlowActionType, flowStructureUtil, FlowTriggerType, FlowVersion, QadamPackage, tryCatch, WorkerToApiContract } from '@aiqadam/shared'
+import { FlowActionType, flowStructureUtil, FlowTriggerType, FlowVersion, NPM_PACKAGE_NAME_REGEX, QadamPackage, qadamVersionParser, tryCatch, WorkerToApiContract } from '@aiqadam/shared'
 import { Logger } from 'pino'
 import { CodeArtifact } from '../../cache/code/code-builder'
 import { provisioner } from '../../cache/provisioner'
@@ -37,7 +37,7 @@ export async function provisionFlowPieces(params: {
         // this tick, which is the one genuinely silent case — `ap_validate_flow` reports the pin so
         // it is visible without waiting for a tick that never fires.
         log.error({ error: String(error), flowId, projectId, usedBy: error.usedBy }, 'A flow step or agent tool is pinned to a qadam version this image does not have; skipping provisioning')
-        return { provisioned: false, unavailableQadam: `${error.qadamName}@${error.qadamVersion}`, usedBy: error.usedBy ?? 'a step or an agent tool' }
+        return { provisioned: false, unavailableQadam: describePin({ qadamName: error.qadamName, qadamVersion: error.qadamVersion }), usedBy: error.usedBy ?? 'a step or an agent tool' }
     }
     return { provisioned: true }
 }
@@ -53,7 +53,7 @@ export async function extractQadamPackages({ flowVersion, platformId, log, apiCl
         .flatMap((step) => agentToolPins.fromInput({ input: step.settings.input }).map((tool): QadamPin => ({
             qadamName: tool.qadamName,
             qadamVersion: tool.qadamVersion,
-            usedBy: `agent tool ${tool.toolName} of step ${step.name}`,
+            usedBy: `agent tool of step ${step.name}`,
         })))
 
     return Promise.all(
@@ -64,7 +64,7 @@ export async function extractQadamPackages({ flowVersion, platformId, log, apiCl
                 platformId,
             }))
             if (error instanceof PieceNotFoundError) {
-                throw new PieceNotFoundError(error.qadamName, error.qadamVersion, pin.usedBy)
+                throw new PieceNotFoundError(error.qadamName, error.qadamVersion, { usedBy: pin.usedBy })
             }
             if (error) {
                 throw error
@@ -83,6 +83,13 @@ export function extractCodeArtifacts(flowVersion: FlowVersion): CodeArtifact[] {
             flowVersionId: flowVersion.id,
             flowVersionState: flowVersion.state,
         }))
+}
+
+// The pin as it goes into an error an MCP client reads. An agent tool's name and version are not
+// validated when stored, so free text that is no package name or no version is not echoed (#779).
+function describePin({ qadamName, qadamVersion }: { qadamName: string, qadamVersion: string }): string {
+    const isWellFormed = NPM_PACKAGE_NAME_REGEX.test(qadamName) && qadamVersionParser.parsePin({ pin: qadamVersion }) !== null
+    return isWellFormed ? `${qadamName}@${qadamVersion}` : 'a malformed pin'
 }
 
 function uniquePins({ pins }: { pins: QadamPin[] }): QadamPin[] {
@@ -105,5 +112,5 @@ type ExtractQadamPackagesParams = {
 
 export type ProvisionFlowQadamsResult =
     | { provisioned: true }
-    // `usedBy` says what holds the pin: `step step_2` or `agent tool wait of step step_3`.
+    // `usedBy` says what holds the pin: `step step_2` or `agent tool of step step_3`.
     | { provisioned: false, unavailableQadam: string, usedBy: string }
