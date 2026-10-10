@@ -1,10 +1,10 @@
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PackageType, QadamType } from '@aiqadam/shared'
 import type { QadamPackage } from '@aiqadam/shared'
 import type { Logger } from 'pino'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockGet = vi.fn()
 // Stubbed rather than driven with fake timers: `vi.useFakeTimers()` does not intercept
@@ -17,13 +17,19 @@ vi.mock('node:timers/promises', () => ({
     setTimeout: (ms: number) => mockDelay(ms),
 }))
 
-vi.mock('@aiqadam/server-utils', () => ({
-    safeHttp: {
-        retryingAxios: {
-            get: mockGet,
+// Everything but the registry client is the real `server-utils`: the signature check and the ledger
+// of persisted signatures are code under test here (#780), and only the network is faked.
+vi.mock('@aiqadam/server-utils', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@aiqadam/server-utils')>()
+    return {
+        ...actual,
+        safeHttp: {
+            retryingAxios: {
+                get: mockGet,
+            },
         },
-    },
-}))
+    }
+})
 
 // Re-imported per test rather than once at the top. The module keeps its already-verified set in
 // a module-level Set — deliberately, since the lockfile is cumulative and every install would
@@ -63,6 +69,7 @@ const UNPINNED_KEY_ID = 'SHA256:0000000000000000000000000000000000000000000='
 const log = {
     info: vi.fn(),
     debug: vi.fn(),
+    warn: vi.fn(),
     error: vi.fn(),
 } as unknown as Logger
 
@@ -564,6 +571,170 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
         await verify(honest)
         await expect(verify(substituted)).rejects.toThrow()
         expect(mockGet).toHaveBeenCalledTimes(2)
+    })
+})
+
+// #780 item 2 and 4: verified signatures survive a restart. A "restart" is a fresh module graph (the
+// process-local memory of what was verified is gone) over the same workspace directory, and "no
+// outbound network" is a registry client that rejects on any call. The ledger it reads is the real
+// one, and the signature in it is npmjs's real signature of `@aiqadam/shared@0.135.1` — so it is the
+// pinned npmjs key, not a test key, that vouches for the package after the restart.
+describe('qadamIntegrity.verifyOfficialQadams after a worker restart', () => {
+    const OTHER = {
+        name: '@aiqadam/qadam-never-signed',
+        version: '1.0.0',
+        integrity: 'sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==',
+    }
+    const TAMPERED = SHARED.integrity.replace('j5nu', 'J5nu')
+
+    beforeEach(async () => {
+        vi.clearAllMocks()
+        mockGet.mockReset()
+        mockDelay.mockReset()
+        mockDelay.mockResolvedValue(undefined)
+        vi.resetModules()
+        ;({ qadamIntegrity } = await import('../../../../src/lib/cache/qadams/qadam-integrity'))
+    })
+
+    async function restart(): Promise<void> {
+        vi.resetModules()
+        ;({ qadamIntegrity } = await import('../../../../src/lib/cache/qadams/qadam-integrity'))
+        mockGet.mockReset()
+        mockGet.mockRejectedValue(new Error('getaddrinfo ENOTFOUND registry.npmjs.org'))
+    }
+
+    async function lockfileInto({ workspace, entries }: { workspace: string, entries: string }): Promise<void> {
+        await writeFile(join(workspace, 'bun.lock'), lockfileText(entries))
+    }
+
+    it('verifies what an earlier process verified with no registry call at all', async () => {
+        const workspace = await writeLockfile(registryEntry(SHARED))
+        mockGet.mockResolvedValue(packumentFor(SHARED.signatures))
+        await verify(workspace)
+        expect(mockGet).toHaveBeenCalledTimes(1)
+
+        await restart()
+
+        await expect(verify(workspace)).resolves.toBeUndefined()
+        expect(mockGet).not.toHaveBeenCalled()
+        expect(log.info).toHaveBeenCalledWith(expect.objectContaining({ count: 1 }), expect.stringContaining('verified from the persisted signatures'))
+    })
+
+    it('persists the signature itself, in a ledger beside bun.lock and nothing else', async () => {
+        const workspace = await writeLockfile(registryEntry(SHARED))
+        mockGet.mockResolvedValue(packumentFor([...SHARED.signatures, { sig: SHARED.signatures[0].sig, keyid: UNPINNED_KEY_ID }]))
+        await verify(workspace)
+
+        const ledger = JSON.parse(await readFile(join(workspace, 'qadam-signatures.json'), 'utf8'))
+
+        expect(await readdir(workspace)).toEqual(['bun.lock', 'qadam-signatures.json'])
+        expect(ledger.formatVersion).toBe(1)
+        expect(ledger.entries).toEqual([expect.objectContaining({ name: SHARED.name, version: SHARED.version, integrity: SHARED.integrity, signatures: SHARED.signatures })])
+    })
+
+    it('still needs the registry, and fails closed offline, for a package it never verified', async () => {
+        const workspace = await writeLockfile(registryEntry(SHARED))
+        mockGet.mockResolvedValue(packumentFor(SHARED.signatures))
+        await verify(workspace)
+        await lockfileInto({ workspace, entries: [registryEntry(SHARED), registryEntry(OTHER)].join('\n') })
+
+        await restart()
+
+        await expect(verify(workspace)).rejects.toThrow(/could not read its registry metadata/)
+        expect(mockGet).toHaveBeenCalledTimes(1)
+        expect(mockGet).toHaveBeenCalledWith(expect.stringContaining('qadam-never-signed'), expect.anything())
+    })
+
+    it('does not let the persisted signature vouch for other bytes of the same version', async () => {
+        const workspace = await writeLockfile(registryEntry(SHARED))
+        mockGet.mockResolvedValue(packumentFor(SHARED.signatures))
+        await verify(workspace)
+        await lockfileInto({ workspace, entries: registryEntry({ ...SHARED, integrity: TAMPERED }) })
+
+        await restart()
+
+        await expect(verify(workspace)).rejects.toThrow(/could not read its registry metadata/)
+        expect(mockGet).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not let an edited ledger vouch for other bytes either', async () => {
+        const workspace = await writeLockfile(registryEntry({ ...SHARED, integrity: TAMPERED }))
+        const forged = {
+            formatVersion: 1,
+            entries: [{ name: SHARED.name, version: SHARED.version, integrity: TAMPERED, signatures: SHARED.signatures, verifiedAt: new Date().toISOString() }],
+        }
+        await writeFile(join(workspace, 'qadam-signatures.json'), JSON.stringify(forged))
+
+        await expect(verify(workspace)).rejects.toThrow(/could not read its registry metadata/)
+        expect(mockGet).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not let an edited ledger override the online check: the registry\'s answer still decides', async () => {
+        const workspace = await writeLockfile(registryEntry({ ...SHARED, integrity: TAMPERED }))
+        await writeFile(join(workspace, 'qadam-signatures.json'), JSON.stringify({
+            formatVersion: 1,
+            entries: [{ name: SHARED.name, version: SHARED.version, integrity: TAMPERED, signatures: SHARED.signatures, verifiedAt: new Date().toISOString() }],
+        }))
+        mockGet.mockResolvedValue(packumentFor(SHARED.signatures))
+
+        await expect(verify(workspace)).rejects.toThrow(/npmjs has not signed the bytes bun fetched/)
+    })
+
+    it.each([
+        ['deleted', async (workspace: string) => rm(join(workspace, 'qadam-signatures.json'))],
+        ['corrupt', async (workspace: string) => writeFile(join(workspace, 'qadam-signatures.json'), '{"formatVersion":1,"entries":[{"na')],
+        ['emptied', async (workspace: string) => writeFile(join(workspace, 'qadam-signatures.json'), JSON.stringify({ formatVersion: 1, entries: [] }))],
+    ])('fails closed offline when the ledger was %s, and recovers when the registry is back', async (_label, damage) => {
+        const workspace = await writeLockfile(registryEntry(SHARED))
+        mockGet.mockResolvedValue(packumentFor(SHARED.signatures))
+        await verify(workspace)
+        await damage(workspace)
+
+        await restart()
+        await expect(verify(workspace)).rejects.toThrow(/could not read its registry metadata/)
+
+        mockGet.mockResolvedValue(packumentFor(SHARED.signatures))
+        await expect(verify(workspace)).resolves.toBeUndefined()
+        await restart()
+        await expect(verify(workspace)).resolves.toBeUndefined()
+        expect(mockGet).not.toHaveBeenCalled()
+    })
+
+    // The case it is most worth having: the registry going away in the middle of the first pass
+    // must not throw away what that pass had already verified.
+    it('keeps what a failed pass had already verified', async () => {
+        const workspace = await writeLockfile([registryEntry(SHARED), registryEntry(OTHER)].join('\n'))
+        mockGet.mockImplementation(async (url: string) => url.includes('qadam-never-signed')
+            ? packumentFor([])
+            : packumentFor(SHARED.signatures))
+        await expect(verify(workspace)).rejects.toThrow(/returned no publisher signature/)
+
+        await restart()
+        await lockfileInto({ workspace, entries: registryEntry(SHARED) })
+
+        await expect(verify(workspace)).resolves.toBeUndefined()
+        expect(mockGet).not.toHaveBeenCalled()
+    })
+
+    it('does not fail the install when the ledger cannot be written, and keeps verifying from memory', async () => {
+        const workspace = await writeLockfile(registryEntry(SHARED))
+        await mkdir(join(workspace, 'qadam-signatures.json'))
+        mockGet.mockResolvedValue(packumentFor(SHARED.signatures))
+
+        await expect(verify(workspace)).resolves.toBeUndefined()
+        await expect(verify(workspace)).resolves.toBeUndefined()
+
+        expect(mockGet).toHaveBeenCalledTimes(1)
+        expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ reason: expect.stringContaining('cannot be written') }), expect.stringContaining('could not persist'))
+    })
+
+    it('does not persist a package that was refused', async () => {
+        const workspace = await writeLockfile(registryEntry({ ...SHARED, integrity: TAMPERED }))
+        mockGet.mockResolvedValue(packumentFor(SHARED.signatures))
+
+        await expect(verify(workspace)).rejects.toThrow()
+
+        expect(await readdir(workspace)).toEqual(['bun.lock'])
     })
 })
 

@@ -1,5 +1,7 @@
+import dns from 'dns'
 import fs from 'fs/promises'
 import { createRequire } from 'module'
+import net from 'net'
 import os from 'os'
 import path from 'path'
 // The store's writer builds the fixtures. Engine code reads through the reader entry only.
@@ -101,6 +103,25 @@ describe('qadamLoader with a qadam version store', () => {
         expect(qadamAction.name).toBe('probe')
         const line = logSpy.mock.calls.map((call) => String(call[0])).find((text) => text.startsWith(`[qadamLoader] cold load {"qadam":"${PROBE}@1.2.3"`))
         expect(JSON.parse(String(line).slice('[qadamLoader] cold load '.length))).toMatchObject({ resolvedVersion: '1.2.3', source: 'store' })
+    })
+
+    // #780 item 4, the engine's half: what the store holds loads with every way out of the process
+    // closed, which is a worker restarted with a warm volume and no network. The worker's half (the
+    // signature check a restart no longer repeats) is in `qadam-integrity.test.ts`.
+    it('loads a stored version with no outbound network', async () => {
+        const unreachable = (): never => {
+            throw new Error('outbound network is unavailable')
+        }
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(unreachable)
+        const connectSpy = vi.spyOn(net.Socket.prototype, 'connect').mockImplementation(unreachable)
+        const lookupSpy = vi.spyOn(dns, 'lookup').mockImplementation(unreachable)
+
+        const { qadamAction } = await qadamLoader.getQadamAndActionOrThrow({ qadamName: PROBE, qadamVersion: '1.2.3', actionName: 'probe', devQadams: [] })
+
+        expect(qadamAction.name).toBe('probe')
+        expect(fetchSpy).not.toHaveBeenCalled()
+        expect(connectSpy).not.toHaveBeenCalled()
+        expect(lookupSpy).not.toHaveBeenCalled()
     })
 
     it('loads a stored snapshot pinned as name@x.y.z-main.<n>, and finds no other version in its alias', async () => {

@@ -1,8 +1,7 @@
-import { createPublicKey, verify } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { safeHttp } from '@aiqadam/server-utils'
+import { npmPackageSignature, qadamSignatureLedger, QadamSignatureLedger, QadamSignatureProof, safeHttp } from '@aiqadam/server-utils'
 import { isNil, OFFICIAL_QADAM_SCOPE_PREFIX, partition, QadamPackage, QadamType, tryCatch, tryCatchSync } from '@aiqadam/shared'
 import { parse as parseJsonc } from 'jsonc-parser'
 import { Logger } from 'pino'
@@ -35,6 +34,13 @@ import { Logger } from 'pino'
 // out of scope for the same reason. And a valid signature says npmjs attested the bytes, not
 // that WE published them — that would be the Sigstore provenance in `dist.attestations`, which
 // is available hardening rather than something this does.
+//
+// A restart does not repeat the registry reads (#780). Each verified signature is persisted in a
+// ledger beside `bun.lock` (`qadamSignatureLedger`, `server-utils`) and checked again OFFLINE
+// against the pinned keys on the next process's first pass: the ledger holds npmjs's signature
+// itself, not a verdict, so an edited file cannot make an unsigned or different package pass, and a
+// package the ledger cannot vouch for is asked of the registry exactly as before — which offline
+// still fails closed.
 //
 // Note what is deliberately NOT used: `npm audit signatures`. It is already in the image and it
 // runs in this workspace, but it verifies the registry's signature over the registry's own
@@ -73,12 +79,29 @@ export const qadamIntegrity = (log: Logger) => ({
             return
         }
 
+        // What an earlier process verified is answered from the ledger beside `bun.lock`, offline:
+        // each persisted signature is checked again against the pinned keys for exactly this name,
+        // version and integrity, so a restart does not need the registry for any of it (#780). A
+        // package the ledger cannot answer for — never verified, edited record, a different
+        // integrity, a key no longer pinned, an unusable file — goes to the registry below.
+        const ledger = qadamSignatureLedger.open({ dir: rootWorkspace, log })
+        const fromLedger = await ledger.check({ packages: unverified })
+        for (const pkg of fromLedger.verified) {
+            verifiedPackages.add(cacheKey(pkg))
+        }
+        const needsRegistry = unverified.filter((pkg) => !verifiedPackages.has(cacheKey(pkg)))
+        if (needsRegistry.length === 0) {
+            log.info({ rootWorkspace, count: fromLedger.verified.length }, '[qadamIntegrity] official qadams verified from the persisted signatures, no registry read')
+            return
+        }
+
         log.info({
             rootWorkspace,
-            count: unverified.length,
+            count: needsRegistry.length,
             // Against the filtered-but-undeduped array, not `resolved`: a second tree position for
             // a package nothing has verified is not an already-verified package.
             alreadyVerified: resolved.length - notYetVerified.length,
+            fromPersistedSignatures: fromLedger.verified.length,
         }, '[qadamIntegrity] verifying registry signatures for official qadams')
 
         // Serially rather than in parallel. This runs inside the installer's file lock, on a set
@@ -88,9 +111,17 @@ export const qadamIntegrity = (log: Logger) => ({
         // Serial and unbounded would be a different thing though, so the whole pass shares one
         // deadline rather than only bounding each request — see VERIFICATION_BUDGET_MS.
         const deadline = Date.now() + VERIFICATION_BUDGET_MS
-        for (const pkg of unverified) {
-            await verifySignature({ pkg, deadline, log })
-            verifiedPackages.add(cacheKey(pkg))
+        const proofs: QadamSignatureProof[] = []
+        try {
+            for (const pkg of needsRegistry) {
+                proofs.push(await verifySignature({ pkg, deadline, log }))
+                verifiedPackages.add(cacheKey(pkg))
+            }
+        }
+        finally {
+            // Also when the pass fails part way: what it did verify is not asked of the registry
+            // again by the retry, which matters most when the failure was the registry going away.
+            await persistProofs({ ledger, proofs, log })
         }
     },
 
@@ -115,27 +146,6 @@ export const qadamIntegrity = (log: Logger) => ({
         return new Set(data.refusals.map((refusal) => refusal.key))
     },
 })
-
-// npmjs's package-signing public keys, pinned rather than fetched.
-//
-// `npm audit signatures` reads these from `/-/npm/v1/keys` on the registry it is verifying, which
-// is circular against the threat #482 actually names: an internal mirror or a transparently
-// rewriting proxy serves its own key alongside its own matching signature and the check passes.
-// Pinning is the whole reason this verification means anything.
-//
-// The cost of pinning is that an npmjs key rotation stops official qadam installs until the image
-// carries the new key. That is accepted rather than softened: falling back to "unknown key id, so
-// allow it" would hand an attacker the trivial bypass. The escape hatch already exists and needs
-// no new knob — `OFFICIAL_QADAMS_INSTALL_ENABLED=false` returns the deployment to the qadams
-// compiled into the image, and is also what gates this check running at all.
-//
-// Refresh procedure: `curl https://registry.npmjs.org/-/npm/v1/keys` and add any new non-expired
-// entry here, keeping the outgoing one until it is gone from that response. Entries npm marks
-// with an `expires` date are deliberately NOT carried: a signature made by a key that has since
-// expired is not evidence this guard should accept.
-const NPM_SIGNING_KEYS: Record<string, string> = {
-    'SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U': 'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEY6Ya7W++7aUPzvMTrezH6Ycx3c+HOKYCcNGybJZSCJq/fd7Qa8uuAKtdIkUQtQiEKERhAmE5lMMJhP8OkDOa2g==',
-}
 
 // Only the official scope (`OFFICIAL_QADAM_SCOPE_PREFIX`, shared with the API's registration
 // check). A community qadam's third-party dependencies resolve through the same install and many
@@ -163,9 +173,9 @@ const REGISTRY_RATE_LIMIT_ATTEMPTS = 4
 const REGISTRY_RATE_LIMIT_BACKOFF_MS = 2_000
 const HTTP_TOO_MANY_REQUESTS = 429
 // One budget for the WHOLE pass, not just per request, because the per-request bound multiplies:
-// the first install after a worker process restart re-verifies everything (`verifiedPackages` is
-// process-local), which with the official catalogue installed is a few hundred sequential reads,
-// each able to spend REGISTRY_TIMEOUT_MS plus its 429 backoffs. All of that happens inside
+// a pass can still have to verify a few hundred packages against the registry (the first one after
+// the ledger was lost, or against a new official catalogue), which is a few hundred sequential
+// reads, each able to spend REGISTRY_TIMEOUT_MS plus its 429 backoffs. All of that happens inside
 // `fileLock.runExclusive`, and `proper-lockfile` refreshes the lock's mtime while it is held — so
 // the 5-minute stale window never expires under a live holder and the hold is genuinely unbounded
 // without this.
@@ -186,15 +196,18 @@ const HTTP_TOO_MANY_REQUESTS = 429
 // timeout is 10 minutes (`bun-runner.ts`), so a slow install blows past every waiter with or
 // without this pass. 150s is chosen only so that verification does not ADD to that. The
 // happy path is far under: a few hundred cached-DNS GETs to registry.npmjs.org run in tens of
-// seconds, and only the first install per process pays even that.
+// seconds, and only a pass that finds the ledger empty pays even that.
 const VERIFICATION_BUDGET_MS = 150_000
 
+// The in-process memory of what has been verified, in front of the ledger: a ledger that cannot be
+// written (a read-only workspace) must not mean a registry read on every install.
+//
 // Keyed on the triple, not on `name@version`: if the same version ever resolves to a different
 // integrity, that is precisely the event this guard exists to catch, and a cache keyed on the
 // version alone would answer it from memory.
 const verifiedPackages = new Set<string>()
 
-const cacheKey = ({ name, version, integrity }: ResolvedPackage): string => `${name}@${version}:${integrity}`
+const cacheKey = ({ name, version, integrity }: LockfileSpec): string => `${name}@${version}:${integrity}`
 
 function uniqueByCacheKey(packages: ResolvedPackage[]): ResolvedPackage[] {
     return [...new Map(packages.map((pkg) => [cacheKey(pkg), pkg])).values()]
@@ -416,34 +429,40 @@ const parseLockfileEntry = (entry: unknown[]): LockfileSpec | undefined => {
     return { name, version, integrity }
 }
 
-const verifySignature = async ({ pkg, deadline, log }: { pkg: ResolvedPackage, deadline: number, log: Logger }): Promise<void> => {
+const verifySignature = async ({ pkg, deadline, log }: { pkg: ResolvedPackage, deadline: number, log: Logger }): Promise<QadamSignatureProof> => {
     const { name, version, integrity } = pkg
     const metadata = await readVersionMetadata({ name, version, deadline })
 
-    const signatures = readSignatures(metadata)
+    const signatures = npmPackageSignature.readSignatures({ versionDocument: metadata })
     if (signatures.length === 0) {
         throw new Error(`[qadamIntegrity] refusing ${name}@${version}: the registry returned no publisher signature for it`)
     }
 
-    // Filter to the keys this image pins BEFORE verifying, so an entry the registry added of its
-    // own never even gets a verification attempt. Doing it the other way round — verify each
-    // entry, then ask whether its key was pinned — is the same answer with a much easier mistake
-    // available in it.
-    const pinned = signatures.filter(({ keyid }) => !isNil(NPM_SIGNING_KEYS[keyid]))
+    const pinned = npmPackageSignature.pinned({ signatures })
     if (pinned.length === 0) {
         const offered = signatures.map(({ keyid }) => keyid).join(', ')
-        throw new Error(`[qadamIntegrity] refusing ${name}@${version}: the registry signed it only with key id(s) this image does not pin (${offered}). If npmjs has rotated its signing key, the image needs updating; see NPM_SIGNING_KEYS.`)
+        throw new Error(`[qadamIntegrity] refusing ${name}@${version}: the registry signed it only with key id(s) this image does not pin (${offered}). If npmjs has rotated its signing key, the image needs updating; see NPM_SIGNING_KEYS in npm-package-signature.ts.`)
     }
 
-    // The payload binds all three together, so neither a substituted tarball (different
-    // integrity) nor a replayed signature from another release (different version) verifies.
-    const payload = Buffer.from(`${name}@${version}:${integrity}`)
-    const verified = pinned.some((signature) => signatureVerifies({ signature, payload }))
-    if (!verified) {
+    const verifying = npmPackageSignature.verifying({ name, version, integrity, signatures: pinned })
+    if (verifying.length === 0) {
         throw new Error(`[qadamIntegrity] refusing ${name}@${version}: npmjs has not signed the bytes bun fetched — the integrity bun recorded (${integrity}) does not match any signature the registry holds for this version.`)
     }
 
     log.debug({ name, version }, '[qadamIntegrity] publisher signature verified')
+    return { name, version, integrity, signatures: verifying }
+}
+
+// A ledger that cannot be written never fails the install: the package IS verified, and only the
+// next restart pays for it.
+const persistProofs = async ({ ledger, proofs, log }: { ledger: QadamSignatureLedger, proofs: QadamSignatureProof[], log: Logger }): Promise<void> => {
+    if (proofs.length === 0) {
+        return
+    }
+    const recorded = await ledger.record({ proofs })
+    if (!recorded.ok) {
+        log.warn({ reason: recorded.reason }, '[qadamIntegrity] could not persist the verified signatures; the next restart verifies them against the registry again')
+    }
 }
 
 // safeHttp rather than raw axios because `.agents/rules/safe-http.md` applies to every outbound
@@ -486,47 +505,6 @@ const readVersionMetadata = async ({ name, version, deadline }: { name: string, 
 const isRateLimited = (error: unknown): boolean =>
     readProperty({ source: readProperty({ source: error, key: 'response' }), key: 'status' }) === HTTP_TOO_MANY_REQUESTS
 
-// Any signature under a PINNED key is enough; every signature under an unpinned key is ignored.
-//
-// The first spelling of this read `signatures[0]` and only that, reasoning that npm publishes
-// one and that accepting "any entry verifies" would let a rewriting registry append its own next
-// to the real one. The first half is simply not true — npmjs returns TWO entries for
-// `@aiqadam/shared@0.135.1`, both valid, both under the same key id (see the fixture in
-// qadam-integrity.test.ts, which is that package's real registry response). The second half is
-// answered by the pinning, not by the index: an appended signature is one this image has no key
-// for, so it is dropped before anything is verified. Taking the first entry only would have
-// meant rejecting a package the moment npmjs reordered its own array or listed a rotated key
-// ahead of the one we pin — a self-inflicted outage in exchange for nothing.
-const readSignatures = (body: unknown): Signature[] => {
-    const dist = readProperty({ source: body, key: 'dist' })
-    const signatures = readProperty({ source: dist, key: 'signatures' })
-    if (!Array.isArray(signatures)) {
-        return []
-    }
-    return signatures.flatMap((entry) => {
-        const keyid = readProperty({ source: entry, key: 'keyid' })
-        const sig = readProperty({ source: entry, key: 'sig' })
-        if (typeof keyid !== 'string' || typeof sig !== 'string') {
-            return []
-        }
-        return [{ keyid, sig }]
-    })
-}
-
-// `verify` throws on a malformed key or signature rather than returning false, and a malformed
-// signature is a rejection rather than a crash.
-const signatureVerifies = ({ signature, payload }: { signature: Signature, payload: Buffer }): boolean => {
-    const publicKey = NPM_SIGNING_KEYS[signature.keyid]
-    if (isNil(publicKey)) {
-        return false
-    }
-    const { data: valid, error } = tryCatchSync(() => {
-        const key = createPublicKey({ key: Buffer.from(publicKey, 'base64'), format: 'der', type: 'spki' })
-        return verify('sha256', payload, key, Buffer.from(signature.sig, 'base64'))
-    })
-    return isNil(error) && valid === true
-}
-
 // Everything this file reads out of the lockfile or the registry is external data of unknown
 // shape, so it is walked key by key rather than cast into a type it is only assumed to have.
 const readProperty = ({ source, key }: { source: unknown, key: string }): unknown =>
@@ -566,9 +544,4 @@ type Refusal = {
 type LockfileReading = {
     resolved: ResolvedPackage[]
     refusals: Refusal[]
-}
-
-type Signature = {
-    keyid: string
-    sig: string
 }

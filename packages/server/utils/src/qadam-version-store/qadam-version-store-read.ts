@@ -236,8 +236,9 @@ async function readIntegrityRecord({ dir }: { dir: string }): Promise<IntegrityR
     if (!stats.data.isFile()) {
         return { ok: false, problem: damaged('integrity.json is not a regular file') }
     }
-    // This release never writes a record this large, so a larger one comes from a later release
-    // (persisted signatures, #780): unsupported here, never damaged.
+    // This release never writes a record this large, so a larger one comes from a later release:
+    // unsupported here, never damaged. (Persisted signatures, #780, live in the store's signature
+    // ledger beside the versions, not in this record.)
     if (stats.data.size > MAX_INTEGRITY_FILE_BYTES) {
         return { ok: false, problem: unsupported(`integrity.json is larger than this release writes (${MAX_INTEGRITY_FILE_BYTES} bytes)`) }
     }
