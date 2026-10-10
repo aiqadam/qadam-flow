@@ -139,7 +139,7 @@ jobs:
       # this, every tag push pays a cold `bun install` (~230s, per that job's
       # own measurement) just to print a list.
       - name: Restore built node_modules
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: |
             node_modules

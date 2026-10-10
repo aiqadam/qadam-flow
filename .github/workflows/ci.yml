@@ -497,7 +497,7 @@ jobs:
       # except here".
       - name: Restore built node_modules
         if: ${{ !contains(github.event.pull_request.labels.*.name, 'refresh-cache') }}
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: |
             node_modules
@@ -640,7 +640,7 @@ jobs:
       # it as it does in `pack-smoke`.
       - name: Restore built node_modules
         if: ${{ !contains(github.event.pull_request.labels.*.name, 'refresh-cache') }}
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: |
             node_modules
@@ -761,7 +761,7 @@ jobs:
         # Skipped when a PR carries `refresh-cache`, forcing that one PR through a real install.
         # This job only restores — it never saves — so skipping it costs time and nothing else.
         if: ${{ !contains(github.event.pull_request.labels.*.name, 'refresh-cache') }}
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: |
             node_modules
@@ -1327,7 +1327,7 @@ jobs:
       # asserts exactly that across both files.
       - name: Restore built node_modules
         if: ${{ !contains(github.event.pull_request.labels.*.name, 'refresh-cache') }}
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: |
             node_modules
@@ -1683,7 +1683,7 @@ jobs:
       # asserts the key and paths match across all three.
       - name: Restore built node_modules
         if: ${{ !contains(github.event.pull_request.labels.*.name, 'refresh-cache') }}
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: |
             node_modules
