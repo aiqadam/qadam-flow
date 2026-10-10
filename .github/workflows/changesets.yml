@@ -80,7 +80,7 @@ jobs:
       # the frozen install is what proves bun.lock still resolves.
       - name: Restore built node_modules
         if: steps.pending.outputs.count != '0'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: |
             node_modules
