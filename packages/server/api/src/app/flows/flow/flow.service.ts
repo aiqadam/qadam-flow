@@ -539,8 +539,12 @@ export const flowService = (log: FastifyBaseLogger) => ({
         }
 
         return transaction(async (entityManager) => {
+            // Read again under a row lock: locking saves the whole version, so a revert of a pin move
+            // that committed since the move above (the disable before this is an external call) must
+            // not be written over with the copy in memory. Once this holds the lock, a revert waits.
+            const currentFlowVersion = await flowVersionRepo(entityManager).findOne({ where: { id: flowVersionToPublish.id, flowId: id }, lock: { mode: 'pessimistic_write' } })
             const lockedFlowVersion = await lockFlowVersionIfNotLocked({
-                flowVersion: flowVersionToPublish,
+                flowVersion: currentFlowVersion ?? flowVersionToPublish,
                 userId,
                 projectId,
                 platformId,

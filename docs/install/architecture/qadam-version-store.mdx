@@ -77,7 +77,7 @@ curl -H "Authorization: Bearer $TOKEN" "https://flow.example.com/api/v1/qadam-pi
 curl -X POST -H "Authorization: Bearer $TOKEN" "https://flow.example.com/api/v1/qadam-pin-moves/$ID/revert"
 ```
 
-A revert puts the step back on the version it had, and only if the step is still on the version the move wrote. A step that someone edited since answers with a conflict and stays as it is. A reverted step is not moved again by a later publish or enable.
+A revert puts the step back on the version it had, and only if the step is still on the version the move wrote. A step that someone edited since is refused with a conflict (HTTP 409) and stays as it is. A revert also puts back the flow's drafts and its published version where they still carry the moved version. A reverted step is not moved again by a later publish or enable.
 
 <Note>
 A move checks that the target loads and, where it can, that its props are compatible. It cannot know that an action fails when it runs. That is what the revert is for.

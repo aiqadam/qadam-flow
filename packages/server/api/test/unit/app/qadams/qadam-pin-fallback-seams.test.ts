@@ -17,9 +17,26 @@ describe('qadamPinFallbackSeams.pinMetadata: what the instance knows about the p
         expect(await seamsOver({ sources: { releases: async () => null } }).pinMetadata({ name: NAME, version: '0.5.1' })).toEqual({ status: 'unknown' })
     })
 
-    it('is never-published when the catalogue was read and does not list the version', async () => {
-        expect(await seamsOver({ sources: { releases: async () => ['0.5.2', '0.5.3'] } }).pinMetadata({ name: NAME, version: '0.5.1' })).toEqual({ status: 'never-published' })
-        expect(await seamsOver({ sources: { releases: async () => [] } }).pinMetadata({ name: NAME, version: '0.5.1' })).toEqual({ status: 'never-published' })
+    it('is unknown when the catalogue was read but cannot say whether entries were skipped', async () => {
+        expect(await seamsOver({ sources: { releases: async () => ['0.5.2', '0.5.3'] } }).pinMetadata({ name: NAME, version: '0.5.1' })).toEqual({ status: 'unknown' })
+    })
+
+    it('is never-published when the catalogue was read, skipped nothing and does not list the version', async () => {
+        expect(await seamsOver({ sources: { skippedEntries: async () => 0, releases: async () => ['0.5.2', '0.5.3'] } }).pinMetadata({ name: NAME, version: '0.5.1' })).toEqual({ status: 'never-published' })
+        expect(await seamsOver({ sources: { skippedEntries: async () => 0, releases: async () => [] } }).pinMetadata({ name: NAME, version: '0.5.1' })).toEqual({ status: 'never-published' })
+    })
+
+    it('is unknown when the version is not listed but entries were skipped, including when all were', async () => {
+        for (const skipped of [1, 40]) {
+            const seams = seamsOver({ sources: { releases: async () => ['0.5.2'], skippedEntries: async () => skipped } })
+
+            expect(await seams.pinMetadata({ name: NAME, version: '0.5.1' })).toEqual({ status: 'unknown' })
+        }
+        expect(await seamsOver({ sources: { releases: async () => [], skippedEntries: async () => 3 } }).pinMetadata({ name: NAME, version: '0.5.1' })).toEqual({ status: 'unknown' })
+    })
+
+    it('is never-published when nothing was skipped and the version is not listed', async () => {
+        expect(await seamsOver({ sources: { releases: async () => ['0.5.2'], skippedEntries: async () => 0 } }).pinMetadata({ name: NAME, version: '0.5.1' })).toEqual({ status: 'never-published' })
     })
 
     it('is the release\'s metadata when the catalogue lists it', async () => {

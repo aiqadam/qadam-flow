@@ -134,6 +134,16 @@ describe('qadamPinMoveService.moveUnavailablePins', () => {
         expect(await db.find('qadam_pin_move', { platformId: ctx.platform.id })).toEqual([])
     })
 
+    it('does not read the pinned version\'s metadata when the image ships no build', async () => {
+        const ctx = await createTestContext(app)
+        const { flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
+        const seams = fakeSeams({ imageVersion: null })
+
+        await moveWith({ ctx, flowVersion, seams })
+
+        expect(seams.pinMetadata).not.toHaveBeenCalled()
+    })
+
     it('does not move a pin when the instance cannot tell whether it was ever published', async () => {
         const ctx = await createTestContext(app)
         const { flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
@@ -282,6 +292,30 @@ describe('qadamPinMoveService.revert', () => {
         expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: flowVersion.id }) })).toEqual(['0.4.2'])
         expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: draft.id }) })).toEqual(['0.4.2'])
         expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: editedDraft.id }) })).toEqual(['0.4.9'])
+    })
+
+    it('also reverts the published version a republish copied from the moved one, and leaves a published version that already differs', async () => {
+        const ctx = await createTestContext(app)
+        const { flow, flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
+        const { moved, flowVersion: movedVersion } = await moveWith({ ctx, flowVersion, seams: fakeSeams({ imageVersion: '0.4.5' }) })
+        const republished = createMockFlowVersion({ flowId: flow.id, updatedBy: ctx.user.id, state: FlowVersionState.LOCKED, valid: true, trigger: movedVersion.trigger })
+        await db.save('flow_version', republished)
+        await db.update('flow', flow.id, { publishedVersionId: republished.id })
+
+        await qadamPinMoveService({ log: app.log }).revert({ id: moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })
+
+        expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: republished.id }) })).toEqual(['0.4.2'])
+        expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: flowVersion.id }) })).toEqual(['0.4.2'])
+
+        const other = await seedFlow({ ctx, pins: ['0.4.2'] })
+        const second = await moveWith({ ctx, flowVersion: other.flowVersion, seams: fakeSeams({ imageVersion: '0.4.5' }) })
+        const differs = createMockFlowVersion({ flowId: other.flow.id, updatedBy: ctx.user.id, state: FlowVersionState.LOCKED, valid: true, trigger: { ...second.flowVersion.trigger, settings: { ...second.flowVersion.trigger.settings, qadamVersion: '0.4.9' } } })
+        await db.save('flow_version', differs)
+        await db.update('flow', other.flow.id, { publishedVersionId: differs.id })
+
+        await qadamPinMoveService({ log: app.log }).revert({ id: second.moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })
+
+        expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: differs.id }) })).toEqual(['0.4.9'])
     })
 
     it('refuses a second revert', async () => {

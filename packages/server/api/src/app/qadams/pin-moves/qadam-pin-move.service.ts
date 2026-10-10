@@ -150,7 +150,10 @@ async function planMoves({ steps, held, platformId, seams }: { steps: QadamPinne
             return { ...base, move: false, reason: 'reverted-by-user', detail: 'a person reverted a move of this step, so it is not moved again until its version is changed' }
         }
         const image = await memoize({ cache: images, key: qadamName, load: () => seams.imageBuild({ name: qadamName, platformId }) })
-        const metadata = await memoize({ cache: pinMetadata, key: `${qadamName}@${qadamVersion}`, load: () => seams.pinMetadata({ name: qadamName, version: qadamVersion }) })
+        // Without an image build the decision cannot move the step, so the catalogue is not read for it.
+        const metadata: PinMetadata = image === null
+            ? { status: 'unknown' }
+            : await memoize({ cache: pinMetadata, key: `${qadamName}@${qadamVersion}`, load: () => seams.pinMetadata({ name: qadamName, version: qadamVersion }) })
         const verdict: MoveVerdict = qadamPinFallbackDecision.decide({
             pinnedVersion: qadamVersion,
             image: image?.build ?? null,
@@ -227,7 +230,7 @@ async function revertInTransaction({ manager, id, platformId, userId }: { manage
         throw refused({ message: 'This move was already reverted.' })
     }
     const rewrite = { stepName: record.stepName, qadamName: record.qadamName, fromVersion: record.toVersion, toVersion: record.fromVersion }
-    // The version the move wrote, and the flow's drafts: an edit after a publish copies the published
+    // The version the move wrote, the flow's drafts and its published version: an edit after a publish copies the published
     // version into a new draft that carries the moved pin, and publishing that draft would put it
     // back. Each is rewritten only where the step is still on the version the move wrote.
     const drafts = await flowVersionRepo(manager).find({ where: { flowId: record.flowId, state: FlowVersionState.DRAFT }, lock: { mode: 'pessimistic_write' } })
@@ -235,7 +238,12 @@ async function revertInTransaction({ manager, id, platformId, userId }: { manage
     if (isNil(moved)) {
         throw refused({ message: 'The flow version this move changed no longer exists.' })
     }
-    const candidates = [moved, ...drafts.filter((draft) => draft.id !== moved.id)]
+    // And the flow's published version: a republish copies the moved version, still on the moved pin,
+    // and no new move follows because that pin is available.
+    const flow = await flowRepo(manager).findOneBy({ id: record.flowId })
+    const published = isNil(flow?.publishedVersionId) ? null : await flowVersionRepo(manager).findOne({ where: { id: flow.publishedVersionId, flowId: record.flowId }, lock: { mode: 'pessimistic_write' } })
+    const others = [...drafts, ...(isNil(published) ? [] : [published])].filter((candidate, index, all) => candidate.id !== moved.id && all.findIndex((other) => other.id === candidate.id) === index)
+    const candidates = [moved, ...others]
     const rewrites = candidates.flatMap((candidate) => {
         const rewritten = qadamPinRewrite.apply({ flowVersion: candidate, rewrite })
         return isNil(rewritten) ? [] : [{ id: candidate.id, trigger: rewritten.trigger }]

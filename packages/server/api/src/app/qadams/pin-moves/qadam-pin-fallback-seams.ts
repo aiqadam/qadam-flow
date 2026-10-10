@@ -43,7 +43,10 @@ async function readPinMetadata({ sources, name, version }: { sources: SnapshotEx
         return { status: 'unknown' }
     }
     if (!releases.includes(version)) {
-        return { status: 'never-published' }
+        // An entry the reader could not parse is not listed either, so with any skipped the version
+        // may be one of them: unknown, not never-published.
+        const skipped = await sources.skippedEntries?.()
+        return skipped === 0 ? { status: 'never-published' } : { status: 'unknown' }
     }
     const metadata = await sources.releaseMetadata({ name, version })
     return isNil(metadata) ? { status: 'unknown' } : { status: 'found', metadata }
