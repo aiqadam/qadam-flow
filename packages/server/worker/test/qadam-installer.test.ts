@@ -538,6 +538,23 @@ describe('qadamInstaller', () => {
             expect(await pathExists(qadamDirPath(qadam))).toBe(false)
         })
 
+        it('installs into the @ directory once a failed install rolled the legacy directory back', async () => {
+            const qadam = makeQadam('@acme/qadam-legacy-rolled-back', '1.3.0')
+            await writeLegacyReadyMember({ qadam })
+            await rm(join(legacyDirPath(qadam), 'node_modules'), { recursive: true })
+            const installer = qadamInstaller(fakeLog, fakeApiClient)
+            mockInstall.mockRejectedValueOnce(new Error('install failure'))
+
+            await expect(installer.install({ pieces: [qadam], includeFilters: true })).rejects.toThrow('install failure')
+            expect(await pathExists(legacyDirPath(qadam))).toBe(false)
+
+            mockInstall.mockImplementation(simulateBunInstall)
+            await installer.install({ pieces: [qadam], includeFilters: true })
+
+            expect(await pathExists(readyFilePath(qadam))).toBe(true)
+            expect(await pathExists(legacyDirPath(qadam))).toBe(false)
+        })
+
         it('installs a snapshot version next to a legacy directory of another version', async () => {
             const released = makeQadam('@acme/qadam-both', '1.3.0')
             const snapshot = makeQadam('@acme/qadam-both', '1.3.0-main.412')

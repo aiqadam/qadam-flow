@@ -6,16 +6,19 @@
 const NUMBER = '(?:0|[1-9][0-9]{0,8})'
 const SNAPSHOT_CHANNEL = 'main'
 // Numbers carry no leading zero (semver's canonical form, which is also what the version store
-// accepts) and at most nine digits, so the longest version is far below the store's 64-character cap.
-const VERSION_SOURCE = `(${NUMBER})\\.(${NUMBER})\\.(${NUMBER})(?:-${SNAPSHOT_CHANNEL}\\.(${NUMBER}))?`
-const RELEASE_SOURCE = `${NUMBER}\\.${NUMBER}\\.${NUMBER}`
+// accepted before this parser) and at most nine digits. That limit is now the only bound on a
+// version's length: the longest one is `999999999.999999999.999999999-main.999999999`, 44 characters.
+const CORE_SOURCE = `${NUMBER}\\.${NUMBER}\\.${NUMBER}`
+const CAPTURED_CORE_SOURCE = `(${NUMBER})\\.(${NUMBER})\\.(${NUMBER})`
+const VERSION_SOURCE = `${CAPTURED_CORE_SOURCE}(?:-${SNAPSHOT_CHANNEL}\\.(${NUMBER}))?`
 
 export const QADAM_VERSION_PATTERN = `^${VERSION_SOURCE}$`
-export const QADAM_RELEASE_PATTERN = `^${RELEASE_SOURCE}$`
-export const QADAM_PIN_PATTERN = `^[~^]?${VERSION_SOURCE}$`
+export const QADAM_RELEASE_PATTERN = `^${CORE_SOURCE}$`
+// The one capturing pattern of a pin: group 1 is the optional `^` or `~`, groups 2-5 the version.
+export const QADAM_PIN_PATTERN = `^([~^])?${VERSION_SOURCE}$`
 
 const QADAM_VERSION_REGEX = new RegExp(QADAM_VERSION_PATTERN)
-const QADAM_PIN_REGEX = new RegExp(`^([~^])?${VERSION_SOURCE}$`)
+const QADAM_PIN_REGEX = new RegExp(QADAM_PIN_PATTERN)
 // A legacy alias `name-version`: the version is the longest tail that is one, so the `-main.<n>` of a
 // snapshot stays with the version and not with the name.
 const LEGACY_ALIAS_REGEX = new RegExp(`^(.+?)-(${VERSION_SOURCE})$`)
