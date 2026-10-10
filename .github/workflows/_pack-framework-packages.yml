@@ -194,7 +194,7 @@ jobs:
       # `persist-credentials: false`: after the fetch this job needs git only locally, and it is
       # the half that runs `bun install` and `npx turbo` — i.e. the most third-party code in the
       # pipeline. No reason for a git token to sit in its config while that runs.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true

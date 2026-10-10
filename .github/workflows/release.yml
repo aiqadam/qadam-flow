@@ -58,7 +58,7 @@ jobs:
       # script a truncated range; it detects that and fails UNKNOWN rather than
       # reporting a clean release, so removing this line breaks the release
       # loudly instead of silently — which is the intent.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -92,7 +92,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v6
         with:
@@ -122,7 +122,7 @@ jobs:
     timeout-minutes: 10
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v6
         id: node
@@ -272,7 +272,7 @@ jobs:
       # install runs here and nothing is built, so there is no node_modules for an `npx` to
       # resolve a shimmed `npm` out of. `persist-credentials: false` because a job holding an
       # npm publish token has no business also holding a git one.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -348,7 +348,7 @@ jobs:
             cacheScope: monolith-linux-arm64
             artifactSuffix: linux-arm64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: docker/setup-buildx-action@v3
         with:

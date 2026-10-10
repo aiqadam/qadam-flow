@@ -44,7 +44,7 @@ jobs:
       release_relevant: ${{ steps.release.outputs.release_relevant }}
       qadam_divergence_relevant: ${{ steps.divergence.outputs.qadam_divergence_relevant }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -374,7 +374,7 @@ jobs:
     outputs:
       verdict: ${{ steps.resolve.outputs.verdict }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -436,7 +436,7 @@ jobs:
       # The e2e Dockerfile uses `RUN --mount=type=cache`, which needs BuildKit.
       DOCKER_BUILDKIT: 1
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           # This job runs PR code in a --privileged container; keep the GITHUB_TOKEN out of
           # .git/config where that container could read it.
@@ -477,7 +477,7 @@ jobs:
     steps:
       # Shallow, and no git credential: `--skip-registry-check` means nothing here diffs against
       # origin/main, so the full history the real pack job needs is not needed.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -622,7 +622,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -690,7 +690,7 @@ jobs:
     # its behaviour may change in a minor/patch, and pinning the exact version makes that moot.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           # The scanner runs in a third-party container; keep the token out of .git/config where
           # it could read it, as `sandbox-e2e` and `pack-smoke` do.
@@ -733,7 +733,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v6
         id: node
@@ -897,7 +897,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -950,7 +950,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -1026,7 +1026,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -1089,7 +1089,7 @@ jobs:
             cacheScope: monolith-linux-arm64
             artifactSuffix: linux-arm64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: docker/setup-buildx-action@v3
         with:
@@ -1309,7 +1309,7 @@ jobs:
       # login below removes any dependency on it staying that way.
       packages: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v6
         id: node
@@ -1662,7 +1662,7 @@ jobs:
           - mode: SANDBOX_CODE_AND_PROCESS
             sandboxed: 'yes'
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           # This job sources PR-controlled `run.sh` and boots a worker with CAP_SYS_ADMIN, so keep
           # the token out of .git/config where that code could read it — same reason as
