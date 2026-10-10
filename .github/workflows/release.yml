@@ -154,10 +154,10 @@ jobs:
       - name: List migrations tagged for this release
         run: npm run check-release-migrations -- "${GITHUB_REF_NAME#v}"
 
-  # Step 1a of the version-model decision in #433 (#475): publish
+  # Steps 1a and 1b of the version-model decision in #433: publish
   # `@aiqadam/qadams-framework` and `@aiqadam/qadams-common` — the two packages every
-  # qadam depends on through the bun workspace protocol. #476 (step 1b, publishing the 238
-  # qadams themselves) is blocked on this landing first and is NOT wired here.
+  # qadam depends on through the bun workspace protocol — and, since #476, the 238
+  # official qadams themselves, which ride the same pack manifest and artifact.
   #
   # Since #799 (ADR-0001) `@aiqadam/shared` is private and no longer packed or published:
   # `qadams-framework`'s tarball carries all of it (code and `.d.ts`), see
@@ -193,14 +193,16 @@ jobs:
   # it would publish `X.Y.Z` to `next`; cut the real `v2.1.0` later with the framework still
   # at `X.Y.Z` (normal, since the two version independently of the tag) and
   # `packagePrePublishChecks` reports "already published" and skips — `latest`
-  # never advances to `X.Y.Z`, silently, in a green job, and once #476 lands every qadam
-  # install resolves through `latest`. Nothing consumes these two yet, so an RC of Qadam
-  # Flow being unable to publish an RC of them costs nothing; the next stable tag publishes
-  # whatever version is current at that point, same as always. The alternative — on "already
+  # never advances to `X.Y.Z`, silently, in a green job. The 238 official qadams (#476) do
+  # declare these two, but a served instance resolves an official qadam's version through
+  # the qadam version store by name@version (#805, #829), not through npm `latest`, so an
+  # RC of Qadam Flow being unable to publish an RC of them costs nothing; the next stable
+  # tag publishes whatever version is current at that point, same as always.
+  # The alternative — on "already
   # published", additionally call `npm dist-tag add <pkg>@<version> latest` — handles the gap
   # without ever skipping a publish, but is real additional complexity (a second
   # network-mutating npm call, run unconditionally alongside a no-op publish) for a gap that
-  # costs nothing today; revisit if #476 or a real consumer make "an RC can carry a real
+  # costs nothing today; revisit if a real consumer makes "an RC can carry a real
   # framework-package release" a requirement rather than a hypothetical. Note that this is a
   # statement about prerelease TAGS only: publishing prereleases from `main` is #494, and it
   # is a third trigger with its own credentials, not a loosening of this line.
