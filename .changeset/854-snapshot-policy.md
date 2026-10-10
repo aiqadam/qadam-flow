@@ -1,0 +1,5 @@
+---
+"@aiqadam/platform": minor
+---
+
+At start-up, `AP_QADAM_SNAPSHOT_POLICY=follow` moves each draft's available qadam pin to the newest build the image ships when that build is newer and inside the pin's caret range, with the same props and load checks, audit record and revert as the unavailable-version move (#808), under the new move cause `SNAPSHOT_FOLLOW` (ADR-0004, #854). A pin already at the image's build is a no-op, so the pass runs once per boot. What it moves depends on the instance (ADR-0004): a `-main.<n>` instance, where `follow` is the default, moves release pins and snapshot pins, while a release instance moves snapshot pins only and never moves a release pin. A release pin's props are checked against the catalogue, whose address answers 404 until #778, so on a real instance a release pin stays for now; a snapshot pin is checked against the version store. `pin` (the default on a release instance) never rewrites an available pin. Surfacing this in the builder and MCP (the "pre-release build" label, "update available" and the hold) and the store GC / revert-target retention are follow-ups (#855, #478).

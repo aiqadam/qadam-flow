@@ -47,7 +47,7 @@ export const qadamPinMoveService = ({ log, seams = qadamPinFallbackSeams({ log }
     async moveUnavailablePins({ flowVersion, projectId, platformId, cause, actorUserId }: MoveUnavailablePinsParams): Promise<MoveUnavailablePinsResult> {
         // Only a draft is moved: it becomes the published version through the normal publish, so workers
         // and trigger sources see a new version id. A locked version is never rewritten.
-        const steps = flowVersion.state === FlowVersionState.DRAFT ? qadamPinUtil.getQadamSteps({ trigger: flowVersion.trigger }).filter(isExactPin) : []
+        const steps = draftExactPins({ flowVersion })
         if (steps.length === 0) {
             return { flowVersion, moved: [], stayed: [] }
         }
@@ -71,6 +71,52 @@ export const qadamPinMoveService = ({ log, seams = qadamPinFallbackSeams({ log }
             log.info({ flowId: record.flowId, flowVersionId: record.flowVersionId, stepName: record.stepName, qadamName: record.qadamName, from: record.fromVersion, to: record.toVersion, propsCheck: record.propsCheck, cause }, '[qadamPinMoveService] moved a step off an unavailable qadam version')
         })
         return { flowVersion: committed.flowVersion, moved: committed.moved, stayed: [...plan.stayed, ...committed.lost] }
+    },
+
+    // ADR-0004 "Following `main`", the start-up pass's one entry point. Unlike `moveUnavailablePins`
+    // it does not prefilter to unavailable pins: it plans every exact pin, and the pure `decide`
+    // moves only one whose version is available but older than the image's build inside its caret
+    // range (prereleases counted). A pin already at the image's build answers `pin-is-image-version`
+    // and is a no-op, so re-running this every boot costs reads and no writes.
+    //
+    // ADR-0004 scopes `follow` by the instance kind: on a `-main` instance it moves release pins as
+    // well as snapshot pins; on a release instance it moves **snapshot pins only**, so a release pin
+    // is reported and never reaches `decide`. `instanceIsSnapshot` is how the caller says which one
+    // this is (resolved once from the platform version); this service does not re-read it. Everything
+    // else — the draft-only rule, the props and load checks, the audit record, the revert and its hold
+    // — is `moveUnavailablePins`'s.
+    async followAvailablePins({ flowVersion, projectId, platformId, instanceIsSnapshot }: FollowAvailablePinsParams): Promise<MoveUnavailablePinsResult> {
+        const steps = draftExactPins({ flowVersion })
+        if (steps.length === 0) {
+            return { flowVersion, moved: [], stayed: [] }
+        }
+        // A release instance leaves a release pin where it is; the reason is what the builder's "update
+        // this step" marking reads. A `-main` instance keeps both kinds.
+        const releaseStays = instanceIsSnapshot ? [] : steps.filter((step) => !isSnapshotPin({ step })).map((step): PinStay => ({
+            stepName: step.name,
+            qadamName: step.settings.qadamName,
+            version: step.settings.qadamVersion,
+            reason: 'release-pin-on-release-instance',
+            detail: 'this is a release instance, so `follow` moves snapshot pins only; a release pin is moved only on a `-main` instance (ADR-0004)',
+        }))
+        const followable = instanceIsSnapshot ? steps : steps.filter((step) => isSnapshotPin({ step }))
+        if (followable.length === 0) {
+            return { flowVersion, moved: [], stayed: releaseStays }
+        }
+        await assertFlowBelongsTo({ flowId: flowVersion.flowId, projectId, platformId, log })
+        const held = await findHeldRewrites({ flowId: flowVersion.flowId, platformId })
+        const plan = await planMoves({ steps: followable, held, platformId, seams })
+        if (plan.moves.length === 0) {
+            return { flowVersion, moved: [], stayed: [...plan.stayed, ...releaseStays] }
+        }
+
+        const committed = await qadamPinMoveRepo().manager.transaction(async (manager) => {
+            return commitMoves({ manager, flowVersion, platformId, projectId, cause: 'SNAPSHOT_FOLLOW', actorUserId: undefined, moves: plan.moves })
+        })
+        committed.moved.forEach((record) => {
+            log.info({ flowId: record.flowId, flowVersionId: record.flowVersionId, stepName: record.stepName, qadamName: record.qadamName, from: record.fromVersion, to: record.toVersion, propsCheck: record.propsCheck, cause: 'SNAPSHOT_FOLLOW' }, '[qadamPinMoveService] followed an available qadam pin to the image\'s build')
+        })
+        return { flowVersion: committed.flowVersion, moved: committed.moved, stayed: [...plan.stayed, ...releaseStays, ...committed.lost] }
     },
 
     async list({ platformId, query }: { platformId: PlatformId, query: ListQadamPinMovesRequestQuery }): Promise<SeekPage<QadamPinMove>> {
@@ -278,6 +324,17 @@ function isExactPin(step: QadamPinnedStep): boolean {
     return qadamVersionParser.parsePin({ pin: step.settings.qadamVersion })?.range === null
 }
 
+function isSnapshotPin({ step }: { step: QadamPinnedStep }): boolean {
+    return qadamVersionParser.isSnapshot({ version: step.settings.qadamVersion })
+}
+
+// Only a draft is ever moved (both `moveUnavailablePins` and `followAvailablePins`): it becomes the
+// published version through the normal publish, so workers and trigger sources see a new version id.
+// A locked version is never rewritten.
+function draftExactPins({ flowVersion }: { flowVersion: FlowVersion }): QadamPinnedStep[] {
+    return flowVersion.state === FlowVersionState.DRAFT ? qadamPinUtil.getQadamSteps({ trigger: flowVersion.trigger }).filter(isExactPin) : []
+}
+
 function targetOf({ step }: { step: QadamPinnedStep }): StepTarget | null {
     if (step.type === FlowTriggerType.PIECE) {
         return isNil(step.settings.triggerName) ? null : { kind: 'trigger', name: step.settings.triggerName }
@@ -323,6 +380,15 @@ type MoveUnavailablePinsParams = {
     actorUserId?: UserId
 }
 
+type FollowAvailablePinsParams = {
+    flowVersion: FlowVersion
+    projectId: ProjectId
+    platformId: PlatformId
+    // Whether the platform version is a `-main.<n>` snapshot (ADR-0004): a release instance follows
+    // snapshot pins only, a `-main` instance follows release pins as well.
+    instanceIsSnapshot: boolean
+}
+
 type PlannedMove = {
     stepName: string
     qadamName: string
@@ -356,7 +422,7 @@ type CommittedMoves = {
     lost: PinStay[]
 }
 
-export type PinStayReason = StayReason | 'reverted-by-user' | 'changed-meanwhile'
+export type PinStayReason = StayReason | 'reverted-by-user' | 'changed-meanwhile' | 'release-pin-on-release-instance'
 
 // A step with an unavailable pin that was not moved, and why: what "update this step" says.
 export type PinStay = {

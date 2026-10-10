@@ -6,8 +6,9 @@ import { z } from 'zod'
 // scoped: every read and write filters by `platformId`.
 export const QadamPinMoveStatus = z.enum(['APPLIED', 'REVERTED'])
 
-// What caused the move: the step's flow was published (its draft was moved before it was locked).
-export const QadamPinMoveCause = z.enum(['PUBLISH'])
+// What caused the move: the step's flow was published (its draft was moved before it was locked),
+// or the start-up `follow` pass (ADR-0004) moved an available pin onto the build the image ships.
+export const QadamPinMoveCause = z.enum(['PUBLISH', 'SNAPSHOT_FOLLOW'])
 
 // How the props were checked: against the pinned version's metadata, or not at all because the
 // catalogue was read and has no entry for it (a pin that was never published, ADR-0003 "Versions
