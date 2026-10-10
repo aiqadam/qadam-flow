@@ -14,6 +14,7 @@ import {
   FlowTriggerType,
   ApFlagId,
   ApEnvironment,
+  SeekPage,
   TelemetryEventName,
 } from '@aiqadam/shared';
 import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
@@ -27,6 +28,7 @@ import { appConnectionsApi } from '@/features/connections/api/app-connections';
 import {
   StepMetadataWithSuggestions,
   CategorizedStepMetadataWithSuggestions,
+  HeldQadamPinMove,
 } from '@/features/qadams/types';
 import { flagsHooks } from '@/hooks/flags-hooks';
 import { platformHooks } from '@/hooks/platform-hooks';
@@ -366,6 +368,21 @@ export const qadamsHooks = {
     });
     return {
       qadamVersions: query.data,
+      isLoading: query.isLoading,
+    };
+  },
+  // ADR-0004 "Following `main`": the held steps of the open flow — `qadam_pin_move` records whose
+  // status is `REVERTED` (#855). An auxiliary read: when it fails the step stays editable and only
+  // the hold label is omitted, so it must not raise the global error dialog.
+  useHeldPinMoves: (flowId: string) => {
+    const query = useQuery<SeekPage<HeldQadamPinMove>, Error>({
+      queryKey: ['qadam-pin-moves-held', flowId],
+      queryFn: () => qadamsApi.heldMoves(flowId),
+      enabled: !!flowId,
+      meta: { showErrorDialog: false, loadSubsetOptions: {} },
+    });
+    return {
+      heldPinMoves: query.data?.data,
       isLoading: query.isLoading,
     };
   },

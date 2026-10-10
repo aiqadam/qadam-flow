@@ -2272,5 +2272,7 @@
   "Pre-release build": "Предрелизная сборка",
   "This step is pinned to a build from main, not a released version. It runs that exact build until its version is updated.": "Этот шаг привязан к сборке из main, а не к выпущенной версии. Он выполняет именно эту сборку, пока версия не будет обновлена.",
   "Update available": "Доступно обновление",
-  "A released version of this Qadam is available: v{version}.": "Доступна выпущенная версия этого qadam: v{version}."
+  "A released version of this Qadam is available: v{version}.": "Доступна выпущенная версия этого qadam: v{version}.",
+  "Held step": "Шаг удержан",
+  "A version change for this step was reverted, so a publish will not move it again until you change its version.": "Изменение версии этого шага было отменено, поэтому публикация не перенесёт его снова, пока вы не измените версию."
 }

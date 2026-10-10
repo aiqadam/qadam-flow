@@ -13,15 +13,25 @@ import {
   ListQadamsRequestQuery,
   PackageType,
   QadamOptionRequest,
+  SeekPage,
 } from '@aiqadam/shared';
 import { t } from 'i18next';
 
 import { internalErrorToast } from '@/components/ui/sonner';
 import { api } from '@/lib/api';
 
+import { HeldQadamPinMove } from '../types';
+
 export const qadamsApi = {
   list(request: ListQadamsRequestQuery): Promise<QadamMetadataModelSummary[]> {
     return api.get<QadamMetadataModelSummary[]>('/v1/qadams', request);
+  },
+  // ADR-0004 "Following `main`": the held steps of one flow, project scoped (the server resolves the
+  // project from the flow and filters by it) — the builder's read of the hold (#855).
+  heldMoves(flowId: string): Promise<SeekPage<HeldQadamPinMove>> {
+    return api.get<SeekPage<HeldQadamPinMove>>('/v1/qadam-pin-moves/held', {
+      flowId,
+    });
   },
   get(
     request: GetQadamRequestParams & GetQadamRequestQuery,

@@ -1,5 +1,5 @@
 import { PinMetadata } from '@aiqadam/server-utils'
-import { apId, FlowAction, FlowActionType, FlowStatus, FlowTrigger, FlowTriggerType, FlowVersion, FlowVersionState, PackageType, PlatformRole, PrincipalType, PropertyExecutionType, QadamType, SeekPage } from '@aiqadam/shared'
+import { apId, DefaultProjectRole, FlowAction, FlowActionType, FlowStatus, FlowTrigger, FlowTriggerType, FlowVersion, FlowVersionState, PackageType, PlatformRole, PrincipalType, PropertyExecutionType, QadamType, SeekPage } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { qadamCache } from '../../../../src/app/qadams/metadata/qadam-cache'
@@ -8,8 +8,8 @@ import { QadamPinMove } from '../../../../src/app/qadams/pin-moves/qadam-pin-mov
 import { qadamPinMoveService } from '../../../../src/app/qadams/pin-moves/qadam-pin-move.service'
 import { generateMockToken } from '../../../helpers/auth'
 import { db } from '../../../helpers/db'
-import { createMockFlow, createMockFlowVersion, createMockQadamMetadata, mockBasicUser } from '../../../helpers/mocks'
-import { createTestContext, TestContext } from '../../../helpers/test-context'
+import { createMockFlow, createMockFlowVersion, createMockProject, createMockQadamMetadata, mockBasicUser } from '../../../helpers/mocks'
+import { createMemberContext, createTestContext, TestContext } from '../../../helpers/test-context'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
 const QADAM = '@aiqadam/qadam-pin-move-fixture'
@@ -463,6 +463,122 @@ describe('/v1/qadam-pin-moves', () => {
         expect([list.statusCode, one.statusCode, revert.statusCode]).toEqual([StatusCodes.FORBIDDEN, StatusCodes.FORBIDDEN, StatusCodes.FORBIDDEN])
     })
 })
+
+describe('/v1/qadam-pin-moves/held', () => {
+    it('returns the held steps of the flow to a member of its project, and only the reverted ones', async () => {
+        const ctx = await createTestContext(app)
+        const { flow, flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
+        const { moved } = await moveWith({ ctx, flowVersion, seams: fakeSeams({ imageVersion: '0.4.5' }) })
+        await qadamPinMoveService({ log: app.log }).revert({ id: moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })
+
+        const response = await ctx.get('/v1/qadam-pin-moves/held', { flowId: flow.id })
+
+        expect(response.statusCode).toBe(StatusCodes.OK)
+        const held = response.json<SeekPage<QadamPinMove>>().data
+        expect(held).toHaveLength(1)
+        expect(held[0]).toMatchObject({
+            id: moved[0].id,
+            flowId: flow.id,
+            projectId: ctx.project.id,
+            flowVersionId: flowVersion.id,
+            stepName: 'step_1',
+            qadamName: QADAM,
+            fromVersion: '0.4.2',
+            toVersion: '0.4.5',
+            status: 'REVERTED',
+        })
+    })
+
+    it('does not return a move that is still applied', async () => {
+        const ctx = await createTestContext(app)
+        const { flow, flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
+        await moveWith({ ctx, flowVersion, seams: fakeSeams({ imageVersion: '0.4.5' }) })
+
+        const response = await ctx.get('/v1/qadam-pin-moves/held', { flowId: flow.id })
+
+        expect(response.statusCode).toBe(StatusCodes.OK)
+        expect(response.json<SeekPage<QadamPinMove>>().data).toEqual([])
+    })
+
+    it('lets a project member with read access read the hold', async () => {
+        const ctx = await createTestContext(app)
+        const viewer = await createMemberContext(app, ctx, { projectRole: DefaultProjectRole.VIEWER })
+        const { flow, flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
+        await saveHeldMove({ platformId: ctx.platform.id, projectId: ctx.project.id, flowId: flow.id, flowVersionId: flowVersion.id })
+
+        const response = await viewer.get('/v1/qadam-pin-moves/held', { flowId: flow.id })
+
+        expect(response.statusCode).toBe(StatusCodes.OK)
+        expect(response.json<SeekPage<QadamPinMove>>().data).toHaveLength(1)
+    })
+
+    it('refuses a platform member who is not in the flow\'s project', async () => {
+        const ctx = await createTestContext(app)
+        const { flow } = await seedFlow({ ctx, pins: ['0.4.2'] })
+        const { mockUser } = await mockBasicUser({ user: { platformId: ctx.platform.id, platformRole: PlatformRole.MEMBER } })
+        const token = await generateMockToken({ id: mockUser.id, type: PrincipalType.USER, platform: { id: ctx.platform.id } })
+
+        const response = await app.inject({ method: 'GET', url: `/api/v1/qadam-pin-moves/held?flowId=${flow.id}`, headers: { authorization: `Bearer ${token}` } })
+
+        expect(response.statusCode).toBe(StatusCodes.FORBIDDEN)
+    })
+
+    it('does not read a flow in another project the reader is not a member of', async () => {
+        const ctx = await createTestContext(app)
+        const viewer = await createMemberContext(app, ctx, { projectRole: DefaultProjectRole.VIEWER })
+        const otherProject = createMockProject({ platformId: ctx.platform.id, ownerId: ctx.user.id })
+        await db.save('project', otherProject)
+        const otherFlow = createMockFlow({ projectId: otherProject.id })
+        await db.save('flow', otherFlow)
+        const otherVersion = createMockFlowVersion({ flowId: otherFlow.id })
+        await db.save('flow_version', otherVersion)
+        await saveHeldMove({ platformId: ctx.platform.id, projectId: otherProject.id, flowId: otherFlow.id, flowVersionId: otherVersion.id })
+
+        const response = await viewer.get('/v1/qadam-pin-moves/held', { flowId: otherFlow.id })
+
+        expect(response.statusCode).toBe(StatusCodes.FORBIDDEN)
+    })
+
+    it('refuses an anonymous read, and a bad token with 401', async () => {
+        const ctx = await createTestContext(app)
+        const { flow } = await seedFlow({ ctx, pins: ['0.4.2'] })
+
+        // A missing token yields an UNKNOWN principal, which this route's allowed principals
+        // (`USER`, `SERVICE`) do not admit, so it is refused as FORBIDDEN at preValidation — the
+        // same shape every project-scoped route has. A malformed token is the 401 path.
+        const anonymous = await app.inject({ method: 'GET', url: `/api/v1/qadam-pin-moves/held?flowId=${flow.id}` })
+        const badToken = await app.inject({ method: 'GET', url: `/api/v1/qadam-pin-moves/held?flowId=${flow.id}`, headers: { authorization: 'Bearer not-a-token' } })
+
+        expect(anonymous.statusCode).toBe(StatusCodes.FORBIDDEN)
+        expect(badToken.statusCode).toBe(StatusCodes.UNAUTHORIZED)
+    })
+})
+
+// A reverted record seeded directly, for the reads that do not need a move first.
+async function saveHeldMove({ platformId, projectId, flowId, flowVersionId }: { platformId: string, projectId: string, flowId: string, flowVersionId: string }): Promise<QadamPinMove> {
+    const now = new Date().toISOString()
+    const record: QadamPinMove = {
+        id: apId(),
+        created: now,
+        updated: now,
+        platformId,
+        projectId,
+        flowId,
+        flowVersionId,
+        stepName: 'step_1',
+        qadamName: QADAM,
+        fromVersion: '0.4.2',
+        toVersion: '0.4.5',
+        propsCheck: 'not-checked-no-metadata',
+        cause: 'PUBLISH',
+        status: 'REVERTED',
+        movedBy: null,
+        revertedAt: now,
+        revertedBy: null,
+    }
+    await db.save('qadam_pin_move', record)
+    return record
+}
 
 // A call as `qadamPinMoveService` makes it from a publish, against the fixture qadam's fake image.
 function moveWith({ ctx, flowVersion, seams, actorUserId }: { ctx: TestContext, flowVersion: FlowVersion, seams: FakeSeams, actorUserId?: string }) {
