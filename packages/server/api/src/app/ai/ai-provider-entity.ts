@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { ApIdSchema, BaseColumnSchemaPart } from '../database/database-common'
 import { EncryptedObject } from '../helper/encryption'
 
-const AIProviderEncrypted = z.object({
+export const AIProviderEncrypted = z.object({
     ...BaseModelSchema,
     displayName: z.string().min(1),
     platformId: z.string(),

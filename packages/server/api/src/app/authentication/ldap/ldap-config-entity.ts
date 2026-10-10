@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { ApIdSchema, BaseColumnSchemaPart } from '../../database/database-common'
 import { EncryptedObject } from '../../helper/encryption'
 
-const PlatformLdapConfigEncrypted = z.object({
+export const PlatformLdapConfigEncrypted = z.object({
     id: z.string(),
     created: z.string(),
     updated: z.string(),
