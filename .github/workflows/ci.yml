@@ -1043,6 +1043,40 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "Platform version of this build: \`${version}\`" >> "$GITHUB_STEP_SUMMARY"
 
+      # The versions this build WOULD give the qadams (ADR-0004, #851): a `-main.<n>` snapshot for
+      # each qadam with its own pending changeset, the released number for the rest, and the
+      # fallbacks (no release plan, no release archive) as warnings. Computed, logged and summarised
+      # here, and NOT applied to the image: the image still carries the qadams under their released
+      # numbers: a flow pinned to a released version is not served by a snapshot of it until the
+      # `follow` snapshot policy (ADR-0004) and the image's store seed (#807) exist, so stamping the
+      # image now would orphan pinned flows on QA. `continue-on-error`: this step informs, and the
+      # platform version above is what the image job needs.
+      - name: Compute the qadam snapshot plan (not applied to the image)
+        continue-on-error: true
+        env:
+          PLATFORM_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          plan="$RUNNER_TEMP/qadam-snapshot-plan.json"
+          failed() {
+            echo "::warning title=Qadam snapshot plan::computation failed"
+            echo "### Qadam snapshot plan: computation failed (see this step's log)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          }
+          node tools/scripts/qadams/snapshot/compute-snapshot-plan.mjs --counter "$GITHUB_RUN_NUMBER" --platform-version "$PLATFORM_VERSION" --out "$plan" || failed
+          summary="$(jq -r '
+            (.packages // []) as $all
+            | ($all | map(select(.version != .released))) as $snapshots
+            | "\($snapshots | length) of \($all | length) qadams get a snapshot version in this build.",
+              "",
+              ((.warnings // [])[] | "- warning: \(.)"),
+              ($snapshots[:40][] | "- `\(.name)` \(.released) -> `\(.version)` (\(.reason))"),
+              (if ($snapshots | length) > 40 then "- ... and \(($snapshots | length) - 40) more" else empty end)
+          ' "$plan")" || failed
+          {
+            echo "### Qadam snapshot plan (ADR-0004, not applied to the image yet)"
+            echo "$summary"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # Kept on PRs: it is the only place the Dockerfile path itself is built, including the
   # vite bundle and the engine's esbuild, which no other job exercises — `verify` type-checks
   # but does not bundle. Not a required status check, so a PR can be merged while it is still
@@ -1127,7 +1161,11 @@ jobs:
       # moving `:main` and the per-commit `:sha-<short>`. The version tag has the highest priority, so
       # metadata-action also writes it to the `org.opencontainers.image.version` label, next to
       # `org.opencontainers.image.revision` (the commit) — the `<n>` -> commit record ADR-0004 asks
-      # for. Must match `image_publish`'s list below, which is what actually gets pushed.
+      # for. Two explicit labels say the same pair outright (`org.aiqadam.main-build.counter` /
+      # `.commit`, #851), so reading `<n>` does not depend on parsing a version or on which tag
+      # metadata-action ranks first. The labels belong to the image build, not to a tag: they do not
+      # need to match `image_publish`'s list. That list, which is what actually gets pushed, must
+      # match the tags here.
       #
       # Flavours (#807, ADR-0003) are not built yet. When they are, each tag here takes a
       # `-<flavour>` suffix (`:<version>-<flavour>`, `:main-<flavour>`), e.g. via metadata-action's
@@ -1145,6 +1183,8 @@ jobs:
             org.opencontainers.image.title=Qadam Flow
             org.opencontainers.image.description=Open-source AI-first workflow automation platform
             org.opencontainers.image.source=https://github.com/aiqadam/qadam-flow
+            org.aiqadam.main-build.counter=${{ github.run_number }}
+            org.aiqadam.main-build.commit=${{ github.sha }}
 
       # PR / manual dispatch: build-only, exactly as before this became a matrix — just now
       # exercising both platforms' Dockerfile path instead of only amd64's.
