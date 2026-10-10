@@ -140,39 +140,39 @@ describe('qadamMetadataService.resolveVersion() — exact pins and snapshots (un
     it('resolves an exact snapshot pin to that snapshot', async () => {
         loadRegistry.mockResolvedValue([registryEntry({ version: '1.3.0-main.412' }), registryEntry({ version: '1.3.0-main.500' })])
 
-        expect(await qadamMetadataService(logger).resolveVersion({ name: NAME, version: '1.3.0-main.412' })).toBe('1.3.0-main.412')
+        expect(await qadamMetadataService(logger).resolveVersion({ name: NAME, version: '1.3.0-main.412', platformId: undefined })).toBe('1.3.0-main.412')
     })
 
     it('does not resolve a snapshot pin to a later snapshot of the same base', async () => {
         loadRegistry.mockResolvedValue([registryEntry({ version: '1.3.0-main.500' })])
         loadBundledQadams.mockResolvedValue([bundledQadam({ name: NAME, version: '1.3.0-main.500' })])
 
-        expect(await qadamMetadataService(logger).resolveVersion({ name: NAME, version: '1.3.0-main.412' })).toBeUndefined()
+        expect(await qadamMetadataService(logger).resolveVersion({ name: NAME, version: '1.3.0-main.412', platformId: undefined })).toBeUndefined()
     })
 
     it('does not resolve a snapshot pin to the release of its base or to a later release', async () => {
         loadRegistry.mockResolvedValue([registryEntry({ version: '1.3.0' }), registryEntry({ version: '1.4.0' })])
         loadBundledQadams.mockResolvedValue([bundledQadam({ name: NAME, version: '1.4.0' })])
 
-        expect(await qadamMetadataService(logger).resolveVersion({ name: NAME, version: '1.3.0-main.412' })).toBeUndefined()
+        expect(await qadamMetadataService(logger).resolveVersion({ name: NAME, version: '1.3.0-main.412', platformId: undefined })).toBeUndefined()
     })
 
     it('does not resolve an exact release pin to a snapshot of the next patch', async () => {
         loadRegistry.mockResolvedValue([registryEntry({ version: '1.3.1-main.5' })])
         loadBundledQadams.mockResolvedValue([bundledQadam({ name: NAME, version: '1.3.1-main.5' })])
 
-        expect(await qadamMetadataService(logger).resolveVersion({ name: NAME, version: '1.3.0' })).toBeUndefined()
+        expect(await qadamMetadataService(logger).resolveVersion({ name: NAME, version: '1.3.0', platformId: undefined })).toBeUndefined()
     })
 
     it('still resolves a stale release pin to the bundled build inside its caret range', async () => {
         loadBundledQadams.mockResolvedValue([bundledQadam({ name: NAME, version: '1.4.2' })])
 
-        expect(await qadamMetadataService(logger).resolveVersion({ name: NAME, version: '1.2.0' })).toBe('1.4.2')
+        expect(await qadamMetadataService(logger).resolveVersion({ name: NAME, version: '1.2.0', platformId: undefined })).toBe('1.4.2')
     })
 
     it('still resolves a caret range over snapshots', async () => {
         loadRegistry.mockResolvedValue([registryEntry({ version: '1.3.0-main.500' })])
 
-        expect(await qadamMetadataService(logger).resolveVersion({ name: NAME, version: '^1.3.0-main.412' })).toBe('1.3.0-main.500')
+        expect(await qadamMetadataService(logger).resolveVersion({ name: NAME, version: '^1.3.0-main.412', platformId: undefined })).toBe('1.3.0-main.500')
     })
 })
