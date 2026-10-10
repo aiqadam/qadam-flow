@@ -18,7 +18,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { changesetGate } from './check-changesets.mjs'
 
-export const CHANGESET_DIR = '.changeset'
+const CHANGESET_DIR = '.changeset'
 
 export const changesetPlan = {
   // `names`: the packages the caller reads a level for. One of them in a fixed or linked group of

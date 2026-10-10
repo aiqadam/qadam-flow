@@ -234,27 +234,45 @@ refuses "an archived tarball that is gone fails the build" 1 'the release archiv
   --out "${root}/r9" --qadams crypto --pack --snapshot-plan "${root}/plan.json" --release-archive "$archive"
 
 # Defence in depth under the plan's own check: the builder removes `<out>/<name>/<version>` before it
-# rebuilds it, so a version that is a path must stop it before that `rm`.
-mkdir -p "${root}/traversal/out/@aiqadam/qadam-csv" "${root}/traversal/canary"
-printf 'keep' >"${root}/traversal/canary/file"
-TRAVERSAL="${root}/traversal" REPO="$repo" node --input-type=module - <<'EOF'
-import { existsSync } from 'node:fs'
+# rebuilds it, and both name and version come from files, so one that is a path must stop it before
+# that `rm`. Four ways in: a version that climbs, a version that is `..` (which lands on a sibling
+# directory of the package's own), a name that climbs, and a tree manifest (no plan involved) with them.
+# Run as a file, not from stdin: the modules it imports decide whether they are the entry point from argv[1].
+cat >"${root}/traversal.mjs" <<'EOF'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 const { qadamArtifact } = await import(join(process.env.REPO, 'tools/scripts/qadams/bundle/qadam-artifact.mjs'))
-const rejected = await qadamArtifact.build({
-  qadamDir: join(process.env.REPO, 'packages/qadams/core/csv'),
-  outRoot: join(process.env.TRAVERSAL, 'out'),
-  repoRoot: process.env.REPO,
-  config: { qadams: {} },
-  loadCheck: false,
-  version: '../../../canary',
-}).then(() => false, (error) => /not a directory name/.test(error.message))
-const kept = existsSync(join(process.env.TRAVERSAL, 'canary', 'file'))
-console.log(`${rejected ? 'ok   ' : 'FAIL '} a version that is a path is rejected before anything is removed`)
-console.log(`${kept ? 'ok   ' : 'FAIL '} the directory it pointed at is untouched`)
-process.exit(rejected && kept ? 0 : 1)
+const base = process.env.TRAVERSAL
+const csvDir = join(process.env.REPO, 'packages/qadams/core/csv')
+// What each case could delete if the guard failed.
+const canary = (path) => { mkdirSync(path, { recursive: true }); writeFileSync(join(path, 'file'), 'keep'); return path }
+const manifestDir = ({ name, version }) => {
+  const dir = join(base, `manifest-${Math.random().toString(36).slice(2)}`)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version }))
+  return dir
+}
+const cases = [
+  { label: 'a version that climbs', outRoot: join(base, 'a/out'), canary: canary(join(base, 'a/canary')), params: { qadamDir: csvDir, version: '../../../canary' } },
+  { label: 'a version that is ..', outRoot: join(base, 'b/out'), canary: canary(join(base, 'b/out/@aiqadam')), params: { qadamDir: csvDir, version: '..' } },
+  { label: 'a name that climbs, from a tree manifest', outRoot: join(base, 'c/out'), canary: canary(join(base, 'c/canary')), params: { qadamDir: manifestDir({ name: '../../canary', version: '0.1.0' }) } },
+  { label: 'a version that is .., from a tree manifest', outRoot: join(base, 'd/out'), canary: canary(join(base, 'd/out/@aiqadam')), params: { qadamDir: manifestDir({ name: '@aiqadam/qadam-csv', version: '..' }) } },
+  { label: 'a scoped name that climbs, from a tree manifest', outRoot: join(base, 'e/out'), canary: canary(join(base, 'e/canary')), params: { qadamDir: manifestDir({ name: '@../../../canary/x', version: '0.1.0' }) } },
+]
+let failed = false
+for (const c of cases) {
+  mkdirSync(c.outRoot, { recursive: true })
+  const message = await qadamArtifact.build({ outRoot: c.outRoot, repoRoot: process.env.REPO, config: { qadams: {} }, loadCheck: false, ...c.params }).then(() => null, (error) => error.message)
+  const rejected = typeof message === 'string' && /can name a directory|not a directory name/.test(message)
+  const kept = existsSync(join(c.canary, 'file'))
+  console.log(`${rejected ? 'ok   ' : 'FAIL '} ${c.label}: rejected before anything is removed${rejected ? '' : ` (${message})`}`)
+  console.log(`${kept ? 'ok   ' : 'FAIL '} ${c.label}: the directory it pointed at is untouched`)
+  failed = failed || !rejected || !kept
+}
+process.exit(failed ? 1 : 0)
 EOF
-expect_exit "a version that is a path never reaches the rm" 0 $?
+TRAVERSAL="${root}/traversal" REPO="$repo" node "${root}/traversal.mjs"
+expect_exit "a name or version that is a path never reaches the rm" 0 $?
 
 node "$builder" --out "${repo}/.qadam-artifacts-test" --qadams csv >"${root}/inside.log" 2>&1
 expect_exit "--out inside the repository is refused" 2 $?

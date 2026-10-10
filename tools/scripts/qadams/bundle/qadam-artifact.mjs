@@ -27,6 +27,7 @@ import { builtinModules, createRequire } from 'node:module'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { build } from 'esbuild'
+import { snapshotPlan } from '../snapshot/snapshot-plan.mjs'
 
 export const ARTIFACT_FORMAT_VERSION = 1
 
@@ -70,11 +71,16 @@ export const qadamArtifact = {
         const version = versionOverride ?? sourcePackageJson.version
         const qadamConfig = normalizeQadamConfig({ raw: config.qadams?.[name] })
         const artifactDir = join(outRoot, name, version)
-        // The directory is removed and rebuilt below, so it must be exactly `<out>/<name>/<version>`:
-        // a version such as `../../../x` would otherwise point that `rm` anywhere.
-        const placed = relative(join(outRoot, name), artifactDir)
-        if (placed !== version || placed === '' || placed.includes(sep) || isAbsolute(placed)) {
-            throw new Error(`'${version}' is not a directory name under ${name}`)
+        // The directory is removed and rebuilt below, so it must be exactly `<out>/<name>/<version>`.
+        // Both come from files (a manifest, a plan) and both become path segments: a name or a
+        // version such as `..` or `../../x` would point that `rm` anywhere. Checked on the values
+        // and again on the resulting path, so neither check has to be right alone.
+        if (!snapshotPlan.isPackageName({ name }) || !snapshotPlan.isVersion({ version })) {
+            throw new Error(`'${name}@${version}' is not a package name and a version that can name a directory`)
+        }
+        const placed = relative(outRoot, artifactDir)
+        if (placed === '' || placed === '..' || placed.startsWith(`..${sep}`) || isAbsolute(placed) || relative(join(outRoot, name), artifactDir) !== version) {
+            throw new Error(`'${name}@${version}' is not a directory name under the output root`)
         }
         const base = {
             name,

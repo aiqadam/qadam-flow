@@ -74,6 +74,11 @@ export const snapshotPlan = {
 
   // A plan file as the artifact builder reads it; `ok: false` names what is wrong with it.
   parse: ({ text }) => parse({ text }),
+
+  // The two things that become path segments of an artifact: the one definition of both, so the
+  // plan reader and the builder cannot differ on what may name a directory.
+  isVersion: ({ version }) => typeof version === 'string' && PLAN_VERSION.test(version),
+  isPackageName: ({ name }) => typeof name === 'string' && PACKAGE_NAME.test(name),
 }
 
 const OFFICIAL_QADAM_ROOTS = ['packages/qadams/core', 'packages/qadams/community']
@@ -85,6 +90,10 @@ const SNAPSHOT_LEVELS = ['patch', 'minor', 'major']
 // packages/shared/src/lib/automation/qadams/qadam-version.ts, which this plain-node script cannot
 // import; tools/ci/test-qadam-snapshot-plan.sh runs both over the same inputs and fails on a difference.
 const PLAN_VERSION = /^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})(?:-main\.(0|[1-9][0-9]{0,8}))?$/
+
+// npm's package-name shape, optionally scoped: each segment starts with a letter or digit, so no
+// segment is `.` or `..` and a name cannot leave the directory it is joined to.
+const PACKAGE_NAME = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/
 
 const compute = ({ mode, counter, packages, changePlan, archive, produced }) => {
   if (!MODES.includes(mode)) {
@@ -264,10 +273,10 @@ const parse = ({ text }) => {
 // The version becomes a directory name and a tarball name, so it is held to the version grammar
 // here and not left to whoever wrote the file: `../../tmp/x` is not a version.
 const describeEntryProblem = ({ entry }) => {
-  if (typeof entry?.name !== 'string') {
-    return 'no string name'
+  if (!snapshotPlan.isPackageName({ name: entry?.name })) {
+    return 'name is not a package name'
   }
-  if (typeof entry.version !== 'string' || !PLAN_VERSION.test(entry.version)) {
+  if (!snapshotPlan.isVersion({ version: entry.version })) {
     return 'version is not a release or a main snapshot'
   }
   if (typeof entry.released !== 'string' || changesetGate.parseReleaseVersion({ version: entry.released }) === null) {
