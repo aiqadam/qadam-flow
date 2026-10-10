@@ -611,7 +611,11 @@ jobs:
   qadam-divergence:
     name: Qadam divergence (ADR-0004 gate 9, advisory)
     needs: changes
-    if: needs.changes.outputs.docs_only != 'true' && (github.event_name != 'pull_request' || needs.changes.outputs.qadam_divergence_relevant == 'true')
+    # No `docs_only` condition, deliberately: classify-changed-paths.sh files `.changeset/*.md` as docs,
+    # and a changeset-only PR (the batches that shrink the list, or one that deletes a changeset) is
+    # exactly what this job has to see. `qadam_divergence_relevant` is the narrower filter, and on a
+    # push or a dispatch there is no diff to narrow by.
+    if: github.event_name != 'pull_request' || needs.changes.outputs.qadam_divergence_relevant == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     continue-on-error: true

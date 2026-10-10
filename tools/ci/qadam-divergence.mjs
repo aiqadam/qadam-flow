@@ -57,14 +57,15 @@
 // FAIL CLOSED
 // ---------------------------------------------------------------------------
 // A qadam that cannot be measured (registry unreachable, a tarball that fails its integrity check,
-// a tree that was not built, a tarball holding a symlink or a hardlink, a changeset that does not
+// a tree that was not built, a tarball holding a symlink, hardlink, FIFO or device, a changeset that does not
 // parse) has status `unknown`; neither CLI turns that into "identical".
 //
 // UNTRUSTED INPUT: a tarball's member names and a registry's error text reach the log, the
 // `::warning::` annotations and the step summary. `sanitize` strips control characters and `::` from
 // everything taken from there, so a file named `x\n::error::...` cannot inject a workflow command.
-// The tarball is listed before it is extracted and refused if it holds a symlink or a hardlink, which
-// a read of the extracted tree would follow out of the scratch directory.
+// The tarball is listed before it is extracted and refused if it holds anything but regular files and
+// directories: a symlink or hardlink would be followed out of the scratch directory, a FIFO would
+// block the read for good.
 //
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -73,15 +74,6 @@ import os from 'node:os'
 import path from 'node:path'
 import semver from 'semver'
 import { changesetGate } from './check-changesets.mjs'
-
-const QADAM_ROOTS = ['packages/qadams/core', 'packages/qadams/community']
-const NPM_REGISTRY = 'https://registry.npmjs.org'
-// Dependencies the platform provides (ADR-0003), or that no qadam may declare any more.
-const PLATFORM_CHAIN = new Set(['@aiqadam/qadams-framework', '@aiqadam/qadams-common', '@aiqadam/shared'])
-const DEPENDENCY_SECTIONS = ['dependencies', 'peerDependencies', 'optionalDependencies']
-const REQUEST_TIMEOUT_MS = 30_000
-// A registry that asks for longer than this is treated as down for this run, not waited for.
-const MAX_RETRY_AFTER_MS = 60_000
 
 export const qadamDivergence = {
   listQadams: (...args) => listQadams(...args),
@@ -92,6 +84,17 @@ export const qadamDivergence = {
   readCommonOptions: (...args) => readCommonOptions(...args),
   sanitize: (...args) => sanitize(...args),
 }
+
+const QADAM_ROOTS = ['packages/qadams/core', 'packages/qadams/community']
+const NPM_REGISTRY = 'https://registry.npmjs.org'
+// Dependencies the platform provides (ADR-0003), or that no qadam may declare any more.
+const PLATFORM_CHAIN = new Set(['@aiqadam/qadams-framework', '@aiqadam/qadams-common', '@aiqadam/shared'])
+const DEPENDENCY_SECTIONS = ['dependencies', 'peerDependencies', 'optionalDependencies']
+const REQUEST_TIMEOUT_MS = 30_000
+// A registry that asks to be left alone for longer than this is treated as down for this run: the
+// request fails at once (status unknown) instead of waiting, because 30 waves of workers waiting
+// that long would outlast the CI job.
+const MAX_RETRY_AFTER_MS = 20_000
 
 // Every official qadam under packages/qadams/{core,community}, read from its package.json.
 const listQadams = ({ root }) => {
@@ -161,7 +164,7 @@ const measureQadams = async ({ qadams, registry = NPM_REGISTRY, concurrency = 8,
     await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, qadams.length)) }, () => worker()))
   }
   finally {
-    fs.rmSync(scratch, { recursive: true, force: true })
+    removeScratch({ scratch })
   }
   return results
 }
@@ -196,10 +199,22 @@ const readCommonOptions = ({ argv }) => {
 }
 
 // Text that came from a tarball, a registry or a package.json, made safe to print into a log line,
-// a workflow command or a markdown table: control characters (newlines included) and `::` go, so
-// nothing in it can start a `::error::` command or break out of a line.
+// a workflow command or a markdown table: control characters (newlines included), `::` and the
+// legacy `##[` prefix (the runner honours it anywhere in a line, so `##[stop-commands]` would silence
+// every later warning) go, so nothing in it can start a command or break out of a line.
 const sanitize = ({ text }) => {
-  return String(text).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, '?').replace(/::/g, ': :')
+  return String(text).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, '?').replace(/::/g, ': :').replace(/##\[/g, '# #[')
+}
+
+// Never allowed to throw: by now every result is in hand, and a cleanup failure must not discard them.
+const removeScratch = ({ scratch }) => {
+  try {
+    execFileSync('chmod', ['-R', 'u+rwx', scratch], { stdio: 'ignore' })
+    fs.rmSync(scratch, { recursive: true, force: true })
+  }
+  catch (error) {
+    console.error(`[qadam-divergence] could not remove ${scratch}: ${describe({ error })}`)
+  }
 }
 
 const measureOne = async ({ qadam, registry, scratch, declarations, maxAttempts, retryBaseMs }) => {
@@ -332,16 +347,20 @@ const extractTarball = ({ tarball, scratch, label }) => {
   const dir = fs.mkdtempSync(path.join(scratch, 'pkg-'))
   const file = path.join(dir, 'package.tgz')
   fs.writeFileSync(file, tarball)
-  // Listed first: a symlink member could redirect a later member's write, or a read of the
-  // extracted tree, outside the scratch directory. A published qadam has no reason to carry either.
+  // Listed first, and only regular files and directories accepted: a symlink member could redirect a
+  // later member's write, or a read of the extracted tree, outside the scratch directory; a FIFO
+  // named package.json would block the read forever and freeze the job; a device is not a package.
   const listing = execFileSync('tar', ['tvzf', file], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] })
-  const links = listing.split('\n').filter((line) => line.startsWith('l') || line.startsWith('h'))
-  if (links.length > 0) {
-    throw new Error(`the tarball of ${label} holds ${links.length} symlink or hardlink member(s), which this check does not follow: ${sanitize({ text: links[0] })}`)
+  const unusual = listing.split('\n').filter((line) => line !== '' && !line.startsWith('-') && !line.startsWith('d'))
+  if (unusual.length > 0) {
+    throw new Error(`the tarball of ${label} holds ${unusual.length} member(s) that are neither a regular file nor a directory (symlink, hardlink, FIFO, device), which this check does not read: ${sanitize({ text: unusual[0] })}`)
   }
   const out = path.join(dir, 'out')
   fs.mkdirSync(out)
   execFileSync('tar', ['xzf', file, '-C', out, '--no-same-owner', '--no-same-permissions'], { stdio: ['ignore', 'ignore', 'pipe'] })
+  // A directory stored with mode 000 would make the walk below, and the removal of the scratch
+  // directory, fail. Nothing extracted is a link (checked above), so a recursive chmod stays inside.
+  execFileSync('chmod', ['-R', 'u+rwx', out], { stdio: ['ignore', 'ignore', 'pipe'] })
   // And checked again on what was written, by lstat, which does not follow.
   const linked = findLinks({ dir: out })
   if (linked.length > 0) {
@@ -367,7 +386,7 @@ const findLinks = ({ dir }) => {
 
 // A GET with retries for what is worth retrying: network errors, timeouts, 429 and 5xx. A 404 is an
 // answer when `allowNotFound`; any other status is an error, not a retry. A `Retry-After` on the
-// answer is honoured (at least that long, at most MAX_RETRY_AFTER_MS), and a body that is not read
+// answer is honoured (at least that long; longer than MAX_RETRY_AFTER_MS fails the read at once), and a body that is not read
 // is cancelled so the connection is freed.
 const request = async ({ url, accept, maxAttempts, retryBaseMs, allowNotFound }) => {
   for (let attempt = 1; ; attempt++) {
@@ -387,11 +406,14 @@ const request = async ({ url, accept, maxAttempts, retryBaseMs, allowNotFound })
     catch (error) {
       failure = { retryable: true, message: describe({ error }), retryAfterMs: 0 }
     }
+    if (failure.retryAfterMs > MAX_RETRY_AFTER_MS) {
+      throw new Error(`could not read ${url} (attempt ${attempt}/${maxAttempts}): ${failure.message}; it asks to wait ${Math.round(failure.retryAfterMs / 1000)} s, longer than the ${MAX_RETRY_AFTER_MS / 1000} s this check waits, so the registry is treated as down for this run`)
+    }
     if (!failure.retryable || attempt >= maxAttempts) {
       throw new Error(`could not read ${url} (attempt ${attempt}/${maxAttempts}): ${failure.message}`)
     }
     const backoff = Math.pow(4, attempt - 1) * retryBaseMs
-    await new Promise((resolve) => setTimeout(resolve, Math.max(backoff, Math.min(failure.retryAfterMs, MAX_RETRY_AFTER_MS))))
+    await new Promise((resolve) => setTimeout(resolve, Math.max(backoff, failure.retryAfterMs)))
   }
 }
 

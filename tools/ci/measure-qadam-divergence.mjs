@@ -44,12 +44,6 @@ const main = async () => {
   }
   const { root, registry, concurrency, declarations, maxAttempts, retryBaseMs } = common.options
 
-  if (argv.includes('--build')) {
-    console.error('[measure-qadam-divergence] building every official qadam (npx turbo run build --filter=@aiqadam/qadam-*) ...')
-    // turbo's stdout goes to stderr: this script's own stdout is the report, and `--json` must parse.
-    execFileSync('npx', ['turbo', 'run', 'build', '--filter=@aiqadam/qadam-*'], { cwd: root, stdio: ['ignore', 2, 2] })
-  }
-
   const wanted = qadamsValue.split(',').filter(Boolean).map((name) => (name.startsWith('@') ? name : `@aiqadam/qadam-${name}`))
   const zeroX = qadamDivergence.listQadams({ root }).filter(qadamDivergence.isZeroX)
   const unmatched = wanted.filter((name) => !zeroX.some((qadam) => qadam.name === name))
@@ -60,9 +54,17 @@ const main = async () => {
   if (qadams.length === 0) {
     return unknown({ message: `no 0.x qadams under packages/qadams/{core,community} in ${root}` })
   }
+  // Names and changesets are checked before the build: neither needs it, and a typo should not cost
+  // a full catalogue build.
   const { changesets, problems } = qadamDivergence.readChangesets({ root })
   if (problems.length > 0) {
     return unknown({ message: `a changeset does not parse, so which qadams it covers is unknown: ${problems.join(' | ')}` })
+  }
+
+  if (argv.includes('--build')) {
+    console.error('[measure-qadam-divergence] building every official qadam (npx turbo run build --filter=@aiqadam/qadam-*) ...')
+    // turbo's stdout goes to stderr: this script's own stdout is the report, and `--json` must parse.
+    execFileSync('npx', ['turbo', 'run', 'build', '--filter=@aiqadam/qadam-*'], { cwd: root, stdio: ['ignore', 2, 2] })
   }
 
   const results = await qadamDivergence.measureQadams({ qadams, registry, concurrency, declarations, maxAttempts, retryBaseMs })

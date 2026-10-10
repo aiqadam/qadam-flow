@@ -108,14 +108,20 @@ new_package() {
   write "$pkg/package.json" "{ \"name\": \"@aiqadam/qadam-$1\", \"version\": \"$2\", \"main\": \"./src/index.js\", \"types\": \"./src/index.d.ts\", \"dependencies\": { \"@aiqadam/qadams-common\": \"0.17.0\", \"@aiqadam/qadams-framework\": \"0.35.0\", \"@aiqadam/shared\": \"0.155.0\", \"dayjs\": \"1.11.9\" }, \"license\": \"MIT\", \"repository\": { \"type\": \"git\", \"url\": \"https://github.com/aiqadam/qadam-flow.git\" } }"
 }
 
-# serve <short-name> <version> [integrity-override] — pack $tmp/pkg-<name> and list it on the registry
-serve() {
-  local name="$1" version="$2" tgz="$tmp/registry/-/$1-$2.tgz" integrity
-  tar czf "$tgz" -C "$tmp/pkg-$1" package
+# list_tgz <short-name> <version> <tgz> [integrity-override] — list an existing tarball on the registry
+list_tgz() {
+  local name="$1" version="$2" tgz="$3" integrity
   integrity="sha512-$(openssl dgst -sha512 -binary "$tgz" | base64 -w0)"
-  [ -n "${3:-}" ] && integrity="$3"
+  [ -n "${4:-}" ] && integrity="$4"
   printf '{ "name": "@aiqadam/qadam-%s", "versions": { "%s": { "name": "@aiqadam/qadam-%s", "version": "%s", "dist": { "tarball": "__REGISTRY__/-/%s-%s.tgz", "integrity": "%s" } } } }\n' \
     "$name" "$version" "$name" "$version" "$name" "$version" "$integrity" > "$tmp/registry/@aiqadam%2fqadam-$name.json"
+}
+
+# serve <short-name> <version> [integrity-override] — pack $tmp/pkg-<name> and list it on the registry
+serve() {
+  local tgz="$tmp/registry/-/$1-$2.tgz"
+  tar czf "$tgz" -C "$tmp/pkg-$1" package
+  list_tgz "$1" "$2" "$tgz" "${3:-}"
 }
 
 # A fresh tree, registry and routes. Add qadams with `qadam_published` (an identical registry copy).
@@ -331,12 +337,12 @@ echo "== tarballs that must not be followed =="
 new_tree; qadam_published sym 0.1.0
 ln -s /etc/hostname "$tmp/pkg-sym/package/src/leak.js"; serve sym 0.1.0
 run "$measure" "${args[@]}"
-expect 'a tarball holding a symlink is UNKNOWN, never followed' 2 'could not measure  1' 'symlink or hardlink'
+expect 'a tarball holding a symlink is UNKNOWN, never followed' 2 'could not measure  1' 'neither a regular file nor a directory'
 
 new_tree; qadam_published hard 0.1.0
 ln "$tmp/pkg-hard/package/src/lib/action.js" "$tmp/pkg-hard/package/src/lib/copy.js"; serve hard 0.1.0
 run "$measure" "${args[@]}"
-expect 'a tarball holding a hardlink is UNKNOWN' 2 'could not measure  1' 'symlink or hardlink'
+expect 'a tarball holding a hardlink is UNKNOWN' 2 'could not measure  1' 'neither a regular file nor a directory'
 
 echo "== member names are untrusted =="
 new_tree; qadam_published evil 0.1.0
@@ -348,6 +354,63 @@ if printf '%s\n' "$last_out" | grep -q '^::error title=pwned'; then fail_case 'i
 expect 'the name is still reported, flattened' 0 'only on npm: src/lib/x?: :error title=pwned: :injected.js'
 run "$measure" "${args[@]}"
 expect 'the measurement prints it flattened too' 0 'only on npm: src/lib/x?: :error title=pwned: :injected.js'
+
+new_tree; qadam_published legacy 0.1.0
+write "$tmp/pkg-legacy/package/src/lib/##[error]x.js" "exports.e = 1"
+write "$tmp/pkg-legacy/package/src/lib/##[stop-commands]y.js" "exports.f = 1"; serve legacy 0.1.0
+run "$gate" "${args[@]}"
+expect 'the legacy ##[ prefix is neutralised' 0 'only on npm: src/lib/# #[error]x.js' 'only on npm: src/lib/# #[stop-commands]y.js'
+if printf '%s\n' "$last_out" | grep -qF '##['; then fail_case 'a ##[ survived into the output'; else ok; fi
+
+echo "== the workflow runs the job on a changeset-only PR =="
+printf '.changeset/foo.md\n' > "$tmp/changed.txt"
+if "$here/classify-changed-paths.sh" "$tmp/changed.txt" 2>&1 | grep -qx 'docs_only=true'; then ok; else fail_case 'premise: classify-changed-paths.sh files a changeset-only diff as docs_only'; fi
+job_if="$(awk '/^  qadam-divergence:/{f=1} f && /^    if:/{print; exit}' "${here}/../../.github/workflows/ci.yml")"
+case "$job_if" in
+  *qadam_divergence_relevant*) ok ;;
+  *) fail_case "the qadam-divergence job's if: does not read qadam_divergence_relevant: ${job_if:-<none>}" ;;
+esac
+case "$job_if" in
+  *docs_only*) fail_case "the qadam-divergence job's if: reads docs_only, so a changeset-only PR would skip it: $job_if" ;;
+  *) ok ;;
+esac
+
+
+echo "== a typo in --qadams costs no build =="
+new_tree; qadam_published a 0.1.0
+mkdir -p "$tmp/bin"; rm -f "$tmp/npx-ran"
+printf '#!/bin/sh\ntouch "%s/npx-ran"\n' "$tmp" > "$tmp/bin/npx"; chmod +x "$tmp/bin/npx"
+PATH="$tmp/bin:$PATH" run "$measure" "${args[@]}" --build --qadams typo
+expect 'an unknown --qadams name with --build exits 2' 2 'UNKNOWN' 'typo'
+[ ! -e "$tmp/npx-ran" ] && ok || fail_case 'the build ran although --qadams named nothing'
+
+echo "== Retry-After longer than the check waits is UNKNOWN at once =="
+new_tree; qadam_published long 0.1.0
+printf '%s\n' '{ "/@aiqadam%2fqadam-long": [{ "status": 429, "headers": { "retry-after": "120" } }] }' > "$tmp/routes.json"
+started="$(date +%s)"
+run "$measure" "${args[@]}"
+expect 'a 429 asking for 120 s: the registry is treated as down, exit 2' 2 'could not measure  1' 'treated as down'
+[ $(( $(date +%s) - started )) -lt 10 ] && ok || fail_case 'the check waited on a Retry-After it should have refused'
+
+echo "== member types other than files and directories =="
+new_tree; qadam_published fifo 0.1.0
+mkfifo "$tmp/pkg-fifo/package/src/pipe.js"; serve fifo 0.1.0
+run "$measure" "${args[@]}"
+expect 'a FIFO member is UNKNOWN and is never opened' 2 'could not measure  1' 'neither a regular file nor a directory'
+
+new_tree; qadam_published ok 0.1.0; qadam_published locked 0.1.0
+(
+  cd "$tmp/pkg-locked"
+  mkdir -p package/src/locked; echo 'exports.l = 1' > package/src/locked/l.js
+  tar cf "$tmp/locked.tar" --exclude=package/src/locked package
+  tar rf "$tmp/locked.tar" --no-recursion --mode=000 package/src/locked
+  tar rf "$tmp/locked.tar" package/src/locked/l.js
+  gzip -f "$tmp/locked.tar"
+)
+list_tgz locked 0.1.0 "$tmp/locked.tar.gz" && cp "$tmp/locked.tar.gz" "$tmp/registry/-/locked-0.1.0.tgz"
+run "$measure" "${args[@]}"
+expect 'a mode-000 directory in a tarball neither aborts the run nor loses the other results' 0 'only on npm: src/locked/l.js' 'identical to npm   1' 'DIVERGENT          1'
+refuse 'no cleanup failure' 'could not remove'
 
 echo "== --json =="
 new_tree; qadam_published same 0.1.0; qadam_published diff 0.1.0
