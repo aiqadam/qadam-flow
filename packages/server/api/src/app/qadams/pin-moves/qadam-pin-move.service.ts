@@ -139,6 +139,18 @@ export const qadamPinMoveService = ({ log, seams = qadamPinFallbackSeams({ log }
         return paginationHelper.createPage<QadamPinMove>(data, cursor)
     },
 
+    // The builder's project-scoped read of the hold (#855, ADR-0004 "Following `main`"): the
+    // REVERTED records of one flow. They are keyed by the step's `fromVersion`, the same key
+    // `findHeldRewrites` builds, so the step-settings label can match a step against the hold that
+    // named it. Project scoped on purpose: the flow must be in the caller's project
+    // (`assertFlowBelongsTo`), and the read filters by `projectId` and `platformId` as well as
+    // `flowId`, so another project's flow is not reachable through it.
+    async listHeld({ flowId, projectId, platformId }: { flowId: FlowId, projectId: ProjectId, platformId: PlatformId }): Promise<SeekPage<QadamPinMove>> {
+        await assertFlowBelongsTo({ flowId, projectId, platformId, log })
+        const held = await qadamPinMoveRepo().findBy({ flowId, projectId, platformId, status: 'REVERTED' })
+        return paginationHelper.createPage<QadamPinMove>(held, null)
+    },
+
     async getOneOrThrow({ id, platformId }: { id: string, platformId: PlatformId }): Promise<QadamPinMove> {
         const record = await qadamPinMoveRepo().findOneBy({ id, platformId })
         if (isNil(record)) {

@@ -2272,5 +2272,7 @@
   "Pre-release build": "Pre-release құрастыру",
   "This step is pinned to a build from main, not a released version. It runs that exact build until its version is updated.": "Бұл қадам шығарылған нұсқаға емес, main-нан алынған құрастыруға бекітілген. Нұсқа жаңартылғанша дәл осы құрастыруды орындайды.",
   "Update available": "Жаңарту қолжетімді",
-  "A released version of this Qadam is available: v{version}.": "Осы Qadam-ның шығарылған нұсқасы қолжетімді: v{version}."
+  "A released version of this Qadam is available: v{version}.": "Осы Qadam-ның шығарылған нұсқасы қолжетімді: v{version}.",
+  "Held step": "Қадам ұсталып тұр",
+  "A version change for this step was reverted, so a publish will not move it again until you change its version.": "Бұл қадам үшін нұсқа өзгерісі қайтарылды, сондықтан нұсқаны өзгертпейінше жариялау оны қайта жылжытпайды."
 }

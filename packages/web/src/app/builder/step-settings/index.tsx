@@ -40,6 +40,7 @@ import { TestStepCTAButton } from '../test-step/test-step-cta-button';
 import { AgentSettings } from './agent-settings';
 import { CodeSettings } from './code-settings';
 import EditableStepName from './editable-step-name';
+import { HeldStepLabel } from './held-step-label';
 import { LoopsSettings } from './loops-settings';
 import { PieceSettings } from './piece-settings';
 import { PreReleaseBuildLabel } from './pre-release-build-label';
@@ -191,6 +192,10 @@ const StepSettingsContainer = () => {
         {(modifiedStep.type === FlowActionType.PIECE ||
           modifiedStep.type === FlowTriggerType.PIECE) && (
           <UpdateAvailableLabel step={modifiedStep} readonly={readonly} />
+        )}
+        {(modifiedStep.type === FlowActionType.PIECE ||
+          modifiedStep.type === FlowTriggerType.PIECE) && (
+          <HeldStepLabel step={modifiedStep} flowId={flowVersion.flowId} />
         )}
         {modifiedStep.type === FlowActionType.LOOP_ON_ITEMS && (
           <LoopsSettings readonly={readonly}></LoopsSettings>

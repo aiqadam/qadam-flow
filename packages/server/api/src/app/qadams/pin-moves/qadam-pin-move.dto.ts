@@ -40,6 +40,13 @@ export const ListQadamPinMovesRequestQuery = z.object({
     limit: z.coerce.number().int().min(1).max(100).optional(),
 })
 
+// The builder's project-scoped read of the hold (#855, ADR-0004 "Following `main`"): the REVERTED
+// records of one flow. A person reverted a move of that step, so `follow` does not move it again
+// until the step's version changes; this query names the flow whose held steps are read.
+export const ListHeldQadamPinMovesRequestQuery = z.object({
+    flowId: ApId,
+})
+
 // The published version keeps running until the restored draft is published.
 export const RevertedQadamPinMove = QadamPinMove.extend({ publishRequired: z.boolean() })
 
@@ -50,4 +57,5 @@ export type QadamPinMoveStatus = z.infer<typeof QadamPinMoveStatus>
 export type QadamPinMoveCause = z.infer<typeof QadamPinMoveCause>
 export type QadamPinMovePropsCheck = z.infer<typeof QadamPinMovePropsCheck>
 export type ListQadamPinMovesRequestQuery = z.infer<typeof ListQadamPinMovesRequestQuery>
+export type ListHeldQadamPinMovesRequestQuery = z.infer<typeof ListHeldQadamPinMovesRequestQuery>
 export type RevertedQadamPinMove = z.infer<typeof RevertedQadamPinMove>
