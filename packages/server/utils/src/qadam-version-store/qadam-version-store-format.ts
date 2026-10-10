@@ -1,6 +1,6 @@
 import { readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
-import { isNil, tryCatch } from '@aiqadam/shared'
+import { isNil, qadamVersionParser, tryCatch } from '@aiqadam/shared'
 import { z } from 'zod'
 import { QADAM_VERSION_STORE_LAYOUT, QadamVersionCoordinates } from './qadam-version-store-layout'
 import { qadamVersionStoreTree, QadamVersionTree } from './qadam-version-store-tree'
@@ -64,7 +64,7 @@ export const qadamVersionStoreFormat = {
         if (!format.ok) {
             return format
         }
-        return { ok: true, format: format.format, kind: format.kind, entryPoint }
+        return { ok: true, format: format.format, kind: format.kind, entryPoint, builtAgainst: readBuiltAgainst({ marker: packageJson.value.qadamArtifact }) }
     },
 
     // What a reader checks on every lookup, without walking the tree: the marker still says what the
@@ -111,10 +111,18 @@ const ProcessReport = z.object({
 
 const GLIBC_PATTERN = /^glibc (\d+)\.(\d+)/
 
+// What an artifact was built against (ADR-0004, decision 8): informational, so a value this reader
+// does not understand is dropped instead of refusing a version that runs.
+const BuiltAgainst = z.object({
+    framework: z.string(),
+    platform: z.string().optional(),
+})
+
 const ArtifactMarker = z.object({
     formatVersion: z.number(),
     kind: z.string(),
     builtFor: BuiltFor.optional(),
+    builtAgainst: z.unknown().optional(),
 }).loose()
 
 const ArtifactPackageJson = z.object({
@@ -256,6 +264,21 @@ function hostPlatform(): HostPlatform {
     return cachedHost
 }
 
+// A snapshot is built against the framework of its build; a framework change alters what it does
+// (ADR-0002 governs breaks, ADR-0004 accepts the rest as a known limitation) and the record is how
+// that stays traceable. Both numbers are versions the parser knows: a release or a `-main.<n>`.
+function readBuiltAgainst({ marker }: { marker: z.infer<typeof ArtifactMarker> | undefined }): QadamVersionBuiltAgainst | null {
+    const parsed = BuiltAgainst.safeParse(marker?.builtAgainst)
+    if (!parsed.success) {
+        return null
+    }
+    const { framework, platform } = parsed.data
+    if (qadamVersionParser.parse({ version: framework }) === null || (!isNil(platform) && qadamVersionParser.parse({ version: platform }) === null)) {
+        return null
+    }
+    return isNil(platform) ? { framework } : { framework, platform }
+}
+
 function damaged(reason: string): FormatProblem {
     return { ok: false, reason, unsupported: false }
 }
@@ -273,8 +296,14 @@ type InspectParams = {
 // `unsupported`: not damaged, only not runnable by this release on this host (see the header).
 export type FormatProblem = { ok: false, reason: string, unsupported: boolean }
 
+export type QadamVersionBuiltAgainst = {
+    framework: string
+    // The platform version of the build that made the artifact, when the builder knew it.
+    platform?: string
+}
+
 type InspectResult =
-    | { ok: true, format: QadamArtifactFormat, kind: QadamArtifactKind | null, entryPoint: string }
+    | { ok: true, format: QadamArtifactFormat, kind: QadamArtifactKind | null, entryPoint: string, builtAgainst: QadamVersionBuiltAgainst | null }
     | FormatProblem
 
 type FormatResult =

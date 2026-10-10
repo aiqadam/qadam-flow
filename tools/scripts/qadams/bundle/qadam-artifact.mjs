@@ -45,6 +45,8 @@ export const ARTIFACT_STATUS = {
     LOAD_FAILED: 'load-failed',
     PACK_FAILED: 'pack-failed',
     BUILD_ERROR: 'build-error',
+    // Not built: the plan takes this version from the release archive (ADR-0004, #851).
+    FROM_ARCHIVE: 'from-archive',
 }
 
 // The packages the platform provides. A bundle that inlined any of them would carry its own copy,
@@ -56,10 +58,16 @@ export const PLATFORM_PROVIDED_PACKAGES = {
 }
 
 export const qadamArtifact = {
-    build: async ({ qadamDir, outRoot, repoRoot, config, loadCheck, pack, packDestination }) => {
+    // `version` is the version this artifact is built and named as, when it is not the one in the
+    // qadam's package.json: a `-main.<n>` snapshot of a build from `main` (ADR-0004, #851). It is
+    // written into the artifact's `package.json`, from which `metadata.json` takes it, and names the
+    // artifact's directory. `platformVersion` is recorded next to the framework version the artifact
+    // is built against.
+    build: async ({ qadamDir, outRoot, repoRoot, config, loadCheck, pack, packDestination, version: versionOverride, platformVersion }) => {
         const startedAt = Date.now()
         const sourcePackageJson = JSON.parse(await readFile(join(qadamDir, 'package.json'), 'utf8'))
-        const { name, version } = sourcePackageJson
+        const { name } = sourcePackageJson
+        const version = versionOverride ?? sourcePackageJson.version
         const qadamConfig = normalizeQadamConfig({ raw: config.qadams?.[name] })
         const artifactDir = join(outRoot, name, version)
         const base = {
@@ -124,9 +132,11 @@ export const qadamArtifact = {
             const peerDependencies = await computePeerDependencies({ peers: analysis.peers, repoRoot })
             await writeFile(join(artifactDir, 'package.json'), JSON.stringify(buildArtifactPackageJson({
                 sourcePackageJson,
+                version,
                 kind,
                 peerDependencies,
                 nodeModules,
+                builtAgainst: await readBuiltAgainst({ repoRoot, platformVersion }),
             }), null, 2) + '\n')
 
             const withFiles = { ...common, i18nLocales, peerDependencies, nodeModules: Object.keys(nodeModules).length }
@@ -429,14 +439,23 @@ const computePeerDependencies = async ({ peers, repoRoot }) => {
     return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)))
 }
 
-const buildArtifactPackageJson = ({ sourcePackageJson, kind, peerDependencies, nodeModules }) => {
+// The framework version the artifact was built against, for the store to record next to the version
+// (ADR-0004 decision 8: a framework change alters what a snapshot does, and the number says which
+// framework it ran with). In a build from `main` the framework's number is its last release, so the
+// platform version of the same build says which framework code that was.
+const readBuiltAgainst = async ({ repoRoot, platformVersion }) => {
+    const { version } = JSON.parse(await readFile(join(repoRoot, PLATFORM_PROVIDED_PACKAGES['@aiqadam/qadams-framework'], 'package.json'), 'utf8'))
+    return { framework: version, ...(platformVersion === undefined || platformVersion === null ? {} : { platform: platformVersion }) }
+}
+
+const buildArtifactPackageJson = ({ sourcePackageJson, version, kind, peerDependencies, nodeModules, builtAgainst }) => {
     const optional = Object.fromEntries(['description', 'license', 'keywords', 'repository', 'homepage', 'author']
         .filter((field) => sourcePackageJson[field] !== undefined)
         .map((field) => [field, sourcePackageJson[field]]))
     const withNodeModules = kind === ARTIFACT_KIND.BUNDLE_WITH_NODE_MODULES
     return {
         name: sourcePackageJson.name,
-        version: sourcePackageJson.version,
+        version,
         ...optional,
         main: './src/index.js',
         peerDependencies,
@@ -444,6 +463,7 @@ const buildArtifactPackageJson = ({ sourcePackageJson, kind, peerDependencies, n
         qadamArtifact: {
             formatVersion: ARTIFACT_FORMAT_VERSION,
             kind,
+            builtAgainst,
             // A native addon runs only where it was built; the store must not seed it elsewhere.
             ...(withNodeModules ? { builtFor: buildPlatform() } : {}),
         },

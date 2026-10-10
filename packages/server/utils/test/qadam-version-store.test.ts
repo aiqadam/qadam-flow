@@ -107,6 +107,30 @@ describe('qadamVersionStore.putTarball and read', () => {
         expect(read.status === QadamVersionReadStatus.PRESENT && read.version.format).toBe(QadamArtifactFormat.LEGACY_NPM)
     })
 
+    it('records the framework and platform version a snapshot was built against (ADR-0004 decision 8)', async () => {
+        const coordinates = { ...CSV, version: '0.6.1-main.412' }
+        const files = tarFixtures.bundleFiles({ name: coordinates.name, version: coordinates.version, builtAgainst: { framework: '0.36.0', platform: '1.1.1-main.412' } })
+
+        expect((await putFiles({ coordinates, files })).status).toBe(QadamVersionPutStatus.STORED)
+
+        const read = await store.read({ coordinates, verify: true })
+        expect(read.status === QadamVersionReadStatus.PRESENT && read.version.integrity.builtAgainst).toEqual({ framework: '0.36.0', platform: '1.1.1-main.412' })
+    })
+
+    it.each([
+        ['an artifact that says nothing', undefined],
+        ['a value that is not an object', 'framework 0.36.0'],
+        ['a framework that is not a version', { framework: 'latest' }],
+        ['a platform that is not a version', { framework: '0.36.0', platform: '^1.1.0' }],
+    ])('records nothing for %s and still stores the version', async (_label, builtAgainst) => {
+        const files = tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version, builtAgainst })
+
+        expect((await putFiles({ coordinates: CSV, files })).status).toBe(QadamVersionPutStatus.STORED)
+
+        const read = await store.read({ coordinates: CSV, verify: true })
+        expect(read.status === QadamVersionReadStatus.PRESENT && read.version.integrity.builtAgainst).toBeNull()
+    })
+
     it('never overwrites a stored version', async () => {
         await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version }) })
         const second = await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version, extra: { 'src/other.js': 'changed' } }) })

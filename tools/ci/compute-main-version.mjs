@@ -36,12 +36,15 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { changesetPlan } from './changeset-plan.mjs'
 import { changesetGate } from './check-changesets.mjs'
 
 const PLATFORM_PACKAGE = '@aiqadam/platform'
 const PLATFORM_MANIFEST = 'packages/platform/package.json'
 const CHANGESET_DIR = '.changeset'
 const COUNTER = /^(0|[1-9]\d*)$/
+
+export const isBuildCounter = ({ counter }) => COUNTER.test(counter ?? '')
 
 const main = () => {
   const args = parseArgs({ argv: process.argv.slice(2) })
@@ -69,25 +72,15 @@ const compute = ({ root }) => {
   if (platform !== released) {
     return { error: `${PLATFORM_MANIFEST} is '${platform}' but the root package.json is '${released}' — they must agree (check-changesets fails a PR that splits them)` }
   }
-  const changesetDir = path.join(root, CHANGESET_DIR)
-  if (fs.existsSync(path.join(changesetDir, 'pre.json'))) {
-    return { error: `${CHANGESET_DIR}/pre.json exists: changesets pre mode versions differently and this script does not model it` }
+  const plan = changesetPlan.read({ root })
+  if (!plan.ok) {
+    return { error: plan.error }
   }
-  const config = readJson({ file: path.join(changesetDir, 'config.json') })
-  if (config === null) {
-    return { error: `${CHANGESET_DIR}/config.json is missing or not JSON` }
-  }
-  const grouped = [...(config.fixed ?? []), ...(config.linked ?? [])].some((group) => Array.isArray(group) && group.includes(PLATFORM_PACKAGE))
+  const grouped = [...(plan.config.fixed ?? []), ...(plan.config.linked ?? [])].some((group) => Array.isArray(group) && group.includes(PLATFORM_PACKAGE))
   if (grouped) {
     return { error: `${CHANGESET_DIR}/config.json puts ${PLATFORM_PACKAGE} in a fixed/linked group; the release plan is then not its own changesets alone` }
   }
-  const files = fs.readdirSync(changesetDir).filter((name) => name.endsWith('.md') && name.toLowerCase() !== 'readme.md').sort()
-  const changesets = files.map((name) => ({ name, ...changesetGate.parseChangeset({ text: fs.readFileSync(path.join(changesetDir, name), 'utf8') }) }))
-  const broken = changesets.find((changeset) => changeset.problems.length > 0)
-  if (broken) {
-    return { error: `${CHANGESET_DIR}/${broken.name}: ${broken.problems.join('; ')}` }
-  }
-  const level = changesetGate.pendingLevel({ changesets, name: PLATFORM_PACKAGE })
+  const level = changesetGate.pendingLevel({ changesets: plan.changesets, name: PLATFORM_PACKAGE })
   const next = changesetGate.bumpVersion({ version: released, level: level === 'none' ? 'patch' : level })
   return { released, level, next }
 }
@@ -118,7 +111,7 @@ const parseArgs = ({ argv }) => {
   if (!counter.present || counter.value === undefined) {
     return { error: 'pass --counter <n> (ci.yml passes github.run_number) or --next' }
   }
-  if (!COUNTER.test(counter.value)) {
+  if (!isBuildCounter({ counter: counter.value })) {
     return { error: `--counter '${counter.value}' is not a semver numeric identifier (digits, no leading zero)` }
   }
   return { root, counter: counter.value }

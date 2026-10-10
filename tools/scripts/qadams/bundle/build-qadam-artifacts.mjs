@@ -14,6 +14,15 @@
 //   --pack               `npm pack` each loaded artifact into `<out>/archive/` and write
 //                        `<out>/archive/archive-index.json` (name, version, integrity, commit)
 //   --allow-failures     exit 0 even when some qadams failed (for a survey of the catalogue)
+//   --snapshot-plan <f>  build each qadam at the version the plan gives it (ADR-0004, #851): a
+//                        `-main.<n>` snapshot is written into the artifact's package.json and
+//                        metadata.json, and the artifact is stored under that version. A qadam the
+//                        plan takes from the release archive is not built; with `--pack` its archived
+//                        tarball is copied into `<out>/archive/` and listed in the same index.
+//                        Made by tools/scripts/qadams/snapshot/compute-snapshot-plan.mjs.
+//   --release-archive <d>  the directory the archived tarballs come from: what an earlier release's
+//                        `--pack` wrote (`archive-index.json` and the tarballs). Needed only when the
+//                        plan takes a qadam from the archive, and then `--pack` is too.
 //   --config <file>      per-qadam exceptions (default: qadam-artifact-config.json beside this)
 //
 // `--out` must not sit inside the repository: the load check resolves `@aiqadam/*` and `zod`
@@ -21,9 +30,12 @@
 // platform copy provisioned in `<out>/node_modules`.
 
 import { execFileSync } from 'node:child_process'
-import { readdir, readFile, stat, writeFile, mkdir } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { copyFile, readdir, readFile, stat, writeFile, mkdir } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
 import { parseArgs } from 'node:util'
+import { releaseArchive } from '../snapshot/release-archive.mjs'
+import { SNAPSHOT_ORIGIN, snapshotPlan } from '../snapshot/snapshot-plan.mjs'
 import { ARTIFACT_STATUS, qadamArtifact } from './qadam-artifact.mjs'
 
 const REPO_ROOT = resolve(import.meta.dirname, '..', '..', '..', '..')
@@ -41,10 +53,12 @@ const main = async () => {
             pack: { type: 'boolean', default: false },
             'allow-failures': { type: 'boolean', default: false },
             config: { type: 'string', default: DEFAULT_CONFIG_PATH },
+            'snapshot-plan': { type: 'string' },
+            'release-archive': { type: 'string' },
         },
     })
     if (!values.out || (!values.all && !values.qadams)) {
-        console.error('usage: build-qadam-artifacts.mjs --out <dir> (--all | --qadams <a,b>) [--concurrency n] [--no-load-check] [--pack] [--allow-failures] [--config file]')
+        console.error('usage: build-qadam-artifacts.mjs --out <dir> (--all | --qadams <a,b>) [--concurrency n] [--no-load-check] [--pack] [--allow-failures] [--config file] [--snapshot-plan file [--release-archive dir]]')
         process.exit(2)
     }
     const outRoot = resolve(values.out)
@@ -58,6 +72,10 @@ const main = async () => {
     const allQadams = await findOfficialQadams()
     const selected = values.all ? allQadams : selectQadams({ allQadams, wanted: values.qadams.split(',').map((q) => q.trim()).filter(Boolean) })
 
+    const snapshot = values['snapshot-plan'] === undefined
+        ? null
+        : await readSnapshotPlan({ file: resolve(values['snapshot-plan']), selected, archiveDir: values['release-archive'], pack: values.pack && loadCheck })
+
     await mkdir(outRoot, { recursive: true })
     const host = loadCheck ? await qadamArtifact.provisionHost({ outRoot, repoRoot: REPO_ROOT }) : null
     const packDestination = join(outRoot, 'archive')
@@ -66,15 +84,21 @@ const main = async () => {
         items: selected,
         concurrency,
         worker: async ({ qadam, index }) => {
-            const result = await qadamArtifact.build({
-                qadamDir: qadam.dir,
-                outRoot,
-                repoRoot: REPO_ROOT,
-                config,
-                loadCheck,
-                pack: values.pack && loadCheck,
-                packDestination,
-            }).catch((e) => ({ name: qadam.packageName, version: null, source: relative(REPO_ROOT, qadam.dir), status: ARTIFACT_STATUS.BUILD_ERROR, error: String(e?.message ?? e), durationMs: 0 }))
+            const entry = snapshot?.find({ name: qadam.packageName }) ?? null
+            const build = entry?.origin === SNAPSHOT_ORIGIN.ARCHIVE
+                ? takeFromArchive({ archive: snapshot.archive, entry, source: relative(REPO_ROOT, qadam.dir), packDestination })
+                : qadamArtifact.build({
+                    qadamDir: qadam.dir,
+                    outRoot,
+                    repoRoot: REPO_ROOT,
+                    config,
+                    loadCheck,
+                    pack: values.pack && loadCheck,
+                    packDestination,
+                    version: entry?.version,
+                    platformVersion: snapshot?.platformVersion,
+                })
+            const result = await build.catch((e) => ({ name: qadam.packageName, version: null, source: relative(REPO_ROOT, qadam.dir), status: ARTIFACT_STATUS.BUILD_ERROR, error: String(e?.message ?? e), durationMs: 0 }))
             console.info(`[${index + 1}/${selected.length}] ${result.name}@${result.version} ${result.status} ${result.kind ?? ''} ${result.durationMs}ms${result.error ? ` — ${result.error}` : ''}`)
             return result
         },
@@ -96,7 +120,7 @@ const main = async () => {
         await writeArchiveIndex({ results, packDestination, commit })
     }
     printSummary({ report, outRoot })
-    const failed = results.filter((r) => r.status !== ARTIFACT_STATUS.OK).length
+    const failed = results.filter(isFailure).length
     process.exit(failed > 0 && !values['allow-failures'] ? 1 : 0)
 }
 
@@ -112,11 +136,65 @@ const writeArchiveIndex = async ({ results, packDestination, commit }) => {
         integrity: r.tarball.integrity,
         shasum: r.tarball.shasum,
         size: r.tarball.size,
-        commit,
+        // An archived release keeps the commit it was built from, not this build's.
+        commit: r.commit ?? commit,
     }))
     // `--pack --allow-failures` can reach here with no tarball at all; the index is still written.
     await mkdir(packDestination, { recursive: true })
     await writeFile(join(packDestination, 'archive-index.json'), JSON.stringify({ formatVersion: 1, artifacts: entries }, null, 2) + '\n')
+}
+
+const isFailure = (result) => result.status !== ARTIFACT_STATUS.OK && result.status !== ARTIFACT_STATUS.FROM_ARCHIVE
+
+// The plan the artifact versions come from (ADR-0004, #851). Every selected qadam must be in it: a
+// qadam built at a version nobody planned is exactly what the plan exists to prevent.
+const readSnapshotPlan = async ({ file, selected, archiveDir, pack }) => {
+    const parsed = snapshotPlan.parse({ text: await readFile(file, 'utf8').catch(() => '') })
+    if (!parsed.ok) {
+        console.error(`--snapshot-plan ${file}: ${parsed.error}`)
+        process.exit(2)
+    }
+    const missing = selected.filter((qadam) => parsed.find({ name: qadam.packageName }) === null)
+    if (missing.length > 0) {
+        console.error(`not in the snapshot plan: ${missing.map((qadam) => qadam.packageName).join(', ')}`)
+        process.exit(2)
+    }
+    const archived = selected.filter((qadam) => parsed.find({ name: qadam.packageName }).origin === SNAPSHOT_ORIGIN.ARCHIVE)
+    if (archived.length > 0 && (archiveDir === undefined || !pack)) {
+        console.error(`the plan takes ${archived.length} qadam(s) from the release archive (${archived.map((qadam) => qadam.packageName).join(', ')}): pass --release-archive <dir> and --pack`)
+        process.exit(2)
+    }
+    return {
+        find: parsed.find,
+        platformVersion: parsed.plan.platformVersion ?? undefined,
+        archive: archiveDir === undefined ? null : releaseArchive.fromDirectory({ dir: resolve(archiveDir) }),
+    }
+}
+
+// The seam for ADR-0004's "unchanged bundle-format qadams come from the release archive": the
+// archived tarball is the artifact, so it is verified against the integrity its index recorded and
+// copied as it is, never rebuilt.
+const takeFromArchive = async ({ archive, entry, source, packDestination }) => {
+    const base = { name: entry.name, version: entry.version, source, durationMs: 0 }
+    const archived = archive?.find({ name: entry.name, version: entry.version }) ?? null
+    if (archived === null) {
+        return { ...base, status: ARTIFACT_STATUS.BUILD_ERROR, error: `the release archive has no ${entry.name}@${entry.version}` }
+    }
+    const from = join(archive.dir, archived.file)
+    const bytes = await readFile(from)
+    const integrity = `sha512-${createHash('sha512').update(bytes).digest('base64')}`
+    if (integrity !== archived.integrity) {
+        return { ...base, status: ARTIFACT_STATUS.BUILD_ERROR, error: `${archived.file} does not match the integrity its archive index records` }
+    }
+    await mkdir(packDestination, { recursive: true })
+    await copyFile(from, join(packDestination, archived.file))
+    return {
+        ...base,
+        status: ARTIFACT_STATUS.FROM_ARCHIVE,
+        kind: archived.kind ?? null,
+        commit: archived.commit,
+        tarball: { file: archived.file, integrity, shasum: archived.shasum, size: (await stat(from)).size },
+    }
 }
 
 const findOfficialQadams = async () => {
@@ -180,7 +258,7 @@ const summarize = ({ results }) => {
 const printSummary = ({ report, outRoot }) => {
     const { summary, results } = report
     console.info(`\n${summary.total} qadams in ${(report.durationMs / 1000).toFixed(0)} s — ${JSON.stringify(summary.byStatus)}; kinds ${JSON.stringify(summary.byKind)}; with i18n ${summary.withI18n}`)
-    results.filter((r) => r.status !== ARTIFACT_STATUS.OK).forEach((r) => console.info(`  ${r.status.padEnd(18)} ${r.name}@${r.version}: ${r.error}`))
+    results.filter(isFailure).forEach((r) => console.info(`  ${r.status.padEnd(18)} ${r.name}@${r.version}: ${r.error}`))
     console.info(`report: ${join(outRoot, 'report.json')}`)
 }
 

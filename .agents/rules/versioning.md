@@ -80,7 +80,7 @@ root raised by the pending platform changesets (at least a patch), with `<n>` th
 (`node tools/ci/compute-main-version.mjs --next` prints `<next>`, the release a change merged now
 ships in — e.g. a migration's `release`). How a `main` build versions *changed package* code
 is [ADR-0004](../../adr/0004-main-builds-give-changed-packages-their-own-prerelease-versions.md),
-accepted on 2026-10-10 and binding (snapshot `-main.<n>` versions, the `follow`/`pin` snapshot policy, export rewriting, gate 9). `@aiqadam/shared` is private and bundled
+accepted on 2026-10-10 and binding (snapshot `-main.<n>` versions, the `follow`/`pin` snapshot policy, export rewriting, gate 9). `tools/scripts/qadams/snapshot/` computes which version each qadam would get in a `main` build (#851); the image does not apply it yet. `@aiqadam/shared` is private and bundled
 into `qadams-framework` (#799). Gates 1–7 (#797) and gate 8 (#801, landed) are required; the maintainer-only
 `semver-override` label bypasses gate 2 alone, when CI over-estimates the level.
 

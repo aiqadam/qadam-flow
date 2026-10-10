@@ -142,6 +142,61 @@ echo '{"qadams":{"@aiqadam/qadam-oracle-database":{"extraEntryPoints":{"src/lib/
 node "$builder" --out "${root}/runner-only" --qadams oracle-database --config "${root}/runner-only.json" --allow-failures >"${root}/runner-only.log" 2>&1
 if grep -q 'native-undeclared.*oracledb' "${root}/runner-only.log"; then ok "oracledb's prebuilt addon detected"; else bad "oracledb's prebuilt addon not detected"; fi
 
+# --- the snapshot plan (ADR-0004, #851): version written into the artifact, archive seam --------
+# csv is built as a `-main.<n>` snapshot; crypto is taken from a (fake) release archive and not built.
+archive="${root}/release-archive"
+mkdir -p "$archive"
+printf 'archived tarball' >"${archive}/aiqadam-qadam-crypto-0.1.0.tgz"
+ARCHIVE="$archive" node --input-type=module - <<'EOF'
+import { createHash } from 'node:crypto'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+const dir = process.env.ARCHIVE
+const integrity = `sha512-${createHash('sha512').update(readFileSync(join(dir, 'aiqadam-qadam-crypto-0.1.0.tgz'))).digest('base64')}`
+writeFileSync(join(dir, 'archive-index.json'), JSON.stringify({ formatVersion: 1, artifacts: [{ name: '@aiqadam/qadam-crypto', version: '0.1.0', kind: 'bundle', file: 'aiqadam-qadam-crypto-0.1.0.tgz', integrity, shasum: 'x', size: 16, commit: { sha: 'archived-commit', dirtyQadams: false } }] }))
+const entry = (name, version, origin) => ({ name, directory: `packages/qadams/core/${name.split('-').pop()}`, released: version, version, origin, reason: 'test' })
+writeFileSync(join(dir, '..', 'plan.json'), JSON.stringify({ formatVersion: 1, mode: 'main', counter: '412', platformVersion: '1.2.0-main.412', packages: [entry('@aiqadam/qadam-csv', '0.6.1-main.412', 'tree'), entry('@aiqadam/qadam-crypto', '0.1.0', 'archive')] }))
+EOF
+node "$builder" --out "${root}/snap" --qadams csv,crypto --pack --snapshot-plan "${root}/plan.json" --release-archive "$archive" >"${root}/snap.log" 2>&1
+expect_exit "builds from a snapshot plan, one qadam from the archive" 0 $?
+
+SNAP="${root}/snap" REPO="$repo" node --input-type=module - <<'EOF'
+import { readFileSync, existsSync } from 'node:fs'
+import { join } from 'node:path'
+const snap = process.env.SNAP
+const frameworkVersion = JSON.parse(readFileSync(join(process.env.REPO, 'packages/qadams/framework/package.json'), 'utf8')).version
+const dir = join(snap, '@aiqadam', 'qadam-csv', '0.6.1-main.412')
+const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
+const metadata = JSON.parse(readFileSync(join(dir, 'metadata.json'), 'utf8'))
+const report = JSON.parse(readFileSync(join(snap, 'report.json'), 'utf8'))
+const byName = Object.fromEntries(report.results.map((r) => [r.name, r]))
+const index = JSON.parse(readFileSync(join(snap, 'archive', 'archive-index.json'), 'utf8'))
+const archived = index.artifacts.find((a) => a.name === '@aiqadam/qadam-crypto')
+const built = index.artifacts.find((a) => a.name === '@aiqadam/qadam-csv')
+const checks = [
+  ['csv: stored under the snapshot version', existsSync(dir)],
+  ['csv: package.json carries the snapshot version', manifest.version === '0.6.1-main.412'],
+  ['csv: metadata.json carries the snapshot version', metadata.version === '0.6.1-main.412'],
+  ['csv: the framework version it was built against is recorded', manifest.qadamArtifact.builtAgainst?.framework === frameworkVersion],
+  ['csv: so is the platform version of the build', manifest.qadamArtifact.builtAgainst?.platform === '1.2.0-main.412'],
+  ['csv: the tarball is named for the snapshot', built?.version === '0.6.1-main.412' && /0\.6\.1-main\.412\.tgz$/.test(built.file)],
+  ['crypto: not built, reported as taken from the archive', byName['@aiqadam/qadam-crypto']?.status === 'from-archive' && !existsSync(join(snap, '@aiqadam', 'qadam-crypto'))],
+  ['crypto: its archived tarball is copied into the archive', existsSync(join(snap, 'archive', 'aiqadam-qadam-crypto-0.1.0.tgz'))],
+  ['crypto: listed in the index with the integrity and commit it was archived with', archived?.integrity.startsWith('sha512-') && archived.commit.sha === 'archived-commit'],
+]
+checks.forEach(([name, passed]) => console.log(`${passed ? 'ok   ' : 'FAIL '} ${name}`))
+process.exit(checks.every(([, passed]) => passed) ? 0 : 1)
+EOF
+expect_exit "snapshot plan: version in package.json and metadata.json, archive seam" 0 $?
+
+node "$builder" --out "${root}/snap-no-archive" --qadams csv,crypto --pack --snapshot-plan "${root}/plan.json" >"${root}/snap-no-archive.log" 2>&1
+expect_exit "a plan that takes a qadam from the archive needs --release-archive" 2 $?
+node "$builder" --out "${root}/snap-missing" --qadams csv,sftp --snapshot-plan "${root}/plan.json" >"${root}/snap-missing.log" 2>&1
+expect_exit "a qadam the plan does not name is refused" 2 $?
+printf 'tampered' >"${archive}/aiqadam-qadam-crypto-0.1.0.tgz"
+node "$builder" --out "${root}/snap-tampered" --qadams crypto --pack --snapshot-plan "${root}/plan.json" --release-archive "$archive" >"${root}/snap-tampered.log" 2>&1
+expect_exit "an archived tarball that no longer matches its integrity fails the build" 1 $?
+
 node "$builder" --out "${repo}/.qadam-artifacts-test" --qadams csv >"${root}/inside.log" 2>&1
 expect_exit "--out inside the repository is refused" 2 $?
 

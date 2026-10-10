@@ -425,6 +425,13 @@ jobs:
       - name: Test the main-build platform version
         run: tools/ci/test-main-version.sh
 
+      # The versions a build gives the official qadams (ADR-0004, #851): `<next>-main.<n>` for a
+      # qadam with its own changeset, the released number for the rest, both fallbacks of a `main`
+      # build (no release archive, no release plan) and the release build that fails instead. Checks
+      # every number against `qadamVersionParser`, so it needs `bun` and sits below the install.
+      - name: Test the qadam snapshot plan
+        run: tools/ci/test-qadam-snapshot-plan.sh
+
       # ADR-0001 gate 6. Full tree, not a diff: the ESLint ban (packages/qadams/eslint.config.mjs,
       # #786) can be silenced by a disable comment; this scan cannot.
       - name: Test the qadam shared-imports checker
