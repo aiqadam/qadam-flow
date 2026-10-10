@@ -1,6 +1,7 @@
 import {
     FlowCreatorType,
     FlowOperationType,
+    flowQadamUtil,
     FlowVersionTemplate,
     isNil,
     McpToolContext,
@@ -35,6 +36,7 @@ export const apImportFlowTool = ({ mcp, userId }: McpToolContext, log: FastifyBa
                     return { content: [{ type: 'text', text: `❌ ${validated.error}` }] }
                 }
                 const { name, flowTemplate } = validated
+                const markedNote = describeMarkedSteps({ flowTemplate })
 
                 const project = await projectService(log).getOneOrThrow(mcp.projectId)
 
@@ -46,6 +48,7 @@ export const apImportFlowTool = ({ mcp, userId }: McpToolContext, log: FastifyBa
                         schemaVersion: flowTemplate.schemaVersion ?? null,
                         notes: flowTemplate.notes ?? null,
                         localeSource: flowTemplate.localeSource ?? null,
+                        exportedUnresolved: flowTemplate.exportedUnresolved,
                     },
                 }
 
@@ -65,7 +68,7 @@ export const apImportFlowTool = ({ mcp, userId }: McpToolContext, log: FastifyBa
                     return {
                         content: [{
                             type: 'text',
-                            text: `✅ Flow "${mcpUtils.wrapUntrustedValue(updatedFlow.version.displayName)}" (id: ${updatedFlow.id}) overwritten from template.\n\nNote: Connections are not restored — step auth inputs are cleared by export, so use ap_flow_structure to check configuration status and re-configure steps as needed.`,
+                            text: `✅ Flow "${mcpUtils.wrapUntrustedValue(updatedFlow.version.displayName)}" (id: ${updatedFlow.id}) overwritten from template.\n\nNote: Connections are not restored — step auth inputs are cleared by export, so use ap_flow_structure to check configuration status and re-configure steps as needed.${markedNote}`,
                         }],
                     }
                 }
@@ -91,7 +94,7 @@ export const apImportFlowTool = ({ mcp, userId }: McpToolContext, log: FastifyBa
                     return {
                         content: [{
                             type: 'text',
-                            text: `✅ Flow "${mcpUtils.wrapUntrustedValue(importedFlow.version.displayName)}" (id: ${importedFlow.id}) created from template.\n\nNote: Connections are not restored — step auth inputs are cleared by export, so use ap_flow_structure to check configuration status and re-configure steps as needed.`,
+                            text: `✅ Flow "${mcpUtils.wrapUntrustedValue(importedFlow.version.displayName)}" (id: ${importedFlow.id}) created from template.\n\nNote: Connections are not restored — step auth inputs are cleared by export, so use ap_flow_structure to check configuration status and re-configure steps as needed.${markedNote}`,
                         }],
                     }
                 }
@@ -112,6 +115,14 @@ export const apImportFlowTool = ({ mcp, userId }: McpToolContext, log: FastifyBa
             }
         },
     }
+}
+
+function describeMarkedSteps({ flowTemplate }: { flowTemplate: FlowVersionTemplate }): string {
+    const names = [...new Set(flowQadamUtil.getMarkableUnresolved({ trigger: flowTemplate.trigger, steps: flowTemplate.exportedUnresolved }).map((step) => step.stepName))]
+    if (names.length === 0) {
+        return ''
+    }
+    return `\n\n${names.length} step(s) were exported from a pre-release build with no release that could be confirmed compatible and are marked "update this step": ${names.map((name) => mcpUtils.wrapUntrustedValue(name)).join(', ')}. Pick a version for each before relying on it.`
 }
 
 function validateTemplateShape(template: Record<string, unknown>): ValidateTemplateShapeResult {
@@ -137,6 +148,7 @@ type ImportFlowOperation = {
         schemaVersion: string | null
         notes: FlowVersionTemplate['notes'] | null
         localeSource: FlowVersionTemplate['localeSource']
+        exportedUnresolved: FlowVersionTemplate['exportedUnresolved']
     }
 }
 

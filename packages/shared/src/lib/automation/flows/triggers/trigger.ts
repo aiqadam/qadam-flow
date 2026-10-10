@@ -14,6 +14,8 @@ const qadamTriggerSettingsFields = {
     customLogoUrl: z.string().optional(),
     qadamName: z.string(),
     qadamVersion: VersionType,
+    // See `qadamActionSettingsFields`. (A trigger has no agent tools.)
+    exportedUnresolvedPin: VersionType.optional(),
     triggerName: z.string().optional(),
     input: z.record(z.string(), z.any()),
 }

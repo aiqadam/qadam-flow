@@ -2264,5 +2264,9 @@
   "This release no longer runs: {versions}. Affected steps: {unsupported}. Affected flows: {flows}. Update each step to a qadam version built against a supported framework version.": "This release no longer runs: {versions}. Affected steps: {unsupported}. Affected flows: {flows}. Update each step to a qadam version built against a supported framework version.",
   "qadams that predate context versions": "qadams that predate context versions",
   "context version {version}": "context version {version}",
-  "and {remaining} more": "and {remaining} more"
+  "and {remaining} more": "and {remaining} more",
+  "unresolvedPinsExported": "{count, plural, =1 {1 step is pinned to a pre-release build and no compatible release was found. It is exported as a caret range of its base release and will be marked \"update this step\" when imported: {steps}} other {# steps are pinned to pre-release builds and no compatible release was found. They are exported as caret ranges of their base releases and will be marked \"update this step\" when imported: {steps}}}",
+  "exportKeepingPrereleasePins": "Export with pre-release pins",
+  "snapshotMetadataInvalid": "The embedded pre-release metadata is not valid",
+  "snapshotMetadataTooLarge": "The embedded pre-release metadata is too large"
 }
