@@ -2270,5 +2270,7 @@
   "snapshotMetadataInvalid": "Ендірілген pre-release метадеректері жарамсыз",
   "snapshotMetadataTooLarge": "Ендірілген pre-release метадеректері тым үлкен",
   "Pre-release build": "Pre-release құрастыру",
-  "This step is pinned to a build from main, not a released version. It runs that exact build until its version is updated.": "Бұл қадам шығарылған нұсқаға емес, main-нан алынған құрастыруға бекітілген. Нұсқа жаңартылғанша дәл осы құрастыруды орындайды."
+  "This step is pinned to a build from main, not a released version. It runs that exact build until its version is updated.": "Бұл қадам шығарылған нұсқаға емес, main-нан алынған құрастыруға бекітілген. Нұсқа жаңартылғанша дәл осы құрастыруды орындайды.",
+  "Update available": "Жаңарту қолжетімді",
+  "A released version of this Qadam is available: v{version}.": "Осы Qadam-ның шығарылған нұсқасы қолжетімді: v{version}."
 }

@@ -7,6 +7,7 @@ import {
   isNil,
   QadamAction,
   QadamTrigger,
+  qadamVersionParser,
 } from '@aiqadam/shared';
 import { t } from 'i18next';
 import { AlertTriangle, ArrowUp, Info } from 'lucide-react';
@@ -94,6 +95,35 @@ function getLatestVersion({
   const latest = versions[0]?.version;
   if (!latest || !semver.gt(latest, currentVersion)) return undefined;
   return latest;
+}
+
+// ADR-0004: the release a snapshot pin (`x.y.z-main.<n>`) graduates to. The candidates are the
+// releases inside the pin's own range — `^` when it carries one or none, a `~` pin staying on its
+// minor — the same expression the export rewrite uses (`snapshot-pin-export.ts`:
+// `${pin.range ?? '^'}${base}`). For `^` that range is the caret: the same major, or on `0.x` the
+// same minor, and it contains the base release (`^1.3.0-main.412` contains `1.3.0`) as well as later
+// patches (`1.3.2`). `getLatestVersion` above compares with plain `semver.gt` and does not apply the
+// range, so it must not be reused here: it would offer a release outside the pin. Prereleases are
+// never candidates — only releases graduate a snapshot.
+function getLatestReleaseInsideCaret({
+  pin,
+  versions,
+}: {
+  pin: string;
+  versions: { version: string }[];
+}): string | undefined {
+  const parsed = qadamVersionParser.parsePin({ pin });
+  if (isNil(parsed)) return undefined;
+  const { major, minor, patch } = parsed.version;
+  const range = `${parsed.range ?? '^'}${major}.${minor}.${patch}`;
+  return versions
+    .map((entry) => entry.version)
+    .filter(
+      (version) =>
+        qadamVersionParser.isRelease({ version }) &&
+        semver.satisfies(version, range),
+    )
+    .sort(semver.rcompare)[0];
 }
 
 export function LatestVersionAvailableAlert({
@@ -253,6 +283,7 @@ export const changeVersionUtils = {
   getInputAfterVersionChange,
   getLatestMinorOrMajorUpgrade,
   getLatestVersion,
+  getLatestReleaseInsideCaret,
   applyPieceVersionChange,
 };
 

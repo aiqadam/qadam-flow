@@ -2270,5 +2270,7 @@
   "snapshotMetadataInvalid": "Встроенные метаданные предрелизной сборки недействительны",
   "snapshotMetadataTooLarge": "Встроенные метаданные предрелизной сборки слишком велики",
   "Pre-release build": "Предрелизная сборка",
-  "This step is pinned to a build from main, not a released version. It runs that exact build until its version is updated.": "Этот шаг привязан к сборке из main, а не к выпущенной версии. Он выполняет именно эту сборку, пока версия не будет обновлена."
+  "This step is pinned to a build from main, not a released version. It runs that exact build until its version is updated.": "Этот шаг привязан к сборке из main, а не к выпущенной версии. Он выполняет именно эту сборку, пока версия не будет обновлена.",
+  "Update available": "Доступно обновление",
+  "A released version of this Qadam is available: v{version}.": "Доступна выпущенная версия этого qadam: v{version}."
 }
