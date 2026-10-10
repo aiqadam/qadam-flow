@@ -46,7 +46,11 @@ When a worker in the `UNSANDBOXED` or `SANDBOX_CODE_ONLY` execution mode starts,
 Then, for a step pinned to an official qadam at an exact version, such as `@aiqadam/qadam-tables@0.5.1`:
 
 1. If the store holds `@aiqadam/qadam-tables` `0.5.1` and it checks out, the step runs that code, even when the image bundles the same version.
-2. Otherwise the step runs what it ran before the store: the image's build of that version, or the image's build of the qadam at another version. That second case is the silent substitution ADR-0003 removes. It stays until the [unavailable-version fallback](https://github.com/aiqadam/qadam-flow/issues/808) can make the move with a check and an audit record.
+2. Otherwise the step runs the image's build of that same version.
+3. Otherwise, for a release pin only, the step runs the image's build of the qadam at another release inside the pin's caret range (the same major, or on `0.x` the same minor, never below the pin), and the worker says so once per pin and engine process: `The pinned version is not available, running the image's build inside the pin's caret range instead`. That is the stand-in for the [unavailable-version fallback](https://github.com/aiqadam/qadam-flow/issues/808), which will make the move with a check and an audit record, and it goes when that lands.
+4. Otherwise the run fails with the pin named, for example `Qadam not found for package: @aiqadam/qadam-tables@0.5.1. The qadam version store and the image hold no @aiqadam/qadam-tables@0.5.1, and the image's build 1.0.0 is outside ^0.5.1.` Nothing runs a different major, a `0.x` minor below or above the pin, an older build than the pin, or any other build for a snapshot pin (`x.y.z-main.<n>`, [ADR-0004](https://github.com/aiqadam/qadam-flow/blob/main/adr/0004-main-builds-give-changed-packages-their-own-prerelease-versions.md)): a snapshot is exact, is never published, and is moved only by that fallback.
+
+Steps that an agent step uses as tools are provisioned like steps: the worker checks every PIECE tool's pin before the run, and the run fails with the pin named when a tool's qadam is unavailable. A tool list that a variable supplies at run time cannot be checked ahead of the run; the engine applies the same rules when it loads the tool.
 
 A stored version that is damaged or that this release cannot use is skipped, with one warning per version and engine process in the worker's log:
 
@@ -54,7 +58,7 @@ A stored version that is damaged or that this release cannot use is skipped, wit
 [qadamVersionStore] The stored version cannot be used, loading the image's build instead {"qadam":"@aiqadam/qadam-tables@0.5.1","status":"damaged","reason":"integrity.json is missing"}
 ```
 
-The `[qadamLoader] cold load` line that the worker writes the first time it loads a qadam says where the code came from in `source`: `store`, `bundled`, `installed` or `dev`.
+The `[qadamLoader] cold load` line that the worker writes the first time it loads a qadam says where the code came from in `source`: `store`, `bundled`, `bundled-fallback` (step 3), `installed` or `dev`.
 
 ### Libraries the platform provides
 

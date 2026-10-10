@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs'
+import path from 'path'
 import { ActionErrorHandlingOptions, BeginExecuteFlowOperation, BranchCondition, BranchExecutionType, CodeAction, ExecutionType, FlowAction, FlowActionType, FlowVersionState, LoopOnItemsAction, PieceAction, StreamStepProgress, PropertyExecutionType, RouterExecutionType, RunEnvironment } from '@aiqadam/shared'
 import { EngineConstants, ResolvedBeginExecuteFlowOperation } from '../../src/lib/handler/context/engine-constants'
 
@@ -105,6 +107,32 @@ export function buildCodeAction({ name, input, skip, nextAction, errorHandlingOp
     }
 }
 
+// A step that runs the image's build pins the version the image carries: the loader no longer runs
+// an exact pin on a build outside its caret range (#779). `vitest.config.ts` runs from the repo root.
+export function bundledQadamVersion({ qadamName }: { qadamName: string }): string {
+    const directory = qadamName.replace('@aiqadam/qadam-', '')
+    for (const group of ['core', 'community']) {
+        const content = readOptionalFile({ filePath: path.resolve('packages/qadams', group, directory, 'package.json') })
+        if (content !== null) {
+            const packageJson: unknown = JSON.parse(content)
+            if (typeof packageJson === 'object' && packageJson !== null && 'version' in packageJson && typeof packageJson.version === 'string') {
+                return packageJson.version
+            }
+        }
+    }
+    // A made-up qadam a test supplies through a mock keeps an arbitrary pin.
+    return '1.0.0'
+}
+
+function readOptionalFile({ filePath }: { filePath: string }): string | null {
+    try {
+        return readFileSync(filePath, 'utf-8')
+    }
+    catch {
+        return null
+    }
+}
+
 export function buildQadamAction({ name, input, skip, qadamName, actionName, nextAction, errorHandlingOptions }: { errorHandlingOptions?: ActionErrorHandlingOptions, name: string, input: Record<string, unknown>, skip?: boolean, qadamName: string, actionName: string, nextAction?: FlowAction }): PieceAction {
     return {
         name,
@@ -114,7 +142,7 @@ export function buildQadamAction({ name, input, skip, qadamName, actionName, nex
         settings: {
             input,
             qadamName,
-            qadamVersion: '1.0.0', // Not required since it's running in development mode
+            qadamVersion: bundledQadamVersion({ qadamName }),
             actionName,
             propertySettings: Object.fromEntries(Object.entries(input).map(([key]) => [key, {
                 type: PropertyExecutionType.MANUAL,

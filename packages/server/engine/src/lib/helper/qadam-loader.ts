@@ -5,12 +5,15 @@ import { EngineGenericError, ErrorCode, extractQadamFromModule, getLegacyPackage
 import { z } from 'zod'
 import { utils } from '../utils'
 import { qadamDistIndex } from './qadam-dist-index'
+import { qadamPinFallback } from './qadam-pin-fallback'
 import { qadamPlatformModules } from './qadam-platform-modules'
 import { qadamVersionStoreResolver } from './qadam-version-store-resolver'
 
 // Bundled qadams are baked into the image and a stored version is never overwritten, so a resolved
 // path cannot change while the process lives. The cache holds the in-flight promise so concurrent
-// steps share one walk.
+// steps share one walk. A fallback answer (another build than the pin names) is the exception: it is
+// dropped once resolved, because a version fetched into the store later (#806) must be seen by the
+// next load of the same pin, not only by the next engine process.
 const qadamPathCache = new Map<string, Promise<ResolvedQadam>>()
 // #419 Phase 0: which resolved qadam paths already had a cold-load line logged. Keyed by the
 // resolved path rather than the (qadamName, qadamVersion) a caller asked for, because a
@@ -20,6 +23,7 @@ const qadamPathCache = new Map<string, Promise<ResolvedQadam>>()
 // racing on the same brand-new path cannot both observe it as cold.
 const loggedColdQadamPaths = new Set<string>()
 const resolvedQadamPackageJsonSchema = z.object({ version: z.string() })
+const warnedFallbackPins = new Set<string>()
 
 export const qadamLoader = {
     loadQadamOrThrow: async (
@@ -183,12 +187,20 @@ async function resolveQadam({ packageName, devQadams }: GetQadamPathParams): Pro
 
     const resolving = resolveQadamPath({ packageName, isDevQadam })
     qadamPathCache.set(packageName, resolving)
-    // A miss is not permanent: an ARCHIVE/CUSTOM qadam can be installed later in this process.
-    void resolving.catch(() => {
+    const forget = (): void => {
         if (qadamPathCache.get(packageName) === resolving) {
             qadamPathCache.delete(packageName)
         }
-    })
+    }
+    // A miss is not permanent: an ARCHIVE/CUSTOM qadam can be installed later in this process.
+    void resolving.then(
+        (resolved) => {
+            if (resolved.source === QadamSource.BUNDLED_FALLBACK) {
+                forget()
+            }
+        },
+        forget,
+    )
     return resolving
 }
 
@@ -262,8 +274,8 @@ async function resolveQadamPath({ packageName, isDevQadam }: ResolveQadamPathPar
         }
     }
     // ADR-0003: the store holds the pinned version's own code, so it comes first. A version it does
-    // not hold falls through to the image's build, as before the store (#779 keeps that until #808's
-    // checked fallback exists).
+    // not hold falls through to the image's build at that same version, an installed copy, and last
+    // to `resolveUnavailablePin` (#779; #808 replaces that last step).
     const pin = splitExactAlias(packageName)
     const storedPath = isNil(pin) ? null : await qadamVersionStoreResolver.findOfficialEntryPoint(pin)
     if (!isNil(storedPath)) {
@@ -283,11 +295,37 @@ async function resolveQadamPath({ packageName, isDevQadam }: ResolveQadamPathPar
     if (!isNil(installedPath)) {
         return { path: installedPath, source: QadamSource.INSTALLED }
     }
+    return resolveUnavailablePin({ packageName, pin })
+}
+
+// Nothing holds the exact pin. A bare name (no version to compare) is the image's build, as before.
+// An exact pin runs on the image's build of the same qadam only where `qadamPinFallback` allows it,
+// and says so: a substitution is never silent. Everything else fails with the pin named.
+async function resolveUnavailablePin({ packageName, pin }: { packageName: string, pin: ExactPin | null }): Promise<ResolvedQadam> {
     const bundledPath = await findInDistFolder({ packageName, refreshIndex: false })
-    if (!isNil(bundledPath)) {
-        return { path: bundledPath, source: QadamSource.BUNDLED }
+    if (isNil(pin)) {
+        if (!isNil(bundledPath)) {
+            return { path: bundledPath, source: QadamSource.BUNDLED }
+        }
+        throw new EngineGenericError('QadamNotFoundError', `Qadam not found for package: ${packageName}`)
     }
-    throw new EngineGenericError('QadamNotFoundError', `Qadam not found for package: ${packageName}`)
+    const imageVersion = await findBundledVersion({ name: pin.name })
+    const verdict = qadamPinFallback.check({ pinnedVersion: pin.version, imageVersion })
+    if (!verdict.allowed || isNil(bundledPath)) {
+        const reason = verdict.allowed ? 'the image does not ship this qadam' : verdict.reason
+        throw new EngineGenericError('QadamNotFoundError', `Qadam not found for package: ${packageName}. The qadam version store and the image hold no ${pin.name}@${pin.version}, and ${reason}.`)
+    }
+    warnOnceForPin({ pin, imageVersion })
+    return { path: bundledPath, source: QadamSource.BUNDLED_FALLBACK }
+}
+
+function warnOnceForPin({ pin, imageVersion }: { pin: ExactPin, imageVersion: string | null }): void {
+    const key = `${pin.name}@${pin.version}`
+    if (warnedFallbackPins.has(key)) {
+        return
+    }
+    warnedFallbackPins.add(key)
+    console.warn(`[qadamLoader] The pinned version is not available, running the image's build inside the pin's caret range instead ${JSON.stringify({ qadam: key, imageVersion })}`)
 }
 
 // A release `name@1.2.3` or a snapshot `name@1.3.0-main.412` (ADR-0004), or the legacy
@@ -305,6 +343,11 @@ async function findBundledBuildAtVersion({ name, version }: ExactPin): Promise<s
         return null
     }
     return bundled.indexPath
+}
+
+async function findBundledVersion({ name }: { name: string }): Promise<string | null> {
+    const distIndex = await qadamDistIndex.get({ refresh: false, warn: warnOnConsole })
+    return distIndex.get(name)?.version ?? null
 }
 
 async function findInDistFolder({ packageName, refreshIndex }: FindInDistFolderParams): Promise<string | null> {
@@ -365,6 +408,8 @@ enum QadamSource {
     DEV = 'dev',
     STORE = 'store',
     BUNDLED = 'bundled',
+    // The image's build at a version other than the pin's (`qadamPinFallback`), until #808.
+    BUNDLED_FALLBACK = 'bundled-fallback',
     INSTALLED = 'installed',
 }
 
