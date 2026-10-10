@@ -52,6 +52,8 @@ import { SystemJobName } from '../../helper/system-jobs/common'
 import { systemJobsSchedule } from '../../helper/system-jobs/system-job'
 import { telemetry } from '../../helper/telemetry.utils'
 import { projectService } from '../../project/project-service'
+import { QadamPinMoveCause } from '../../qadams/pin-moves/qadam-pin-move.dto'
+import { qadamPinMoveService } from '../../qadams/pin-moves/qadam-pin-move.service'
 import { eventPullerRegistry } from '../../trigger/long-polling/event-puller-registry'
 import { longPollingStatus } from '../../trigger/long-polling/long-polling-status'
 import { triggerSourceService } from '../../trigger/trigger-source/trigger-source-service'
@@ -517,12 +519,13 @@ export const flowService = (log: FastifyBaseLogger) => ({
     }: UpdatePublishedVersionIdParams): Promise<PopulatedFlow> {
         const flowToUpdate = await this.getOneOrThrow({ id, projectId })
 
-        const flowVersionToPublish = await flowVersionService(log).getFlowVersionOrThrow({
+        const latestFlowVersion = await flowVersionService(log).getFlowVersionOrThrow({
             flowId: id,
             versionId: undefined,
         })
 
-        assertFlowVersionPublishable({ flowVersion: flowVersionToPublish })
+        assertFlowVersionPublishable({ flowVersion: latestFlowVersion })
+        const flowVersionToPublish = await moveUnavailableQadamPins({ flowVersion: latestFlowVersion, projectId, platformId, userId, cause: 'PUBLISH', log })
 
         if (flowToUpdate.status === FlowStatus.ENABLED && !isNil(flowToUpdate.publishedVersionId)) {
             await triggerSourceService(log).disable({
@@ -773,6 +776,20 @@ const assertFlowVersionPublishable = ({ flowVersion }: AssertFlowVersionPublisha
 }
 
 
+// Publishing or enabling a flow is where an unavailable qadam pin is moved (ADR-0003, #808): what the
+// move needs is a flow version in hand and a person or a status change to attribute it to. It can only
+// make a flow better, so a failure of the move (never of the flow) is logged and the flow carries on
+// with its version as it was: the step is then left for the "update this step" marking, and the
+// run-time net (`qadamPinFallback`) still runs it meanwhile. Nothing here disables a flow (#435).
+async function moveUnavailableQadamPins({ flowVersion, projectId, platformId, userId, cause, log }: MoveUnavailableQadamPinsParams): Promise<FlowVersion> {
+    const { data, error } = await tryCatch(() => qadamPinMoveService(log).moveUnavailablePins({ flowVersion, projectId, platformId, cause, actorUserId: userId ?? undefined }))
+    if (error) {
+        log.warn({ err: error, flowId: flowVersion.flowId, flowVersionId: flowVersion.id, cause }, '[flowService] could not check the flow\'s qadam pins for an unavailable version; leaving them as they are')
+        return flowVersion
+    }
+    return data.flowVersion
+}
+
 async function applyStatusChange(params: {
     id: FlowId
     projectId: ProjectId
@@ -793,10 +810,20 @@ async function applyStatusChange(params: {
 
             const publishedFlowVersionId = flowToUpdate.publishedVersionId
             assertNotNullOrUndefined(publishedFlowVersionId, 'publishedFlowVersionId is required')
-            const publishedFlowVersion = await flowVersionService(log).getFlowVersionOrThrow({
+            const storedPublishedFlowVersion = await flowVersionService(log).getFlowVersionOrThrow({
                 flowId: flowToUpdate.id,
                 versionId: publishedFlowVersionId,
             })
+            const publishedFlowVersion = params.newStatus === FlowStatus.ENABLED
+                ? await moveUnavailableQadamPins({
+                    flowVersion: storedPublishedFlowVersion,
+                    projectId: params.projectId,
+                    platformId: await projectService(log).getPlatformId(params.projectId),
+                    userId: null,
+                    cause: 'ENABLE',
+                    log,
+                })
+                : storedPublishedFlowVersion
 
             await flowSideEffects(log).preUpdateStatus({
                 flowToUpdate,
@@ -930,6 +957,16 @@ type LockFlowVersionIfNotLockedParams = {
     projectId: ProjectId
     platformId: PlatformId
     entityManager: EntityManager
+    log: FastifyBaseLogger
+}
+
+type MoveUnavailableQadamPinsParams = {
+    flowVersion: FlowVersion
+    projectId: ProjectId
+    platformId: PlatformId
+    // Null when a status change, not a person's publish, is the cause.
+    userId: UserId | null
+    cause: QadamPinMoveCause
     log: FastifyBaseLogger
 }
 
