@@ -26,11 +26,9 @@ export function classifyChatError(error: unknown): ClassifiedChatError {
     const { message, statusCode } = describeChatError(error)
     const rule = RULES.find((candidate) => candidate.matches({ message, statusCode }))
     const result = rule?.result ?? UNKNOWN_RESULT
-    // For the two classes that can carry an actionable provider message — the model it wants
-    // instead, the flag it needs — the classified sentence is kept and the provider's message is
-    // appended, so the user is told what to change and not only which class failed (#848). Only the
-    // `message` string is read, never the error object, so the DoD 3 API-key guarantee is intact.
-    return { code: result.code, message: withProviderDetail({ result, providerMessage: message }) }
+    // The provider's own text stays server-side: it can name a model the user must not be steered to,
+    // and a proxy's error body is not ours to echo into the chat bubble (#848).
+    return { code: result.code, message: result.message }
 }
 
 // The one place the fields above are read off a provider error, shared with the loop's log line so
@@ -56,33 +54,6 @@ export const CHAT_ERROR_CODES = {
     PROVIDER_UNREACHABLE: 'PROVIDER_UNREACHABLE',
     UNKNOWN: 'UNKNOWN',
 } as const
-
-// The classes that can carry an actionable provider message. MODEL_NOT_FOUND also matches any bare
-// 404, so a proxy's error body can be appended too; it is whitespace-collapsed, bounded and
-// rendered as plain text, which is the price of surfacing Google's "use this model instead" (a 404
-// whose body does not itself say "not found").
-const PROVIDER_DETAIL_CODES: ReadonlySet<ChatErrorCode> = new Set<ChatErrorCode>([
-    CHAT_ERROR_CODES.PROVIDER_MODEL_NOT_FOUND,
-    CHAT_ERROR_CODES.PROVIDER_TOOLS_NOT_SUPPORTED,
-])
-
-// Bounded so a provider that answers with a page of HTML cannot put it in the chat bubble, and
-// single-lined so it cannot forge the layout of the classified sentence above it.
-const MAX_PROVIDER_DETAIL_LENGTH = 300
-
-function withProviderDetail({ result, providerMessage }: { result: ClassifiedChatError, providerMessage: string }): string {
-    if (!PROVIDER_DETAIL_CODES.has(result.code)) {
-        return result.message
-    }
-    const collapsed = providerMessage.replace(/\s+/g, ' ').trim()
-    if (collapsed.length === 0) {
-        return result.message
-    }
-    const detail = collapsed.length > MAX_PROVIDER_DETAIL_LENGTH
-        ? `${collapsed.slice(0, MAX_PROVIDER_DETAIL_LENGTH)}…`
-        : collapsed
-    return `${result.message}\n\n${detail}`
-}
 
 // Order is significance, not tidiness: the SSRF enrichment and the timeouts are transport messages
 // that can arrive wrapped in `Cannot connect to API: ...`, so they must win over the generic
