@@ -2270,5 +2270,7 @@
   "snapshotMetadataInvalid": "The embedded pre-release metadata is not valid",
   "snapshotMetadataTooLarge": "The embedded pre-release metadata is too large",
   "Pre-release build": "Pre-release build",
-  "This step is pinned to a build from main, not a released version. It runs that exact build until its version is updated.": "This step is pinned to a build from main, not a released version. It runs that exact build until its version is updated."
+  "This step is pinned to a build from main, not a released version. It runs that exact build until its version is updated.": "This step is pinned to a build from main, not a released version. It runs that exact build until its version is updated.",
+  "Update available": "Update available",
+  "A released version of this Qadam is available: v{version}.": "A released version of this Qadam is available: v{version}."
 }

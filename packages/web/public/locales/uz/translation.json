@@ -2270,5 +2270,7 @@
   "snapshotMetadataInvalid": "Ichiga joylangan pre-release metadata yaroqsiz",
   "snapshotMetadataTooLarge": "Ichiga joylangan pre-release metadata juda katta",
   "Pre-release build": "Pre-reliz build",
-  "This step is pinned to a build from main, not a released version. It runs that exact build until its version is updated.": "Bu qadam chiqarilgan versiyaga emas, main'dan olingan buildga bog'langan. Versiya yangilanmaguncha aynan shu buildni ishlatadi."
+  "This step is pinned to a build from main, not a released version. It runs that exact build until its version is updated.": "Bu qadam chiqarilgan versiyaga emas, main'dan olingan buildga bog'langan. Versiya yangilanmaguncha aynan shu buildni ishlatadi.",
+  "Update available": "Yangilanish mavjud",
+  "A released version of this Qadam is available: v{version}.": "Bu Qadamning chiqarilgan versiyasi mavjud: v{version}."
 }
