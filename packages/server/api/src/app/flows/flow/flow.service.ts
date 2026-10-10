@@ -59,6 +59,7 @@ import { flowVersionMigrationService } from '../flow-version/flow-version-migrat
 import { flowVersionRepo, flowVersionService } from '../flow-version/flow-version.service'
 import { flowFolderService } from '../folder/folder.service'
 import { flowExecutionCache } from './flow-execution-cache'
+import { restoreFlowAfterFailedPublish } from './flow-publish-recovery'
 import { flowSideEffects } from './flow-service-side-effects'
 import { FlowEntity } from './flow.entity'
 import { flowRepo } from './flow.repo'
@@ -406,30 +407,48 @@ export const flowService = (log: FastifyBaseLogger) => ({
         operation,
     }: UpdateParams): Promise<PopulatedFlow> {
 
-        if (operation.type === FlowOperationType.LOCK_AND_PUBLISH || operation.type === FlowOperationType.CHANGE_STATUS) {
-            const flow = await this.getOneOrThrow({
+        const flowBeforeOperation = operation.type === FlowOperationType.LOCK_AND_PUBLISH || operation.type === FlowOperationType.CHANGE_STATUS
+            ? await this.getOneOrThrow({
                 id,
                 projectId,
             })
-            if (flow.operationStatus === FlowOperationStatus.DELETING) {
-                throw new QadamFlowError({
-                    code: ErrorCode.FLOW_OPERATION_IN_PROGRESS,
-                    params: {
-                        message: 'This flow is getting deleted.',
-                    },
-                })
-            }
+            : null
+
+        if (flowBeforeOperation?.operationStatus === FlowOperationStatus.DELETING) {
+            throw new QadamFlowError({
+                code: ErrorCode.FLOW_OPERATION_IN_PROGRESS,
+                params: {
+                    message: 'This flow is getting deleted.',
+                },
+            })
         }
 
         switch (operation.type) {
             case FlowOperationType.LOCK_AND_PUBLISH: {
+                assertNotNullOrUndefined(flowBeforeOperation, 'flowBeforeOperation')
                 await this.updatedPublishedVersionId({
                     id,
                     userId,
                     projectId,
                     platformId,
                 })
-                await applyStatusChange({ id, projectId, newStatus: operation.request.status ?? FlowStatus.ENABLED }, log)
+                // #781: `updatedPublishedVersionId` has already swapped `publishedVersionId` and flipped
+                // the flow to DISABLED, so a failure while re-registering the trigger — an ON_ENABLE that
+                // cannot resolve a pin — would leave an enabled flow stuck at DISABLED. Put it back to the
+                // status and published version it had before the publish, then surface the failure.
+                const { error: enableError } = await tryCatch(
+                    () => applyStatusChange({ id, projectId, newStatus: operation.request.status ?? FlowStatus.ENABLED }, log),
+                )
+                if (!isNil(enableError)) {
+                    await restoreFlowAfterFailedPublish({
+                        flowId: id,
+                        projectId,
+                        previousStatus: flowBeforeOperation.status,
+                        previousPublishedVersionId: flowBeforeOperation.publishedVersionId ?? null,
+                        log,
+                    })
+                    throw enableError
+                }
                 break
             }
 
