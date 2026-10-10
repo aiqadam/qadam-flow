@@ -142,6 +142,138 @@ echo '{"qadams":{"@aiqadam/qadam-oracle-database":{"extraEntryPoints":{"src/lib/
 node "$builder" --out "${root}/runner-only" --qadams oracle-database --config "${root}/runner-only.json" --allow-failures >"${root}/runner-only.log" 2>&1
 if grep -q 'native-undeclared.*oracledb' "${root}/runner-only.log"; then ok "oracledb's prebuilt addon detected"; else bad "oracledb's prebuilt addon not detected"; fi
 
+# --- the snapshot plan (ADR-0004, #851): version written into the artifact, archive seam --------
+# csv is built as a `-main.<n>` snapshot; crypto is taken from a (fake) release archive and not built.
+# The plan holds the versions this tree really has as `released`: the builder refuses a plan made for
+# other versions.
+csv_released="$(node -p "require('${repo}/packages/qadams/core/csv/package.json').version")"
+crypto_released="$(node -p "require('${repo}/packages/qadams/core/crypto/package.json').version")"
+csv_snapshot="$(node -p "const [a, b, c] = '${csv_released}'.split('.'); a + '.' + b + '.' + (Number(c) + 1) + '-main.412'")"
+archive="${root}/release-archive"
+archived_file="aiqadam-qadam-crypto-${crypto_released}.tgz"
+mkdir -p "$archive"
+printf 'archived tarball' >"${archive}/${archived_file}"
+ARCHIVE="$archive" ARCHIVED_FILE="$archived_file" CSV_RELEASED="$csv_released" CRYPTO_RELEASED="$crypto_released" CSV_SNAPSHOT="$csv_snapshot" node --input-type=module - <<'EOF'
+import { createHash } from 'node:crypto'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+const { ARCHIVE: dir, ARCHIVED_FILE: file, CSV_RELEASED, CRYPTO_RELEASED, CSV_SNAPSHOT } = process.env
+const integrity = `sha512-${createHash('sha512').update(readFileSync(join(dir, file))).digest('base64')}`
+writeFileSync(join(dir, 'archive-index.json'), JSON.stringify({ formatVersion: 1, artifacts: [{ name: '@aiqadam/qadam-crypto', version: CRYPTO_RELEASED, kind: 'bundle', file, integrity, shasum: 'x', size: 16, commit: { sha: 'archived-commit', dirtyQadams: false } }] }))
+const entry = ({ name, released, version, origin }) => ({ name, directory: `packages/qadams/core/${name.split('-').pop()}`, released, version, origin, reason: 'test' })
+const plan = (packages) => JSON.stringify({ formatVersion: 1, mode: 'main', counter: '412', platformVersion: '1.2.0-main.412', packages })
+const csv = { name: '@aiqadam/qadam-csv', released: CSV_RELEASED, version: CSV_SNAPSHOT, origin: 'tree' }
+const crypto = { name: '@aiqadam/qadam-crypto', released: CRYPTO_RELEASED, version: CRYPTO_RELEASED, origin: 'archive' }
+writeFileSync(join(dir, '..', 'plan.json'), plan([entry(csv), entry(crypto)]))
+writeFileSync(join(dir, '..', 'plan-stale.json'), plan([entry({ ...csv, released: '9.9.9' }), entry(crypto)]))
+writeFileSync(join(dir, '..', 'plan-traversal.json'), plan([entry({ ...csv, version: '../../../../tmp/qf-traversal' }), entry(crypto)]))
+EOF
+node "$builder" --out "${root}/snap" --qadams csv,crypto --pack --snapshot-plan "${root}/plan.json" --release-archive "$archive" >"${root}/snap.log" 2>&1
+expect_exit "builds from a snapshot plan, one qadam from the archive" 0 $?
+
+SNAP="${root}/snap" REPO="$repo" ARCHIVE="$archive" CSV_SNAPSHOT="$csv_snapshot" ARCHIVED_FILE="$archived_file" node --input-type=module - <<'EOF'
+import { readFileSync, existsSync } from 'node:fs'
+import { join } from 'node:path'
+const { SNAP: snap, REPO: repo, ARCHIVE: archive, CSV_SNAPSHOT: snapshot, ARCHIVED_FILE: archivedFile } = process.env
+const frameworkVersion = JSON.parse(readFileSync(join(repo, 'packages/qadams/framework/package.json'), 'utf8')).version
+const dir = join(snap, '@aiqadam', 'qadam-csv', snapshot)
+const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
+const metadata = JSON.parse(readFileSync(join(dir, 'metadata.json'), 'utf8'))
+const report = JSON.parse(readFileSync(join(snap, 'report.json'), 'utf8'))
+const byName = Object.fromEntries(report.results.map((r) => [r.name, r]))
+const index = JSON.parse(readFileSync(join(snap, 'archive', 'archive-index.json'), 'utf8'))
+const fixtureIndex = JSON.parse(readFileSync(join(archive, 'archive-index.json'), 'utf8'))
+const archived = index.artifacts.find((a) => a.name === '@aiqadam/qadam-crypto')
+const built = index.artifacts.find((a) => a.name === '@aiqadam/qadam-csv')
+const checks = [
+  ['csv: stored under the snapshot version', existsSync(dir)],
+  ['csv: package.json carries the snapshot version', manifest.version === snapshot],
+  ['csv: metadata.json carries the snapshot version', metadata.version === snapshot],
+  ['csv: the framework version it was built against is recorded', manifest.qadamArtifact.builtAgainst?.framework === frameworkVersion],
+  ['csv: so is the platform version of the build', manifest.qadamArtifact.builtAgainst?.platform === '1.2.0-main.412'],
+  ['csv: the tarball is named for the snapshot', built?.version === snapshot && built.file.endsWith(`${snapshot}.tgz`)],
+  ['crypto: not built, reported as taken from the archive', byName['@aiqadam/qadam-crypto']?.status === 'from-archive' && !existsSync(join(snap, '@aiqadam', 'qadam-crypto'))],
+  ['crypto: its archived tarball is copied into the archive, byte for byte', readFileSync(join(snap, 'archive', archivedFile), 'utf8') === 'archived tarball'],
+  ['crypto: listed with the integrity of the fixture index entry', archived?.integrity === fixtureIndex.artifacts[0].integrity && archived.size === 16],
+  ['crypto: and the commit it was archived with', archived?.commit.sha === 'archived-commit'],
+]
+checks.forEach(([name, passed]) => console.log(`${passed ? 'ok   ' : 'FAIL '} ${name}`))
+process.exit(checks.every(([, passed]) => passed) ? 0 : 1)
+EOF
+expect_exit "snapshot plan: version in package.json and metadata.json, archive seam" 0 $?
+
+# Every refusal says why, and the message is checked: an exit code alone would also pass for any other
+# reason the build can stop with.
+refuses() { # <name> <expected exit> <message fragment> <builder args…>
+  local name="$1" expected="$2" fragment="$3"
+  shift 3
+  node "$builder" "$@" >"${root}/refusal.log" 2>&1
+  local actual=$?
+  expect_exit "$name" "$expected" "$actual"
+  if grep -q -- "$fragment" "${root}/refusal.log"; then ok "$name: says '$fragment'"; else bad "$name: output does not say '$fragment': $(tail -2 "${root}/refusal.log" | tr '\n' ' ')"; fi
+}
+refuses "a plan that takes a qadam from the archive needs --release-archive" 2 'pass --release-archive' \
+  --out "${root}/r1" --qadams csv,crypto --pack --snapshot-plan "${root}/plan.json"
+refuses "that archive is copied by --pack, so --pack --no-load-check is refused with its own reason" 2 'not --no-load-check' \
+  --out "${root}/r2" --qadams crypto --pack --no-load-check --snapshot-plan "${root}/plan.json" --release-archive "$archive"
+refuses "a qadam the plan does not name is refused" 2 'not in the snapshot plan: @aiqadam/qadam-sftp' \
+  --out "${root}/r3" --qadams csv,sftp --snapshot-plan "${root}/plan.json" --release-archive "$archive"
+refuses "a plan made for other versions of this tree is refused" 2 'made for other versions' \
+  --out "${root}/r4" --qadams csv --snapshot-plan "${root}/plan-stale.json"
+refuses "a plan version that is a path is refused, and nothing is removed" 2 'version is not a release or a main snapshot' \
+  --out "${root}/r5" --qadams csv --snapshot-plan "${root}/plan-traversal.json"
+refuses "--release-archive without a plan is refused" 2 'only applies with --snapshot-plan' \
+  --out "${root}/r6" --qadams csv --release-archive "$archive"
+refuses "a plan file that is not there names why" 2 'ENOENT' \
+  --out "${root}/r7" --qadams csv --snapshot-plan "${root}/no-such-plan.json"
+printf 'tampered' >"${archive}/${archived_file}"
+refuses "an archived tarball that no longer matches its integrity fails the build" 1 'does not match the integrity' \
+  --out "${root}/r8" --qadams crypto --pack --snapshot-plan "${root}/plan.json" --release-archive "$archive"
+rm "${archive}/${archived_file}"
+refuses "an archived tarball that is gone fails the build" 1 'the release archive has no' \
+  --out "${root}/r9" --qadams crypto --pack --snapshot-plan "${root}/plan.json" --release-archive "$archive"
+
+# Defence in depth under the plan's own check: the builder removes `<out>/<name>/<version>` before it
+# rebuilds it, and both name and version come from files, so one that is a path must stop it before
+# that `rm`. Four ways in: a version that climbs, a version that is `..` (which lands on a sibling
+# directory of the package's own), a name that climbs, and a tree manifest (no plan involved) with them.
+# Run as a file, not from stdin: the modules it imports decide whether they are the entry point from argv[1].
+cat >"${root}/traversal.mjs" <<'EOF'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+const { qadamArtifact } = await import(join(process.env.REPO, 'tools/scripts/qadams/bundle/qadam-artifact.mjs'))
+const base = process.env.TRAVERSAL
+const csvDir = join(process.env.REPO, 'packages/qadams/core/csv')
+// What each case could delete if the guard failed.
+const canary = (path) => { mkdirSync(path, { recursive: true }); writeFileSync(join(path, 'file'), 'keep'); return path }
+const manifestDir = ({ name, version }) => {
+  const dir = join(base, `manifest-${Math.random().toString(36).slice(2)}`)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version }))
+  return dir
+}
+const cases = [
+  { label: 'a version that climbs', outRoot: join(base, 'a/out'), canary: canary(join(base, 'a/canary')), params: { qadamDir: csvDir, version: '../../../canary' } },
+  { label: 'a version that is ..', outRoot: join(base, 'b/out'), canary: canary(join(base, 'b/out/@aiqadam')), params: { qadamDir: csvDir, version: '..' } },
+  { label: 'a name that climbs, from a tree manifest', outRoot: join(base, 'c/out'), canary: canary(join(base, 'c/canary')), params: { qadamDir: manifestDir({ name: '../../canary', version: '0.1.0' }) } },
+  { label: 'a version that is .., from a tree manifest', outRoot: join(base, 'd/out'), canary: canary(join(base, 'd/out/@aiqadam')), params: { qadamDir: manifestDir({ name: '@aiqadam/qadam-csv', version: '..' }) } },
+  { label: 'a scoped name that climbs, from a tree manifest', outRoot: join(base, 'e/out'), canary: canary(join(base, 'e/canary')), params: { qadamDir: manifestDir({ name: '@../../../canary/x', version: '0.1.0' }) } },
+]
+let failed = false
+for (const c of cases) {
+  mkdirSync(c.outRoot, { recursive: true })
+  const message = await qadamArtifact.build({ outRoot: c.outRoot, repoRoot: process.env.REPO, config: { qadams: {} }, loadCheck: false, ...c.params }).then(() => null, (error) => error.message)
+  const rejected = typeof message === 'string' && /can name a directory|not a directory name/.test(message)
+  const kept = existsSync(join(c.canary, 'file'))
+  console.log(`${rejected ? 'ok   ' : 'FAIL '} ${c.label}: rejected before anything is removed${rejected ? '' : ` (${message})`}`)
+  console.log(`${kept ? 'ok   ' : 'FAIL '} ${c.label}: the directory it pointed at is untouched`)
+  failed = failed || !rejected || !kept
+}
+process.exit(failed ? 1 : 0)
+EOF
+TRAVERSAL="${root}/traversal" REPO="$repo" node "${root}/traversal.mjs"
+expect_exit "a name or version that is a path never reaches the rm" 0 $?
+
 node "$builder" --out "${repo}/.qadam-artifacts-test" --qadams csv >"${root}/inside.log" 2>&1
 expect_exit "--out inside the repository is refused" 2 $?
 

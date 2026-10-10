@@ -112,6 +112,8 @@ between branches (only the application source layer churns).
 - `:X.Y.Z` — immutable release tag (the `vX.Y.Z` git tag without its `v`)
 - `:X.Y`, `:latest` — moving pointers to the latest release (not moved by a prerelease tag)
 
+The qadam half of ADR-0004 (#851) is computed in the same job and not yet applied: `tools/scripts/qadams/snapshot/compute-snapshot-plan.mjs` plans a `<next>-main.<n>` snapshot version for each qadam with its own pending changeset (same `<n>`), logs a warning when the changesets plan or the release archive is unavailable and builds more snapshots instead, and `platform-version` writes the plan's summary to the run. The image keeps released numbers until `follow` and the store seed (#807) can serve a snapshot to the flows pinned to its release. The image's labels already carry the `<n>` -> commit record: `org.opencontainers.image.version` (`<next>-main.<n>`) and `org.opencontainers.image.revision`, and two explicit labels name the counter and commit for ADR-0004.
+
 Flavours (`:fat` / `:slim`, ADR-0003, #807) will add a `-<flavour>` suffix to each of these. No
 `:edge`, no `:nightly`, no `:canary`. Self-hosters pin to `:X.Y.Z` or `:latest`; CI/CD internals and
 the canary (#116) use `:main` / `:sha-...`.

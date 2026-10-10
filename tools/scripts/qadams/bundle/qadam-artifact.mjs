@@ -24,9 +24,10 @@
 import { execFile } from 'node:child_process'
 import { cp, mkdir, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { builtinModules, createRequire } from 'node:module'
-import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { build } from 'esbuild'
+import { snapshotPlan } from '../snapshot/snapshot-plan.mjs'
 
 export const ARTIFACT_FORMAT_VERSION = 1
 
@@ -45,6 +46,8 @@ export const ARTIFACT_STATUS = {
     LOAD_FAILED: 'load-failed',
     PACK_FAILED: 'pack-failed',
     BUILD_ERROR: 'build-error',
+    // Not built: the plan takes this version from the release archive (ADR-0004, #851).
+    FROM_ARCHIVE: 'from-archive',
 }
 
 // The packages the platform provides. A bundle that inlined any of them would carry its own copy,
@@ -56,12 +59,29 @@ export const PLATFORM_PROVIDED_PACKAGES = {
 }
 
 export const qadamArtifact = {
-    build: async ({ qadamDir, outRoot, repoRoot, config, loadCheck, pack, packDestination }) => {
+    // `version` is the version this artifact is built and named as, when it is not the one in the
+    // qadam's package.json: a `-main.<n>` snapshot of a build from `main` (ADR-0004, #851). It is
+    // written into the artifact's `package.json`, from which `metadata.json` takes it, and names the
+    // artifact's directory. `builtAgainst` is what `readBuiltAgainst` returns, read once by the caller
+    // for the whole run.
+    build: async ({ qadamDir, outRoot, repoRoot, config, loadCheck, pack, packDestination, version: versionOverride, builtAgainst }) => {
         const startedAt = Date.now()
         const sourcePackageJson = JSON.parse(await readFile(join(qadamDir, 'package.json'), 'utf8'))
-        const { name, version } = sourcePackageJson
+        const { name } = sourcePackageJson
+        const version = versionOverride ?? sourcePackageJson.version
         const qadamConfig = normalizeQadamConfig({ raw: config.qadams?.[name] })
         const artifactDir = join(outRoot, name, version)
+        // The directory is removed and rebuilt below, so it must be exactly `<out>/<name>/<version>`.
+        // Both come from files (a manifest, a plan) and both become path segments: a name or a
+        // version such as `..` or `../../x` would point that `rm` anywhere. Checked on the values
+        // and again on the resulting path, so neither check has to be right alone.
+        if (!snapshotPlan.isPackageName({ name }) || !snapshotPlan.isVersion({ version })) {
+            throw new Error(`'${name}@${version}' is not a package name and a version that can name a directory`)
+        }
+        const placed = relative(outRoot, artifactDir)
+        if (placed === '' || placed === '..' || placed.startsWith(`..${sep}`) || isAbsolute(placed) || relative(join(outRoot, name), artifactDir) !== version) {
+            throw new Error(`'${name}@${version}' is not a directory name under the output root`)
+        }
         const base = {
             name,
             version,
@@ -124,9 +144,11 @@ export const qadamArtifact = {
             const peerDependencies = await computePeerDependencies({ peers: analysis.peers, repoRoot })
             await writeFile(join(artifactDir, 'package.json'), JSON.stringify(buildArtifactPackageJson({
                 sourcePackageJson,
+                version,
                 kind,
                 peerDependencies,
                 nodeModules,
+                builtAgainst,
             }), null, 2) + '\n')
 
             const withFiles = { ...common, i18nLocales, peerDependencies, nodeModules: Object.keys(nodeModules).length }
@@ -153,6 +175,15 @@ export const qadamArtifact = {
             await rm(artifactDir, { recursive: true, force: true })
             throw e
         }
+    },
+
+    // The framework version the artifacts of this run are built against, and the platform version of
+    // the build when it is known (ADR-0004, decision 8). Read once per run: it is the same for every
+    // qadam, and a run must not record two different answers. In a build from `main` the framework's
+    // number is its last release, so the platform version says which framework code that was.
+    readBuiltAgainst: async ({ repoRoot, platformVersion }) => {
+        const { version } = JSON.parse(await readFile(join(repoRoot, PLATFORM_PROVIDED_PACKAGES['@aiqadam/qadams-framework'], 'package.json'), 'utf8'))
+        return { framework: version, ...(platformVersion === undefined || platformVersion === null ? {} : { platform: platformVersion }) }
     },
 
     // The platform's copies, where a store would keep them: `<outRoot>/node_modules`. Only the load
@@ -429,14 +460,14 @@ const computePeerDependencies = async ({ peers, repoRoot }) => {
     return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)))
 }
 
-const buildArtifactPackageJson = ({ sourcePackageJson, kind, peerDependencies, nodeModules }) => {
+const buildArtifactPackageJson = ({ sourcePackageJson, version, kind, peerDependencies, nodeModules, builtAgainst }) => {
     const optional = Object.fromEntries(['description', 'license', 'keywords', 'repository', 'homepage', 'author']
         .filter((field) => sourcePackageJson[field] !== undefined)
         .map((field) => [field, sourcePackageJson[field]]))
     const withNodeModules = kind === ARTIFACT_KIND.BUNDLE_WITH_NODE_MODULES
     return {
         name: sourcePackageJson.name,
-        version: sourcePackageJson.version,
+        version,
         ...optional,
         main: './src/index.js',
         peerDependencies,
@@ -444,6 +475,7 @@ const buildArtifactPackageJson = ({ sourcePackageJson, kind, peerDependencies, n
         qadamArtifact: {
             formatVersion: ARTIFACT_FORMAT_VERSION,
             kind,
+            builtAgainst,
             // A native addon runs only where it was built; the store must not seed it elsewhere.
             ...(withNodeModules ? { builtFor: buildPlatform() } : {}),
         },

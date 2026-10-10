@@ -26,13 +26,13 @@ export const tarFixtures = {
         return Object.entries(files).map(([path, content]) => ({ path: `package/${path}`, type: '0', content, mode: 0o644 }))
     },
 
-    bundleFiles: ({ name, version, kind = 'bundle', builtFor, extra = {} }: BundleFilesParams): Record<string, string> => ({
+    bundleFiles: ({ name, version, kind = 'bundle', builtFor, builtAgainst, extra = {} }: BundleFilesParams): Record<string, string> => ({
         'package.json': JSON.stringify({
             name,
             version,
             main: './src/index.js',
             peerDependencies: { '@aiqadam/qadams-framework': '^0.36.0', 'zod': '^4.3.6' },
-            qadamArtifact: { formatVersion: 1, kind, ...(builtFor ? { builtFor } : {}) },
+            qadamArtifact: { formatVersion: 1, kind, ...(builtFor ? { builtFor } : {}), ...(builtAgainst === undefined ? {} : { builtAgainst }) },
         }),
         'src/index.js': ENTRY_SOURCE,
         'metadata.json': JSON.stringify({ name, version, displayName: name, actions: {}, triggers: {} }),
@@ -108,6 +108,9 @@ type BundleFilesParams = {
     version: string
     kind?: string
     builtFor?: Record<string, string>
+    // Whatever the artifact's package.json claims it was built against, including values a store
+    // must not trust.
+    builtAgainst?: unknown
     extra?: Record<string, string>
 }
 
