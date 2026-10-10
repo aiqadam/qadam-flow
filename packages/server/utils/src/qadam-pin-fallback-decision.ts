@@ -15,7 +15,7 @@ import { isNil, ParsedQadamVersion, qadamVersionParser } from '@aiqadam/shared'
 // record and its revert are the answer to that, not this module.
 //
 // The props check is a seam: `PropsCompatibilityChecker` is the shape of ADR-0001 gate 2's schema
-// diff (#880's `qadamPropsCompatibility`). Nothing here writes a second checker.
+// diff (#880's `qadamPropsCompatibility`, which the API passes in). Nothing here writes a second checker.
 //
 // It lives in `server-utils`, not in the API, because the engine's run-time net (`checkNet`) asks
 // the same caret rule; the engine takes it through its own alias like the version store's reader.

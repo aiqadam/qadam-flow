@@ -2,6 +2,7 @@ import { isNil } from '../../../core/common'
 import { FlowAction, FlowActionType } from '../actions/action'
 import { FlowVersion } from '../flow-version'
 import { FlowTrigger, FlowTriggerType } from '../triggers/trigger'
+import { flowQadamUtil } from '../util/flow-qadam-util'
 import { flowStructureUtil } from '../util/flow-structure-util'
 import { AddNoteRequest, DeleteNoteRequest, FlowOperationRequest, FlowOperationType, ImportFlowRequest, StepLocationRelativeToParent } from './index'
 
@@ -163,14 +164,39 @@ function removeAnySubsequentAction(action: FlowAction): FlowAction {
     return clonedAction
 }
 
+// ADR-0004: the exporter listed these steps because it could not confirm a compatible release, so
+// each is marked "update this step", even when the release its caret names exists. A request with
+// no list leaves the flow as it is: IMPORT_FLOW is also how a draft is made from a published version
+// and how a flow is duplicated, and a mark must survive both. With a list, the marks the file
+// carried are replaced by the listed ones; a name whose qadam is neither the step's nor one of its
+// agent tools' marks nothing. The mark is advisory state for the builder, not a trust decision.
+function markExportedUnresolved({ trigger, steps }: { trigger: FlowTrigger, steps: ImportFlowRequest['exportedUnresolved'] }): FlowTrigger {
+    if (isNil(steps)) {
+        return trigger
+    }
+    const marked: FlowTrigger = structuredClone(trigger)
+    const markable = new Set(flowQadamUtil.getMarkableUnresolved({ trigger: marked, steps }).map((entry) => entry.stepName))
+    for (const step of flowStructureUtil.getAllSteps(marked)) {
+        if (step.type !== FlowActionType.PIECE && step.type !== FlowTriggerType.PIECE) {
+            continue
+        }
+        delete step.settings.exportedUnresolvedPin
+        if (markable.has(step.name)) {
+            step.settings.exportedUnresolvedPin = flowQadamUtil.getExactVersion(step.settings.qadamVersion)
+        }
+    }
+    return marked
+}
+
 function _importFlow(flowVersion: FlowVersion, request: ImportFlowRequest): FlowOperationRequest[] {
     const existingActions = flowStructureUtil.getAllNextActionsWithoutChildren(flowVersion.trigger)
+    const trigger = markExportedUnresolved({ trigger: request.trigger, steps: request.exportedUnresolved })
 
     const deleteOperations = existingActions.map(action =>
         createDeleteActionOperation(action.name),
     )
 
-    const importOperations = _getImportOperationsForSteps(request.trigger)
+    const importOperations = _getImportOperationsForSteps(trigger)
  
     return [
         createChangeNameOperation(request.displayName),
@@ -181,7 +207,7 @@ function _importFlow(flowVersion: FlowVersion, request: ImportFlowRequest): Flow
         // silently wiping `localeSource` on every import that did not carry it.
         ...(request.localeSource !== undefined ? [createUpdateLocaleSourceOperation(request.localeSource)] : []),
         ...deleteOperations,
-        createUpdateTriggerOperation(request.trigger),
+        createUpdateTriggerOperation(trigger),
         ...importOperations,
         ..._getImportOperationsForNotes(flowVersion, request),
     ]

@@ -2264,5 +2264,9 @@
   "This release no longer runs: {versions}. Affected steps: {unsupported}. Affected flows: {flows}. Update each step to a qadam version built against a supported framework version.": "Этот релиз больше не поддерживает: {versions}. Затронуто шагов: {unsupported}. Затронуто потоков: {flows}. Обновите каждый шаг до версии qadam, собранной против поддерживаемой версии фреймворка.",
   "qadams that predate context versions": "qadam, созданные до появления версий контекста",
   "context version {version}": "версия контекста {version}",
-  "and {remaining} more": "и ещё {remaining}"
+  "and {remaining} more": "и ещё {remaining}",
+  "unresolvedPinsExported": "{count, plural, =1 {1 шаг привязан к предрелизной сборке, а совместимый релиз не найден. Он экспортируется как диапазон ^ от базового релиза и при импорте будет помечен «обновите этот шаг»: {steps}} few {# шага привязаны к предрелизным сборкам, а совместимый релиз не найден. Они экспортируются как диапазоны ^ от базовых релизов и при импорте будут помечены «обновите этот шаг»: {steps}} other {# шагов привязаны к предрелизным сборкам, а совместимый релиз не найден. Они экспортируются как диапазоны ^ от базовых релизов и при импорте будут помечены «обновите этот шаг»: {steps}}}",
+  "exportKeepingPrereleasePins": "Экспорт с предрелизными версиями",
+  "snapshotMetadataInvalid": "Встроенные метаданные предрелизной сборки недействительны",
+  "snapshotMetadataTooLarge": "Встроенные метаданные предрелизной сборки слишком велики"
 }

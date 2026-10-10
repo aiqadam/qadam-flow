@@ -133,17 +133,6 @@ describe('qadamPinMoveService.moveUnavailablePins', () => {
         expect(await db.find('qadam_pin_move', { platformId: ctx.platform.id })).toEqual([])
     })
 
-    it('fails closed with the stand-in checker: metadata exists and nothing can compare it', async () => {
-        const ctx = await createTestContext(app)
-        const { flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
-        const seams = fakeSeams({ imageVersion: '0.4.5', pinMetadata: { pinned: true } })
-
-        const result = await qadamPinMoveService(app.log, { ...seams, propsChecker: unwiredChecker() }).moveUnavailablePins(moveParams({ ctx, flowVersion }))
-
-        expect(result.moved).toEqual([])
-        expect(result.stayed).toEqual([expect.objectContaining({ reason: 'props-incompatible' })])
-    })
-
     it('does not touch a pin the instance holds, and does not even look at the image for it', async () => {
         const ctx = await createTestContext(app)
         await saveQadamVersion({ version: '0.4.2' })
@@ -375,10 +364,6 @@ function fakeSeams({ imageVersion, loaded = true, pinMetadata = null, check = ()
         pinMetadata: vi.fn(async () => pinMetadata),
         propsChecker: { check },
     }
-}
-
-function unwiredChecker(): PinFallbackSeams['propsChecker'] {
-    return { check: () => ({ compatible: false, reason: 'no props-compatibility checker is wired yet (#880)' }) }
 }
 
 async function saveQadamVersion({ version }: { version: string }): Promise<void> {

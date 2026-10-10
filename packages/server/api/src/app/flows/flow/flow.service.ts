@@ -54,6 +54,8 @@ import { telemetry } from '../../helper/telemetry.utils'
 import { projectService } from '../../project/project-service'
 import { QadamPinMoveCause } from '../../qadams/pin-moves/qadam-pin-move.dto'
 import { qadamPinMoveService } from '../../qadams/pin-moves/qadam-pin-move.service'
+import { SnapshotExportSources, snapshotExportSources } from '../../qadams/snapshot-export/snapshot-export-sources'
+import { SnapshotExportMode, snapshotPinExport } from '../../qadams/snapshot-export/snapshot-pin-export'
 import { eventPullerRegistry } from '../../trigger/long-polling/event-puller-registry'
 import { longPollingStatus } from '../../trigger/long-polling/long-polling-status'
 import { triggerSourceService } from '../../trigger/trigger-source/trigger-source-service'
@@ -590,6 +592,8 @@ export const flowService = (log: FastifyBaseLogger) => ({
         userMetadata,
         versionId,
         projectId,
+        snapshotExportMode,
+        snapshotSources = snapshotExportSources.forInstance({ log }),
     }: GetTemplateParams): Promise<SharedTemplate> {
         const flow = await this.getOnePopulatedOrThrow({
             id: flowId,
@@ -599,12 +603,13 @@ export const flowService = (log: FastifyBaseLogger) => ({
             removeSampleData: true,
         })
 
+        const exportedVersion = await snapshotPinExport.apply({ flowVersion: flow.version, mode: snapshotExportMode, sources: snapshotSources, log })
         const template: SharedTemplate = {
             name: flow.version.displayName,
             summary: '',
             description: '',
-            qadams: Array.from(new Set(flowQadamUtil.getUsedQadams(flow.version.trigger))),
-            flows: [flow.version],
+            qadams: Array.from(new Set(flowQadamUtil.getUsedQadams(exportedVersion.trigger))),
+            flows: [exportedVersion],
             tags: [],
             blogUrl: '',
             metadata: {
@@ -920,6 +925,9 @@ type GetTemplateParams = {
     userMetadata: UserWithMetaInformation | null
     projectId: ProjectId
     versionId: FlowVersionId | undefined
+    snapshotExportMode: SnapshotExportMode
+    // Only a test replaces these.
+    snapshotSources?: SnapshotExportSources
 }
 
 type CountParams = {

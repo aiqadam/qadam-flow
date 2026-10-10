@@ -1,6 +1,7 @@
 import { apVersionUtil, ImageBuild, PropsCompatibilityChecker } from '@aiqadam/server-utils'
 import { isNil, PlatformId } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
+import { qadamPropsCompatibility } from '../snapshot-export/qadam-props-compatibility'
 import { filterQadamBasedOnType, isSupportedRelease, loadBundledQadams } from '../metadata/utils'
 
 // What `qadamPinMoveService` needs from outside the decision, each a named seam so the service and
@@ -26,16 +27,9 @@ export const qadamPinFallbackSeams = (log: FastifyBaseLogger): PinFallbackSeams 
     // only, a snapshot pin is not moved.
     pinMetadata: async () => null,
 
-    propsChecker: unwiredPropsChecker,
+    // ADR-0001 gate 2's schema diff, #880's checker. Nothing here compares props itself.
+    propsChecker: qadamPropsCompatibility,
 })
-
-// ADR-0001 gate 2's schema diff for one action or trigger is #880's `qadamPropsCompatibility`
-// (`snapshot-export/qadam-props-compatibility.ts`, not on `main` when this was written). This
-// stand-in is not a second checker: it refuses every comparison, so a move that needs one fails
-// closed instead of passing unchecked. #880's checker has this shape and replaces it here.
-const unwiredPropsChecker: PropsCompatibilityChecker = {
-    check: () => ({ compatible: false, reason: 'no props-compatibility checker is wired yet (#880)' }),
-}
 
 export type PinFallbackSeams = {
     imageBuild: (params: { name: string, platformId: PlatformId }) => Promise<ImageBuildWithMetadata | null>
