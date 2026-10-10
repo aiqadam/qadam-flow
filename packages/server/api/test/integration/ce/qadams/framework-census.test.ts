@@ -742,3 +742,47 @@ async function bundledBuild({ root, name, version, frameworkSpec }: {
         platformId: undefined,
     }
 }
+
+// The builder's per-flow read of the census (#803): project scoped, and bounded to one flow version.
+describe('GET /v1/framework-census/flow-version (#803)', () => {
+    it('names the steps of the version a retirement stopped running, and nothing while no shim is retired', async () => {
+        const ctx = await createTestContext(app!)
+        await saveQadamRow({ name: 'census-v1-custom', version: '1.0.0', platformId: ctx.platform.id, qadamType: QadamType.CUSTOM, contextVersion: ContextVersion.V1 })
+        const flowId = await saveFlowWithPinnedStep({ projectId: ctx.project.id, qadamName: 'census-v1-custom', qadamVersion: '1.0.0' })
+        const flow = await db.findOneByOrFail<{ publishedVersionId: string }>('flow', { id: flowId })
+
+        const before = await ctx.get('/v1/framework-census/flow-version', { flowId, flowVersionId: flow.publishedVersionId })
+        expect(before.statusCode).toBe(StatusCodes.OK)
+        expect(before.json<{ unsupportedStepNames: string[] }>().unsupportedStepNames).toEqual([])
+
+        await withEngineContextVersions({
+            contextVersions: [LATEST_CONTEXT_VERSION],
+            run: async () => {
+                const after = await ctx.get('/v1/framework-census/flow-version', { flowId, flowVersionId: flow.publishedVersionId })
+                expect(after.statusCode).toBe(StatusCodes.OK)
+                expect(after.json<{ unsupportedStepNames: string[] }>().unsupportedStepNames).toEqual(['trigger'])
+            },
+        })
+    })
+
+    it('answers nothing for a version that is not the flow\'s, and refuses a flow of a project the caller is not in', async () => {
+        const ctx = await createTestContext(app!)
+        const other = await createTestContext(app!)
+        await saveQadamRow({ name: 'census-v1-custom', version: '1.0.0', platformId: other.platform.id, qadamType: QadamType.CUSTOM, contextVersion: ContextVersion.V1 })
+        const otherFlowId = await saveFlowWithPinnedStep({ projectId: other.project.id, qadamName: 'census-v1-custom', qadamVersion: '1.0.0' })
+        const otherFlow = await db.findOneByOrFail<{ publishedVersionId: string }>('flow', { id: otherFlowId })
+        const ownFlowId = await saveFlowWithPinnedStep({ projectId: ctx.project.id, qadamName: 'census-v1-custom', qadamVersion: '1.0.0' })
+
+        await withEngineContextVersions({
+            contextVersions: [LATEST_CONTEXT_VERSION],
+            run: async () => {
+                const foreign = await ctx.get('/v1/framework-census/flow-version', { flowId: otherFlowId, flowVersionId: otherFlow.publishedVersionId })
+                expect(foreign.statusCode).toBe(StatusCodes.FORBIDDEN)
+
+                const mismatched = await ctx.get('/v1/framework-census/flow-version', { flowId: ownFlowId, flowVersionId: otherFlow.publishedVersionId })
+                expect(mismatched.statusCode).toBe(StatusCodes.OK)
+                expect(mismatched.json<{ unsupportedStepNames: string[] }>().unsupportedStepNames).toEqual([])
+            },
+        })
+    })
+})

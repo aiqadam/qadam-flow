@@ -40,6 +40,7 @@ import { TestStepCTAButton } from '../test-step/test-step-cta-button';
 import { AgentSettings } from './agent-settings';
 import { CodeSettings } from './code-settings';
 import EditableStepName from './editable-step-name';
+import { FrameworkUnsupportedLabel } from './framework-unsupported-label';
 import { HeldStepLabel } from './held-step-label';
 import { LoopsSettings } from './loops-settings';
 import { PieceSettings } from './piece-settings';
@@ -185,6 +186,15 @@ const StepSettingsContainer = () => {
           GAP_SIZE_FOR_STEP_SETTINGS,
         )}
       >
+        {(modifiedStep.type === FlowActionType.PIECE ||
+          modifiedStep.type === FlowTriggerType.PIECE) && (
+          <FrameworkUnsupportedLabel
+            stepName={modifiedStep.name}
+            flowId={flowVersion.flowId}
+            flowVersionId={flowVersion.id}
+            flowVersionUpdated={flowVersion.updated}
+          />
+        )}
         {(modifiedStep.type === FlowActionType.PIECE ||
           modifiedStep.type === FlowTriggerType.PIECE) && (
           <PreReleaseBuildLabel step={modifiedStep} />

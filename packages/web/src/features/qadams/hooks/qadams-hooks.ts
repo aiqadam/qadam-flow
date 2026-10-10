@@ -28,6 +28,7 @@ import { appConnectionsApi } from '@/features/connections/api/app-connections';
 import {
   StepMetadataWithSuggestions,
   CategorizedStepMetadataWithSuggestions,
+  FlowVersionFrameworkCensus,
   HeldQadamPinMove,
 } from '@/features/qadams/types';
 import { flagsHooks } from '@/hooks/flags-hooks';
@@ -383,6 +384,38 @@ export const qadamsHooks = {
     });
     return {
       heldPinMoves: query.data?.data,
+      isLoading: query.isLoading,
+    };
+  },
+  // ADR-0002 (#803): the open flow version's steps whose framework version this release no longer
+  // runs. Auxiliary, like the hold: when the read fails the steps stay editable and only the mark is
+  // omitted, so it must not raise the global error dialog. One query per version, shared by every
+  // canvas node and the step sidebar.
+  useUnsupportedFrameworkSteps: ({
+    flowId,
+    flowVersionId,
+    flowVersionUpdated,
+  }: {
+    flowId: string;
+    flowVersionId: string;
+    flowVersionUpdated: string;
+  }) => {
+    const query = useQuery<FlowVersionFrameworkCensus, Error>({
+      // a draft keeps its id while edited; `updated` re-reads the census once a step's pin is saved
+      queryKey: [
+        'framework-census-flow-version',
+        flowId,
+        flowVersionId,
+        flowVersionUpdated,
+      ],
+      queryFn: () =>
+        qadamsApi.unsupportedFrameworkSteps({ flowId, flowVersionId }),
+      enabled: !!flowId && !!flowVersionId,
+      staleTime: 60_000,
+      meta: { showErrorDialog: false, loadSubsetOptions: {} },
+    });
+    return {
+      unsupportedStepNames: query.data?.unsupportedStepNames,
       isLoading: query.isLoading,
     };
   },

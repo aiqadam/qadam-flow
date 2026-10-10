@@ -2274,5 +2274,7 @@
   "Update available": "Доступно обновление",
   "A released version of this Qadam is available: v{version}.": "Доступна выпущенная версия этого qadam: v{version}.",
   "Held step": "Шаг удержан",
-  "A version change for this step was reverted, so a publish will not move it again until you change its version.": "Изменение версии этого шага было отменено, поэтому публикация не перенесёт его снова, пока вы не измените версию."
+  "A version change for this step was reverted, so a publish will not move it again until you change its version.": "Изменение версии этого шага было отменено, поэтому публикация не перенесёт его снова, пока вы не измените версию.",
+  "Framework version no longer supported": "Версия фреймворка больше не поддерживается",
+  "This step is pinned to a qadam version built for a framework version this release no longer runs. Update this step.": "Этот шаг привязан к версии qadam, собранной для версии фреймворка, которую этот релиз больше не запускает. Обновите этот шаг."
 }

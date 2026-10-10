@@ -2274,5 +2274,7 @@
   "Update available": "Update available",
   "A released version of this Qadam is available: v{version}.": "A released version of this Qadam is available: v{version}.",
   "Held step": "Held step",
-  "A version change for this step was reverted, so a publish will not move it again until you change its version.": "A version change for this step was reverted, so a publish will not move it again until you change its version."
+  "A version change for this step was reverted, so a publish will not move it again until you change its version.": "A version change for this step was reverted, so a publish will not move it again until you change its version.",
+  "Framework version no longer supported": "Framework version no longer supported",
+  "This step is pinned to a qadam version built for a framework version this release no longer runs. Update this step.": "This step is pinned to a qadam version built for a framework version this release no longer runs. Update this step."
 }

@@ -2274,5 +2274,7 @@
   "Update available": "Жаңарту қолжетімді",
   "A released version of this Qadam is available: v{version}.": "Осы Qadam-ның шығарылған нұсқасы қолжетімді: v{version}.",
   "Held step": "Қадам ұсталып тұр",
-  "A version change for this step was reverted, so a publish will not move it again until you change its version.": "Бұл қадам үшін нұсқа өзгерісі қайтарылды, сондықтан нұсқаны өзгертпейінше жариялау оны қайта жылжытпайды."
+  "A version change for this step was reverted, so a publish will not move it again until you change its version.": "Бұл қадам үшін нұсқа өзгерісі қайтарылды, сондықтан нұсқаны өзгертпейінше жариялау оны қайта жылжытпайды.",
+  "Framework version no longer supported": "Фреймворк нұсқасы енді қолдау таппайды",
+  "This step is pinned to a qadam version built for a framework version this release no longer runs. Update this step.": "Бұл қадам осы релиз енді іске қоспайтын фреймворк нұсқасына арналған qadam нұсқасына байланған. Бұл қадамды жаңартыңыз."
 }

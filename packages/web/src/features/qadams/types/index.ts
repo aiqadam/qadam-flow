@@ -118,3 +118,9 @@ export type HeldQadamPinMove = {
 };
 
 export type HeldQadamPinMoveCause = 'PUBLISH' | 'SNAPSHOT_FOLLOW';
+
+// ADR-0002 (#803): what `GET /v1/framework-census/flow-version` answers for one flow version — the
+// names of its steps pinned to a qadam build this release no longer runs.
+export type FlowVersionFrameworkCensus = {
+  unsupportedStepNames: string[];
+};
