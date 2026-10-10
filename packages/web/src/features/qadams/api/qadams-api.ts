@@ -20,7 +20,7 @@ import { t } from 'i18next';
 import { internalErrorToast } from '@/components/ui/sonner';
 import { api } from '@/lib/api';
 
-import { HeldQadamPinMove } from '../types';
+import { FlowVersionFrameworkCensus, HeldQadamPinMove } from '../types';
 
 export const qadamsApi = {
   list(request: ListQadamsRequestQuery): Promise<QadamMetadataModelSummary[]> {
@@ -32,6 +32,17 @@ export const qadamsApi = {
     return api.get<SeekPage<HeldQadamPinMove>>('/v1/qadam-pin-moves/held', {
       flowId,
     });
+  },
+  // ADR-0002 (#803): the steps of one flow version whose pin needs a framework context version this
+  // release no longer runs. Project scoped; the builder's per-flow census read.
+  unsupportedFrameworkSteps(request: {
+    flowId: string;
+    flowVersionId: string;
+  }): Promise<FlowVersionFrameworkCensus> {
+    return api.get<FlowVersionFrameworkCensus>(
+      '/v1/framework-census/flow-version',
+      request,
+    );
   },
   get(
     request: GetQadamRequestParams & GetQadamRequestQuery,

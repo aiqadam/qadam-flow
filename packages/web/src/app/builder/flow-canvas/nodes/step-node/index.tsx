@@ -1,4 +1,5 @@
 import {
+  FlowActionType,
   FlowOperationType,
   Step,
   FlowTriggerType,
@@ -21,6 +22,7 @@ import { ApStepNode } from '../../utils/types';
 
 import { StepNodeChevron } from './step-node-chevron';
 import { StepNodeDisplayName } from './step-node-display-name';
+import { ApStepNodeFrameworkUnsupported } from './step-node-framework-unsupported';
 import { StepNodeLogo } from './step-node-logo';
 import { ApStepNodeSkippedStatus } from './step-node-skipped-status';
 import { ApStepNodeStatusInDraft } from './step-node-status-in-draft';
@@ -154,6 +156,10 @@ const ApStepCanvasNode = React.memo(
         <ApStepNodeStatusInRun stepName={step.name} />
         <ApStepNodeSkippedStatus stepName={step.name} />
         <ApStepNodeStatusInDraft stepName={step.name} />
+        {step.type === FlowActionType.PIECE ||
+        step.type === FlowTriggerType.PIECE ? (
+          <ApStepNodeFrameworkUnsupported stepName={step.name} />
+        ) : null}
         <div
           className={cn('h-full w-full', {
             'px-3 overflow-hidden': !isHorizontal,

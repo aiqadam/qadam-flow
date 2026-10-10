@@ -2274,5 +2274,7 @@
   "Update available": "Yangilanish mavjud",
   "A released version of this Qadam is available: v{version}.": "Bu Qadamning chiqarilgan versiyasi mavjud: v{version}.",
   "Held step": "Qadam ushlab turilgan",
-  "A version change for this step was reverted, so a publish will not move it again until you change its version.": "Bu qadam uchun versiya o'zgarishi qaytarildi, shuning uchun siz versiyani o'zgartirmaguningizcha nashr uni qayta ko'chirmaydi."
+  "A version change for this step was reverted, so a publish will not move it again until you change its version.": "Bu qadam uchun versiya o'zgarishi qaytarildi, shuning uchun siz versiyani o'zgartirmaguningizcha nashr uni qayta ko'chirmaydi.",
+  "Framework version no longer supported": "Freymvork versiyasi endi qo'llab-quvvatlanmaydi",
+  "This step is pinned to a qadam version built for a framework version this release no longer runs. Update this step.": "Bu qadam shu reliz endi ishga tushirmaydigan freymvork versiyasi uchun yaratilgan qadam versiyasiga biriktirilgan. Bu qadamni yangilang."
 }

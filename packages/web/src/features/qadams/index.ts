@@ -30,6 +30,7 @@ export type {
   PrimitiveStepMetadata,
   StepMetadataWithActionOrTriggerOrAgentDisplayName,
   CategorizedStepMetadataWithSuggestions,
+  FlowVersionFrameworkCensus,
   HeldQadamPinMove,
   HeldQadamPinMoveCause,
 } from './types';
