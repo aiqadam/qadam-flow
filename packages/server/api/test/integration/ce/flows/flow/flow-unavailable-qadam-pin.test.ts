@@ -81,9 +81,32 @@ describe('publishing and enabling a flow with a qadam pin that is not available 
         const response = await ctx.post(`/v1/flows/${flow.id}`, { type: FlowOperationType.CHANGE_STATUS, request: { status: FlowStatus.ENABLED } })
 
         expect(response.statusCode).toBe(StatusCodes.OK)
-        expect(pinOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: flowVersion.id }) })).toBe(IMAGE_VERSION)
+        // A locked version is cached by id on workers: the move publishes a new version instead of rewriting it.
+        const { publishedVersionId } = await db.findOneByOrFail<Flow>('flow', { id: flow.id })
+        expect(publishedVersionId).not.toBe(flowVersion.id)
+        expect(pinOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: publishedVersionId! }) })).toBe(IMAGE_VERSION)
+        expect(pinOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: flowVersion.id }) })).toBe(STALE_PIN)
         const records = await db.find<QadamPinMove>('qadam_pin_move', { platformId: ctx.platform.id })
-        expect(records).toEqual([expect.objectContaining({ cause: 'ENABLE', movedBy: ctx.user.id, fromVersion: STALE_PIN, toVersion: IMAGE_VERSION })])
+        expect(records).toEqual([expect.objectContaining({ flowVersionId: publishedVersionId, cause: 'ENABLE', movedBy: ctx.user.id, fromVersion: STALE_PIN, toVersion: IMAGE_VERSION })])
+    })
+
+    it('reverts an enable-time move by publishing a new version again, and registers the trigger from it', async () => {
+        const ctx = await createTestContext(app)
+        const { flow, flowVersion } = await seedFlow({ ctx, state: FlowVersionState.LOCKED, status: FlowStatus.DISABLED })
+        await ctx.post(`/v1/flows/${flow.id}`, { type: FlowOperationType.CHANGE_STATUS, request: { status: FlowStatus.ENABLED } })
+        const [record] = await db.find<QadamPinMove>('qadam_pin_move', { platformId: ctx.platform.id })
+        const afterMove = (await db.findOneByOrFail<Flow>('flow', { id: flow.id })).publishedVersionId
+
+        const revert = await ctx.post(`/v1/qadam-pin-moves/${record.id}/revert`)
+
+        expect(revert.statusCode).toBe(StatusCodes.OK)
+        const after = await db.findOneByOrFail<Flow>('flow', { id: flow.id })
+        expect(after.publishedVersionId).not.toBe(afterMove)
+        expect(after.publishedVersionId).not.toBe(flowVersion.id)
+        expect(pinOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: after.publishedVersionId! }) })).toBe(STALE_PIN)
+        expect(pinOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: afterMove! }) })).toBe(IMAGE_VERSION)
+        expect(after.status).toBe(FlowStatus.ENABLED)
+        expect(await db.find('qadam_pin_move', { platformId: ctx.platform.id })).toEqual([expect.objectContaining({ id: record.id, status: 'REVERTED' })])
     })
 
     it('does not move a pin when disabling a flow', async () => {

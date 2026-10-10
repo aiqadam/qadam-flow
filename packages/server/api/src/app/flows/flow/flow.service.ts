@@ -542,9 +542,14 @@ export const flowService = (log: FastifyBaseLogger) => ({
             // Read again under a row lock: locking saves the whole version, so a revert of a pin move
             // that committed since the move above (the disable before this is an external call) must
             // not be written over with the copy in memory. Once this holds the lock, a revert waits.
-            const currentFlowVersion = await flowVersionRepo(entityManager).findOne({ where: { id: flowVersionToPublish.id, flowId: id }, lock: { mode: 'pessimistic_write' } })
+            const currentFlowVersion = await flowVersionRepo(entityManager).findOne({ where: { id: flowVersionToPublish.id, flowId: id }, lock: { mode: 'for_no_key_update' } })
+            if (isNil(currentFlowVersion)) {
+                throw new QadamFlowError({ code: ErrorCode.ENTITY_NOT_FOUND, params: { entityType: 'flow_version', entityId: flowVersionToPublish.id, message: `flow_version_not_found id=${flowVersionToPublish.id}` } })
+            }
+            // The gate again, on what is about to be locked: an edit may have landed since it ran above.
+            assertFlowVersionPublishable({ flowVersion: currentFlowVersion })
             const lockedFlowVersion = await lockFlowVersionIfNotLocked({
-                flowVersion: currentFlowVersion ?? flowVersionToPublish,
+                flowVersion: currentFlowVersion,
                 userId,
                 projectId,
                 platformId,

@@ -304,7 +304,12 @@ describe('qadamPinMoveService.revert', () => {
 
         await qadamPinMoveService({ log: app.log }).revert({ id: moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })
 
-        expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: republished.id }) })).toEqual(['0.4.2'])
+        // A worker caches a locked version by id: the published version is replaced, never rewritten in place.
+        const { publishedVersionId } = await db.findOneByOrFail<{ publishedVersionId: string }>('flow', { id: flow.id })
+        expect(publishedVersionId).not.toBe(republished.id)
+        expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: publishedVersionId }) })).toEqual(['0.4.2'])
+        expect(await db.findOneByOrFail<FlowVersion>('flow_version', { id: publishedVersionId })).toMatchObject({ state: FlowVersionState.LOCKED })
+        expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: republished.id }) })).toEqual(['0.4.5'])
         expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: flowVersion.id }) })).toEqual(['0.4.2'])
 
         const other = await seedFlow({ ctx, pins: ['0.4.2'] })
@@ -316,6 +321,7 @@ describe('qadamPinMoveService.revert', () => {
         await qadamPinMoveService({ log: app.log }).revert({ id: second.moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })
 
         expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: differs.id }) })).toEqual(['0.4.9'])
+        expect((await db.findOneByOrFail<{ publishedVersionId: string }>('flow', { id: other.flow.id })).publishedVersionId).toBe(differs.id)
     })
 
     it('refuses a second revert', async () => {
