@@ -432,6 +432,18 @@ jobs:
       - name: Test the qadam snapshot plan
         run: tools/ci/test-qadam-snapshot-plan.sh
 
+      # The ADR-0003 artifact builder (#804) is the release archive and the image's qadam seed: one
+      # bundle per qadam version, with `@aiqadam/*` and `zod` left to the platform. Its suite
+      # (tools/ci/test-qadam-artifacts.sh) builds real bundles from this tree and runs each through
+      # the load check, which resolves the platform's copies out of `dist` — so the three platform
+      # packages must be built first. A build of exactly those three, served by the turbo cache on a
+      # warm run, not the 238-qadam catalogue the real pack job builds.
+      - name: Build shared, qadams-framework and qadams-common for the artifact test
+        run: npx turbo run build --filter=@aiqadam/shared --filter=@aiqadam/qadams-common --filter=@aiqadam/qadams-framework
+
+      - name: Test the qadam artifact build
+        run: tools/ci/test-qadam-artifacts.sh
+
       # ADR-0001 gate 6. Full tree, not a diff: the ESLint ban (packages/qadams/eslint.config.mjs,
       # #786) can be silenced by a disable comment; this scan cannot.
       - name: Test the qadam shared-imports checker
