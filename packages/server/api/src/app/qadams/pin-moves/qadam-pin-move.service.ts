@@ -3,8 +3,6 @@ import {
     apId,
     ErrorCode,
     FlowId,
-    FlowOperationType,
-    FlowStatus,
     FlowTriggerType,
     FlowVersion,
     FlowVersionState,
@@ -21,9 +19,7 @@ import dayjs from 'dayjs'
 import { FastifyBaseLogger } from 'fastify'
 import { EntityManager } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
-import { flowExecutionCache } from '../../flows/flow/flow-execution-cache'
 import { flowRepo } from '../../flows/flow/flow.repo'
-import { flowService } from '../../flows/flow/flow.service'
 import { flowVersionRepo } from '../../flows/flow-version/flow-version.service'
 import { buildPaginator } from '../../helper/pagination/build-paginator'
 import { paginationHelper } from '../../helper/pagination/pagination-utils'
@@ -34,7 +30,6 @@ import { ImageBuildWithMetadata, PinFallbackSeams, qadamPinFallbackSeams } from 
 import { ListQadamPinMovesRequestQuery, QadamPinMove, QadamPinMoveCause } from './qadam-pin-move.dto'
 import { QadamPinMoveEntity } from './qadam-pin-move.entity'
 import { qadamPinRewrite } from './qadam-pin-rewrite'
-import { qadamPinVersionWriter } from './qadam-pin-version-writer'
 
 export const qadamPinMoveRepo = repoFactory(QadamPinMoveEntity)
 
@@ -50,7 +45,9 @@ export const qadamPinMoveRepo = repoFactory(QadamPinMoveEntity)
 // `seams` is where the image, the pinned version's metadata and the props checker come from.
 export const qadamPinMoveService = ({ log, seams = qadamPinFallbackSeams({ log }) }: { log: FastifyBaseLogger, seams?: PinFallbackSeams }) => ({
     async moveUnavailablePins({ flowVersion, projectId, platformId, cause, actorUserId }: MoveUnavailablePinsParams): Promise<MoveUnavailablePinsResult> {
-        const steps = qadamPinUtil.getQadamSteps({ trigger: flowVersion.trigger }).filter(isExactPin)
+        // Only a draft is moved: it becomes the published version through the normal publish, so workers
+        // and trigger sources see a new version id. A locked version is never rewritten.
+        const steps = flowVersion.state === FlowVersionState.DRAFT ? qadamPinUtil.getQadamSteps({ trigger: flowVersion.trigger }).filter(isExactPin) : []
         if (steps.length === 0) {
             return { flowVersion, moved: [], stayed: [] }
         }
@@ -104,18 +101,15 @@ export const qadamPinMoveService = ({ log, seams = qadamPinFallbackSeams({ log }
         return record
     },
 
-    // Puts the step's pin back to the version it was moved from. It refuses when the step is no
-    // longer on the version the move wrote (a person has edited it since): that edit is theirs.
-    async revert({ id, platformId, userId }: { id: string, platformId: PlatformId, userId: UserId }): Promise<QadamPinMove> {
-        const { record: reverted, triggerReplaced, flowWasEnabled } = await qadamPinMoveRepo().manager.transaction(async (manager) => {
+    // Restores the step's old pin in a draft (making one from the published version when the flow has
+    // none) and holds the step. It refuses when no draft or published version still carries the moved
+    // pin (a person has edited it since): that edit is theirs.
+    async revert({ id, platformId, userId }: { id: string, platformId: PlatformId, userId: UserId }): Promise<RevertedQadamPinMove> {
+        const { record: reverted, publishRequired } = await qadamPinMoveRepo().manager.transaction(async (manager) => {
             return revertInTransaction({ manager, id, platformId, userId })
         })
-        await flowExecutionCache(log).invalidate(reverted.flowId)
-        if (triggerReplaced && flowWasEnabled) {
-            await reregisterTrigger({ flowId: reverted.flowId, projectId: reverted.projectId, platformId, userId, log })
-        }
         log.info({ flowId: reverted.flowId, flowVersionId: reverted.flowVersionId, stepName: reverted.stepName, qadamName: reverted.qadamName, from: reverted.toVersion, to: reverted.fromVersion, userId }, '[qadamPinMoveService] reverted a qadam pin move')
-        return reverted
+        return { ...reverted, publishRequired }
     },
 })
 
@@ -182,7 +176,7 @@ async function planMoves({ steps, held, platformId, seams }: { steps: QadamPinne
 // overwritten with a stale copy of the flow version.
 async function commitMoves({ manager, flowVersion, platformId, projectId, cause, actorUserId, moves }: CommitMovesParams): Promise<CommittedMoves> {
     const current = await flowVersionRepo(manager).findOne({ where: { id: flowVersion.id, flowId: flowVersion.flowId }, lock: { mode: 'for_no_key_update' } })
-    if (isNil(current)) {
+    if (isNil(current) || current.state !== FlowVersionState.DRAFT) {
         return { flowVersion, moved: [], lost: moves.map((move) => lostReason({ stepName: move.stepName, qadamName: move.qadamName, version: move.version })) }
     }
     // Read again under the lock: a revert that committed after the plan was made holds the step.
@@ -200,9 +194,8 @@ async function commitMoves({ manager, flowVersion, platformId, projectId, cause,
     if (applied.length === 0) {
         return { flowVersion: current, moved: [], lost }
     }
-    const flow = await flowRepo(manager).findOneBy({ id: current.flowId, projectId })
-    const written = await qadamPinVersionWriter.write({ manager, current, trigger: rewritten.trigger, projectId, publishedVersionId: flow?.publishedVersionId ?? null })
-    const stored = written.flowVersion
+    await flowVersionRepo(manager).update({ id: current.id }, { trigger: rewritten.trigger })
+    const stored = await flowVersionRepo(manager).findOneByOrFail({ id: current.id })
     const records = applied.map((rewrite): QadamPinMove => {
         const now = dayjs().toISOString()
         return {
@@ -238,54 +231,40 @@ async function revertInTransaction({ manager, id, platformId, userId }: { manage
         throw refused({ message: 'This move was already reverted.' })
     }
     const rewrite = { stepName: record.stepName, qadamName: record.qadamName, fromVersion: record.toVersion, toVersion: record.fromVersion }
-    // The version the move wrote, the flow's drafts and its published version: an edit after a publish copies the published
-    // version into a new draft that carries the moved pin, and publishing that draft would put it
-    // back. Each is rewritten only where the step is still on the version the move wrote.
-    const drafts = await flowVersionRepo(manager).find({ where: { flowId: record.flowId, state: FlowVersionState.DRAFT }, lock: { mode: 'for_no_key_update' } })
-    const moved = await flowVersionRepo(manager).findOne({ where: { id: record.flowVersionId, flowId: record.flowId }, lock: { mode: 'for_no_key_update' } })
-    if (isNil(moved)) {
-        throw refused({ message: 'The flow version this move changed no longer exists.' })
-    }
-    // And the flow's published version: a republish copies the moved version, still on the moved pin,
-    // and no new move follows because that pin is available.
+    // A revert only ever writes a draft, never a locked version: workers cache a locked version by id
+    // and a trigger source keeps its pins, so the published version keeps running until the draft is
+    // published. The draft rows are locked like the publish locks the one it publishes, so a revert and
+    // a publish cannot lose each other's write.
     const flow = await flowRepo(manager).findOneBy({ id: record.flowId, projectId: record.projectId })
-    const published = isNil(flow?.publishedVersionId) ? null : await flowVersionRepo(manager).findOne({ where: { id: flow.publishedVersionId, flowId: record.flowId }, lock: { mode: 'for_no_key_update' } })
-    const others = [...drafts, ...(isNil(published) ? [] : [published])].filter((candidate, index, all) => candidate.id !== moved.id && all.findIndex((other) => other.id === candidate.id) === index)
-    const candidates = [moved, ...others]
-    const rewrites = candidates.flatMap((candidate) => {
-        const rewritten = qadamPinRewrite.apply({ flowVersion: candidate, rewrite })
-        return isNil(rewritten) ? [] : [{ candidate, trigger: rewritten.trigger }]
+    const drafts = await flowVersionRepo(manager).find({ where: { flowId: record.flowId, state: FlowVersionState.DRAFT }, lock: { mode: 'for_no_key_update' } })
+    const published = isNil(flow?.publishedVersionId) ? null : await flowVersionRepo(manager).findOneBy({ id: flow.publishedVersionId, flowId: record.flowId })
+    const publishedRewritten = isNil(published) ? null : qadamPinRewrite.apply({ flowVersion: published, rewrite })
+    const rewrites = drafts.flatMap((draft) => {
+        const rewritten = qadamPinRewrite.apply({ flowVersion: draft, rewrite })
+        return isNil(rewritten) ? [] : [{ id: draft.id, trigger: rewritten.trigger }]
     })
-    if (rewrites.length === 0) {
-        throw refused({ message: `The step ${record.stepName} is no longer pinned to ${record.toVersion}, so there is nothing to revert. Change its version in the builder.` })
+    // The flow has no draft (the publish locked it): one is made from the published version the way an
+    // edit makes it, with the old pin restored.
+    const newDraft = drafts.length === 0 && !isNil(published) ? publishedRewritten : null
+    if (rewrites.length === 0 && isNil(newDraft)) {
+        throw refused({ message: `The step ${record.stepName} is no longer pinned to ${record.toVersion} in a draft or in the published version, so there is nothing to revert. Change its version in the builder.` })
     }
-    let triggerReplaced = false
     for (const write of rewrites) {
-        const written = await qadamPinVersionWriter.write({ manager, current: write.candidate, trigger: write.trigger, projectId: record.projectId, publishedVersionId: flow?.publishedVersionId ?? null })
-        triggerReplaced = triggerReplaced || (written.replacedPublished && write.candidate.trigger.name === record.stepName)
+        await flowVersionRepo(manager).update({ id: write.id }, { trigger: write.trigger })
+    }
+    if (!isNil(newDraft) && !isNil(published)) {
+        const { flow: _flow, updatedByUser: _updatedByUser, ...fields } = published
+        const now = dayjs().toISOString()
+        await flowVersionRepo(manager).insert({ ...fields, id: apId(), created: now, updated: now, state: FlowVersionState.DRAFT, trigger: newDraft.trigger, backupFiles: null })
     }
     const revertedAt = dayjs().toISOString()
     await qadamPinMoveRepo(manager).update({ id: record.id, platformId }, { status: 'REVERTED', revertedAt, revertedBy: userId })
-    return { record: { ...record, status: 'REVERTED', revertedAt, revertedBy: userId }, triggerReplaced, flowWasEnabled: flow?.status === FlowStatus.ENABLED }
+    return { record: { ...record, status: 'REVERTED', revertedAt, revertedBy: userId }, publishRequired: !isNil(publishedRewritten) }
 }
 
 type RevertedInTransaction = {
     record: QadamPinMove
-    // The published version's trigger step was the one rewritten: its trigger source still holds the moved pin.
-    triggerReplaced: boolean
-    flowWasEnabled: boolean
-}
-
-// The trigger source was registered from the version that was published, with its pin. Disabling and
-// enabling the flow registers it again from the new published version, through the same status change
-// a person makes. The enable asks the pin check again; the revert holds the step, so it stays put.
-async function reregisterTrigger({ flowId, projectId, platformId, userId, log }: { flowId: FlowId, projectId: ProjectId, platformId: PlatformId, userId: UserId, log: FastifyBaseLogger }): Promise<void> {
-    const change = (status: FlowStatus): Promise<unknown> => flowService(log).update({ id: flowId, projectId, platformId, userId, operation: { type: FlowOperationType.CHANGE_STATUS, request: { status } } })
-    const { error: disableError } = await tryCatch(() => change(FlowStatus.DISABLED))
-    const { error: enableError } = await tryCatch(() => change(FlowStatus.ENABLED))
-    if (!isNil(disableError) || !isNil(enableError)) {
-        log.error({ flowId, disableError: String(disableError), enableError: String(enableError) }, '[qadamPinMoveService] the pin move was reverted but the flow\'s trigger could not be registered again; enable the flow to do it')
-    }
+    publishRequired: boolean
 }
 
 function isExactPin(step: QadamPinnedStep): boolean {
@@ -368,6 +347,12 @@ type CommittedMoves = {
     flowVersion: FlowVersion
     moved: QadamPinMove[]
     lost: PinStay[]
+}
+
+export type RevertedQadamPinMove = QadamPinMove & {
+    // True while the published version still carries the moved pin: it keeps running until the draft
+    // the revert restored is published.
+    publishRequired: boolean
 }
 
 export type PinStayReason = StayReason | 'reverted-by-user' | 'changed-meanwhile'

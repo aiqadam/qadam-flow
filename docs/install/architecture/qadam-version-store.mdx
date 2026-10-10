@@ -47,7 +47,7 @@ Then, for a step pinned to an official qadam at an exact version, such as `@aiqa
 
 1. If the store holds `@aiqadam/qadam-tables` `0.5.1` and it checks out, the step runs that code, even when the image bundles the same version.
 2. Otherwise the step runs the image's build of that same version.
-3. Otherwise, for a release pin only, the step runs the image's build of the qadam at another release inside the pin's caret range (the same major, or on `0.x` the same minor, never below the pin), and the worker says so once per pin and engine process: `The pinned version is not available, running the image's build inside the pin's caret range instead`. That is the run-time net under the [unavailable-version fallback](https://github.com/aiqadam/qadam-flow/issues/808): it changes nothing in the flow and writes no record. The fallback itself moves the step, with a check and a record (see below), when its flow is published or enabled, and the net goes once that covers every path.
+3. Otherwise, for a release pin only, the step runs the image's build of the qadam at another release inside the pin's caret range (the same major, or on `0.x` the same minor, never below the pin), and the worker says so once per pin and engine process: `The pinned version is not available, running the image's build inside the pin's caret range instead`. That is the run-time net under the [unavailable-version fallback](https://github.com/aiqadam/qadam-flow/issues/808): it changes nothing in the flow and writes no record. The fallback itself moves the step, with a check and a record (see below), when its flow is published, and the net goes once that covers every path.
 4. Otherwise the run fails with the pin named, for example `Qadam not found for package: @aiqadam/qadam-tables@0.5.1. The qadam version store and the image hold no @aiqadam/qadam-tables@0.5.1, and the image's build 1.0.0 is outside ^0.5.1.` Nothing runs a different major, a `0.x` minor below or above the pin, an older build than the pin, or any other build for a snapshot pin (`x.y.z-main.<n>`, [ADR-0004](https://github.com/aiqadam/qadam-flow/blob/main/adr/0004-main-builds-give-changed-packages-their-own-prerelease-versions.md)): a snapshot is exact, is never published, and is moved only by that fallback.
 
 Steps that an agent step uses as tools are provisioned like steps: the worker checks every PIECE tool's pin before the run, and the run fails with the pin named when a tool's qadam is unavailable. A tool list that a variable supplies at run time cannot be checked ahead of the run; the engine applies the same rules when it loads the tool.
@@ -62,13 +62,13 @@ The `[qadamLoader] cold load` line that the worker writes the first time it load
 
 ### When a pinned version is not available
 
-A step can be pinned to a version that this instance cannot have: one that was never published to npm (the stale pins that image upgrades strand), or one that was removed. When you publish such a flow, or enable it, Qadam Flow moves each of its steps to the image's build of the same qadam, but only when all of these hold:
+A step can be pinned to a version that this instance cannot have: one that was never published to npm (the stale pins that image upgrades strand), or one that was removed. When you publish such a flow, Qadam Flow moves each of its steps in the draft being published to the image's build of the same qadam, but only when all of these hold:
 
 1. The image's version is inside the pin's caret range: the same major, or on `0.x` the same minor, and never below the pin.
 2. The props are compatible, where metadata for the pinned version exists in the catalogue (or, for a snapshot pin `x.y.z-main.<n>`, in the store). Only a pin that the catalogue was read and does not list (never published) gets no props check. When the catalogue or the store cannot be read, the step is not moved; until the catalogue is published, pins that were published stay as they are.
 3. The image's build loaded successfully.
 
-Each move is written as an audit record and the step's version is rewritten in the same transaction. Nothing is moved when a check fails: the step keeps its pin, and the flow is never disabled. Checking the pins never blocks a publish or an enable. If it fails, the flow carries on with its steps as they were.
+Each move is written as an audit record and the step's version is rewritten in the same transaction. Nothing is moved when a check fails: the step keeps its pin, and the flow is never disabled. Checking the pins never blocks a publish. Enabling a flow, and flows that are already published, do not move pins yet. If it fails, the flow carries on with its steps as they were.
 
 A platform admin lists the records and reverts one:
 
@@ -77,7 +77,7 @@ curl -H "Authorization: Bearer $TOKEN" "https://flow.example.com/api/v1/qadam-pi
 curl -X POST -H "Authorization: Bearer $TOKEN" "https://flow.example.com/api/v1/qadam-pin-moves/$ID/revert"
 ```
 
-A revert puts the step back on the version it had, and only if the step is still on the version the move wrote. A step that someone edited since is refused with a conflict (HTTP 409) and stays as it is. A revert also puts back the flow's drafts and its published version where they still carry the moved version. A reverted step is not moved again by a later publish or enable.
+A revert restores the step's old version in the flow's draft (making a draft from the published version when there is none) and holds the step, so a later publish does not move it again. The published version keeps running until you publish that draft; the response says so with `publishRequired`. A step that someone edited since is refused with a conflict (HTTP 409) and stays as it is.
 
 <Note>
 A move checks that the target loads and, where it can, that its props are compatible. It cannot know that an action fails when it runs. That is what the revert is for.

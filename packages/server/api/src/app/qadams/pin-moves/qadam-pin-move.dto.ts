@@ -6,8 +6,8 @@ import { z } from 'zod'
 // scoped: every read and write filters by `platformId`.
 export const QadamPinMoveStatus = z.enum(['APPLIED', 'REVERTED'])
 
-// What caused the move: the step's flow was published, or enabled with its published version.
-export const QadamPinMoveCause = z.enum(['PUBLISH', 'ENABLE'])
+// What caused the move: the step's flow was published (its draft was moved before it was locked).
+export const QadamPinMoveCause = z.enum(['PUBLISH'])
 
 // How the props were checked: against the pinned version's metadata, or not at all because the
 // catalogue was read and has no entry for it (a pin that was never published, ADR-0003 "Versions
@@ -38,6 +38,9 @@ export const ListQadamPinMovesRequestQuery = z.object({
     cursor: z.string().optional(),
     limit: z.coerce.number().int().min(1).max(100).optional(),
 })
+
+// The published version keeps running until the restored draft is published.
+export const RevertedQadamPinMove = QadamPinMove.extend({ publishRequired: z.boolean() })
 
 export const QadamPinMovePage = SeekPage(QadamPinMove)
 

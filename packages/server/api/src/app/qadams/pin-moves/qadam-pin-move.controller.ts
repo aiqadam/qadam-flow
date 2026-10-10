@@ -3,7 +3,7 @@ import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { StatusCodes } from 'http-status-codes'
 import { z } from 'zod'
 import { securityAccess } from '../../core/security/authorization/fastify-security'
-import { ListQadamPinMovesRequestQuery, QadamPinMove, QadamPinMovePage } from './qadam-pin-move.dto'
+import { ListQadamPinMovesRequestQuery, QadamPinMove, QadamPinMovePage, RevertedQadamPinMove } from './qadam-pin-move.dto'
 import { qadamPinMoveService } from './qadam-pin-move.service'
 
 export const qadamPinMoveController: FastifyPluginAsyncZod = async (app) => {
@@ -57,7 +57,7 @@ const RevertQadamPinMoveRequest = {
         tags: ['qadam-pin-moves'],
         params: z.object({ id: ApId }),
         response: {
-            [StatusCodes.OK]: QadamPinMove,
+            [StatusCodes.OK]: RevertedQadamPinMove,
         },
     },
 }

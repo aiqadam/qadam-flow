@@ -277,51 +277,71 @@ describe('qadamPinMoveService.revert', () => {
         expect(await db.findOneByOrFail<QadamPinMove>('qadam_pin_move', { id: moved[0].id })).toMatchObject({ status: 'REVERTED', fromVersion: '0.4.2', toVersion: '0.4.5' })
     })
 
-    it('also puts the pin back in a draft that was copied from the moved version, so publishing it does not undo the revert', async () => {
+    it('restores the old pin in a draft copied from the moved version and never touches a locked version', async () => {
         const ctx = await createTestContext(app)
         const { flow, flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
         const { moved, flowVersion: movedVersion } = await moveWith({ ctx, flowVersion, seams: fakeSeams({ imageVersion: '0.4.5' }) })
         await db.update('flow_version', flowVersion.id, { state: FlowVersionState.LOCKED })
+        await db.update('flow', flow.id, { publishedVersionId: flowVersion.id })
         const draft = createMockFlowVersion({ flowId: flow.id, updatedBy: ctx.user.id, state: FlowVersionState.DRAFT, valid: true, trigger: movedVersion.trigger })
         await db.save('flow_version', draft)
         const editedDraft = createMockFlowVersion({ flowId: flow.id, updatedBy: ctx.user.id, state: FlowVersionState.DRAFT, valid: true, trigger: { ...movedVersion.trigger, settings: { ...movedVersion.trigger.settings, qadamVersion: '0.4.9' } } })
         await db.save('flow_version', editedDraft)
 
-        await qadamPinMoveService({ log: app.log }).revert({ id: moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })
+        const reverted = await qadamPinMoveService({ log: app.log }).revert({ id: moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })
 
-        expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: flowVersion.id }) })).toEqual(['0.4.2'])
+        expect(reverted).toMatchObject({ status: 'REVERTED', publishRequired: true })
         expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: draft.id }) })).toEqual(['0.4.2'])
         expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: editedDraft.id }) })).toEqual(['0.4.9'])
+        const locked = await db.findOneByOrFail<FlowVersion>('flow_version', { id: flowVersion.id })
+        expect(pinsOf({ flowVersion: locked })).toEqual(['0.4.5'])
+        expect((await db.findOneByOrFail<{ publishedVersionId: string }>('flow', { id: flow.id })).publishedVersionId).toBe(flowVersion.id)
     })
 
-    it('also reverts the published version a republish copied from the moved one, and leaves a published version that already differs', async () => {
+    it('makes a draft from the published version when the flow has none, and leaves the published version as it is', async () => {
+        const ctx = await createTestContext(app)
+        const { flow, flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
+        const { moved } = await moveWith({ ctx, flowVersion, seams: fakeSeams({ imageVersion: '0.4.5' }) })
+        await db.update('flow_version', flowVersion.id, { state: FlowVersionState.LOCKED })
+        await db.update('flow', flow.id, { publishedVersionId: flowVersion.id })
+
+        const reverted = await qadamPinMoveService({ log: app.log }).revert({ id: moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })
+
+        expect(reverted.publishRequired).toBe(true)
+        expect((await db.findOneByOrFail<{ publishedVersionId: string }>('flow', { id: flow.id })).publishedVersionId).toBe(flowVersion.id)
+        expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: flowVersion.id }) })).toEqual(['0.4.5'])
+        const drafts = await db.find<FlowVersion>('flow_version', { flowId: flow.id, state: FlowVersionState.DRAFT })
+        expect(drafts).toHaveLength(1)
+        expect(pinsOf({ flowVersion: drafts[0] })).toEqual(['0.4.2'])
+        expect(drafts[0].id).not.toBe(flowVersion.id)
+    })
+
+    it('refuses when neither a draft nor the published version carries the moved pin', async () => {
         const ctx = await createTestContext(app)
         const { flow, flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
         const { moved, flowVersion: movedVersion } = await moveWith({ ctx, flowVersion, seams: fakeSeams({ imageVersion: '0.4.5' }) })
-        const republished = createMockFlowVersion({ flowId: flow.id, updatedBy: ctx.user.id, state: FlowVersionState.LOCKED, valid: true, trigger: movedVersion.trigger })
-        await db.save('flow_version', republished)
-        await db.update('flow', flow.id, { publishedVersionId: republished.id })
-
-        await qadamPinMoveService({ log: app.log }).revert({ id: moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })
-
-        // A worker caches a locked version by id: the published version is replaced, never rewritten in place.
-        const { publishedVersionId } = await db.findOneByOrFail<{ publishedVersionId: string }>('flow', { id: flow.id })
-        expect(publishedVersionId).not.toBe(republished.id)
-        expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: publishedVersionId }) })).toEqual(['0.4.2'])
-        expect(await db.findOneByOrFail<FlowVersion>('flow_version', { id: publishedVersionId })).toMatchObject({ state: FlowVersionState.LOCKED })
-        expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: republished.id }) })).toEqual(['0.4.5'])
-        expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: flowVersion.id }) })).toEqual(['0.4.2'])
-
-        const other = await seedFlow({ ctx, pins: ['0.4.2'] })
-        const second = await moveWith({ ctx, flowVersion: other.flowVersion, seams: fakeSeams({ imageVersion: '0.4.5' }) })
-        const differs = createMockFlowVersion({ flowId: other.flow.id, updatedBy: ctx.user.id, state: FlowVersionState.LOCKED, valid: true, trigger: { ...second.flowVersion.trigger, settings: { ...second.flowVersion.trigger.settings, qadamVersion: '0.4.9' } } })
+        await db.update('flow_version', flowVersion.id, { state: FlowVersionState.LOCKED })
+        const differs = createMockFlowVersion({ flowId: flow.id, updatedBy: ctx.user.id, state: FlowVersionState.LOCKED, valid: true, trigger: { ...movedVersion.trigger, settings: { ...movedVersion.trigger.settings, qadamVersion: '0.4.9' } } })
         await db.save('flow_version', differs)
-        await db.update('flow', other.flow.id, { publishedVersionId: differs.id })
+        await db.update('flow', flow.id, { publishedVersionId: differs.id })
+        const editedDraft = createMockFlowVersion({ flowId: flow.id, updatedBy: ctx.user.id, state: FlowVersionState.DRAFT, valid: true, trigger: differs.trigger })
+        await db.save('flow_version', editedDraft)
 
-        await qadamPinMoveService({ log: app.log }).revert({ id: second.moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })
+        await expect(qadamPinMoveService({ log: app.log }).revert({ id: moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })).rejects.toMatchObject({ error: { code: 'VALIDATION' } })
 
-        expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: differs.id }) })).toEqual(['0.4.9'])
-        expect((await db.findOneByOrFail<{ publishedVersionId: string }>('flow', { id: other.flow.id })).publishedVersionId).toBe(differs.id)
+        expect(await db.findOneByOrFail<QadamPinMove>('qadam_pin_move', { id: moved[0].id })).toMatchObject({ status: 'APPLIED' })
+    })
+
+    it('does not move a locked version', async () => {
+        const ctx = await createTestContext(app)
+        const { flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
+        await db.update('flow_version', flowVersion.id, { state: FlowVersionState.LOCKED })
+        const locked = await db.findOneByOrFail<FlowVersion>('flow_version', { id: flowVersion.id })
+
+        const result = await moveWith({ ctx, flowVersion: locked, seams: fakeSeams({ imageVersion: '0.4.5' }) })
+
+        expect(result.moved).toEqual([])
+        expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: flowVersion.id }) })).toEqual(['0.4.2'])
     })
 
     it('refuses a second revert', async () => {
