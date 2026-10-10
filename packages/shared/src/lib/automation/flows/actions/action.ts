@@ -115,6 +115,9 @@ const qadamActionSettingsFields = {
     propertySettings: z.record(z.string(), PropertySettings),
     qadamName: z.string(),
     qadamVersion: VersionType,
+    // Set by the importer on a step its export could not resolve to a release (ADR-0004): the step
+    // is "update this step" while `qadamVersion` is still this pin. Changing the version ends it.
+    exportedUnresolvedPin: VersionType.optional(),
     actionName: z.string().optional(),
     input: z.record(z.string(), z.unknown()),
     errorHandlingOptions: ActionErrorHandlingOptions,

@@ -1,4 +1,22 @@
-import { FlowVersionTemplate, Template } from '@aiqadam/shared';
+import {
+  EmbeddedSnapshotMetadataMap,
+  ExportedUnresolvedSteps,
+  FlowVersionTemplate,
+  Template,
+} from '@aiqadam/shared';
+
+// ADR-0004: an export can carry two optional fields a file's author chose, so they are checked
+// against the same bounds the server applies before any of the file is used.
+const hasValidExportFields = (flows: unknown[]): boolean =>
+  flows.every(
+    (flow) =>
+      typeof flow === 'object' &&
+      flow !== null &&
+      (!('exportedUnresolved' in flow) ||
+        ExportedUnresolvedSteps.safeParse(flow.exportedUnresolved).success) &&
+      (!('snapshotMetadata' in flow) ||
+        EmbeddedSnapshotMetadataMap.safeParse(flow.snapshotMetadata).success),
+  );
 
 export const templateUtils = {
   parseTemplate: (jsonString: string): Template | null => {
@@ -24,6 +42,9 @@ export const templateUtils = {
 
       const { flows, name } = template;
       if (!flows?.[0] || !name || !flows[0].trigger) {
+        return null;
+      }
+      if (!hasValidExportFields(flows)) {
         return null;
       }
 

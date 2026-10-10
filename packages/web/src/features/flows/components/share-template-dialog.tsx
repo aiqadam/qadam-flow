@@ -50,6 +50,7 @@ const ShareTemplateDialog: React.FC<{
     mutationFn: async () => {
       const template = await flowsApi.getTemplate(flowId, {
         versionId: flowVersionId,
+        sameInstance: true,
       });
 
       const author = currentUser

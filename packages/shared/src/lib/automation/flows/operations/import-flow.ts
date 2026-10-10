@@ -2,6 +2,7 @@ import { isNil } from '../../../core/common'
 import { FlowAction, FlowActionType } from '../actions/action'
 import { FlowVersion } from '../flow-version'
 import { FlowTrigger, FlowTriggerType } from '../triggers/trigger'
+import { flowQadamUtil } from '../util/flow-qadam-util'
 import { flowStructureUtil } from '../util/flow-structure-util'
 import { AddNoteRequest, DeleteNoteRequest, FlowOperationRequest, FlowOperationType, ImportFlowRequest, StepLocationRelativeToParent } from './index'
 
@@ -163,14 +164,35 @@ function removeAnySubsequentAction(action: FlowAction): FlowAction {
     return clonedAction
 }
 
+// ADR-0004: the exporter listed these steps because no release passed its props check, so each is
+// marked "update this step", even when the release its caret names exists. The list is untrusted:
+// a name that is not a qadam step of this flow marks nothing.
+function markExportedUnresolved({ trigger, steps }: { trigger: FlowTrigger, steps: ImportFlowRequest['exportedUnresolved'] }): FlowTrigger {
+    if (isNil(steps) || steps.length === 0) {
+        return trigger
+    }
+    const names = new Set(steps.map((step) => step.stepName))
+    const marked: FlowTrigger = JSON.parse(JSON.stringify(trigger))
+    for (const step of flowStructureUtil.getAllSteps(marked)) {
+        if (!names.has(step.name)) {
+            continue
+        }
+        if (step.type === FlowActionType.PIECE || step.type === FlowTriggerType.PIECE) {
+            step.settings.exportedUnresolvedPin = flowQadamUtil.getExactVersion(step.settings.qadamVersion)
+        }
+    }
+    return marked
+}
+
 function _importFlow(flowVersion: FlowVersion, request: ImportFlowRequest): FlowOperationRequest[] {
     const existingActions = flowStructureUtil.getAllNextActionsWithoutChildren(flowVersion.trigger)
+    const trigger = markExportedUnresolved({ trigger: request.trigger, steps: request.exportedUnresolved })
 
     const deleteOperations = existingActions.map(action =>
         createDeleteActionOperation(action.name),
     )
 
-    const importOperations = _getImportOperationsForSteps(request.trigger)
+    const importOperations = _getImportOperationsForSteps(trigger)
  
     return [
         createChangeNameOperation(request.displayName),
@@ -181,7 +203,7 @@ function _importFlow(flowVersion: FlowVersion, request: ImportFlowRequest): Flow
         // silently wiping `localeSource` on every import that did not carry it.
         ...(request.localeSource !== undefined ? [createUpdateLocaleSourceOperation(request.localeSource)] : []),
         ...deleteOperations,
-        createUpdateTriggerOperation(request.trigger),
+        createUpdateTriggerOperation(trigger),
         ...importOperations,
         ..._getImportOperationsForNotes(flowVersion, request),
     ]

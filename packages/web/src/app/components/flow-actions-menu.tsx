@@ -1,8 +1,10 @@
 import {
+  ApFlagId,
   FlowOperationType,
   FlowVersion,
   Permission,
   PopulatedFlow,
+  qadamVersionParser,
 } from '@aiqadam/shared';
 import { useMutation } from '@tanstack/react-query';
 import { t } from 'i18next';
@@ -38,6 +40,7 @@ import { flowHooks, flowsApi } from '@/features/flows';
 import { ImportFlowDialog } from '@/features/flows/components/import-flow-dialog';
 import { foldersHooks } from '@/features/folders';
 import { useAuthorization } from '@/hooks/authorization-hooks';
+import { flagsHooks } from '@/hooks/flags-hooks';
 import { authenticationSession } from '@/lib/authentication-session';
 import { useNewWindow } from '@/lib/navigation-utils';
 
@@ -142,6 +145,13 @@ const FlowActionMenu: React.FC<FlowActionMenuProps> = ({
 
   const { mutate: exportFlow, isPending: isExportPending } =
     flowHooks.useExportFlows();
+  // Only a build from `main` runs pre-release qadam pins, so only there is there anything to keep.
+  const { data: platformVersion } = flagsHooks.useFlag<string>(
+    ApFlagId.CURRENT_VERSION,
+  );
+  const canKeepSnapshots = qadamVersionParser.isSnapshot({
+    version: platformVersion ?? '',
+  });
   return (
     <>
       <DropdownMenu open={open} onOpenChange={setOpen}>
@@ -289,7 +299,7 @@ const FlowActionMenu: React.FC<FlowActionMenuProps> = ({
             )}
 
           {!embedState.hideExportAndImportFlow && (
-            <DropdownMenuItem onClick={() => exportFlow([flow])}>
+            <DropdownMenuItem onClick={() => exportFlow({ flows: [flow] })}>
               <div className="flex cursor-pointer  flex-row gap-2 items-center">
                 {isExportPending ? (
                   <LoadingSpinner />
@@ -297,6 +307,16 @@ const FlowActionMenu: React.FC<FlowActionMenuProps> = ({
                   <Download className="h-4 w-4" />
                 )}
                 <span>{isExportPending ? t('Exporting') : t('Export')}</span>
+              </div>
+            </DropdownMenuItem>
+          )}
+          {!embedState.hideExportAndImportFlow && canKeepSnapshots && (
+            <DropdownMenuItem
+              onClick={() => exportFlow({ flows: [flow], keepSnapshots: true })}
+            >
+              <div className="flex cursor-pointer  flex-row gap-2 items-center">
+                <Download className="h-4 w-4" />
+                <span>{t('exportKeepingPrereleasePins')}</span>
               </div>
             </DropdownMenuItem>
           )}

@@ -1,4 +1,5 @@
 import {
+  ExportedUnresolvedStep,
   PopulatedFlow,
   FlowTriggerType,
   LongPollingStatus,
@@ -20,25 +21,45 @@ import { formatUtils } from '@/lib/format-utils';
 
 import { flowsApi } from '../api/flows-api';
 
-const downloadFlow = async (flowId: string) => {
-  const template = await flowsApi.getTemplate(flowId, {});
+// An export leaves the instance, so the server rewrites a pre-release qadam pin to a release unless
+// the person chose to keep it (ADR-0004). The steps it could not rewrite come back with the file.
+const downloadFlow = async ({
+  flowId,
+  keepSnapshots,
+}: {
+  flowId: string;
+  keepSnapshots: boolean;
+}): Promise<ExportedUnresolvedStep[]> => {
+  const template = await flowsApi.getTemplate(flowId, { keepSnapshots });
   downloadFile({
     obj: JSON.stringify(template, null, 2),
     fileName: template.name,
     extension: 'json',
   });
+  return template.flows?.flatMap((flow) => flow.exportedUnresolved ?? []) ?? [];
 };
 
-const zipFlows = async (flows: PopulatedFlow[]) => {
+const zipFlows = async ({
+  flows,
+  keepSnapshots,
+}: {
+  flows: PopulatedFlow[];
+  keepSnapshots: boolean;
+}) => {
   const zip = new JSZip();
+  const unresolved: ExportedUnresolvedStep[] = [];
   for (const flow of flows) {
-    const template = await flowsApi.getTemplate(flow.id, {});
+    const template = await flowsApi.getTemplate(flow.id, { keepSnapshots });
+    unresolved.push(
+      ...(template.flows?.flatMap((item) => item.exportedUnresolved ?? []) ??
+        []),
+    );
     zip.file(
       `${flow.version.displayName}_${flow.id}.json`,
       JSON.stringify(template, null, 2),
     );
   }
-  return zip;
+  return { zip, unresolved };
 };
 
 /**

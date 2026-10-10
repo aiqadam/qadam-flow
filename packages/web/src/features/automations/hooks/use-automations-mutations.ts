@@ -260,7 +260,7 @@ export function useAutomationsMutations(deps: MutationDeps) {
           .map((id) => flowsById.get(id))
           .filter((flow): flow is PopulatedFlow => !isNil(flow));
         if (flowsToExport.length > 0) {
-          exportFlows(flowsToExport);
+          exportFlows({ flows: flowsToExport });
         }
       }
 
@@ -285,7 +285,7 @@ export function useAutomationsMutations(deps: MutationDeps) {
 
   const handleExportFlow = useCallback(
     (flow: PopulatedFlow) => {
-      exportFlows([flow]);
+      exportFlows({ flows: [flow] });
     },
     [exportFlows],
   );

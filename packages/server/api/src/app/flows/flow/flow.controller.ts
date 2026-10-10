@@ -29,6 +29,7 @@ import { ProjectResourceType } from '../../core/security/authorization/common'
 import { securityAccess } from '../../core/security/authorization/fastify-security'
 import { authorizationMiddleware } from '../../core/security/v2/authz/authorization-middleware'
 import { applicationEvents } from '../../helper/application-events'
+import { snapshotPinExport } from '../../qadams/snapshot-export/snapshot-pin-export'
 import { userService } from '../../user/user-service'
 import { migrateFlowVersionTemplate } from '../flow-version/migrations'
 import { FlowEntity } from './flow.entity'
@@ -191,6 +192,7 @@ export const flowController: FastifyPluginAsyncZod = async (app) => {
             userMetadata,
             projectId: request.projectId,
             versionId: request.query.versionId,
+            snapshotExportMode: snapshotPinExport.modeFor(request.query),
         })
     })
 
