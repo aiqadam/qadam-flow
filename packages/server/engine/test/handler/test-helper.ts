@@ -1,4 +1,6 @@
-import { ActionErrorHandlingOptions, BeginExecuteFlowOperation, BranchCondition, BranchExecutionType, CodeAction, ExecutionType, FlowAction, FlowActionType, FlowVersionState, LoopOnItemsAction, PieceAction, StreamStepProgress, PropertyExecutionType, RouterExecutionType, RunEnvironment } from '@aiqadam/shared'
+import { readFileSync } from 'fs'
+import path from 'path'
+import { ActionErrorHandlingOptions, BeginExecuteFlowOperation, BranchCondition, BranchExecutionType, CodeAction, ExecutionType, FlowAction, FlowActionType, FlowVersionState, LoopOnItemsAction, PieceAction, StreamStepProgress, PropertyExecutionType, RouterExecutionType, RunEnvironment, tryCatchSync } from '@aiqadam/shared'
 import { EngineConstants, ResolvedBeginExecuteFlowOperation } from '../../src/lib/handler/context/engine-constants'
 
 export const generateMockEngineConstants = (params?: Partial<EngineConstants>): EngineConstants => {
@@ -105,7 +107,24 @@ export function buildCodeAction({ name, input, skip, nextAction, errorHandlingOp
     }
 }
 
-export function buildQadamAction({ name, input, skip, qadamName, actionName, nextAction, errorHandlingOptions }: { errorHandlingOptions?: ActionErrorHandlingOptions, name: string, input: Record<string, unknown>, skip?: boolean, qadamName: string, actionName: string, nextAction?: FlowAction }): PieceAction {
+// A step that runs the image's build pins the version the image carries: the loader no longer runs
+// an exact pin on a build outside its caret range (#779). A qadam a test supplies through a mock
+// has no build to read; the test says so with `isMockQadam`, and only then gets an arbitrary pin.
+export function bundledQadamVersion({ qadamName, isMockQadam = false }: { qadamName: string, isMockQadam?: boolean }): string {
+    if (isMockQadam) {
+        return MOCK_QADAM_VERSION
+    }
+    const directory = qadamName.replace('@aiqadam/qadam-', '')
+    for (const group of ['core', 'community']) {
+        const version = readBundledVersion({ packageJsonPath: path.resolve(REPO_ROOT, 'packages/qadams', group, directory, 'package.json') })
+        if (version !== null) {
+            return version
+        }
+    }
+    throw new Error(`No bundled qadam ${qadamName} in packages/qadams: build it, or pass isMockQadam for a mock`)
+}
+
+export function buildQadamAction({ name, input, skip, qadamName, actionName, nextAction, errorHandlingOptions, isMockQadam }: { errorHandlingOptions?: ActionErrorHandlingOptions, name: string, input: Record<string, unknown>, skip?: boolean, qadamName: string, actionName: string, nextAction?: FlowAction, isMockQadam?: boolean }): PieceAction {
     return {
         name,
         displayName: 'Your Action Name',
@@ -114,7 +133,7 @@ export function buildQadamAction({ name, input, skip, qadamName, actionName, nex
         settings: {
             input,
             qadamName,
-            qadamVersion: '1.0.0', // Not required since it's running in development mode
+            qadamVersion: bundledQadamVersion({ qadamName, isMockQadam }),
             actionName,
             propertySettings: Object.fromEntries(Object.entries(input).map(([key]) => [key, {
                 type: PropertyExecutionType.MANUAL,
@@ -148,4 +167,25 @@ export function buildMockBeginExecuteFlowOperation(
         executeTrigger: false,
         ...params,
     }
+}
+
+const MOCK_QADAM_VERSION = '1.0.0'
+// `test-helper.ts` sits at packages/server/engine/test/handler.
+const REPO_ROOT = path.resolve(__dirname, '../../../../..')
+
+// `null` only for a qadam that has no package.json in that group; any other failure is the test's
+// environment being wrong and surfaces.
+function readBundledVersion({ packageJsonPath }: { packageJsonPath: string }): string | null {
+    const { data: content, error } = tryCatchSync<string, NodeJS.ErrnoException>(() => readFileSync(packageJsonPath, 'utf-8'))
+    if (error !== null) {
+        if (error.code === 'ENOENT') {
+            return null
+        }
+        throw error
+    }
+    const packageJson: unknown = JSON.parse(content)
+    if (typeof packageJson !== 'object' || packageJson === null || !('version' in packageJson) || typeof packageJson.version !== 'string') {
+        throw new Error(`${packageJsonPath} has no version`)
+    }
+    return packageJson.version
 }

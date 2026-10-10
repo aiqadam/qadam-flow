@@ -354,6 +354,7 @@ const findExactVersion = async (
     const versionToSearch = findNextExcludedVersion(version)
     const currentRelease = apVersionUtil.getCurrentRelease()
     const registry = filterRegistry(await loadRegistry(log), { release: currentRelease, platformId })
+    const isExactPin = !isNil(version) && qadamVersionParser.isExact({ version })
     const matchingRegistryEntries = registry.filter((entry) => {
         if (entry.name !== name) {
             return false
@@ -361,11 +362,21 @@ const findExactVersion = async (
         if (isNil(versionToSearch)) {
             return true
         }
+        // The range below ends at the pin's next patch, which a prerelease of that patch sits inside
+        // (`1.3.1-main.5` is below `1.3.1`), so an exact pin matches by equality (#779, ADR-0004).
+        if (isExactPin) {
+            return entry.version === version
+        }
         return semVer.compare(entry.version, versionToSearch.nextExcludedVersion) < 0
             && semVer.compare(entry.version, versionToSearch.baseVersion) >= 0
     })
 
     if (matchingRegistryEntries.length === 0) {
+        // A snapshot pin is exact (ADR-0004): no other build stands in for it. Moving it is #808's
+        // checked, audited fallback, so until that exists it is an unavailable pin.
+        if (!isNil(version) && qadamVersionParser.isSnapshot({ version })) {
+            return undefined
+        }
         return findBundledFallback({ log, name, requestedBaseVersion: versionToSearch?.baseVersion, currentRelease, platformId })
     }
 

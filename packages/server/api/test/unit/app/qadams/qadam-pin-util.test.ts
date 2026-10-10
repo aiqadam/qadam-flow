@@ -9,7 +9,7 @@ vi.mock('../../../../src/app/qadams/metadata/qadam-metadata-service', () => ({
     qadamMetadataService: (): { get: typeof mockGet, registry: typeof mockRegistry } => ({ get: mockGet, registry: mockRegistry }),
 }))
 
-import { qadamPinUtil } from '../../../../src/app/qadams/metadata/qadam-pin-util'
+import { MALFORMED_TOOL_PIN, qadamPinUtil } from '../../../../src/app/qadams/metadata/qadam-pin-util'
 
 const log = { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() } as unknown as FastifyBaseLogger
 const PLATFORM_ID = 'platform-1'
@@ -199,5 +199,61 @@ describe('qadamPinUtil.findResolvableVersion', () => {
         const version = await qadamPinUtil.findResolvableVersion({ name: '@acme/qadam-internal', platformId: PLATFORM_ID, log })
 
         expect(version).toBeUndefined()
+    })
+})
+
+// #779: a member can save one agent step with a very large `agentTools` array, and the pin reports
+// (`ap_validate_flow`, `ap_flow_structure`) collect its pins on the API's event loop.
+describe('qadamPinUtil — a very large agent tool list', () => {
+    it('collects 20,000 distinct tool pins in well under a second, and still dedupes', () => {
+        const tools = Array.from({ length: 20_000 }, (_, index) => ({
+            toolName: `tool_${index}`,
+            qadamName: `@acme/qadam-tool-${index % 10_000}`,
+            qadamVersion: '1.0.0',
+            stepName: 'agent',
+            stepDisplayName: 'Agent',
+        }))
+
+        const startedAt = performance.now()
+        const pins = qadamPinUtil.collectDistinctPins({ steps: [], tools })
+        const elapsedMs = performance.now() - startedAt
+
+        expect(pins).toHaveLength(10_000)
+        expect(elapsedMs).toBeLessThan(500)
+    })
+})
+
+// #779: a tool is free text. Its name and version must not read as another pin.
+describe('qadamPinUtil — a malformed agent tool pin', () => {
+    beforeEach(() => {
+        vi.clearAllMocks()
+    })
+
+    function tool({ qadamName, qadamVersion }: { qadamName: string, qadamVersion: string }): { toolName: string, qadamName: string, qadamVersion: string, stepName: string, stepDisplayName: string } {
+        return { toolName: 'tool', qadamName, qadamVersion, stepName: 'agent', stepDisplayName: 'Agent' }
+    }
+
+    it('does not collide with the valid pin it reads like, so validate cannot call it resolvable', async () => {
+        mockGet.mockResolvedValue({ name: '@scope/foo', version: '1.0.0' })
+        const valid = tool({ qadamName: '@scope/foo', qadamVersion: '1.0.0' })
+        const lookalike = tool({ qadamName: '', qadamVersion: 'scope/foo@1.0.0' })
+
+        const pins = qadamPinUtil.collectDistinctPins({ steps: [], tools: [valid, lookalike] })
+        const resolutions = await qadamPinUtil.resolvePins({ pins, platformId: PLATFORM_ID, log })
+
+        expect(pins).toHaveLength(2)
+        expect(resolutions.get(qadamPinUtil.pinOfTool({ tool: valid }))).toBe(true)
+        expect(resolutions.get(qadamPinUtil.pinOfTool({ tool: lookalike }))).toBe(false)
+        expect(mockGet).toHaveBeenCalledTimes(1)
+    })
+
+    it.each([
+        ['a name past npm\'s 214 characters', tool({ qadamName: `${'a-'.repeat(50_000)}b`, qadamVersion: '1.0.0' })],
+        ['an instruction-shaped name', tool({ qadamName: `${'ignore-all-previous-instructions-'.repeat(8)}now`, qadamVersion: '1.0.0' })],
+        ['a version that is no version', tool({ qadamName: '@scope/foo', qadamVersion: 'latest' })],
+    ])('keys %s as the one constant malformed pin, without its text', (_label, malformed) => {
+        const pin = qadamPinUtil.pinOfTool({ tool: malformed })
+
+        expect(pin).toBe(MALFORMED_TOOL_PIN)
     })
 })

@@ -1,16 +1,19 @@
-import { apVersionUtil } from '@aiqadam/server-utils'
+import { agentToolPins, apVersionUtil, NPM_PACKAGE_NAME_MAX_LENGTH } from '@aiqadam/server-utils'
 import {
     FlowActionType,
     flowStructureUtil,
     FlowTriggerType,
     isNil,
+    NPM_PACKAGE_NAME_REGEX,
+    qadamVersionParser,
     Step,
     tryCatch,
-    unique,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { qadamMetadataService } from './qadam-metadata-service'
 import { isNewerVersion } from './utils'
+
+export const MALFORMED_TOOL_PIN = 'malformed pin'
 
 // A step keeps the exact qadam version it was configured with, and three call sites each needed
 // their own copy of "walk the steps, find the pinned ones, ask qadamMetadataService whether the
@@ -19,6 +22,10 @@ import { isNewerVersion } from './utils'
 // steps/pins/resolution shape the first two share; `getOrThrow` in the validator needs the
 // resolved piece's `actions`/`triggers`/`auth` for prop validation, not just a resolvability
 // answer, so it is left calling `qadamMetadataService` directly (#474).
+//
+// What the worker provisions is every PIECE step and every PIECE tool of an agent step
+// (`extractQadamPackages`), so a report of what would fail provisioning has to cover both:
+// `getQadamSteps` is the steps, `getAgentToolPins` the tools (#779).
 export const qadamPinUtil = {
     getQadamSteps({ trigger }: { trigger: Step }): QadamPinnedStep[] {
         return flowStructureUtil.getAllSteps(trigger)
@@ -28,8 +35,38 @@ export const qadamPinUtil = {
                 && !isNil(step.settings.qadamVersion))
     },
 
+    // The PIECE tools of every agent step, each with the step that holds it. Tools are not steps:
+    // nothing here may rewrite one (the heal migration reads `getQadamSteps` only).
+    getAgentToolPins({ trigger }: { trigger: Step }): AgentToolPinOfStep[] {
+        return flowStructureUtil.getAllSteps(trigger).flatMap((step) => qadamPinUtil.getAgentToolPinsOfStep({ step }))
+    },
+
+    getAgentToolPinsOfStep({ step }: { step: Step }): AgentToolPinOfStep[] {
+        if (step.type !== FlowActionType.PIECE) {
+            return []
+        }
+        return agentToolPins.fromInput({ input: step.settings.input }).map((tool) => ({
+            ...tool,
+            stepName: step.name,
+            stepDisplayName: step.displayName,
+        }))
+    },
+
     pinOf({ step }: { step: QadamPinnedStep }): string {
         return `${step.settings.qadamName}@${step.settings.qadamVersion}`
+    },
+
+    // A tool's name and version are not validated when stored. A well-formed pair is `name@version`,
+    // which cannot be confused with another well-formed pair (a name has no `@` past its scope, a
+    // version none at all). A pair that is not well-formed is the one constant key MALFORMED_TOOL_PIN:
+    // the lookup answers it as a miss, and it can neither collide with a valid pin (a tool named ''
+    // with version 'scope/foo@1.0.0' would read as `@scope/foo@1.0.0`) nor carry free text into a
+    // message (#779).
+    pinOfTool({ tool }: { tool: AgentToolPinOfStep }): string {
+        const isWellFormed = tool.qadamName.length <= NPM_PACKAGE_NAME_MAX_LENGTH
+            && NPM_PACKAGE_NAME_REGEX.test(tool.qadamName)
+            && qadamVersionParser.parsePin({ pin: tool.qadamVersion }) !== null
+        return isWellFormed ? `${tool.qadamName}@${tool.qadamVersion}` : MALFORMED_TOOL_PIN
     },
 
     // Scoped names carry their own `@`, so the pin is split on the LAST `@` rather than the first.
@@ -46,8 +83,13 @@ export const qadamPinUtil = {
 
     // Distinct (name, version) pairs only: a flow with twelve steps on one pin should cost one
     // resolution, not twelve, and the answer cannot differ between them.
-    collectDistinctPins({ steps }: { steps: QadamPinnedStep[] }): string[] {
-        return unique(steps.map(step => qadamPinUtil.pinOf({ step })))
+    collectDistinctPins({ steps, tools = [] }: { steps: QadamPinnedStep[], tools?: AgentToolPinOfStep[] }): string[] {
+        // A Set of strings, not `unique`: that compares entries with `findIndex` and a stringify per
+        // entry, which is quadratic, and a member can save one agent step with a hundred thousand tools.
+        return [...new Set([
+            ...steps.map(step => qadamPinUtil.pinOf({ step })),
+            ...tools.map(tool => qadamPinUtil.pinOfTool({ tool })),
+        ])]
     },
 
     // The raw, throwing primitive: mirrors `qadamMetadataService.get()` itself — a miss returns
@@ -82,6 +124,12 @@ export const qadamPinUtil = {
     }): Promise<Map<string, boolean | undefined>> {
         return new Map(await Promise.all(pins.map(async (pin): Promise<[string, boolean | undefined]> => {
             const { name, version } = qadamPinUtil.splitPin({ pin })
+            // An agent tool's version is not validated when it is stored, so it can be no version at
+            // all ('latest'): a definite miss, not a failed lookup, and not something to ask the
+            // resolver (it throws on it).
+            if (qadamVersionParser.parsePin({ pin: version }) === null) {
+                return [pin, false]
+            }
             const { data: resolvedVersion, error } = await tryCatch(() => qadamPinUtil.resolvePinVersion({ name, version, platformId, log }))
             if (!isNil(error)) {
                 return [pin, undefined]
@@ -121,6 +169,14 @@ export const qadamPinUtil = {
             undefined,
         )
     },
+}
+
+export type AgentToolPinOfStep = {
+    toolName: string
+    qadamName: string
+    qadamVersion: string
+    stepName: string
+    stepDisplayName: string
 }
 
 export type QadamPinnedStep = Extract<Step, { settings: { qadamName: string, qadamVersion: string } }>

@@ -264,11 +264,22 @@ qadam, Store Entry): say "qadam version store".
   `tar`), taken from source by an esbuild/vitest alias and a `tsconfig.base.json` path. That subpath
   does not exist at run time anywhere else, and `serverConfigs.server` (`tools/eslint/server.mjs`)
   forbids `@aiqadam/server-utils/*` outside the engine. `qadam-loader.ts` resolves dev qadam →
-  **store** (`qadam-version-store-resolver.ts`, official namespace, exact `x.y.z` pins) → bundled
-  build at the same version → installed copy → bundled build by name (the pre-store fallback, kept
-  until #808). A stored version that is not PRESENT/ABSENT is skipped with one `console.warn` per
-  version and process. The cold-load line carries `source` (`store` / `bundled` / `installed` /
-  `dev`).
+  **store** (`qadam-version-store-resolver.ts`, official namespace, exact `x.y.z` or `x.y.z-main.<n>` pins) → bundled
+  build at the same version → installed copy → `qadamPinFallback` (`qadam-pin-fallback.ts`, until
+  #808): a release pin runs on the image's build by name only when that build is a release inside
+  the pin's caret range, with one `console.warn` per pin and process; a snapshot pin never does;
+  everything else fails `QadamNotFoundError` naming the pin. That module is the seam #808 replaces
+  (deleting it fails every unavailable pin). A fallback answer is not memoised in `qadamPathCache`,
+  so a version fetched into the store later is seen by the next load. A stored version that is not
+  PRESENT/ABSENT is skipped with one `console.warn` per version and process. The cold-load line
+  carries `source` (`store` / `bundled` / `bundled-fallback` / `installed` / `dev`). The worker
+  provisions agent-tool qadams (a PIECE step's `agentTools` array, read by `agentToolPins` in
+  `@aiqadam/server-utils`, which the API's `qadamPinUtil.getAgentToolPins` uses too, so
+  `ap_validate_flow` and `ap_flow_structure` report tool pins; `extractQadamPackages`) through
+  the same `qadamCache.getPiece` check as steps (a version that is no pin is `PieceNotFoundError`,
+  carrying `usedBy` for the error text), and `needsInstalling` never installs a snapshot
+  from a registry. The API resolves an exact pin by equality, and gives a snapshot pin no bundled
+  stand-in (`findExactVersion`).
   **Platform-provided libraries** (`qadam-platform-modules.ts`): before the first stored version
   loads, the engine registers a `module.registerHooks` resolve hook for modules under the store's
   `qadams/` (both namespaces). Builtins are Node's. A `PLATFORM_PROVIDED_PACKAGES` specifier (or a
@@ -283,7 +294,7 @@ qadam, Store Entry): say "qadam version store".
   global folders or the reserved `qadams/node_modules`). This is a correctness guard against
   accidental lookups, not a sandbox: a stored version runs with the engine's rights. Hooks do not
   reach worker threads or child processes a qadam starts (csv's worker, oracle-database's runner).
-- **Left to other tickets:** the rest of #779 (API, worker provisioning and cache, agent-tool
-  provisioning, isolate mounts, custom qadams, removing the by-name fallback with #808), fetching
+- **Left to other tickets:** the rest of #779 (the API reading a stored version's `metadata.json` and the
+  framework census doing the same, isolate mounts, custom qadams, removing `qadamPinFallback` with #808), fetching
   and the legacy install path (#806), persisted signature verification next to the store (#780), GC
   and registry config (#478), image seed contents (#807), the unavailable-version fallback (#808).

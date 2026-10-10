@@ -211,7 +211,7 @@ Three log lines answer "where did a slow job's time go" without OTEL. All of the
 
 ## Shared Cache Volume (#372, #586)
 All worker replicas mount one `cache` volume (`/usr/src/app/cache`). An in-process `memoryLock` keeps only one container's own jobs apart, so every write to that volume also needs a lock on disk (`fileLock` from `@aiqadam/server-utils`, built on `proper-lockfile`; a lock whose holder stops refreshing it is stale after 5 min unless the caller passes `staleMs`):
-- **Qadam installs** (`qadam-installer.ts`, #373): `fileLock` on the `common` workspace, i.e. `v12/common.lock`.
+- **Qadam installs** (`qadam-installer.ts`, #373): `fileLock` on the `common` workspace, i.e. `v13/common.lock`.
 - **`cacheState.getOrSetCache` with `crossProcess: { log }`** (`cache/cache-state.ts`, #586). Only the two callers whose `installFn` writes shared state on the volume opt in: code builds and the engine copy. The flow-version and qadam-metadata caches only fetch, so they stay on the `memoryLock` alone; a lock there would serialize every draft flow-version fetch across replicas.
   - The memory fast path is unchanged: a hit takes no lock.
   - A miss takes the in-process `memoryLock`, then the named lock `<folder>.cache-state`, then re-reads `cache.json` from disk. The replica that loses the race therefore uses the winner's result instead of installing again.

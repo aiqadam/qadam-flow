@@ -256,7 +256,7 @@ describe('executeFlowJob', () => {
         })
 
         it('omits logsFileId when piece provisioning fails, the engine never ran', async () => {
-            mockProvisionFlowPieces.mockResolvedValueOnce({ provisioned: false, unavailableQadam: '@aiqadam/qadam-tables@0.3.1' })
+            mockProvisionFlowPieces.mockResolvedValueOnce({ provisioned: false, unavailableQadam: '@aiqadam/qadam-tables@0.3.1', usedBy: 'the step step_1' })
 
             const ctx = makeMockContext()
             const data = makeResumeJobData({ executionType: ExecutionType.BEGIN, logsFileId: 'logs-file-1' })
@@ -392,7 +392,7 @@ describe('executeFlowJob', () => {
             mockGetVersion.mockResolvedValueOnce(null)
             const missingVersion = await executeFlowJob.execute(ctx, makeResumeJobData({ executionType: ExecutionType.BEGIN }))
 
-            mockProvisionFlowPieces.mockResolvedValueOnce({ provisioned: false, unavailableQadam: '@aiqadam/qadam-tables@0.3.1' })
+            mockProvisionFlowPieces.mockResolvedValueOnce({ provisioned: false, unavailableQadam: '@aiqadam/qadam-tables@0.3.1', usedBy: 'the step step_1' })
             const unavailablePin = await executeFlowJob.execute(ctx, makeResumeJobData({ executionType: ExecutionType.BEGIN }))
 
             expect(missingVersion.retryable).toBe(false)

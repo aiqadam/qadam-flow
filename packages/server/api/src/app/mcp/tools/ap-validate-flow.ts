@@ -195,28 +195,30 @@ function validateFlow({ trigger }: { trigger: Step }): ValidationResult {
     return { totalSteps: allSteps.length, validSteps: validCount, invalidSteps: invalidCount, skippedSteps: skippedCount, issues }
 }
 
-// A step keeps the exact qadam version it was configured with. When an image upgrade drops that
-// version and #424's bundled fallback cannot reach the replacement — a caret range does not cross a
-// minor for a 0.x package, so a `0.3.1` pin never resolves to a bundled `0.4.5` — the flow stays
-// LOCKED, valid and ENABLED and fails only when something next provisions it, with the cause
-// visible in worker logs and nowhere a flow owner looks (#432).
+// A step keeps the exact qadam version it was configured with, and so does an agent tool. When an
+// image upgrade drops that version and #424's bundled fallback cannot reach the replacement — a
+// caret range does not cross a minor for a 0.x package, so a `0.3.1` pin never resolves to a
+// bundled `0.4.5` — the flow stays LOCKED, valid and ENABLED and fails only when something next
+// provisions it, with the cause visible in worker logs and nowhere a flow owner looks (#432).
 async function validatePinnedQadamVersions({ trigger, platformId, log }: {
     trigger: Step
     platformId: string
     log: FastifyBaseLogger
 }): Promise<ValidationIssue[]> {
     // No `skip` filter, unlike every other check here: `extractQadamPackages` in the worker
-    // provisions every PIECE step in the version regardless of `skip`, so a dead pin on a skipped
-    // step still fails provisioning on every trigger tick and every run. Excluding it would report
-    // exactly the flow this category exists to catch as ready to publish.
+    // provisions every PIECE step in the version, and every PIECE tool of an agent step, regardless
+    // of `skip`, so a dead pin on a skipped step still fails provisioning on every trigger tick and
+    // every run. Excluding it would report exactly the flow this category exists to catch as ready
+    // to publish.
     const qadamSteps = qadamPinUtil.getQadamSteps({ trigger })
+    const agentTools = qadamPinUtil.getAgentToolPins({ trigger })
 
     // Distinct (name, version) pairs only: a flow with twelve tables steps on one pin should cost
     // one resolution, not twelve, and the answer cannot differ between them.
-    const pins = qadamPinUtil.collectDistinctPins({ steps: qadamSteps })
+    const pins = qadamPinUtil.collectDistinctPins({ steps: qadamSteps, tools: agentTools })
     const resolutions = await qadamPinUtil.resolvePins({ pins, platformId, log })
 
-    return qadamSteps.flatMap((step) => {
+    const stepIssues = qadamSteps.flatMap((step) => {
         const pin = qadamPinUtil.pinOf({ step })
         // Shared with `ap_flow_structure` via `mcpUtils.qadamPinIssue`, so the two tools cannot
         // give an agent contradictory accounts of the same pin — a confirmed miss (`false`) gets
@@ -232,6 +234,19 @@ async function validatePinnedQadamVersions({ trigger, platformId, log }: {
             message: `${mcpUtils.wrapUntrustedValue(step.displayName)} ${issue.message}`,
         }]
     })
+    const toolIssues = agentTools.flatMap((tool) => {
+        const pin = qadamPinUtil.pinOfTool({ tool })
+        const issue = mcpUtils.qadamPinIssue({ pin, resolvable: resolutions.get(pin), subject: 'agent_tool' })
+        if (isNil(issue)) {
+            return []
+        }
+        return [{
+            category: 'qadam_version' as const,
+            stepName: tool.stepName,
+            message: `${mcpUtils.wrapUntrustedValue(tool.stepDisplayName)} has an agent tool (${mcpUtils.wrapUntrustedValue(tool.toolName)}) that ${issue.message}`,
+        }]
+    })
+    return [...stepIssues, ...toolIssues]
 }
 
 // ADR-0002 (#803): once a release retires a framework context version, a step pinned to a qadam
