@@ -835,9 +835,10 @@ function qadamPath({ rootWorkspace, piece }: QadamPathParams): string {
 
 // ADR-0004: a member directory is named after the alias `name@version`. A workspace installed
 // before it holds `name-version` instead, and a qadam already there keeps its directory: a second
-// member would carry the same package name, which bun refuses in one workspace. This code never
-// creates a legacy directory, but an older worker sharing the workspace can, so one found is
-// followed on every call; only the absence of one is remembered, as the cheap common answer.
+// member would carry the same package name, which bun refuses in one workspace. A legacy directory
+// found is looked for again on every call, because it can be deleted (`removeAbandonedMembers`, or
+// another replica's rollback). Its absence is safe to remember: only an older worker creates one, the
+// downgrade case that breaking-changes.mdx says needs a cache clear.
 function memberDirectoryName({ rootWorkspace, piece }: QadamPathParams): string {
     const key = memberDirectoryKey({ rootWorkspace, piece })
     const currentName = getPackageAliasForQadam(piece)
