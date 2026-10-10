@@ -1,8 +1,8 @@
 import { apVersionUtil, ImageBuild, PropsCompatibilityChecker } from '@aiqadam/server-utils'
 import { isNil, PlatformId } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
-import { qadamPropsCompatibility } from '../snapshot-export/qadam-props-compatibility'
 import { filterQadamBasedOnType, isSupportedRelease, loadBundledQadams } from '../metadata/utils'
+import { qadamPropsCompatibility } from '../snapshot-export/qadam-props-compatibility'
 
 // What `qadamPinMoveService` needs from outside the decision, each a named seam so the service and
 // its tests do not know where the answer comes from.
