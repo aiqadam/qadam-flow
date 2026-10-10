@@ -653,6 +653,9 @@
       "@aiqadam/server-utils": [
         "packages/server/utils/src/index.ts"
       ],
+      "@aiqadam/server-utils/qadam-pin-fallback-decision": [
+        "packages/server/utils/src/qadam-pin-fallback-decision.ts"
+      ],
       "@aiqadam/server-utils/qadam-version-store-reader": [
         "packages/server/utils/src/qadam-version-store/reader.ts"
       ],

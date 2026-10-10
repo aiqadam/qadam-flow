@@ -28,6 +28,8 @@ const buildOptions = {
         '@aiqadam/pieces-common': path.resolve(__dirname, '../../pieces/common/src'),
         // The store's reader only, from source, not the server-utils package (#779).
         '@aiqadam/server-utils/qadam-version-store-reader': path.resolve(__dirname, '../utils/src/qadam-version-store/reader.ts'),
+        // The pin fallback's caret rule, shared with the API (#808).
+        '@aiqadam/server-utils/qadam-pin-fallback-decision': path.resolve(__dirname, '../utils/src/qadam-pin-fallback-decision.ts'),
     },
     external: ['isolated-vm', 'utf-8-validate', 'bufferutil'],
     plugins: [

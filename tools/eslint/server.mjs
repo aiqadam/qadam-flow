@@ -7,9 +7,10 @@ import { safeHttpRules } from './safe-http-rules.mjs'
 
 const { tsFiles, scriptFiles, lodashPatterns, unusedVarsOptions } = baseConfigs
 
-// `@aiqadam/server-utils/qadam-version-store-reader` exists only through the engine's esbuild and
-// vitest aliases (#779). `tsconfig.base.json` maps it for every package, so anywhere else it would
-// type-check and then fail at run time; the engine's own config replaces this rule.
+// `@aiqadam/server-utils/qadam-version-store-reader` and `.../qadam-pin-fallback-decision` exist only
+// through the engine's esbuild and vitest aliases (#779, #808). `tsconfig.base.json` maps them for
+// every package, so anywhere else they would type-check and then fail at run time; the engine's own
+// config replaces this rule.
 const ENGINE_ONLY_SERVER_UTILS_SUBPATHS = {
     group: ['@aiqadam/server-utils/*'],
     message: 'Import @aiqadam/server-utils from its root. Its subpaths are engine-only aliases that do not exist at run time here.',

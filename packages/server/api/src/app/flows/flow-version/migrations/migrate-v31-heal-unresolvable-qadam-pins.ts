@@ -14,7 +14,7 @@ import { Migration } from '.'
 
 // #432/#474 step 0: an image upgrade can drop the exact qadam version a step is pinned to, and
 // #424's bundled fallback deliberately does not cross a caret boundary for a 0.x qadam (see the
-// comment on `satisfiesRequestedRange` in `qadam-metadata-service.ts` — #435 rejected widening it).
+// comment on `findBundledFallback` in `qadam-metadata-service.ts` — #435 rejected widening it).
 // That leaves the flow LOCKED, valid and ENABLED, failing only when something next provisions it.
 // This migration is the one-off heal: for any qadam name (not a hardcoded list — the five
 // `migrate-v24`..`migrate-v30` files this repo already has are the failure mode this exists to

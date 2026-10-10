@@ -1,4 +1,5 @@
 import { QadamMetadata } from '@aiqadam/qadams-framework'
+import { apVersionUtil } from '@aiqadam/server-utils'
 import { apId, isEmpty, isNil, PackageType, QadamType } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import semVer from 'semver'
@@ -54,6 +55,16 @@ export async function loadBundledQadams(log: FastifyBaseLogger): Promise<QadamMe
         bundledQadamsCachePromise = null
     })
     return bundledQadamsCachePromise
+}
+
+// What this image ships for a qadam name, as a platform may run it on this release: the one lookup
+// and gating the per-lookup fallback and #808's audited move share.
+export function findImageBuild({ bundled, name, platformId }: { bundled: QadamMetadataSchema[], name: string, platformId: string | undefined }): QadamMetadataSchema | undefined {
+    const build = bundled.find((qadam) => qadam.name === name)
+    if (isNil(build) || !filterQadamBasedOnType(platformId, build) || !isSupportedRelease(apVersionUtil.getCurrentRelease(), build)) {
+        return undefined
+    }
+    return build
 }
 
 export function filterQadamBasedOnType(platformId: string | undefined, qadam: QadamMetadataSchema | QadamRegistryEntry): boolean {

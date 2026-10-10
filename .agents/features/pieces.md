@@ -265,11 +265,13 @@ qadam, Store Entry): say "qadam version store".
   does not exist at run time anywhere else, and `serverConfigs.server` (`tools/eslint/server.mjs`)
   forbids `@aiqadam/server-utils/*` outside the engine. `qadam-loader.ts` resolves dev qadam →
   **store** (`qadam-version-store-resolver.ts`, official namespace, exact `x.y.z` or `x.y.z-main.<n>` pins) → bundled
-  build at the same version → installed copy → `qadamPinFallback` (`qadam-pin-fallback.ts`, until
-  #808): a release pin runs on the image's build by name only when that build is a release inside
+  build at the same version → installed copy → `qadamPinFallback` (`qadam-pin-fallback.ts`, the
+  run-time net under #808's audited move, see [qadam-pin-moves.md](./qadam-pin-moves.md)): a release
+  pin runs on the image's build by name only when that build is a release inside
   the pin's caret range, with one `console.warn` per pin and process; a snapshot pin never does;
-  everything else fails `QadamNotFoundError` naming the pin. That module is the seam #808 replaces
-  (deleting it fails every unavailable pin). A fallback answer is not memoised in `qadamPathCache`,
+  everything else fails `QadamNotFoundError` naming the pin. The caret rule is
+  `qadamPinFallbackDecision.checkNet`, shared with the API (`@aiqadam/server-utils/qadam-pin-fallback-decision`,
+  one more engine-only alias). Deleting the module fails every unavailable pin. A fallback answer is not memoised in `qadamPathCache`,
   so a version fetched into the store later is seen by the next load. A stored version that is not
   PRESENT/ABSENT is skipped with one `console.warn` per version and process. The cold-load line
   carries `source` (`store` / `bundled` / `bundled-fallback` / `installed` / `dev`). The worker
@@ -295,6 +297,6 @@ qadam, Store Entry): say "qadam version store".
   accidental lookups, not a sandbox: a stored version runs with the engine's rights. Hooks do not
   reach worker threads or child processes a qadam starts (csv's worker, oracle-database's runner).
 - **Left to other tickets:** the rest of #779 (the API reading a stored version's `metadata.json` and the
-  framework census doing the same, isolate mounts, custom qadams, removing `qadamPinFallback` with #808), fetching
+  framework census doing the same, isolate mounts, custom qadams, removing `qadamPinFallback` once #808's move covers every path), fetching
   and the legacy install path (#806, which also writes the signature ledger for what it fetches), GC
-  and registry config (#478), image seed contents (#807), the unavailable-version fallback (#808).
+  and registry config (#478), image seed contents (#807), the rest of the unavailable-version fallback (#808: the marking, the start-up and import passes, the catalogue read).

@@ -19,11 +19,12 @@ import { QadamVersionCatalogueSource, qadamVersionCatalogueSource } from '../cat
 export const snapshotExportSources = {
     forInstance: ({ log, catalogueSource = defaultCatalogueSource() }: ForInstanceParams): SnapshotExportSources => {
         // One catalogue read per export, however many pins it resolves.
-        let catalogue: Promise<QadamVersionCatalogue | null> | undefined
-        const readCatalogue = (): Promise<QadamVersionCatalogue | null> => {
-            catalogue ??= loadCatalogue({ source: catalogueSource, log })
-            return catalogue
+        let loaded: Promise<LoadedCatalogue | null> | undefined
+        const readLoaded = (): Promise<LoadedCatalogue | null> => {
+            loaded ??= loadCatalogue({ source: catalogueSource, log })
+            return loaded
         }
+        const readCatalogue = async (): Promise<QadamVersionCatalogue | null> => (await readLoaded())?.catalogue ?? null
         // One open of the store per export, however many snapshots it reads.
         let store: Promise<StoreReader | null> | undefined
         const readStore = (): Promise<StoreReader | null> => {
@@ -31,6 +32,7 @@ export const snapshotExportSources = {
             return store
         }
         return {
+            skippedEntries: async () => (await readLoaded())?.skippedEntries ?? null,
             releases: async ({ name }) => (await readCatalogue())?.versions({ name }) ?? null,
             releaseMetadata: async ({ name, version }): Promise<unknown> => {
                 const result = await (await readCatalogue())?.readMetadata({ name, version })
@@ -44,10 +46,10 @@ export const snapshotExportSources = {
     },
 }
 
-async function loadCatalogue({ source, log }: { source: QadamVersionCatalogueSource, log: FastifyBaseLogger }): Promise<QadamVersionCatalogue | null> {
+async function loadCatalogue({ source, log }: { source: QadamVersionCatalogueSource, log: FastifyBaseLogger }): Promise<LoadedCatalogue | null> {
     const result = await qadamVersionCatalogue.read({ source })
     if (result.status === 'ok') {
-        return result.catalogue
+        return { catalogue: result.catalogue, skippedEntries: result.skippedEntries }
     }
     log.warn({ status: result.status }, '[snapshotExport] The qadam version catalogue is unavailable; snapshot pins in this export cannot be moved to a release')
     return null
@@ -80,6 +82,11 @@ function defaultCatalogueSource(): QadamVersionCatalogueSource {
     return qadamVersionCatalogueSource.http({ baseUrl: QADAM_VERSION_CATALOGUE_DEFAULT_URL })
 }
 
+type LoadedCatalogue = {
+    catalogue: QadamVersionCatalogue
+    skippedEntries: number
+}
+
 type StoreReader = Extract<Awaited<ReturnType<typeof qadamVersionStoreReader.open>>, { ok: true }>['reader']
 
 type ForInstanceParams = {
@@ -89,6 +96,11 @@ type ForInstanceParams = {
 }
 
 export type SnapshotExportSources = {
+    // How many catalogue entries the reader could not parse and left out of `releases`; `null` when
+    // the catalogue cannot be read. An export treats a version that is not listed as harmless. The
+    // unavailable-version move (#808) must not: an unlisted version is "never published" only when
+    // nothing was skipped.
+    skippedEntries?: () => Promise<number | null>
     // Released versions of an official qadam, in no particular order; `null` when the catalogue
     // cannot be read, `[]` when it lists none.
     releases: (params: { name: string }) => Promise<string[] | null>

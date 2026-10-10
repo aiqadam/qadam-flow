@@ -1,4 +1,5 @@
 import { QadamMetadataModel } from '@aiqadam/qadams-framework'
+import { qadamVersionStoreReader } from '@aiqadam/server-utils'
 import { PackageType, QadamType } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { qadamMetadataService } from '../../../../src/app/qadams/metadata/qadam-metadata-service'
@@ -174,5 +175,70 @@ describe('qadamMetadataService.resolveVersion() — exact pins and snapshots (un
         loadRegistry.mockResolvedValue([registryEntry({ version: '1.3.0-main.500' })])
 
         expect(await qadamMetadataService(logger).resolveVersion({ name: NAME, version: '^1.3.0-main.412', platformId: undefined })).toBe('1.3.0-main.500')
+    })
+})
+
+// #808: `get` and `resolveVersion` answer a stale exact pin with the image's build (the run-time net),
+// so they cannot say whether the pin itself is there. `isPinAvailable` can, and is what the audited
+// move asks.
+describe('qadamMetadataService.isPinAvailable() — the pin itself, never a stand-in (unit)', () => {
+    const NAME = '@aiqadam/qadam-fixture'
+
+    afterEach(() => {
+        vi.restoreAllMocks()
+    })
+
+    beforeEach(() => {
+        vi.clearAllMocks()
+        loadRegistry.mockResolvedValue([])
+        loadBundledQadams.mockResolvedValue([bundledQadam({ name: NAME, version: '0.4.5' })])
+    })
+
+    it('is true for a version the registry holds', async () => {
+        loadRegistry.mockResolvedValue([{ name: NAME, version: '0.4.2', qadamType: QadamType.OFFICIAL, platformId: undefined }])
+
+        expect(await qadamMetadataService(logger).isPinAvailable({ name: NAME, version: '0.4.2', platformId: undefined })).toBe(true)
+    })
+
+    it('is false for a stale pin the net would still run on the bundled build', async () => {
+        const service = qadamMetadataService(logger)
+
+        expect(await service.resolveVersion({ name: NAME, version: '0.4.2', platformId: undefined })).toBe('0.4.5')
+        expect(await service.isPinAvailable({ name: NAME, version: '0.4.2', platformId: undefined })).toBe(false)
+    })
+
+    it('is false for a snapshot pin the registry does not hold', async () => {
+        expect(await qadamMetadataService(logger).isPinAvailable({ name: NAME, version: '0.4.5-main.9', platformId: undefined })).toBe(false)
+    })
+
+    it('does not count another platform\'s row of the same name and version', async () => {
+        loadRegistry.mockResolvedValue([{ name: NAME, version: '0.4.2', qadamType: QadamType.CUSTOM, platformId: 'platform-b' }])
+
+        expect(await qadamMetadataService(logger).isPinAvailable({ name: NAME, version: '0.4.2', platformId: 'platform-a' })).toBe(false)
+        expect(await qadamMetadataService(logger).isPinAvailable({ name: NAME, version: '0.4.2', platformId: 'platform-b' })).toBe(true)
+    })
+
+    it('is true when the version store holds the version, which the engine reads first', async () => {
+        const read = vi.fn(async () => ({ status: 'present' as const }))
+        vi.spyOn(qadamVersionStoreReader, 'open').mockResolvedValue({ ok: true, reader: { read } } as never)
+
+        expect(await qadamMetadataService(logger).isPinAvailable({ name: NAME, version: '0.4.2', platformId: undefined })).toBe(true)
+        expect(read).toHaveBeenCalledWith({ coordinates: { platformId: null, name: NAME, version: '0.4.2' } })
+    })
+
+    it('stays false when the store is absent there, or cannot be opened', async () => {
+        vi.spyOn(qadamVersionStoreReader, 'open').mockResolvedValue({ ok: true, reader: { read: async () => ({ status: 'absent' }) } } as never)
+        expect(await qadamMetadataService(logger).isPinAvailable({ name: NAME, version: '0.4.2', platformId: undefined })).toBe(false)
+
+        vi.spyOn(qadamVersionStoreReader, 'open').mockRejectedValue(new Error('EACCES'))
+        expect(await qadamMetadataService(logger).isPinAvailable({ name: NAME, version: '0.4.2', platformId: undefined })).toBe(false)
+    })
+
+    it('is false, without asking the registry, for a range or anything that is not a version', async () => {
+        const service = qadamMetadataService(logger)
+
+        expect(await service.isPinAvailable({ name: NAME, version: '^0.4.2', platformId: undefined })).toBe(false)
+        expect(await service.isPinAvailable({ name: NAME, version: 'latest', platformId: undefined })).toBe(false)
+        expect(loadRegistry).not.toHaveBeenCalled()
     })
 })
