@@ -1,5 +1,8 @@
 import {
+  chunk,
+  ExportedUnresolvedStep,
   PopulatedFlow,
+  SharedTemplate,
   FlowTriggerType,
   LongPollingStatus,
   isNil,
@@ -20,26 +23,71 @@ import { formatUtils } from '@/lib/format-utils';
 
 import { flowsApi } from '../api/flows-api';
 
-const downloadFlow = async (flowId: string) => {
-  const template = await flowsApi.getTemplate(flowId, {});
-  downloadFile({
+const EXPORT_PARALLELISM = 4;
+
+// An export leaves the instance, so the server rewrites a pre-release qadam pin to a release unless
+// the person chose to keep it (ADR-0004). The pins it could not rewrite come back with the file,
+// each tagged with the flow it is in.
+const downloadFlow = async ({
+  flowId,
+  keepSnapshots,
+}: {
+  flowId: string;
+  keepSnapshots: boolean;
+}): Promise<UnresolvedExportedStep[]> => {
+  const template = await flowsApi.getTemplate(flowId, { keepSnapshots });
+  await downloadFile({
     obj: JSON.stringify(template, null, 2),
     fileName: template.name,
     extension: 'json',
   });
+  return collectUnresolved({ template, flowName: template.name });
 };
 
-const zipFlows = async (flows: PopulatedFlow[]) => {
-  const zip = new JSZip();
-  for (const flow of flows) {
-    const template = await flowsApi.getTemplate(flow.id, {});
-    zip.file(
-      `${flow.version.displayName}_${flow.id}.json`,
-      JSON.stringify(template, null, 2),
+const zipFlows = async ({
+  flows,
+  keepSnapshots,
+}: {
+  flows: PopulatedFlow[];
+  keepSnapshots: boolean;
+}) => {
+  // A few at a time: each template can cost the server catalogue fetches.
+  const templates: SharedTemplate[] = [];
+  for (const batch of chunk(flows, EXPORT_PARALLELISM)) {
+    templates.push(
+      ...(await Promise.all(
+        batch.map((flow) => flowsApi.getTemplate(flow.id, { keepSnapshots })),
+      )),
     );
   }
-  return zip;
+  const zip = new JSZip();
+  for (const [index, flow] of flows.entries()) {
+    zip.file(
+      `${flow.version.displayName}_${flow.id}.json`,
+      JSON.stringify(templates[index], null, 2),
+    );
+  }
+  return {
+    zip,
+    unresolved: templates.flatMap((template, index) =>
+      collectUnresolved({
+        template,
+        flowName: flows[index].version.displayName,
+      }),
+    ),
+  };
 };
+
+const collectUnresolved = ({
+  template,
+  flowName,
+}: {
+  template: SharedTemplate;
+  flowName: string;
+}): UnresolvedExportedStep[] =>
+  (template.flows ?? []).flatMap((flow) =>
+    (flow.exportedUnresolved ?? []).map((step) => ({ ...step, flowName })),
+  );
 
 /**
  * A flow served by the long-polling host can be on, published and still receiving nothing — a
@@ -137,4 +185,8 @@ export const flowsUtils = {
       }
     }
   },
+};
+
+type UnresolvedExportedStep = ExportedUnresolvedStep & {
+  flowName: string;
 };

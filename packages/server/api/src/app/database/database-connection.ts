@@ -35,6 +35,7 @@ import { ProjectEntity } from '../project/project-entity'
 import { ProjectMemberEntity } from '../project/project-member.entity'
 import { ProjectRoleEntity } from '../project/project-role.entity'
 import { QadamMetadataEntity } from '../qadams/metadata/qadam-metadata-entity'
+import { QadamPinMoveEntity } from '../qadams/pin-moves/qadam-pin-move.entity'
 import { QadamTagEntity } from '../qadams/tags/qadams/qadam-tag.entity'
 import { TagEntity } from '../qadams/tags/tag-entity'
 import { StoreEntryEntity } from '../store-entry/store-entry-entity'
@@ -106,6 +107,7 @@ function getEntities(): EntitySchema<unknown>[] {
         PlatformAnalyticsReportEntity,
         PlatformLdapConfigEntity,
         UserFederatedIdentityEntity,
+        QadamPinMoveEntity,
     ]
 }
 

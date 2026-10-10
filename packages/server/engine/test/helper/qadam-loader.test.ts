@@ -3,12 +3,26 @@ import os from 'os'
 import path from 'path'
 import { qadamLoader } from '../../src/lib/helper/qadam-loader'
 
-const BUNDLED_QADAM_ALIAS = '@aiqadam/qadam-subflows-0.0.1'
 const DEV_QADAM_PACKAGE = '@aiqadam/qadam-http'
-const VERSIONED_QADAM_ALIAS = '@aiqadam/qadam-http-0.0.1'
 const DEV_QADAMS = ['http']
 
+async function readBundledVersion(qadamDirectory: string): Promise<string> {
+    const packageJson: unknown = JSON.parse(await fs.readFile(`packages/qadams/core/${qadamDirectory}/package.json`, 'utf-8'))
+    if (typeof packageJson !== 'object' || packageJson === null || !('version' in packageJson) || typeof packageJson.version !== 'string') {
+        throw new Error(`${qadamDirectory} package.json has no version`)
+    }
+    return packageJson.version
+}
+
 describe('qadamLoader.getQadamPath', () => {
+    let BUNDLED_QADAM_ALIAS: string
+    let VERSIONED_QADAM_ALIAS: string
+
+    beforeAll(async () => {
+        BUNDLED_QADAM_ALIAS = `@aiqadam/qadam-subflows@${await readBundledVersion('subflows')}`
+        VERSIONED_QADAM_ALIAS = `@aiqadam/qadam-http@${await readBundledVersion('http')}`
+    })
+
     afterEach(() => {
         vi.restoreAllMocks()
     })
@@ -67,11 +81,7 @@ describe('qadamLoader.getQadamPath — installed copy under a bundled name (#503
     let previousCustomPaths: string | undefined
 
     beforeAll(async () => {
-        const packageJson: unknown = JSON.parse(await fs.readFile('packages/qadams/core/subflows/package.json', 'utf-8'))
-        if (typeof packageJson !== 'object' || packageJson === null || !('version' in packageJson) || typeof packageJson.version !== 'string') {
-            throw new Error('subflows package.json has no version')
-        }
-        bundledVersion = packageJson.version
+        bundledVersion = await readBundledVersion('subflows')
     })
 
     beforeEach(async () => {

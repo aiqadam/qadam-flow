@@ -23,6 +23,7 @@ export default defineConfig({
       '@aiqadam/qadams-framework': path.resolve(__dirname, '../../../packages/qadams/framework/src/index.ts'),
       '@aiqadam/qadams-common': path.resolve(__dirname, '../../../packages/qadams/common/src/index.ts'),
       '@aiqadam/server-utils/qadam-version-store-reader': path.resolve(__dirname, '../utils/src/qadam-version-store/reader.ts'),
+      '@aiqadam/server-utils/qadam-pin-fallback-decision': path.resolve(__dirname, '../utils/src/qadam-pin-fallback-decision.ts'),
     },
   },
 })

@@ -2264,5 +2264,15 @@
   "This release no longer runs: {versions}. Affected steps: {unsupported}. Affected flows: {flows}. Update each step to a qadam version built against a supported framework version.": "Bu reliz endi quyidagilarni qo'llab-quvvatlamaydi: {versions}. Ta'sirlangan qadamlar: {unsupported}. Ta'sirlangan oqimlar: {flows}. Har bir qadamni qo'llab-quvvatlanadigan framework versiyasiga mos qadam versiyasiga yangilang.",
   "qadams that predate context versions": "kontekst versiyalari paydo bo'lishidan oldingi qadamlar",
   "context version {version}": "kontekst versiyasi {version}",
-  "and {remaining} more": "yana {remaining} ta"
+  "and {remaining} more": "yana {remaining} ta",
+  "unresolvedPinsExported": "{count, plural, =1 {1 ta qadam pre-release buildga bog'langan va mos reliz topilmadi. U asosiy relizning ^ oralig'i sifatida eksport qilinadi va import paytida \"bu qadamni yangilang\" deb belgilanadi: {steps}} other {# ta qadam pre-release buildlarga bog'langan va mos reliz topilmadi. Ular asosiy relizlarning ^ oraliqlari sifatida eksport qilinadi va import paytida \"bu qadamni yangilang\" deb belgilanadi: {steps}}}",
+  "exportKeepingPrereleasePins": "Pre-release versiyalar bilan eksport qilish",
+  "snapshotMetadataInvalid": "Ichiga joylangan pre-release metadata yaroqsiz",
+  "snapshotMetadataTooLarge": "Ichiga joylangan pre-release metadata juda katta",
+  "Pre-release build": "Pre-reliz build",
+  "This step is pinned to a build from main, not a released version. It runs that exact build until its version is updated.": "Bu qadam chiqarilgan versiyaga emas, main'dan olingan buildga bog'langan. Versiya yangilanmaguncha aynan shu buildni ishlatadi.",
+  "Update available": "Yangilanish mavjud",
+  "A released version of this Qadam is available: v{version}.": "Bu Qadamning chiqarilgan versiyasi mavjud: v{version}.",
+  "Held step": "Qadam ushlab turilgan",
+  "A version change for this step was reverted, so a publish will not move it again until you change its version.": "Bu qadam uchun versiya o'zgarishi qaytarildi, shuning uchun siz versiyani o'zgartirmaguningizcha nashr uni qayta ko'chirmaydi."
 }

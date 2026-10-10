@@ -2264,5 +2264,15 @@
   "This release no longer runs: {versions}. Affected steps: {unsupported}. Affected flows: {flows}. Update each step to a qadam version built against a supported framework version.": "Этот релиз больше не поддерживает: {versions}. Затронуто шагов: {unsupported}. Затронуто потоков: {flows}. Обновите каждый шаг до версии qadam, собранной против поддерживаемой версии фреймворка.",
   "qadams that predate context versions": "qadam, созданные до появления версий контекста",
   "context version {version}": "версия контекста {version}",
-  "and {remaining} more": "и ещё {remaining}"
+  "and {remaining} more": "и ещё {remaining}",
+  "unresolvedPinsExported": "{count, plural, =1 {1 шаг привязан к предрелизной сборке, а совместимый релиз не найден. Он экспортируется как диапазон ^ от базового релиза и при импорте будет помечен «обновите этот шаг»: {steps}} few {# шага привязаны к предрелизным сборкам, а совместимый релиз не найден. Они экспортируются как диапазоны ^ от базовых релизов и при импорте будут помечены «обновите этот шаг»: {steps}} other {# шагов привязаны к предрелизным сборкам, а совместимый релиз не найден. Они экспортируются как диапазоны ^ от базовых релизов и при импорте будут помечены «обновите этот шаг»: {steps}}}",
+  "exportKeepingPrereleasePins": "Экспорт с предрелизными версиями",
+  "snapshotMetadataInvalid": "Встроенные метаданные предрелизной сборки недействительны",
+  "snapshotMetadataTooLarge": "Встроенные метаданные предрелизной сборки слишком велики",
+  "Pre-release build": "Предрелизная сборка",
+  "This step is pinned to a build from main, not a released version. It runs that exact build until its version is updated.": "Этот шаг привязан к сборке из main, а не к выпущенной версии. Он выполняет именно эту сборку, пока версия не будет обновлена.",
+  "Update available": "Доступно обновление",
+  "A released version of this Qadam is available: v{version}.": "Доступна выпущенная версия этого qadam: v{version}.",
+  "Held step": "Шаг удержан",
+  "A version change for this step was reverted, so a publish will not move it again until you change its version.": "Изменение версии этого шага было отменено, поэтому публикация не перенесёт его снова, пока вы не измените версию."
 }

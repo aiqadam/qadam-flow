@@ -3,7 +3,11 @@ import { readdir, rm, stat } from 'fs/promises'
 import path from 'path'
 import { logger } from '../config/logger'
 
-export const LATEST_CACHE_VERSION = 'v12'
+// v13 (#779): the `pieces-metadata` entries cache what the API resolved a pin to and are never
+// revalidated in production, so they outlived the switch to resolving by `name@version` from the
+// store and kept pre-switch answers (a pin resolved to another version) for as long as the cache
+// lived. A new version starts every worker, replicas of one image included, from the same answers.
+export const LATEST_CACHE_VERSION = 'v13'
 
 export const GLOBAL_CACHE_ALL_VERSIONS_PATH = path.resolve('cache')
 

@@ -52,9 +52,13 @@ import { SystemJobName } from '../../helper/system-jobs/common'
 import { systemJobsSchedule } from '../../helper/system-jobs/system-job'
 import { telemetry } from '../../helper/telemetry.utils'
 import { projectService } from '../../project/project-service'
+import { QadamPinMoveCause } from '../../qadams/pin-moves/qadam-pin-move.dto'
+import { qadamPinMoveService } from '../../qadams/pin-moves/qadam-pin-move.service'
+import { SnapshotExportSources, snapshotExportSources } from '../../qadams/snapshot-export/snapshot-export-sources'
+import { SnapshotExportMode, snapshotPinExport } from '../../qadams/snapshot-export/snapshot-pin-export'
 import { eventPullerRegistry } from '../../trigger/long-polling/event-puller-registry'
 import { longPollingStatus } from '../../trigger/long-polling/long-polling-status'
-import { triggerSourceService } from '../../trigger/trigger-source/trigger-source-service'
+import { triggerSourceRepo, triggerSourceService } from '../../trigger/trigger-source/trigger-source-service'
 import { flowVersionMigrationService } from '../flow-version/flow-version-migration.service'
 import { flowVersionRepo, flowVersionService } from '../flow-version/flow-version.service'
 import { flowFolderService } from '../folder/folder.service'
@@ -536,12 +540,15 @@ export const flowService = (log: FastifyBaseLogger) => ({
     }: UpdatePublishedVersionIdParams): Promise<PopulatedFlow> {
         const flowToUpdate = await this.getOneOrThrow({ id, projectId })
 
-        const flowVersionToPublish = await flowVersionService(log).getFlowVersionOrThrow({
+        const latestFlowVersion = await flowVersionService(log).getFlowVersionOrThrow({
             flowId: id,
             versionId: undefined,
         })
 
-        assertFlowVersionPublishable({ flowVersion: flowVersionToPublish })
+        assertFlowVersionPublishable({ flowVersion: latestFlowVersion })
+        const flowVersionToPublish = latestFlowVersion.state === FlowVersionState.DRAFT
+            ? await moveUnavailableQadamPins({ flowVersion: latestFlowVersion, projectId, platformId, userId, cause: 'PUBLISH', log })
+            : latestFlowVersion
 
         if (flowToUpdate.status === FlowStatus.ENABLED && !isNil(flowToUpdate.publishedVersionId)) {
             await triggerSourceService(log).disable({
@@ -552,9 +559,22 @@ export const flowService = (log: FastifyBaseLogger) => ({
             })
         }
 
-        return transaction(async (entityManager) => {
+        // Captured before the transaction: nothing below may read the previous state back from
+        // `flowToUpdate` after it has been given the new version.
+        const previousPublishedVersionId = flowToUpdate.publishedVersionId
+        const wasEnabled = flowToUpdate.status === FlowStatus.ENABLED && !isNil(previousPublishedVersionId)
+        const published = await transaction(async (entityManager) => {
+            // Read again under a row lock: locking saves the whole version, so a revert of a pin move
+            // that committed since the move above (the disable before this is an external call) must
+            // not be written over with the copy in memory. Once this holds the lock, a revert waits.
+            const currentFlowVersion = await flowVersionRepo(entityManager).findOne({ where: { id: flowVersionToPublish.id, flowId: id }, lock: { mode: 'for_no_key_update' } })
+            if (isNil(currentFlowVersion)) {
+                throw new QadamFlowError({ code: ErrorCode.ENTITY_NOT_FOUND, params: { entityType: 'flow_version', entityId: flowVersionToPublish.id, message: `flow_version_not_found id=${flowVersionToPublish.id}` } })
+            }
+            // The gate again, on what is about to be locked: an edit may have landed since it ran above.
+            assertFlowVersionPublishable({ flowVersion: currentFlowVersion })
             const lockedFlowVersion = await lockFlowVersionIfNotLocked({
-                flowVersion: flowVersionToPublish,
+                flowVersion: currentFlowVersion,
                 userId,
                 projectId,
                 platformId,
@@ -562,15 +582,22 @@ export const flowService = (log: FastifyBaseLogger) => ({
                 log,
             })
 
-            flowToUpdate.publishedVersionId = lockedFlowVersion.id
-            flowToUpdate.status = FlowStatus.DISABLED
-            const updatedFlow = await flowRepo(entityManager).save(flowToUpdate)
+            const updatedFlow = await flowRepo(entityManager).save({ ...flowToUpdate, publishedVersionId: lockedFlowVersion.id, status: FlowStatus.DISABLED })
             await flowExecutionCache(log).invalidate(updatedFlow.id)
             return {
                 ...updatedFlow,
                 version: lockedFlowVersion,
             }
+        }).catch(async (error: unknown) => {
+            // The trigger source was disabled above and the flow row still says ENABLED: put the previous
+            // published version's trigger source back, so a publish that fails leaves the flow running (#435).
+            // Moving the disable after the transaction would change which version the disable hook sees.
+            if (wasEnabled) {
+                await reenablePreviousTrigger({ flowToUpdate, previousPublishedVersionId, log })
+            }
+            throw error
         })
+        return published
     },
 
     async delete({ id, projectId }: DeleteParams): Promise<void> {
@@ -606,6 +633,8 @@ export const flowService = (log: FastifyBaseLogger) => ({
         userMetadata,
         versionId,
         projectId,
+        snapshotExportMode,
+        snapshotSources = snapshotExportSources.forInstance({ log }),
     }: GetTemplateParams): Promise<SharedTemplate> {
         const flow = await this.getOnePopulatedOrThrow({
             id: flowId,
@@ -615,12 +644,13 @@ export const flowService = (log: FastifyBaseLogger) => ({
             removeSampleData: true,
         })
 
+        const exportedVersion = await snapshotPinExport.apply({ flowVersion: flow.version, mode: snapshotExportMode, sources: snapshotSources, log })
         const template: SharedTemplate = {
             name: flow.version.displayName,
             summary: '',
             description: '',
-            qadams: Array.from(new Set(flowQadamUtil.getUsedQadams(flow.version.trigger))),
-            flows: [flow.version],
+            qadams: Array.from(new Set(flowQadamUtil.getUsedQadams(exportedVersion.trigger))),
+            flows: [exportedVersion],
             tags: [],
             blogUrl: '',
             metadata: {
@@ -792,6 +822,52 @@ const assertFlowVersionPublishable = ({ flowVersion }: AssertFlowVersionPublisha
 }
 
 
+// Publishing a flow is where an unavailable qadam pin is moved (ADR-0003, #808), in the draft that is
+// about to become the published version, so workers and trigger sources see a new version id as for
+// any publish. A published version is never rewritten. The move can only
+// make a flow better, so a failure of the move (never of the flow) is logged and the flow carries on
+// with its version as it was: the step is then left for the "update this step" marking, and the
+// run-time net (`qadamPinFallback`) still runs it meanwhile. Nothing here disables a flow (#435).
+async function moveUnavailableQadamPins({ flowVersion, projectId, platformId, userId, cause, log }: MoveUnavailableQadamPinsParams): Promise<FlowVersion> {
+    const { data, error } = await tryCatch(() => qadamPinMoveService({ log }).moveUnavailablePins({ flowVersion, projectId, platformId, cause, actorUserId: userId ?? undefined }))
+    if (error) {
+        log.warn({ err: error, flowId: flowVersion.flowId, flowVersionId: flowVersion.id, cause }, '[flowService] could not check the flow\'s qadam pins for an unavailable version; leaving them as they are')
+        return flowVersion
+    }
+    data.stayed.forEach((stay) => {
+        log.warn({ flowId: flowVersion.flowId, flowVersionId: flowVersion.id, stepName: stay.stepName, qadamName: stay.qadamName, pinnedVersion: stay.version, reason: stay.reason, detail: stay.detail, cause }, '[flowService] a step is pinned to an unavailable qadam version and was not moved')
+    })
+    return data.flowVersion
+}
+
+// Under the flow's status-change lock and from a fresh read: a person may have disabled the flow, or
+// another publish may have moved the published version, while this one failed. The trigger source is
+// registered again only when the flow still says ENABLED on the version it was on, and nothing
+// registered it meanwhile. No row lock is held across the external call.
+async function reenablePreviousTrigger({ flowToUpdate, previousPublishedVersionId, log }: { flowToUpdate: Flow, previousPublishedVersionId: FlowVersionId | null, log: FastifyBaseLogger }): Promise<void> {
+    const flowId = flowToUpdate.id
+    const { error } = await tryCatch(() => distributedLock(log).runExclusive({
+        key: `flow-status-change-${flowId}`,
+        timeoutInSeconds: system.getNumberOrThrow(AppSystemProp.TRIGGER_TIMEOUT_SECONDS) + 30,
+        fn: async () => {
+            const fresh = await flowRepo().findOneBy({ id: flowId, projectId: flowToUpdate.projectId })
+            if (isNil(fresh) || fresh.status !== FlowStatus.ENABLED || isNil(previousPublishedVersionId) || fresh.publishedVersionId !== previousPublishedVersionId) {
+                log.info({ flowId }, '[flowService] a publish failed; the flow was changed meanwhile, so its previous trigger source is not registered again')
+                return
+            }
+            const active = await triggerSourceRepo().findOneBy({ flowId, projectId: flowToUpdate.projectId, simulate: false })
+            if (!isNil(active)) {
+                return
+            }
+            const previous = await flowVersionService(log).getFlowVersionOrThrow({ flowId, versionId: previousPublishedVersionId })
+            await triggerSourceService(log).enable({ flowVersion: previous, projectId: flowToUpdate.projectId, simulate: false, templateId: flowToUpdate.templateId ?? undefined })
+        },
+    }))
+    if (!isNil(error)) {
+        log.error({ err: error, flowId }, '[flowService] a publish failed after the flow\'s trigger source was disabled and it could not be enabled again; enable the flow to do it')
+    }
+}
+
 async function applyStatusChange(params: {
     id: FlowId
     projectId: ProjectId
@@ -912,6 +988,9 @@ type GetTemplateParams = {
     userMetadata: UserWithMetaInformation | null
     projectId: ProjectId
     versionId: FlowVersionId | undefined
+    snapshotExportMode: SnapshotExportMode
+    // Only a test replaces these.
+    snapshotSources?: SnapshotExportSources
 }
 
 type CountParams = {
@@ -949,6 +1028,15 @@ type LockFlowVersionIfNotLockedParams = {
     projectId: ProjectId
     platformId: PlatformId
     entityManager: EntityManager
+    log: FastifyBaseLogger
+}
+
+type MoveUnavailableQadamPinsParams = {
+    flowVersion: FlowVersion
+    projectId: ProjectId
+    platformId: PlatformId
+    userId: UserId | null
+    cause: QadamPinMoveCause
     log: FastifyBaseLogger
 }
 

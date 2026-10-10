@@ -315,6 +315,25 @@ describe('qadamInstaller', () => {
         expect(await pathExists(readyFilePath(official))).toBe(true)
     })
 
+    // ADR-0004: a snapshot is never published, so it is never fetched from a registry; #808's
+    // fallback owns a snapshot pin that nothing local holds.
+    it('OFFICIAL_QADAMS_INSTALL_ENABLED on — an official snapshot is never selected for installation', async () => {
+        officialQadamsInstallEnabled = true
+        const snapshot = makeOfficialQadam('@aiqadam/qadam-tables', '1.3.0-main.412')
+        const release = makeOfficialQadam('@aiqadam/qadam-http', '1.3.0')
+        const installer = qadamInstaller(fakeLog, fakeApiClient)
+
+        mockInstall.mockImplementation(simulateBunInstall)
+
+        await installer.install({ pieces: [snapshot, release], includeFilters: true })
+
+        expect(mockInstall).toHaveBeenCalledOnce()
+        expect(mockInstall.mock.calls[0]?.[0]).toMatchObject({
+            filtersPath: [expect.stringContaining(`${release.qadamName}@${release.qadamVersion}`)],
+        })
+        expect(await pathExists(qadamDirPath(snapshot))).toBe(false)
+    })
+
     it('OFFICIAL_QADAMS_INSTALL_ENABLED on — installs both the official and custom qadams in a mixed set', async () => {
         officialQadamsInstallEnabled = true
         const official = makeOfficialQadam('@aiqadam/qadam-tables')

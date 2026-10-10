@@ -1,5 +1,6 @@
 import os from 'os'
 import path from 'path'
+import { apVersionUtil } from '@aiqadam/server-utils'
 import {
     DefaultProjectRole,
     ErrorCode,
@@ -12,6 +13,7 @@ import {
 import { FastifyBaseLogger } from 'fastify'
 import { DatabaseType } from '../../database/database-type'
 import { RedisType } from '../../database/redis/types'
+import { qadamSnapshotPolicy } from '../../qadams/pin-moves/qadam-snapshot-policy'
 import { pinoLogging } from '../logger'
 import { AppSystemProp, ContainerType, environmentVariables, SystemProp } from './system-props'
 
@@ -33,6 +35,9 @@ const systemPropDefaultValues: Partial<Record<SystemProp, string>> = {
     // What the image ships to seed the store with: an `archive-index.json` and its tarballs (#804's
     // `--pack` output). No image carries one before #807; a missing directory seeds nothing.
     [AppSystemProp.QADAM_VERSION_STORE_SEED_PATH]: path.resolve('packages/qadams/version-store-seed'),
+    // ADR-0004 "Following `main`": `follow` on a `-main.<n>` build, `pin` on a release instance. The
+    // version is read once, at load: it cannot change while this process runs.
+    [AppSystemProp.QADAM_SNAPSHOT_POLICY]: qadamSnapshotPolicy.resolveDefault({ version: apVersionUtil.getCurrentRelease() }),
     [AppSystemProp.DB_TYPE]: DatabaseType.POSTGRES,
     [AppSystemProp.APP_WEBHOOK_SECRETS]: '{}',
     [AppSystemProp.PORT]: '3000',

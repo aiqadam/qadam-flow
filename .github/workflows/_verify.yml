@@ -425,6 +425,13 @@ jobs:
       - name: Test the main-build platform version
         run: tools/ci/test-main-version.sh
 
+      # The versions a build gives the official qadams (ADR-0004, #851): `<next>-main.<n>` for a
+      # qadam with its own changeset, the released number for the rest, both fallbacks of a `main`
+      # build (no release archive, no release plan) and the release build that fails instead. Checks
+      # every number against `qadamVersionParser`, so it needs `bun` and sits below the install.
+      - name: Test the qadam snapshot plan
+        run: tools/ci/test-qadam-snapshot-plan.sh
+
       # ADR-0001 gate 6. Full tree, not a diff: the ESLint ban (packages/qadams/eslint.config.mjs,
       # #786) can be silenced by a disable comment; this scan cannot.
       - name: Test the qadam shared-imports checker
@@ -456,6 +463,12 @@ jobs:
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: npm run check-framework-support
+
+      # ADR-0004 gate 9 (#852): the comparison of a `0.x` qadam's tree build with its npm tarball,
+      # the measurement script and the advisory gate. Against a stub registry, no network; the gate
+      # itself runs in ci.yml's `qadam-divergence` job, which needs the registry and a built tree.
+      - name: Test the qadam divergence check
+        run: tools/ci/test-qadam-divergence.sh
 
       # _pack-framework-packages.yml's `pack-framework-packages` job trusts a custom
       # workspace:* rewrite instead of bun's own (see that job's header for why). Needs

@@ -3,7 +3,7 @@ import path from 'node:path'
 import { isNil, tryCatch } from '@aiqadam/shared'
 import { z } from 'zod'
 import { fileSystemUtils } from '../file-system-utils'
-import { QadamArtifactFormat, QadamArtifactKind, qadamVersionStoreFormat } from './qadam-version-store-format'
+import { QadamArtifactFormat, QadamArtifactKind, QadamVersionBuiltAgainst, qadamVersionStoreFormat } from './qadam-version-store-format'
 import { qadamVersionStoreFs } from './qadam-version-store-fs'
 import { QADAM_VERSION_STORE_LAYOUT, QadamVersionCoordinates, qadamVersionStoreLayout } from './qadam-version-store-layout'
 import { QadamVersionStoreLimits, qadamVersionStoreTree } from './qadam-version-store-tree'
@@ -189,6 +189,10 @@ const QadamVersionIntegrity = z.object({
     format: z.enum(QadamArtifactFormat),
     kind: z.enum(QadamArtifactKind).nullable(),
     entryPoint: z.string(),
+    // The framework (and platform) version the artifact was built against, from the artifact's own
+    // `package.json` (ADR-0004, decision 8). Absent on records written before it, and `null` for a
+    // version that does not say (a legacy npm package).
+    builtAgainst: QadamVersionBuiltAgainst.nullable().optional(),
     origin: z.object({
         kind: z.enum(QadamVersionOrigin),
         tarballIntegrity: z.string().nullable(),
@@ -232,8 +236,9 @@ async function readIntegrityRecord({ dir }: { dir: string }): Promise<IntegrityR
     if (!stats.data.isFile()) {
         return { ok: false, problem: damaged('integrity.json is not a regular file') }
     }
-    // This release never writes a record this large, so a larger one comes from a later release
-    // (persisted signatures, #780): unsupported here, never damaged.
+    // This release never writes a record this large, so a larger one comes from a later release:
+    // unsupported here, never damaged. (Persisted signatures, #780, live in the store's signature
+    // ledger beside the versions, not in this record.)
     if (stats.data.size > MAX_INTEGRITY_FILE_BYTES) {
         return { ok: false, problem: unsupported(`integrity.json is larger than this release writes (${MAX_INTEGRITY_FILE_BYTES} bytes)`) }
     }

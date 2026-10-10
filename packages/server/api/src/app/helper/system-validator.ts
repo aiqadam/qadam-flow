@@ -4,6 +4,7 @@ import { FastifyBaseLogger } from 'fastify'
 import { DatabaseType } from '../database/database-type'
 import { RedisType } from '../database/redis/types'
 import { s3Helper } from '../file/s3-helper'
+import { qadamSnapshotPolicy } from '../qadams/pin-moves/qadam-snapshot-policy'
 import { encryptUtils } from './encryption'
 import { jwtUtils } from './jwt-utils'
 import { system } from './system/system'
@@ -101,6 +102,7 @@ const systemPropValidators: {
     [AppSystemProp.CONFIG_PATH]: stringValidator,
     [AppSystemProp.QADAM_VERSION_STORE_PATH]: stringValidator,
     [AppSystemProp.QADAM_VERSION_STORE_SEED_PATH]: stringValidator,
+    [AppSystemProp.QADAM_SNAPSHOT_POLICY]: enumValidator([...qadamSnapshotPolicy.values]),
     [AppSystemProp.DB_TYPE]: enumValidator(Object.values(DatabaseType)),
     [AppSystemProp.DEV_QADAMS]: stringValidator,
     [AppSystemProp.ENCRYPTION_KEY]: stringValidator,

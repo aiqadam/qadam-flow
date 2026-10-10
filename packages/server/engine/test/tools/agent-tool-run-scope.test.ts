@@ -42,7 +42,7 @@ import { qadamLoader } from '../../src/lib/helper/qadam-loader'
 import { waitpointClient } from '../../src/lib/qadam-context/waitpoint-client'
 import { agentTools } from '../../src/lib/tools'
 import { mockHttpServer } from '../handler/mock-http-server'
-import { buildQadamAction, generateMockEngineConstants } from '../handler/test-helper'
+import { buildQadamAction, bundledQadamVersion, generateMockEngineConstants } from '../handler/test-helper'
 
 // What the worker's `runScope.assertOwnsRun` admits for `resolveInlineFlow`: the job's own run.
 const JOB_RUN_ID = 'job-run-id'
@@ -160,7 +160,7 @@ describe('an agent PIECE tool calling @aiqadam/qadam-subflows callFlow', () => {
         const executionState = withLoop.forkForIteration({ loopName: 'loop', iteration: 0, concurrent })
 
         const result = await qadamExecutor.handle({
-            action: buildQadamAction({ name: 'agent_step', qadamName: FAKE_AGENT_QADAM, actionName: 'run_agent', input: {} }),
+            action: buildQadamAction({ name: 'agent_step', qadamName: FAKE_AGENT_QADAM, actionName: 'run_agent', input: {}, isMockQadam: true }),
             executionState,
             constants: parentConstants(),
         })
@@ -189,7 +189,7 @@ describe('an agent PIECE tool whose action always pauses', () => {
                 toolName: 'wait',
                 qadamMetadata: {
                     qadamName: '@aiqadam/qadam-approval',
-                    qadamVersion: '1.0.0',
+                    qadamVersion: bundledQadamVersion({ qadamName: '@aiqadam/qadam-approval' }),
                     actionName: 'wait_for_approval',
                 },
             }],
@@ -264,7 +264,7 @@ function callFlowTool({ executionMode, waitForResponse }: { executionMode: 'inli
         toolName: 'call_flow',
         qadamMetadata: {
             qadamName: '@aiqadam/qadam-subflows',
-            qadamVersion: '1.0.0',
+            qadamVersion: bundledQadamVersion({ qadamName: '@aiqadam/qadam-subflows' }),
             actionName: 'callFlow',
             predefinedInput: {
                 fields: {

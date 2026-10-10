@@ -36,4 +36,6 @@ export const formErrors = {
     invalidLocale: 'invalidLocale',
     tooManyTranslationLocales: 'tooManyTranslationLocales',
     localeSourceTooLong: 'localeSourceTooLong',
+    snapshotMetadataInvalid: 'snapshotMetadataInvalid',
+    snapshotMetadataTooLarge: 'snapshotMetadataTooLarge',
 } as const

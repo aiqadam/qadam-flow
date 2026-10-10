@@ -40,15 +40,18 @@ type DialogView = 'upgrade' | 'advanced';
 const UpdatePieceVersionDialog: React.FC<UpdatePieceVersionDialogProps> = ({
   step,
   currentVersion,
+  suggestedVersion,
   variant = 'icon',
 }) => {
   const [view, setView] = useState<DialogView | null>(null);
   const qadamName = step.settings.qadamName;
   const { qadamVersions, isLoading } = qadamsHooks.useQadamVersions(qadamName);
-  const latestVersion = changeVersionUtils.getLatestVersion({
-    currentVersion,
-    versions: qadamVersions ?? [],
-  });
+  const latestVersion =
+    suggestedVersion ??
+    changeVersionUtils.getLatestVersion({
+      currentVersion,
+      versions: qadamVersions ?? [],
+    });
   const hasNewerVersion = latestVersion !== undefined;
   const isLatestMinorOrMajor =
     latestVersion !== undefined &&
@@ -144,6 +147,11 @@ export { UpdatePieceVersionDialog };
 type UpdatePieceVersionDialogProps = {
   step: QadamAction | QadamTrigger;
   currentVersion: string;
+  // The version the upgrade view should offer, newer than `currentVersion`. ADR-0004's "update
+  // available" for a snapshot pin passes the release inside the pin's caret range here, because that
+  // release is not the newest version overall (a later major is) and the dialog would otherwise
+  // offer it. Omitted, the dialog keeps its default: the newest version the registry knows.
+  suggestedVersion?: string;
   variant?: 'icon' | 'labelled';
 };
 

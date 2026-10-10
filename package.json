@@ -50,6 +50,8 @@
     "check-changeset-levels": "node tools/ci/check-changeset-levels.mjs",
     "check-qadam-shared-imports": "node tools/ci/check-qadam-shared-imports.mjs",
     "check-compat-floors": "node tools/ci/check-compat-floors.mjs",
+    "check-qadam-divergence": "node tools/ci/check-qadam-divergence.mjs",
+    "measure-qadam-divergence": "node tools/ci/measure-qadam-divergence.mjs",
     "version-packages": "node tools/scripts/changesets/version.mjs",
     "check-agent-docs": "node tools/ci/check-agent-docs.mjs",
     "check-safe-http-lint": "node tools/eslint/check-safe-http-probes.mjs",

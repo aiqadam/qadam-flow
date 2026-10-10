@@ -37,7 +37,7 @@ ADR disagree, the ADR wins. The procedure — choosing a level, applying it — 
 
 A version inside `^` of a pin (`^1.2.3` → `<2.0.0`, `^0.3.1` → `<0.4.0`) is a drop-in replacement at
 the contract level. Anything that moves a pin automatically may move it only inside that range —
-#424's bundled fallback (`satisfiesRequestedRange`) is the model. Moving a pin across it is a user
+`qadamPinFallbackDecision` (`packages/server/utils/src/qadam-pin-fallback-decision.ts`, #808) is the one place that rule is written for a move. Moving a pin across it is a user
 action in the builder, never a resolver, migration or job. The only exception since this rule is the
 one-off heal `migrate-v31-heal-unresolvable-qadam-pins.ts` (#474), which still runs once per flow
 version and may cross the range; the legacy `v24`–`v30` republish migrations
@@ -80,7 +80,13 @@ root raised by the pending platform changesets (at least a patch), with `<n>` th
 (`node tools/ci/compute-main-version.mjs --next` prints `<next>`, the release a change merged now
 ships in — e.g. a migration's `release`). How a `main` build versions *changed package* code
 is [ADR-0004](../../adr/0004-main-builds-give-changed-packages-their-own-prerelease-versions.md),
-accepted on 2026-10-10 and binding (snapshot `-main.<n>` versions, the `follow`/`pin` snapshot policy, export rewriting, gate 9). `@aiqadam/shared` is private and bundled
+accepted on 2026-10-10 and binding (snapshot `-main.<n>` versions, the `follow`/`pin` snapshot policy, export rewriting, gate 9). `tools/scripts/qadams/snapshot/` computes which version each qadam would get in a `main` build (#851); the image does not apply it yet. `@aiqadam/shared` is private and bundled
 into `qadams-framework` (#799). Gates 1–7 (#797) and gate 8 (#801, landed) are required; the maintainer-only
 `semver-override` label bypasses gate 2 alone, when CI over-estimates the level.
+Gate 9 (ADR-0004, #852) is **advisory** until the `0.x` clean-up is done: ci.yml's `qadam-divergence` job
+runs `tools/ci/check-qadam-divergence.mjs`, which warns when a `0.x` qadam's tree build differs from its
+npm tarball under the same version and no pending changeset covers it. `tools/ci/measure-qadam-divergence.mjs`
+prints the full list (it needs a built tree and the registry). It becomes required when that list is empty,
+before `v2.0.0` is tagged. Until then a PR is not blocked by it. A changeset for a divergent qadam
+shrinks the gate's list at once; the measurement's list shrinks once the release publishes that qadam.
 

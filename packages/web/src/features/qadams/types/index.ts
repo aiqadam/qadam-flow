@@ -99,3 +99,22 @@ export type QadamSelectorQadamItem =
 export type QadamSelectorItem = QadamSelectorQadamItem | PrimitiveStepMetadata;
 
 export type HandleSelectActionOrTrigger = (item: QadamSelectorItem) => void;
+
+// The hold of ADR-0004 "Following `main`" as the builder reads it: one `qadam_pin_move` record with
+// status `REVERTED`, returned by `GET /v1/qadam-pin-moves/held`. `stepName`, `qadamName` and
+// `fromVersion` are the key the builder matches a step against — `follow` will not move that step
+// again until its version changes.
+export type HeldQadamPinMove = {
+  id: string;
+  flowId: string;
+  flowVersionId: string;
+  stepName: string;
+  qadamName: string;
+  fromVersion: string;
+  toVersion: string;
+  cause: HeldQadamPinMoveCause;
+  status: 'REVERTED';
+  revertedAt: string | null;
+};
+
+export type HeldQadamPinMoveCause = 'PUBLISH' | 'SNAPSHOT_FOLLOW';

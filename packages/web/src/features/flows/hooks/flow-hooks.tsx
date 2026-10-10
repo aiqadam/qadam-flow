@@ -147,30 +147,53 @@ export const flowHooks = {
   },
   useExportFlows: () => {
     return useMutation({
-      mutationFn: async (flows: PopulatedFlow[]) => {
+      mutationFn: async ({
+        flows,
+        keepSnapshots = false,
+      }: {
+        flows: PopulatedFlow[];
+        keepSnapshots?: boolean;
+      }) => {
         if (flows.length === 0) {
-          return flows;
+          return { flows, unresolved: [] };
         }
         if (flows.length === 1) {
-          await flowsUtils.downloadFlow(flows[0].id);
-          return flows;
+          const unresolved = await flowsUtils.downloadFlow({
+            flowId: flows[0].id,
+            keepSnapshots,
+          });
+          return { flows, unresolved };
         }
-        await downloadFile({
-          obj: await flowsUtils.zipFlows(flows),
-          fileName: 'flows',
-          extension: 'zip',
+        const { zip, unresolved } = await flowsUtils.zipFlows({
+          flows,
+          keepSnapshots,
         });
-        return flows;
+        await downloadFile({ obj: zip, fileName: 'flows', extension: 'zip' });
+        return { flows, unresolved };
       },
-      onSuccess: (res) => {
-        if (res.length > 0) {
+      onSuccess: ({ flows, unresolved }) => {
+        if (flows.length > 0) {
           toast.success(
-            res.length === 1
-              ? t(`${res[0].version.displayName} has been exported.`)
+            flows.length === 1
+              ? t(`${flows[0].version.displayName} has been exported.`)
               : t('Flows have been exported.'),
             {
               duration: 3000,
             },
+          );
+        }
+        if (unresolved.length > 0) {
+          toast.warning(
+            t('unresolvedPinsExported', {
+              count: unresolved.length,
+              steps: unresolved
+                .map(
+                  (step) =>
+                    `${step.flowName}: ${step.stepName} (${step.qadamName})`,
+                )
+                .join(', '),
+            }),
+            { duration: Infinity, closeButton: true },
           );
         }
       },
@@ -313,6 +336,7 @@ export const flowHooks = {
       mutationFn: async ({ flowId, flowVersionId, description, author }) => {
         const template = await flowsApi.getTemplate(flowId, {
           versionId: flowVersionId,
+          sameInstance: true,
         });
         const flowTemplate = await templatesApi.create({
           name: template.name,
@@ -431,6 +455,7 @@ export const flowHooks = {
         schemaVersion: templateFlow.schemaVersion,
         notes: templateFlow.notes,
         localeSource: templateFlow.localeSource,
+        exportedUnresolved: templateFlow.exportedUnresolved,
       },
     });
   },
@@ -502,6 +527,7 @@ export const flowHooks = {
             schemaVersion: templateFlow.schemaVersion,
             notes: templateFlow.notes,
             localeSource: templateFlow.localeSource,
+            exportedUnresolved: templateFlow.exportedUnresolved,
           },
         });
       },

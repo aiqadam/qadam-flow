@@ -30,6 +30,8 @@ export type {
   PrimitiveStepMetadata,
   StepMetadataWithActionOrTriggerOrAgentDisplayName,
   CategorizedStepMetadataWithSuggestions,
+  HeldQadamPinMove,
+  HeldQadamPinMoveCause,
 } from './types';
 export { formUtils } from './utils/form-utils';
 export {

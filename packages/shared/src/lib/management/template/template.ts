@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { Note } from '../../automation/flows'
 import { FlowVersion } from '../../automation/flows/flow-version'
+import { EmbeddedSnapshotMetadataMap, EXPORTED_UNRESOLVED_MAX_STEPS, ExportedUnresolvedStep } from '../../automation/qadams'
 import { BaseModelSchema, ColorHex, Metadata, Nullable } from '../../core/common'
 
 export const TemplateTag = z.object({
@@ -32,6 +33,14 @@ export const FlowVersionTemplate = FlowVersion.omit({
     description: z.string().optional(),
     //notes were optional for old json templates
     notes: z.array(Note).optional(),
+    // ADR-0004: steps whose snapshot pin the export could not move to a release that passes the
+    // props check; the importer marks them "update this step". A plain array and not
+    // `ExportedUnresolvedSteps`: the web's template forms use this schema, and `BoundedArray`'s
+    // input type is `unknown`, which the form resolver's types refuse.
+    exportedUnresolved: z.array(ExportedUnresolvedStep).max(EXPORTED_UNRESOLVED_MAX_STEPS).optional(),
+    // ADR-0004: `metadata.json` of each snapshot a keep-snapshots export left in place, keyed
+    // `name@version`. Untrusted input on import.
+    snapshotMetadata: EmbeddedSnapshotMetadataMap.optional(),
 })
 export type FlowVersionTemplate = z.infer<typeof FlowVersionTemplate>
 

@@ -153,6 +153,7 @@ function createStore({ root, log, limits }: CreateStoreParams): QadamVersionStor
             format: inspected.format,
             kind: inspected.kind,
             entryPoint: inspected.entryPoint,
+            builtAgainst: inspected.builtAgainst,
             origin,
             tree: { algorithm: 'sha512', digest, files: walked.tree.files, bytes: walked.tree.bytes },
             storedAt: new Date().toISOString(),

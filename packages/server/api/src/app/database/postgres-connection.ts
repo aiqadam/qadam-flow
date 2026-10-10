@@ -34,6 +34,7 @@ import { AddPlatformRoleManagedByToUser1791200000000 } from './migration/postgre
 import { AddLastReconciledAtToUserFederatedIdentity1791300000000 } from './migration/postgres/1791300000000-AddLastReconciledAtToUserFederatedIdentity'
 import { AddAutoCompactToChatConversation1791400000000 } from './migration/postgres/1791400000000-AddAutoCompactToChatConversation'
 import { AddContextVersionToQadamMetadata1791486366657 } from './migration/postgres/1791486366657-AddContextVersionToQadamMetadata'
+import { AddQadamPinMove1791630589901 } from './migration/postgres/1791630589901-AddQadamPinMove'
 
 const getSslConfig = (): boolean | TlsOptions => {
     const useSsl = system.get(AppSystemProp.POSTGRES_USE_SSL)
@@ -75,6 +76,7 @@ export const getMigrations = (): (new () => Migration)[] => {
         AddLastReconciledAtToUserFederatedIdentity1791300000000,
         AddAutoCompactToChatConversation1791400000000,
         AddContextVersionToQadamMetadata1791486366657,
+        AddQadamPinMove1791630589901,
     ]
 }
 

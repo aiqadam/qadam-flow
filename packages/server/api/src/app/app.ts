@@ -56,6 +56,8 @@ import { communityQadamsModule } from './qadams/community-qadam-module'
 import { startDevQadamWatcher } from './qadams/dev-qadam-watcher'
 import { qadamModule } from './qadams/metadata/qadam-metadata-controller'
 import { qadamMetadataService } from './qadams/metadata/qadam-metadata-service'
+import { qadamPinMoveModule } from './qadams/pin-moves/qadam-pin-move.module'
+import { qadamSnapshotFollow } from './qadams/pin-moves/qadam-snapshot-follow'
 import { qadamContextVersionBackfill } from './qadams/qadam-context-version-backfill'
 import { tagsModule } from './qadams/tags/tags-module'
 import { qadamVersionStoreSeeding } from './qadams/version-store/qadam-version-store-seeding'
@@ -159,6 +161,7 @@ export const setupApp = async (app: FastifyInstance): Promise<FastifyInstance> =
     await qadamMetadataService(app.log).setup()
     await app.register(qadamModule)
     await app.register(frameworkCensusModule)
+    await app.register(qadamPinMoveModule)
     await app.register(collaborativeModule)
     await app.register(flowModule)
     await app.register(flowRunModule)
@@ -300,6 +303,13 @@ The application started on ${await domainHelper.getPublicApiUrl({ path: '' })}, 
     // ADR-0003 (#805): fills the versioned qadam store from the image, in the background. Nothing
     // resolves a qadam through the store until #779, so this changes no behaviour yet.
     void qadamVersionStoreSeeding(app.log).run()
+    // ADR-0004 "Following `main`": moves every draft's available qadam pins onto the build the image
+    // ships, in the background. It is scoped by the instance kind: a `-main` snapshot moves release
+    // pins too, a release instance moves snapshot pins only; `pin` (the default on a release) returns
+    // before any read. It is a floating `void`, like the seeding above, so it may read the store
+    // before that seeding finishes: a snapshot pin then stays until the next boot. Boot is not
+    // blocked on either.
+    void qadamSnapshotFollow({ log: app.log }).run()
 }
 
 function registerOpenApiSchemas() {

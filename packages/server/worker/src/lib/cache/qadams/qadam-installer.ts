@@ -16,6 +16,7 @@ import {
     PrivateQadamPackage,
     QadamPackage,
     QadamType,
+    qadamVersionParser,
     tryCatch,
     unique,
     WorkerToApiContract,
@@ -47,7 +48,7 @@ const LOCKFILE_NAME = 'bun.lock'
 
 // #482 items 2 and 3. Both exist because bun reads `.npmrc` and `bunfig.toml` from the install
 // WORKING DIRECTORY and from `$HOME`, and does not walk up the tree — so neither of the repo-root
-// copies reaches this workspace (`cache/v12/common`, see getGlobalCacheCommonPath). Writing them
+// copies reaches this workspace (`cache/v13/common`, see getGlobalCacheCommonPath). Writing them
 // here, next to the root package.json, is the only way either one is in force where packages are
 // actually installed.
 const OFFICIAL_QADAM_SCOPE = '@aiqadam'
@@ -354,6 +355,12 @@ function needsInstalling({ piece, officialQadamsInstallEnabled }: {
 }): boolean {
     if (piece.packageType === PackageType.ARCHIVE || piece.qadamType === QadamType.CUSTOM) {
         return true
+    }
+    // ADR-0004: a snapshot (`x.y.z-main.<n>`) is never published, so a registry has nothing to give for
+    // it. It comes from the image's store, and when that does not hold it the step goes to #808's
+    // checked fallback, not to an install that can only 404 or, worse, resolve something else.
+    if (qadamVersionParser.isSnapshot({ version: piece.qadamVersion })) {
+        return false
     }
     // `piece.qadamType === QadamType.OFFICIAL` is always true once the CUSTOM branch above has
     // already returned — `QadamType` has exactly two members. Kept explicit rather than

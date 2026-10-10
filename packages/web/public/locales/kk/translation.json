@@ -2264,5 +2264,15 @@
   "This release no longer runs: {versions}. Affected steps: {unsupported}. Affected flows: {flows}. Update each step to a qadam version built against a supported framework version.": "Бұл релиз енді мыналарды қолдамайды: {versions}. Әсер етілген қадамдар: {unsupported}. Әсер етілген ағындар: {flows}. Әр қадамды қолдау көрсетілетін framework нұсқасына сәйкес qadam нұсқасына жаңартыңыз.",
   "qadams that predate context versions": "контекст нұсқалары пайда болғанға дейінгі qadam-дар",
   "context version {version}": "контекст нұсқасы {version}",
-  "and {remaining} more": "тағы {remaining}"
+  "and {remaining} more": "тағы {remaining}",
+  "unresolvedPinsExported": "{count, plural, =1 {1 қадам pre-release құрастыруына бекітілген, үйлесімді релиз табылмады. Ол негізгі релиздің ^ аралығы ретінде экспортталады және импорт кезінде \"осы қадамды жаңартыңыз\" деп белгіленеді: {steps}} other {# қадам pre-release құрастыруларына бекітілген, үйлесімді релиз табылмады. Олар негізгі релиздердің ^ аралықтары ретінде экспортталады және импорт кезінде \"осы қадамды жаңартыңыз\" деп белгіленеді: {steps}}}",
+  "exportKeepingPrereleasePins": "Pre-release нұсқаларымен экспорттау",
+  "snapshotMetadataInvalid": "Ендірілген pre-release метадеректері жарамсыз",
+  "snapshotMetadataTooLarge": "Ендірілген pre-release метадеректері тым үлкен",
+  "Pre-release build": "Pre-release құрастыру",
+  "This step is pinned to a build from main, not a released version. It runs that exact build until its version is updated.": "Бұл қадам шығарылған нұсқаға емес, main-нан алынған құрастыруға бекітілген. Нұсқа жаңартылғанша дәл осы құрастыруды орындайды.",
+  "Update available": "Жаңарту қолжетімді",
+  "A released version of this Qadam is available: v{version}.": "Осы Qadam-ның шығарылған нұсқасы қолжетімді: v{version}.",
+  "Held step": "Қадам ұсталып тұр",
+  "A version change for this step was reverted, so a publish will not move it again until you change its version.": "Бұл қадам үшін нұсқа өзгерісі қайтарылды, сондықтан нұсқаны өзгертпейінше жариялау оны қайта жылжытпайды."
 }

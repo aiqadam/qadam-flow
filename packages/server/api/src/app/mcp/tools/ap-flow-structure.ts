@@ -3,6 +3,7 @@ import {
     BranchExecutionType,
     FlowActionType,
     flowCanvasUtils,
+    flowQadamUtil,
     flowStructureUtil,
     FlowTriggerType,
     isNil,
@@ -14,6 +15,7 @@ import {
     Note,
     Permission,
     ProjectScopedMcpServer,
+    qadamVersionParser,
     StepLocationRelativeToParent,
     tryCatch,
 } from '@aiqadam/shared'
@@ -24,7 +26,7 @@ import { flowService } from '../../flows/flow/flow.service'
 import { projectService } from '../../project/project-service'
 import { frameworkCensusMarking } from '../../qadams/census/framework-census-marking'
 import { PinFrameworkSupport } from '../../qadams/census/framework-census-service'
-import { QadamPinnedStep, qadamPinUtil } from '../../qadams/metadata/qadam-pin-util'
+import { AgentToolPinOfStep, QadamPinnedStep, qadamPinUtil } from '../../qadams/metadata/qadam-pin-util'
 import { mcpUtils } from './mcp-utils'
 
 type StepInfo = {
@@ -44,6 +46,13 @@ type StepInfo = {
     input: Record<string, unknown> | null
     qadamPin?: string
     qadamVersionResolvable?: boolean
+    // Only carried when the step's pin is a snapshot (`x.y.z-main.<n>`, a build from `main`), so the
+    // default case adds no noise (ADR-0004). It is a fact, not a fault: the pin resolves and the
+    // step runs it, so this is a plain label, never one of the `qadamPinWarning` marks above.
+    preReleaseBuild?: true
+    // The PIECE tools of an agent step, each with whether its pin resolves. Only carried by a step
+    // that has some: the worker provisions them like steps, so a dead one fails the flow (#779).
+    agentToolPins?: AgentToolPinInfo[]
     // Only carried when the pinned qadam needs a framework context version this release no longer
     // runs (ADR-0002, #803). Absent means the step is fine, or no shim has been retired yet.
     frameworkVersionSupported?: false
@@ -81,7 +90,11 @@ function getConfigStatus(step: Step): string {
 // the lookup errored) precisely so a caller that must not conflate the last two — the heal
 // migration — can tell them apart. This is a read-only report, not a persister, so it passes the
 // raw tri-state value straight through; `qadamPinWarning` below is where the collapse happens.
-function qadamPinInfo({ step, qadamResolutions, unsupportedPins }: { step: Step, qadamResolutions: Map<string, boolean | undefined>, unsupportedPins: Map<string, PinFrameworkSupport> }): Pick<StepInfo, 'qadamPin' | 'qadamVersionResolvable' | 'frameworkVersionSupported'> {
+function qadamPinInfo({ step, qadamResolutions, unsupportedPins }: { step: Step, qadamResolutions: Map<string, boolean | undefined>, unsupportedPins: Map<string, PinFrameworkSupport> }): Pick<StepInfo, 'qadamPin' | 'qadamVersionResolvable' | 'preReleaseBuild' | 'frameworkVersionSupported' | 'agentToolPins'> {
+    const agentToolPins = qadamPinUtil.getAgentToolPinsOfStep({ step }).map((tool): AgentToolPinInfo => {
+        const pin = qadamPinUtil.pinOfTool({ tool })
+        return { toolName: tool.toolName, qadamPin: pin, qadamVersionResolvable: qadamResolutions.get(pin) }
+    })
     if ((step.type !== FlowActionType.PIECE && step.type !== FlowTriggerType.PIECE) || isNil(step.settings.qadamName) || isNil(step.settings.qadamVersion)) {
         return {}
     }
@@ -93,6 +106,9 @@ function qadamPinInfo({ step, qadamResolutions, unsupportedPins }: { step: Step,
     return {
         qadamPin: pin,
         qadamVersionResolvable: qadamResolutions.get(pin),
+        ...(agentToolPins.length > 0 ? { agentToolPins } : {}),
+        // The stored pin may carry a `^` or `~` range; the parser wants the exact version.
+        ...(qadamVersionParser.isSnapshot({ version: flowQadamUtil.getExactVersion(step.settings.qadamVersion) }) ? { preReleaseBuild: true as const } : {}),
         // Only the negative is reported: a step whose framework version is still run carries
         // nothing, so the default case adds no noise (the `logFlags` pattern).
         ...(unsupportedPins.has(pin) ? { frameworkVersionSupported: false as const } : {}),
@@ -108,6 +124,17 @@ function frameworkVersionWarning(step: StepInfo): string {
     return step.frameworkVersionSupported === false ? ` ⚠️ ${FRAMEWORK_VERSION_LABEL}` : ''
 }
 
+// ADR-0004: a snapshot-pinned step runs a build from `main`. The label shares its wording with
+// `ap_validate_flow` via `mcpUtils.preReleaseBuildIssue`, so the two tools agree. It is appended
+// without a warning glyph: unlike `frameworkVersionWarning` and `qadamPinWarning`, there is nothing
+// to fix — the pin resolves and the step runs it.
+function preReleaseBuildLabel(step: StepInfo): string {
+    if (step.preReleaseBuild !== true || isNil(step.qadamPin)) {
+        return ''
+    }
+    return ` [${mcpUtils.preReleaseBuildIssue({ pin: step.qadamPin }).label}]`
+}
+
 // Wording is shared with `ap_validate_flow` via `mcpUtils.qadamPinIssue`, so the two tools cannot
 // give an agent contradictory accounts of the same pin. `qadamVersionResolvable` is `undefined` in
 // two different situations here, and only one of them reaches `qadamPinIssue` at all: the step
@@ -116,6 +143,10 @@ function frameworkVersionWarning(step: StepInfo): string {
 // never even calls `resolvePins`) or one specific pin's lookup threw. `qadamPinIssue` is the one
 // place that decides the destructive-remedy wording is only warranted for a confirmed `false`.
 function qadamPinWarning(step: StepInfo): string {
+    return `${stepPinWarning(step)}${(step.agentToolPins ?? []).map(agentToolPinWarning).join('')}`
+}
+
+function stepPinWarning(step: StepInfo): string {
     if (isNil(step.qadamPin)) {
         return ''
     }
@@ -127,6 +158,15 @@ function qadamPinWarning(step: StepInfo): string {
     return ` ⚠️ ${label}: this step ${issue.message}`
 }
 
+function agentToolPinWarning(tool: AgentToolPinInfo): string {
+    const issue = mcpUtils.qadamPinIssue({ pin: tool.qadamPin, resolvable: tool.qadamVersionResolvable, subject: 'agent_tool' })
+    if (isNil(issue)) {
+        return ''
+    }
+    const label = issue.severity === 'unavailable' ? 'AGENT TOOL PINNED VERSION UNAVAILABLE' : 'AGENT TOOL PINNED VERSION UNVERIFIED'
+    return ` ⚠️ ${label}: the agent tool ${mcpUtils.wrapUntrustedValue(tool.toolName)} ${issue.message}`
+}
+
 // A pin signal is a decoration on top of the structure this tool exists to return — before this
 // feature, `ap_flow_structure` needed only the flow row. Both signals share one platform lookup,
 // and neither runs for a flow with no qadam steps: a flow with none must not cost a platform read.
@@ -134,8 +174,9 @@ function qadamPinWarning(step: StepInfo): string {
 // that degrades to "no pin info" rather than failing the response, the way `ap_validate_flow`'s
 // equivalent unwrapped call is allowed to for a one-shot pre-publish gate. A failed census lookup
 // degrades the same way, to no framework-version mark.
-async function resolvePinSignals({ qadamSteps, projectId, log }: {
+async function resolvePinSignals({ qadamSteps, agentTools, projectId, log }: {
     qadamSteps: QadamPinnedStep[]
+    agentTools: AgentToolPinOfStep[]
     projectId: string
     log: FastifyBaseLogger
 }): Promise<PinSignals> {
@@ -143,7 +184,7 @@ async function resolvePinSignals({ qadamSteps, projectId, log }: {
     if (isNil(platformId)) {
         return emptyPinSignals()
     }
-    const pins = qadamPinUtil.collectDistinctPins({ steps: qadamSteps })
+    const pins = qadamPinUtil.collectDistinctPins({ steps: qadamSteps, tools: agentTools })
     const [qadamResolutions, census] = await Promise.all([
         qadamPinUtil.resolvePins({ pins, platformId, log }),
         tryCatch(() => frameworkCensusMarking(log).unsupportedPins({ qadamSteps, platformId })),
@@ -381,7 +422,7 @@ function formatFlowStructure(
             if (fullStep && fullStep.type === FlowTriggerType.PIECE && fullStep.settings.qadamName) {
                 triggerDetail = ` (qadam: ${mcpUtils.wrapUntrustedValue(fullStep.settings.qadamName)}, trigger: ${fullStep.settings.triggerName ? mcpUtils.wrapUntrustedValue(fullStep.settings.triggerName) : 'not set'})`
             }
-            lines.push(`- [TRIGGER] ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${triggerDetail}${qadamPinWarning(step)}${frameworkVersionWarning(step)} | parent: — | ${step.configStatus}${sampleLabel}${skipLabel}${logLabel}${canvasLabel}`)
+            lines.push(`- [TRIGGER] ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${triggerDetail}${preReleaseBuildLabel(step)}${qadamPinWarning(step)}${frameworkVersionWarning(step)} | parent: — | ${step.configStatus}${sampleLabel}${skipLabel}${logLabel}${canvasLabel}`)
             if (fullStep) {
                 lines.push(...formatStepSettings(fullStep, includeInput))
             }
@@ -396,7 +437,7 @@ function formatFlowStructure(
             if (s?.qadamName) stepDetail = ` (qadam: ${mcpUtils.wrapUntrustedValue(s.qadamName)}, action: ${s.actionName ? mcpUtils.wrapUntrustedValue(s.actionName) : 'not set'})`
         }
 
-        lines.push(`- ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${stepDetail}${qadamPinWarning(step)}${frameworkVersionWarning(step)} | parent: ${step.parentName} | ${rel} | ${step.configStatus}${sampleLabel}${skipLabel}${logLabel}${canvasLabel}`)
+        lines.push(`- ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${stepDetail}${preReleaseBuildLabel(step)}${qadamPinWarning(step)}${frameworkVersionWarning(step)} | parent: ${step.parentName} | ${rel} | ${step.configStatus}${sampleLabel}${skipLabel}${logLabel}${canvasLabel}`)
 
         if (fullStep) {
             lines.push(...formatStepSettings(fullStep, includeInput))
@@ -490,7 +531,7 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
     return {
         title: 'ap_flow_structure',
         permission: Permission.READ_FLOW,
-        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), valid insert locations for ap_add_step, the flow\'s localeSource, whether each step\'s pinned qadam version is still available on this installation, and whether a step\'s pinned qadam needs a framework version this release no longer supports. Pass includeInput=true to also get each step\'s full untruncated input in structuredContent; text input: lines are returned untruncated too.',
+        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), valid insert locations for ap_add_step, the flow\'s localeSource, whether each step\'s pinned qadam version, and the pinned qadam of each agent tool, is still available on this installation, whether a step runs a pre-release build from main, and whether a step\'s pinned qadam needs a framework version this release no longer supports. Pass includeInput=true to also get each step\'s full untruncated input in structuredContent; text input: lines are returned untruncated too.',
         inputSchema: {
             flowId: z.string().describe('The id of the flow'),
             includeInput: z.boolean().optional().describe('When true, include the full step input (untruncated) in structuredContent.steps[].input and render text input: lines untruncated'),
@@ -507,8 +548,9 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
                 }
                 // `getQadamSteps` does not filter by `skip`, matching `ap_validate_flow`'s
                 // `validatePinnedQadamVersions`: the worker provisions every PIECE step in the
-                // version regardless of `skip`, so a dead pin on a skipped step still fails
-                // provisioning on every trigger tick — hiding it here would be misleading.
+                // version, and every PIECE tool of an agent step, regardless of `skip`, so a dead
+                // pin on a skipped step still fails provisioning on every trigger tick — hiding it
+                // here would be misleading.
                 //
                 // Distinct-pin dedupe keeps the added cost to one platform lookup plus one
                 // resolution per *distinct* pin, not per step — a flow with twelve steps on one
@@ -518,9 +560,10 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
                 // bundled (#474) — worth knowing before calling this tool in a hot loop over many
                 // distinct pins, though no worse than `ap_validate_flow` already accepts.
                 const qadamSteps = qadamPinUtil.getQadamSteps({ trigger: flow.version.trigger })
+                const agentTools = qadamPinUtil.getAgentToolPins({ trigger: flow.version.trigger })
                 const { qadamResolutions, unsupportedPins } = qadamSteps.length === 0
                     ? emptyPinSignals()
-                    : await resolvePinSignals({ qadamSteps, projectId: mcp.projectId, log })
+                    : await resolvePinSignals({ qadamSteps, agentTools, projectId: mcp.projectId, log })
                 const { structure, stepByName } = buildFlowStructure({ trigger: flow.version.trigger, qadamResolutions, unsupportedPins })
                 const positions = flowCanvasUtils.computeStepPositions(flow.version.trigger)
                 const localeSource = flow.version.localeSource ?? null
@@ -549,6 +592,8 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
                             configStatus: s.configStatus,
                             ...(includeInput && s.input !== null ? { input: s.input } : {}),
                             ...(s.qadamPin !== undefined ? { qadamPin: s.qadamPin, qadamVersionResolvable: s.qadamVersionResolvable } : {}),
+                            ...(s.preReleaseBuild === true ? { preReleaseBuild: true } : {}),
+                            ...(s.agentToolPins !== undefined ? { agentToolPins: s.agentToolPins } : {}),
                             ...(s.frameworkVersionSupported === false ? { frameworkVersionSupported: false } : {}),
                         })),
                         stepCount: structure.length,
@@ -560,6 +605,12 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
             }
         },
     }
+}
+
+type AgentToolPinInfo = {
+    toolName: string
+    qadamPin: string
+    qadamVersionResolvable: boolean | undefined
 }
 
 // The two per-pin signals `ap_flow_structure` decorates steps with: whether each pin resolves

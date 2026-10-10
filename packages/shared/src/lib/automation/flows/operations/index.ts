@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { BoundedArray, Nullable } from '../../../core/common'
 import { Metadata } from '../../../core/common/metadata'
 import { formErrors } from '../../../form-errors'
+import { ExportedUnresolvedSteps } from '../../qadams/exported-snapshot'
 import { LOCALE_SOURCE_MAX_LENGTH } from '../../translation/translation'
 import { BranchCondition, CodeActionSchema, CodeActionSettings, FlowActionType, LoopOnItemsActionSchema, LoopOnItemsActionSettings, MAX_BRANCH_CONDITION_GROUPS, MAX_CONDITIONS_PER_GROUP, QadamActionSchema, QadamActionSettings, RouterActionSchema, RouterActionSettings } from '../actions/action'
 import { FlowStatus } from '../flow'
@@ -137,6 +138,8 @@ export const ImportFlowRequest = z.object({
     schemaVersion: Nullable(z.string()),
     notes: Nullable(BoundedArray({ element: Note, max: MAX_NOTES_PER_FLOW })),
     localeSource: Nullable(z.string().max(LOCALE_SOURCE_MAX_LENGTH, formErrors.localeSourceTooLong)).optional(),
+    // From the template's `exportedUnresolved` (ADR-0004): each listed step is marked "update this step".
+    exportedUnresolved: ExportedUnresolvedSteps.optional(),
 })
 
 export type ImportFlowRequest = z.infer<typeof ImportFlowRequest>
