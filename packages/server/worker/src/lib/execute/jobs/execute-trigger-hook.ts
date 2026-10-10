@@ -11,6 +11,7 @@ import { flowCache } from '../../cache/flow/flow-cache'
 import { workerSettings } from '../../config/worker-settings'
 import { JobContext, JobHandler, JobResultKind, SynchronousJobResult } from '../types'
 import { provisionFlowPieces } from '../utils/flow-helpers'
+import { MALFORMED_PIN } from '../utils/malformed-pin'
 import { isSandboxTimeout } from '../utils/sandbox-helpers'
 import { getWebhookUrl } from '../utils/webhook-url'
 
@@ -40,7 +41,9 @@ export const executeTriggerHookJob: JobHandler<ExecuteTriggerHookJobData, Synchr
                 kind: JobResultKind.SYNCHRONOUS,
                 status: EngineResponseStatus.INTERNAL_ERROR,
                 response: undefined,
-                errorMessage: `This flow has ${provision.usedBy} pinned to ${provision.unavailableQadam}, which this installation does not have. Re-point it at an available version (a step or an agent tool) — ap_validate_flow lists it — then enable the flow again.`,
+                errorMessage: provision.unavailableQadam === MALFORMED_PIN
+                    ? `This flow has ${provision.usedBy} with a malformed qadam pin (no valid name or version). Fix or remove it — ap_validate_flow lists it — then enable the flow again.`
+                    : `This flow has ${provision.usedBy} pinned to ${provision.unavailableQadam}, which this installation does not have. Re-point it at an available version — ap_validate_flow lists it — then enable the flow again.`,
             }
         }
 

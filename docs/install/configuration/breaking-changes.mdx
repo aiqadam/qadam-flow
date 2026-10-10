@@ -322,8 +322,9 @@ the pin's caret range instead` once per pin. Otherwise the run fails with the pi
 - **The worker now provisions the qadams of an agent step's tools the way it provisions steps.** A
   custom qadam used only as an agent tool is installed, and a tool pinned to a version the instance
   does not have fails the flow with the pin named: a run fails, an enabled webhook or polling flow
-  stops firing, and enabling or publishing it is refused. A tool whose version is not a version at
-  all (`latest`, an empty string) is treated the same way.
+  stops firing, and enabling or publishing it is refused. A tool whose name or version is not a
+  qadam name or a version at all (`latest`, an empty string) is reported as a **malformed pin** and
+  fails the flow the same way; `ap_validate_flow` names the agent step and the tool.
 - **What stops working:** flows that run today only because of the old fallback: a step or tool
   pinned outside the image's caret range, pinned to a version that was never published, or kept
   alive by an answer in a worker's cache. The worker's cache moves to `cache/v13`, so every pin is

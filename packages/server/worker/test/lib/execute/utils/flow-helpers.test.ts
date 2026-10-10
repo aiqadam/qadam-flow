@@ -212,6 +212,20 @@ describe('extractQadamPackages — agent tools', () => {
         expect(mockGetPiece).toHaveBeenCalledTimes(2)
     })
 
+    it('does not let a malformed tool pin hide behind the valid pin it reads like', async () => {
+        const fv = flowWith({
+            agentTools: [
+                qadamTool({ toolName: 'a', qadamName: '@scope/foo', qadamVersion: '1.0.0' }),
+                qadamTool({ toolName: 'b', qadamName: '', qadamVersion: 'scope/foo@1.0.0' }),
+            ],
+        })
+
+        await extractQadamPackages({ flowVersion: fv, platformId: mockPlatformId, log: mockLog, apiClient: mockApiClient })
+
+        expect(mockGetPiece).toHaveBeenCalledWith(expect.objectContaining({ qadamName: '', qadamVersion: 'scope/foo@1.0.0' }))
+        expect(mockGetPiece).toHaveBeenCalledWith(expect.objectContaining({ qadamName: '@scope/foo', qadamVersion: '1.0.0' }))
+    })
+
     it('keeps two versions of one qadam apart', async () => {
         const fv = flowWith({
             agentTools: [
@@ -259,7 +273,7 @@ describe('extractQadamPackages — agent tools', () => {
             apiClient: mockApiClient,
         })
 
-        expect(result).toEqual({ provisioned: false, unavailableQadam: '@aiqadam/qadam-tables@0.5.1', usedBy: 'agent tool of step agent' })
+        expect(result).toEqual({ provisioned: false, unavailableQadam: '@aiqadam/qadam-tables@0.5.1', usedBy: 'an agent tool of step agent' })
         expect(mockProvision).not.toHaveBeenCalled()
     })
 })
@@ -366,7 +380,7 @@ describe('provisionFlowPieces', () => {
             log: mockLogger,
             apiClient,
         })
-        expect(result).toEqual({ provisioned: false, unavailableQadam: '@aiqadam/qadam-tables@0.3.1', usedBy: 'step trigger_1' })
+        expect(result).toEqual({ provisioned: false, unavailableQadam: '@aiqadam/qadam-tables@0.3.1', usedBy: 'the step trigger_1' })
         expect(mockError).toHaveBeenCalledTimes(1)
         expect(mockError.mock.calls[0][0]).toMatchObject({ flowId: 'flow-1', projectId: 'project-1' })
         expect(String(mockError.mock.calls[0][0].error)).toContain('0.3.1')

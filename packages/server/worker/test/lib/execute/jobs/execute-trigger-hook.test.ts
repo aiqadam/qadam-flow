@@ -102,7 +102,7 @@ describe('executeTriggerHookJob — unavailable pinned qadam', () => {
         mockGetVersion.mockReset()
         mockProvisionFlowPieces.mockReset()
         mockGetVersion.mockResolvedValue(makeFlowVersion())
-        mockProvisionFlowPieces.mockResolvedValue({ provisioned: false, unavailableQadam: '@aiqadam/qadam-tables@0.3.1', usedBy: 'agent tool of step step_2' })
+        mockProvisionFlowPieces.mockResolvedValue({ provisioned: false, unavailableQadam: '@aiqadam/qadam-tables@0.3.1', usedBy: 'an agent tool of step step_2' })
     })
 
     it('fails ON_ENABLE and names the pin', async () => {
@@ -110,7 +110,17 @@ describe('executeTriggerHookJob — unavailable pinned qadam', () => {
 
         expect(result.status).toBe(EngineResponseStatus.INTERNAL_ERROR)
         expect(result.errorMessage).toContain('@aiqadam/qadam-tables@0.3.1')
-        expect(result.errorMessage).toContain('agent tool of step step_2')
+        expect(result.errorMessage).toContain('an agent tool of step step_2')
+    })
+
+    it('words a malformed pin as such, not as a version this installation does not have', async () => {
+        mockProvisionFlowPieces.mockResolvedValue({ provisioned: false, unavailableQadam: 'a malformed pin', usedBy: 'an agent tool of step step_2' })
+
+        const result = await executeTriggerHookJob.execute(makeContext(), makeJobData(TriggerHookType.ON_ENABLE))
+
+        expect(result.status).toBe(EngineResponseStatus.INTERNAL_ERROR)
+        expect(result.errorMessage).toContain('an agent tool of step step_2 with a malformed qadam pin')
+        expect(result.errorMessage).not.toContain('does not have')
     })
 
     it('fails RENEW as well', async () => {

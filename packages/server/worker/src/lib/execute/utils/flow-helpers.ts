@@ -3,7 +3,8 @@ import { FlowActionType, flowStructureUtil, FlowTriggerType, FlowVersion, NPM_PA
 import { Logger } from 'pino'
 import { CodeArtifact } from '../../cache/code/code-builder'
 import { provisioner } from '../../cache/provisioner'
-import { PieceNotFoundError, qadamCache } from '../../cache/qadams/qadam-cache'
+import { NPM_PACKAGE_NAME_MAX_LENGTH, PieceNotFoundError, qadamCache } from '../../cache/qadams/qadam-cache'
+import { MALFORMED_PIN } from './malformed-pin'
 
 export async function provisionFlowPieces(params: {
     flowVersion: FlowVersion
@@ -46,14 +47,14 @@ export async function extractQadamPackages({ flowVersion, platformId, log, apiCl
     const steps = flowStructureUtil.getAllSteps(flowVersion.trigger)
     const stepPins = steps
         .filter((step) => step.type === FlowActionType.PIECE || step.type === FlowTriggerType.PIECE)
-        .map((step): QadamPin => ({ qadamName: step.settings.qadamName, qadamVersion: step.settings.qadamVersion, usedBy: `step ${step.name}` }))
+        .map((step): QadamPin => ({ qadamName: step.settings.qadamName, qadamVersion: step.settings.qadamVersion, usedBy: `the step ${step.name}` }))
     // The engine loads an agent tool's qadam by its own pin, like a step's, so it is provisioned like one (#779).
     const toolPins = steps
         .filter((step) => step.type === FlowActionType.PIECE)
         .flatMap((step) => agentToolPins.fromInput({ input: step.settings.input }).map((tool): QadamPin => ({
             qadamName: tool.qadamName,
             qadamVersion: tool.qadamVersion,
-            usedBy: `agent tool of step ${step.name}`,
+            usedBy: `an agent tool of step ${step.name}`,
         })))
 
     return Promise.all(
@@ -88,12 +89,14 @@ export function extractCodeArtifacts(flowVersion: FlowVersion): CodeArtifact[] {
 // The pin as it goes into an error an MCP client reads. An agent tool's name and version are not
 // validated when stored, so free text that is no package name or no version is not echoed (#779).
 function describePin({ qadamName, qadamVersion }: { qadamName: string, qadamVersion: string }): string {
-    const isWellFormed = NPM_PACKAGE_NAME_REGEX.test(qadamName) && qadamVersionParser.parsePin({ pin: qadamVersion }) !== null
-    return isWellFormed ? `${qadamName}@${qadamVersion}` : 'a malformed pin'
+    const isWellFormed = qadamName.length <= NPM_PACKAGE_NAME_MAX_LENGTH && NPM_PACKAGE_NAME_REGEX.test(qadamName) && qadamVersionParser.parsePin({ pin: qadamVersion }) !== null
+    return isWellFormed ? `${qadamName}@${qadamVersion}` : MALFORMED_PIN
 }
 
 function uniquePins({ pins }: { pins: QadamPin[] }): QadamPin[] {
-    const byKey = new Map(pins.map((pin) => [`${pin.qadamName}@${pin.qadamVersion}`, pin]))
+    // Keyed on the pair, not on `name@version`: a tool is free text, and one named '' at version
+    // 'scope/foo@1.0.0' would read as the valid pin @scope/foo@1.0.0 and hide behind it.
+    const byKey = new Map(pins.map((pin) => [JSON.stringify([pin.qadamName, pin.qadamVersion]), pin]))
     return [...byKey.values()]
 }
 
@@ -112,5 +115,5 @@ type ExtractQadamPackagesParams = {
 
 export type ProvisionFlowQadamsResult =
     | { provisioned: true }
-    // `usedBy` says what holds the pin: `step step_2` or `agent tool of step step_3`.
+    // `usedBy` says what holds the pin: `the step step_2` or `an agent tool of step step_3`.
     | { provisioned: false, unavailableQadam: string, usedBy: string }

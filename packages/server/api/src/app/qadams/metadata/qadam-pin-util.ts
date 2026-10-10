@@ -4,6 +4,7 @@ import {
     flowStructureUtil,
     FlowTriggerType,
     isNil,
+    NPM_PACKAGE_NAME_REGEX,
     qadamVersionParser,
     Step,
     tryCatch,
@@ -11,6 +12,10 @@ import {
 import { FastifyBaseLogger } from 'fastify'
 import { qadamMetadataService } from './qadam-metadata-service'
 import { isNewerVersion } from './utils'
+
+export const MALFORMED_TOOL_PIN = 'malformed pin'
+// npm's own limit on a package name.
+const NPM_PACKAGE_NAME_MAX_LENGTH = 214
 
 // A step keeps the exact qadam version it was configured with, and three call sites each needed
 // their own copy of "walk the steps, find the pinned ones, ask qadamMetadataService whether the
@@ -53,8 +58,17 @@ export const qadamPinUtil = {
         return `${step.settings.qadamName}@${step.settings.qadamVersion}`
     },
 
+    // A tool's name and version are not validated when stored. A well-formed pair is `name@version`,
+    // which cannot be confused with another well-formed pair (a name has no `@` past its scope, a
+    // version none at all). A pair that is not well-formed is the one constant key MALFORMED_TOOL_PIN:
+    // the lookup answers it as a miss, and it can neither collide with a valid pin (a tool named ''
+    // with version 'scope/foo@1.0.0' would read as `@scope/foo@1.0.0`) nor carry free text into a
+    // message (#779).
     pinOfTool({ tool }: { tool: AgentToolPinOfStep }): string {
-        return `${tool.qadamName}@${tool.qadamVersion}`
+        const isWellFormed = tool.qadamName.length <= NPM_PACKAGE_NAME_MAX_LENGTH
+            && NPM_PACKAGE_NAME_REGEX.test(tool.qadamName)
+            && qadamVersionParser.parsePin({ pin: tool.qadamVersion }) !== null
+        return isWellFormed ? `${tool.qadamName}@${tool.qadamVersion}` : MALFORMED_TOOL_PIN
     },
 
     // Scoped names carry their own `@`, so the pin is split on the LAST `@` rather than the first.

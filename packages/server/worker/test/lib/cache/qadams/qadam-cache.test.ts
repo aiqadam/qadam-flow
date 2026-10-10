@@ -38,6 +38,7 @@ describe('qadamCache.getPiece', () => {
         ['../x'],
         ['@acme/../../x'],
         ['Upper'],
+        [`${'a-'.repeat(50_000)}b`],
     ])('answers name %j, outside the npm package-name grammar, as not found without building a cache path', async (qadamName) => {
         const { apiClient, methods } = fakeApiClient()
 

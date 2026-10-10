@@ -6,6 +6,10 @@ import { workerSettings } from '../../config/worker-settings'
 import { getGlobalCacheQadamsPath } from '../cache-paths'
 import { cacheState, NO_SAVE_GUARD } from '../cache-state'
 
+// npm's own limit on a package name. The grammar has no length bound, and a longer name would be a
+// path component the filesystem refuses (ENAMETOOLONG, a plain Error that provisioning rethrows).
+export const NPM_PACKAGE_NAME_MAX_LENGTH = 214
+
 const tracer = trace.getTracer('qadam-cache')
 
 export const qadamCache = (log: Logger, apiClient: WorkerToApiContract) => ({
@@ -13,7 +17,7 @@ export const qadamCache = (log: Logger, apiClient: WorkerToApiContract) => ({
         // The cache folder below is named after the qadam. The API refuses names outside the npm
         // package-name grammar and the installer will not install one, so such a name is answered
         // as not found before any path is built from it.
-        if (!NPM_PACKAGE_NAME_REGEX.test(qadamName)) {
+        if (qadamName.length > NPM_PACKAGE_NAME_MAX_LENGTH || !NPM_PACKAGE_NAME_REGEX.test(qadamName)) {
             throw new PieceNotFoundError(qadamName, qadamVersion)
         }
         // A pin that is no version at all ('latest', '', '1.0', a range with trailing text) is
@@ -103,7 +107,7 @@ async function getQadamPackage(query: PieceCacheKey, apiClient: WorkerToApiContr
 }
 
 export class PieceNotFoundError extends Error {
-    // `usedBy` is what pins it, when the caller knows: `step step_2` or `agent tool of step step_3`.
+    // `usedBy` is what pins it, when the caller knows: `the step step_2` or `an agent tool of step step_3`.
     // Built from step names only (they are checked), never from flow-authored free text such as a
     // tool name, because it reaches an error an MCP client reads (#779).
     public readonly usedBy: string | undefined
