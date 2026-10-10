@@ -240,8 +240,11 @@ jobs:
     # copy in the other caller identical — tools/ci/test-publish-packed-tarballs.sh compares the
     # two jobs line for line with comments stripped, and a timeout that differs is drift.
     timeout-minutes: 90
-    # Requires a GitHub Environment named `npm-publish` (Settings → Environments) with
-    # required reviewers configured and `NPM_TOKEN` stored as an ENVIRONMENT secret on it.
+    # Requires a GitHub Environment named `npm-publish` (Settings -> Environments) with
+    # `NPM_TOKEN` stored as an ENVIRONMENT secret on it. It has NO required reviewers — only a
+    # deployment branch policy restricted to the default branch (plus `v*` for this tag path) — so
+    # the publish needs no approval click; the branch policy is what keeps the credential reachable
+    # only from `main`. The comments here used to say "required reviewers"; they were stale.
     #
     # Whatever this workflow gates on constrains the tree's QUALITY, not its PROVENANCE. On
     # the tag path none of verify/breaking-change-gate/version-tag-gate assert the tagged
@@ -252,12 +255,13 @@ jobs:
     # commit that never touched `main` and publish `@aiqadam/qadams-framework`, the root of
     # every qadam's dependency graph, to public npm at `latest` with no human in the loop. The dispatch path
     # replaces "can push a tag" with "can start a workflow_dispatch run", the same set of
-    # credentials, and clears two of the three gates, which makes the human load-bearing
-    # rather than a formality.
+    # credentials, and clears two of the three gates — which is exactly why the ref, not a person,
+    # has to be the thing that is trusted here.
     #
-    # A required-reviewers environment is the one control in Actions that interposes a human
-    # between "a run started" and "the publish secret is readable". The ancestry check in the
-    # packing workflow is a second, automatic layer underneath it, not a replacement.
+    # The environment's DEPLOYMENT BRANCH POLICY is the control that stands between "a run started"
+    # and "the publish secret is readable": it is enforced outside the ref, so a modified workflow
+    # on a branch cannot reach the credential at all. The ancestry check in the packing workflow is
+    # a second, automatic layer underneath it, not a replacement.
     environment: npm-publish
     permissions:
       contents: read

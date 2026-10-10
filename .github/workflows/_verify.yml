@@ -470,6 +470,12 @@ jobs:
       - name: Test the qadam divergence check
         run: tools/ci/test-qadam-divergence.sh
 
+      # The zero-touch publish loop's release guard (#852): the release PR merges itself, so the
+      # per-release cap of 30 qadams and the "no platform major before the milestone" rule are
+      # checked here rather than by a reviewer. Fixtures only, node builtins, no install.
+      - name: Test the zero-touch publish release guard
+        run: tools/ci/test-release-guard.sh
+
       # _pack-framework-packages.yml's `pack-framework-packages` job trusts a custom
       # workspace:* rewrite instead of bun's own (see that job's header for why). Needs
       # ts-node and the transform's own runtime deps (axios, via package-pre-publish-checks.ts) from
