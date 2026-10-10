@@ -176,3 +176,41 @@ describe('qadamMetadataService.resolveVersion() — exact pins and snapshots (un
         expect(await qadamMetadataService(logger).resolveVersion({ name: NAME, version: '^1.3.0-main.412', platformId: undefined })).toBe('1.3.0-main.500')
     })
 })
+
+// #808: `get` and `resolveVersion` answer a stale exact pin with the image's build (the run-time net),
+// so they cannot say whether the pin itself is there. `isPinAvailable` can, and is what the audited
+// move asks.
+describe('qadamMetadataService.isPinAvailable() — the pin itself, never a stand-in (unit)', () => {
+    const NAME = '@aiqadam/qadam-fixture'
+
+    beforeEach(() => {
+        vi.clearAllMocks()
+        loadRegistry.mockResolvedValue([])
+        loadBundledQadams.mockResolvedValue([bundledQadam({ name: NAME, version: '0.4.5' })])
+    })
+
+    it('is true for a version the registry holds', async () => {
+        loadRegistry.mockResolvedValue([{ name: NAME, version: '0.4.2', qadamType: QadamType.OFFICIAL, platformId: undefined }])
+
+        expect(await qadamMetadataService(logger).isPinAvailable({ name: NAME, version: '0.4.2', platformId: undefined })).toBe(true)
+    })
+
+    it('is false for a stale pin the net would still run on the bundled build', async () => {
+        const service = qadamMetadataService(logger)
+
+        expect(await service.resolveVersion({ name: NAME, version: '0.4.2', platformId: undefined })).toBe('0.4.5')
+        expect(await service.isPinAvailable({ name: NAME, version: '0.4.2', platformId: undefined })).toBe(false)
+    })
+
+    it('is false for a snapshot pin the registry does not hold', async () => {
+        expect(await qadamMetadataService(logger).isPinAvailable({ name: NAME, version: '0.4.5-main.9', platformId: undefined })).toBe(false)
+    })
+
+    it('is false, without asking the registry, for a range or anything that is not a version', async () => {
+        const service = qadamMetadataService(logger)
+
+        expect(await service.isPinAvailable({ name: NAME, version: '^0.4.2', platformId: undefined })).toBe(false)
+        expect(await service.isPinAvailable({ name: NAME, version: 'latest', platformId: undefined })).toBe(false)
+        expect(loadRegistry).not.toHaveBeenCalled()
+    })
+})

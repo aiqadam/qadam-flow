@@ -56,6 +56,7 @@ import { communityQadamsModule } from './qadams/community-qadam-module'
 import { startDevQadamWatcher } from './qadams/dev-qadam-watcher'
 import { qadamModule } from './qadams/metadata/qadam-metadata-controller'
 import { qadamMetadataService } from './qadams/metadata/qadam-metadata-service'
+import { qadamPinMoveModule } from './qadams/pin-moves/qadam-pin-move.module'
 import { qadamContextVersionBackfill } from './qadams/qadam-context-version-backfill'
 import { tagsModule } from './qadams/tags/tags-module'
 import { qadamVersionStoreSeeding } from './qadams/version-store/qadam-version-store-seeding'
@@ -159,6 +160,7 @@ export const setupApp = async (app: FastifyInstance): Promise<FastifyInstance> =
     await qadamMetadataService(app.log).setup()
     await app.register(qadamModule)
     await app.register(frameworkCensusModule)
+    await app.register(qadamPinMoveModule)
     await app.register(collaborativeModule)
     await app.register(flowModule)
     await app.register(flowRunModule)

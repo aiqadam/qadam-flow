@@ -1,5 +1,5 @@
 import { QadamMetadata, QadamMetadataModel, QadamMetadataModelSummary, QadamPackageInformation, qadamTranslation } from '@aiqadam/qadams-framework'
-import { apVersionUtil } from '@aiqadam/server-utils'
+import { apVersionUtil, qadamPinFallbackDecision } from '@aiqadam/server-utils'
 import {
     apId,
     assertNotNullOrUndefined,
@@ -80,6 +80,17 @@ export const qadamMetadataService = (log: FastifyBaseLogger) => {
                 return undefined
             }
             return qadam
+        },
+        // Whether the instance holds exactly this pin, with no stand-in: `get` (and `resolveVersion`)
+        // answer an exact pin that nothing holds with the image's build inside its caret range (#424,
+        // the run-time net), so they cannot tell a pin that is there from one that is substituted.
+        // #808's move asks this instead. A range pin, or a pin that is not a version, is not asked.
+        async isPinAvailable({ platformId, version, name }: IsPinAvailableParams): Promise<boolean> {
+            if (!qadamVersionParser.isExact({ version })) {
+                return false
+            }
+            const match = await findExactVersion(log, { name, version, platformId, allowBundledFallback: false })
+            return !isNil(match)
         },
         // The version `get` resolves a pin to, without reading the qadam row itself: the registry
         // it resolves through selects named columns only, so it answers on a database whose
@@ -333,24 +344,11 @@ const sortByVersionDescending = <T extends { version: string }>(a: T, b: T): num
     return semVer.rcompare(a.version, b.version)
 }
 
-// Deliberately looser than the registry-path range above for an exact or `~` pin: the whole
-// point of this fallback is that the pinned version no longer exists anywhere (bundled or
-// persisted), so reusing that same range here would always match nothing and defeat the
-// fallback. (For a `^` pin the two ranges already agree, since findNextExcludedVersion treats
-// `^` the same way.) A caret range is the bound instead — same-minor drift for 0.x, same-major
-// for 1.x+ — so a step still can't cross what semver itself calls a breaking boundary.
-const satisfiesRequestedRange = ({ candidate, requestedBaseVersion }: { candidate: string, requestedBaseVersion: string }): boolean => {
-    if (!semVer.valid(candidate) || !semVer.valid(requestedBaseVersion)) {
-        return false
-    }
-    return semVer.satisfies(candidate, `^${requestedBaseVersion}`)
-}
-
 const findExactVersion = async (
     log: FastifyBaseLogger,
-    params: { name: string, version: string | undefined, platformId: string | undefined },
+    params: { name: string, version: string | undefined, platformId: string | undefined, allowBundledFallback?: boolean },
 ): Promise<{ name: string, version: string, platformId: string | undefined } | undefined> => {
-    const { name, version, platformId } = params
+    const { name, version, platformId, allowBundledFallback = true } = params
     const versionToSearch = findNextExcludedVersion(version)
     const currentRelease = apVersionUtil.getCurrentRelease()
     const registry = filterRegistry(await loadRegistry(log), { release: currentRelease, platformId })
@@ -373,8 +371,8 @@ const findExactVersion = async (
 
     if (matchingRegistryEntries.length === 0) {
         // A snapshot pin is exact (ADR-0004): no other build stands in for it. Moving it is #808's
-        // checked, audited fallback, so until that exists it is an unavailable pin.
-        if (!isNil(version) && qadamVersionParser.isSnapshot({ version })) {
+        // checked, audited fallback, which needs its own metadata, so here it is an unavailable pin.
+        if (!allowBundledFallback || (!isNil(version) && qadamVersionParser.isSnapshot({ version }))) {
             return undefined
         }
         return findBundledFallback({ log, name, requestedBaseVersion: versionToSearch?.baseVersion, currentRelease, platformId })
@@ -388,6 +386,10 @@ const findExactVersion = async (
     }
 }
 
+// The run-time net under #808's audited move: the image's build stands in for an exact pin that
+// nothing holds, inside the pin's caret range (`qadamPinFallbackDecision.checkNet`, the rule the
+// engine's `qadamPinFallback` shares), and logs it. It is read-only, so it cannot audit or revert;
+// `qadamPinMoveService` moves the step itself, with both, when its flow is published or enabled.
 const findBundledFallback = async ({ log, name, requestedBaseVersion, currentRelease, platformId }: {
     log: FastifyBaseLogger
     name: string
@@ -400,7 +402,7 @@ const findBundledFallback = async ({ log, name, requestedBaseVersion, currentRel
     if (isNil(bundled)) {
         return undefined
     }
-    if (!isNil(requestedBaseVersion) && !satisfiesRequestedRange({ candidate: bundled.version, requestedBaseVersion })) {
+    if (!isNil(requestedBaseVersion) && !qadamPinFallbackDecision.checkNet({ pinnedVersion: requestedBaseVersion, imageVersion: bundled.version }).allowed) {
         return undefined
     }
     if (!filterQadamBasedOnType(platformId, bundled) || !isSupportedRelease(currentRelease, bundled)) {
@@ -616,6 +618,12 @@ type FindInstalledForPinParams = {
     name: string
     version?: string
     platformId?: string
+}
+
+type IsPinAvailableParams = {
+    name: string
+    version: string
+    platformId: string | undefined
 }
 
 type ResolveVersionParams = {
