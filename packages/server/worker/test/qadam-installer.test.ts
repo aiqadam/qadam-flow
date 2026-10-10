@@ -538,7 +538,7 @@ describe('qadamInstaller', () => {
             expect(await pathExists(qadamDirPath(qadam))).toBe(false)
         })
 
-        it('installs into the @ directory once a failed install rolled the legacy directory back', async () => {
+        it('installs into the @ directory once a failed install rolled the legacy directory back, with nothing to invalidate', async () => {
             const qadam = makeQadam('@acme/qadam-legacy-rolled-back', '1.3.0')
             await writeLegacyReadyMember({ qadam })
             await rm(join(legacyDirPath(qadam), 'node_modules'), { recursive: true })
@@ -549,6 +549,23 @@ describe('qadamInstaller', () => {
             expect(await pathExists(legacyDirPath(qadam))).toBe(false)
 
             mockInstall.mockImplementation(simulateBunInstall)
+            await installer.install({ pieces: [qadam], includeFilters: true })
+
+            expect(await pathExists(readyFilePath(qadam))).toBe(true)
+            expect(await pathExists(legacyDirPath(qadam))).toBe(false)
+        })
+
+        it('follows a legacy directory that another replica deleted since the last call, instead of a remembered answer', async () => {
+            const qadam = makeQadam('@acme/qadam-legacy-deleted', '1.3.0')
+            const installer = qadamInstaller(fakeLog, fakeApiClient)
+            mockInstall.mockImplementation(simulateBunInstall)
+            await writeLegacyReadyMember({ qadam })
+            await rm(join(legacyDirPath(qadam), 'node_modules'), { recursive: true })
+
+            await installer.install({ pieces: [qadam], includeFilters: true })
+            expect(await pathExists(join(legacyDirPath(qadam), 'node_modules'))).toBe(true)
+
+            await rm(legacyDirPath(qadam), { recursive: true })
             await installer.install({ pieces: [qadam], includeFilters: true })
 
             expect(await pathExists(readyFilePath(qadam))).toBe(true)

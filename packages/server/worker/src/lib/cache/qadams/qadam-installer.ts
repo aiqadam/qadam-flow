@@ -31,11 +31,11 @@ import { qadamIntegrity } from './qadam-integrity'
 const tracer = trace.getTracer('qadam-installer')
 
 const usedQadamsMemoryCache: Record<string, boolean> = {}
-// Which member directory name a (workspace, name, version) uses, so `qadamPath` probes the disk for a
-// legacy directory once and not on every call. Whatever removes a member directory has to forget its
-// entry (`rollbackInstallation` does), or the next install would be sent back to a directory that is
-// gone.
-const memberDirectoryNames = new Map<string, string>()
+// The (workspace, name, version) triples that were found to have no legacy member directory, so
+// `qadamPath` skips the probe for them. Only that answer is remembered: the workspace is shared by
+// every worker replica, and one of them can delete a legacy directory this process once saw, so a
+// legacy directory is looked for again on every call.
+const withoutLegacyMember = new Set<string>()
 // The workspaces glob in createInstallWorkspaceFiles has to address this same directory. When the
 // two drifted apart (the glob still said `pieces/**` after the rename), bun matched no workspace,
 // exited 0 with "No packages!", and created no node_modules — so qadamCheckIfAlreadyInstalled
@@ -379,13 +379,10 @@ async function rollbackInstallation({ rootWorkspace, pieces, before, isCompromis
     if (isRollbackForbidden({ isCompromised, rootWorkspace, log })) {
         return
     }
-    await Promise.all(pieces.map(async (piece) => {
-        await rm(qadamPath({ rootWorkspace, piece }), {
-            recursive: true,
-            force: true,
-        })
-        forgetMemberDirectoryName({ rootWorkspace, piece })
-    }))
+    await Promise.all(pieces.map(piece => rm(qadamPath({ rootWorkspace, piece }), {
+        recursive: true,
+        force: true,
+    })))
     if (!isNil(before)) {
         await restoreLockfile({ rootWorkspace, before, isCompromised, log })
     }
@@ -838,23 +835,21 @@ function qadamPath({ rootWorkspace, piece }: QadamPathParams): string {
 
 // ADR-0004: a member directory is named after the alias `name@version`. A workspace installed
 // before it holds `name-version` instead, and a qadam already there keeps its directory: a second
-// member would carry the same package name, which bun refuses in one workspace. Nothing creates a
-// legacy directory; it is read for as long as it exists. The probe is one synchronous `stat`, made
-// once per (workspace, name, version) and remembered.
+// member would carry the same package name, which bun refuses in one workspace. This code never
+// creates a legacy directory, but an older worker sharing the workspace can, so one found is
+// followed on every call; only the absence of one is remembered, as the cheap common answer.
 function memberDirectoryName({ rootWorkspace, piece }: QadamPathParams): string {
     const key = memberDirectoryKey({ rootWorkspace, piece })
-    const known = memberDirectoryNames.get(key)
-    if (!isNil(known)) {
-        return known
+    const currentName = getPackageAliasForQadam(piece)
+    if (withoutLegacyMember.has(key)) {
+        return currentName
     }
     const legacyName = getLegacyPackageAliasForQadam(piece)
-    const name = existsSync(join(rootWorkspace, QADAMS_DIR, legacyName, 'package.json')) ? legacyName : getPackageAliasForQadam(piece)
-    memberDirectoryNames.set(key, name)
-    return name
-}
-
-function forgetMemberDirectoryName({ rootWorkspace, piece }: QadamPathParams): void {
-    memberDirectoryNames.delete(memberDirectoryKey({ rootWorkspace, piece }))
+    if (existsSync(join(rootWorkspace, QADAMS_DIR, legacyName, 'package.json'))) {
+        return legacyName
+    }
+    withoutLegacyMember.add(key)
+    return currentName
 }
 
 function memberDirectoryKey({ rootWorkspace, piece }: QadamPathParams): string {

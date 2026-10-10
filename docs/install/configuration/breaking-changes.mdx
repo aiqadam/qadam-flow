@@ -297,7 +297,9 @@ no action: a directory the old layout already holds keeps being used.
 
 - **Going back to an older worker is the one case that needs action.** An older worker creates
   `<name>-<version>` next to the new `<name>@<version>` of the same qadam, and both carry one package
-  name, so `bun install` fails in the shared workspace until the worker's qadam cache is cleared.
+  name, so `bun install` fails in the shared workspace until the worker's qadam cache is cleared. To clear it, stop
+  the stack (the app and the workers share the `./cache` bind mount from `docker-compose.yml`), delete
+  `./cache` in the install directory and start the stack again; the cache is rebuilt on start.
 
 ## 2.0.0
 
