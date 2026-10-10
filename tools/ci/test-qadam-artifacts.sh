@@ -6,7 +6,9 @@
 # platform packages external and declared as peers, translations inside the artifact and its
 # tarball, metadata.json written from a successful load, the node_modules exception, extra entry
 # points, an action executed with only the platform's copies of `@aiqadam/*` and `zod` — and that
-# each guard fails when its exception is taken away. `--pack --allow-failures` still writes the
+# each guard fails when its exception is taken away, that a failed build leaves no half-built version
+# behind, and that a declared `node_modules` package with an unresolvable required dependency fails
+# the build rather than shipping a broken install. `--pack --allow-failures` still writes the
 # archive index (empty) when every build failed.
 #
 # Needs `bun install` and the three platform packages built:
@@ -123,6 +125,73 @@ Object.entries(expected).forEach(([q, s]) => console.log(`${status[q] === s ? 'o
 process.exit(wrong.length === 0 ? 0 : 1)
 EOF
 expect_exit "guards report the missing exception" 0 $?
+
+# --- cleanup: a failed build leaves no directory in the store ------------------------------------
+# The statuses above are reported whether or not the half-built directory was removed, so the
+# cleanup `build` promises — anything short of OK leaves no `<out>/<name>/<version>` — is asserted
+# on what is actually on disk. Every guard here fails through `fail()`, which is one of the two
+# removal paths (the other is the `catch`, exercised just below).
+#
+# The scope directory must exist or the emptiness check would be vacuous: `find` on a missing path,
+# and the `|| true`, both yield nothing too, so a misplaced store would read as clean.
+if [ ! -d "${root}/guards/@aiqadam" ]; then
+  bad "the guard builds created no ${root}/guards/@aiqadam, so the cleanup check below would be vacuous"
+else
+  half_built="$(find "${root}/guards/@aiqadam" -mindepth 2 -maxdepth 2 -type d)"
+  if [ -z "$half_built" ]; then
+    ok "a failed build leaves no artifact directory in the store"
+  else
+    bad "a failed build left artifact directories: $(echo "$half_built" | tr '\n' ' ')"
+  fi
+fi
+
+# --- a broken install: a declared node_modules package whose required dependency is missing ------
+# The artifact's `node_modules` is copied by walking each package's required `dependencies`
+# (`copyNodeModulesClosure`): a required dependency that does not resolve is a broken install, not a
+# skip, so the build throws, `build`'s `catch` removes the half-built artifact, and nothing is left
+# behind. A fixture rather than a real qadam because no resolved tree ships a broken install.
+fixture="${root}/missing-required-dep"
+mkdir -p "${fixture}/qadam/src" "${fixture}/qadam/node_modules/fixture-native-dep"
+# `readEmitOptions` resolves `typescript` from the qadam's own directory, as a real qadam does; the
+# fixture borrows the workspace's copy so it needs no install of its own.
+ln -s "${repo}/node_modules/typescript" "${fixture}/qadam/node_modules/typescript"
+cat >"${fixture}/qadam/package.json" <<'EOF'
+{ "name": "@aiqadam/qadam-fixture", "version": "0.0.1" }
+EOF
+cat >"${fixture}/qadam/tsconfig.lib.json" <<'EOF'
+{}
+EOF
+cat >"${fixture}/qadam/src/index.ts" <<'EOF'
+import 'fixture-native-dep'
+export const fixture = true
+EOF
+cat >"${fixture}/qadam/node_modules/fixture-native-dep/package.json" <<'EOF'
+{ "name": "fixture-native-dep", "version": "1.0.0", "dependencies": { "fixture-missing-dep": "^1.0.0" } }
+EOF
+cat >"${fixture}/qadam/node_modules/fixture-native-dep/index.js" <<'EOF'
+module.exports = {}
+EOF
+# Run as a file, not from stdin, like the traversal block: the imported module is loaded by path.
+cat >"${fixture}/missing-required-dep.mjs" <<'EOF'
+import { existsSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+const { qadamArtifact } = await import(pathToFileURL(join(process.env.REPO, 'tools/scripts/qadams/bundle/qadam-artifact.mjs')).href)
+const config = { qadams: { '@aiqadam/qadam-fixture': { nodeModules: { 'fixture-native-dep': 'test fixture standing in for a package with a missing required dependency' } } } }
+const message = await qadamArtifact.build({ qadamDir: process.env.QADAM_DIR, outRoot: process.env.OUT, repoRoot: process.env.REPO, config, loadCheck: false }).then(() => null, (error) => error.message)
+const refused = typeof message === 'string' && message.includes('cannot resolve fixture-missing-dep')
+const parent = join(process.env.OUT, '@aiqadam', 'qadam-fixture')
+// `build` mkdirs `<out>/@aiqadam/qadam-fixture/<version>` before it can throw, so the parent's
+// existence proves the remove below is exercising the `catch`, not a failure that never got there.
+const created = existsSync(parent)
+const leftover = created ? readdirSync(parent) : []
+console.log(`${refused ? 'ok   ' : 'FAIL '} a node_modules package with an unresolvable required dependency fails the build${refused ? '' : ` (${message})`}`)
+console.log(`${created ? 'ok   ' : 'FAIL '} the artifact directory was created before the failure (the removal check is not vacuous)`)
+console.log(`${leftover.length === 0 ? 'ok   ' : 'FAIL '} and the half-built artifact is removed (${leftover.join(', ') || 'nothing left'})`)
+process.exit(refused && created && leftover.length === 0 ? 0 : 1)
+EOF
+REPO="$repo" QADAM_DIR="${fixture}/qadam" OUT="${fixture}/out" node "${fixture}/missing-required-dep.mjs"
+expect_exit "a missing required dependency leaves no artifact" 0 $?
 
 # --- --pack when every build fails: the archive index is still written, with no entries ---------
 node "$builder" --out "${root}/pack-failures" --qadams csv --config "${root}/empty-config.json" --pack --allow-failures >"${root}/pack-failures.log" 2>&1
