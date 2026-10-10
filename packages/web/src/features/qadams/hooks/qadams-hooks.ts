@@ -394,12 +394,20 @@ export const qadamsHooks = {
   useUnsupportedFrameworkSteps: ({
     flowId,
     flowVersionId,
+    flowVersionUpdated,
   }: {
     flowId: string;
     flowVersionId: string;
+    flowVersionUpdated: string;
   }) => {
     const query = useQuery<FlowVersionFrameworkCensus, Error>({
-      queryKey: ['framework-census-flow-version', flowId, flowVersionId],
+      // a draft keeps its id while edited; `updated` re-reads the census once a step's pin is saved
+      queryKey: [
+        'framework-census-flow-version',
+        flowId,
+        flowVersionId,
+        flowVersionUpdated,
+      ],
       queryFn: () =>
         qadamsApi.unsupportedFrameworkSteps({ flowId, flowVersionId }),
       enabled: !!flowId && !!flowVersionId,

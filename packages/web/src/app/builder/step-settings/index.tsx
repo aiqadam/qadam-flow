@@ -192,6 +192,7 @@ const StepSettingsContainer = () => {
             stepName={modifiedStep.name}
             flowId={flowVersion.flowId}
             flowVersionId={flowVersion.id}
+            flowVersionUpdated={flowVersion.updated}
           />
         )}
         {(modifiedStep.type === FlowActionType.PIECE ||

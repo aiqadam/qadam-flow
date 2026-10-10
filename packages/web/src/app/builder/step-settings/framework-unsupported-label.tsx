@@ -8,6 +8,7 @@ type FrameworkUnsupportedLabelProps = {
   stepName: string;
   flowId: string;
   flowVersionId: string;
+  flowVersionUpdated: string;
 };
 
 // ADR-0002 (#803): this release no longer runs the framework version the step's qadam was built
@@ -17,11 +18,13 @@ export function FrameworkUnsupportedLabel({
   stepName,
   flowId,
   flowVersionId,
+  flowVersionUpdated,
 }: FrameworkUnsupportedLabelProps) {
   const { t } = useTranslation();
   const { unsupportedStepNames } = qadamsHooks.useUnsupportedFrameworkSteps({
     flowId,
     flowVersionId,
+    flowVersionUpdated,
   });
   if (!(unsupportedStepNames ?? []).includes(stepName)) {
     return null;

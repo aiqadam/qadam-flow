@@ -18,13 +18,17 @@ export function ApStepNodeFrameworkUnsupported({
   stepName: string;
 }) {
   const { t } = useTranslation();
-  const [flowId, flowVersionId] = useBuilderStateContext((state) => [
-    state.flowVersion.flowId,
-    state.flowVersion.id,
-  ]);
+  const [flowId, flowVersionId, flowVersionUpdated] = useBuilderStateContext(
+    (state) => [
+      state.flowVersion.flowId,
+      state.flowVersion.id,
+      state.flowVersion.updated,
+    ],
+  );
   const { unsupportedStepNames } = qadamsHooks.useUnsupportedFrameworkSteps({
     flowId,
     flowVersionId,
+    flowVersionUpdated,
   });
   if (!(unsupportedStepNames ?? []).includes(stepName)) {
     return null;

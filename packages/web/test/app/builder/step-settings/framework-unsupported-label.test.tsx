@@ -48,6 +48,7 @@ async function render({
         stepName="step_1"
         flowId="flow_1"
         flowVersionId="version_1"
+        flowVersionUpdated="2026-01-01T00:00:00.000Z"
       />,
     );
   });
