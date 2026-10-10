@@ -277,7 +277,7 @@ async function resolveQadamPath({ packageName, isDevQadam }: ResolveQadamPathPar
     }
     // ADR-0003: the store holds the pinned version's own code, so it comes first. A version it does
     // not hold falls through to the image's build at that same version, an installed copy, and last
-    // to `resolveUnavailablePin` (#779; #808 replaces that last step).
+    // to `resolveUnavailablePin` (#779): the run-time net under #808's audited move.
     const pin = splitExactAlias(packageName)
     const storedPath = isNil(pin) ? null : await qadamVersionStoreResolver.findOfficialEntryPoint(pin)
     if (!isNil(storedPath)) {
@@ -410,7 +410,7 @@ enum QadamSource {
     DEV = 'dev',
     STORE = 'store',
     BUNDLED = 'bundled',
-    // The image's build at a version other than the pin's (`qadamPinFallback`), until #808.
+    // The image's build at a version other than the pin's (`qadamPinFallback`, the net under #808's audited move).
     BUNDLED_FALLBACK = 'bundled-fallback',
     INSTALLED = 'installed',
 }
