@@ -128,6 +128,28 @@ describe('UpdateThisStepLabel', () => {
     expect(dialogCalls).toHaveLength(0);
   });
 
+  it('shows the tool message, not the own-pin one, for a fresh import with a snapshot tool', async () => {
+    const text = await render({
+      qadamVersion: '0.5.0',
+      mark: '0.5.0',
+      toolVersion: '1.3.0-main.412',
+    });
+
+    expect(text).toContain('Update that tool.');
+    expect(text).not.toContain('Update its version.');
+    expect(dialogCalls).toHaveLength(0);
+  });
+
+  it('drops a mark equal to a release own pin when every tool is a release', async () => {
+    expect(
+      await render({
+        qadamVersion: '0.5.0',
+        mark: '0.5.0',
+        toolVersion: '1.3.0',
+      })
+    ).toBe('');
+  });
+
   it('drops a tool-origin mark once every tool pin is a release', async () => {
     expect(
       await render({

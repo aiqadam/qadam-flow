@@ -22,8 +22,9 @@ type UpdateThisStepLabelProps = {
 // ADR-0004: an import sets `exportedUnresolvedPin` on a step whose exporter could not move a
 // snapshot pin to a release. The mark is advisory builder state — a file or an editor can set it —
 // so it only points the person at the existing version update; it never moves or blocks anything.
-// A step's own mark holds while its version is still the recorded one. A mark that came from an
-// agent tool records the agent step's own version, so for those the tools' pins are what counts.
+// A step's own mark holds while its version is still the recorded, snapshot one. A mark that came
+// from an agent tool records the agent step's own version (a release), so the importer cannot tell
+// the origins apart here and the tools' pins are what counts.
 export function UpdateThisStepLabel({
   step,
   readonly,
@@ -34,9 +35,11 @@ export function UpdateThisStepLabel({
     return null;
   }
   const exactVersion = flowQadamUtil.getExactVersion(
-    step.settings.qadamVersion,
+    step.settings.qadamVersion
   );
-  const isOwnPinMarked = mark === exactVersion;
+  const isOwnPinMarked =
+    mark === exactVersion &&
+    qadamVersionParser.isSnapshot({ version: exactVersion });
   const hasSnapshotTool = hasSnapshotToolPin({ input: step.settings.input });
   if (!isOwnPinMarked && !hasSnapshotTool) {
     return null;
@@ -52,10 +55,10 @@ export function UpdateThisStepLabel({
       <p className="text-sm text-muted-foreground">
         {isOwnPinMarked
           ? t(
-              'This step was imported with a pre-release build that could not be moved to a released version. Update its version.',
+              'This step was imported with a pre-release build that could not be moved to a released version. Update its version.'
             )
           : t(
-              'This step was imported with an agent tool pinned to a pre-release build that could not be moved to a released version. Update that tool.',
+              'This step was imported with an agent tool pinned to a pre-release build that could not be moved to a released version. Update that tool.'
             )}
       </p>
       {isOwnPinMarked && !readonly && (
@@ -84,7 +87,7 @@ function hasSnapshotToolPin({
       parsed.success &&
       qadamVersionParser.isSnapshot({
         version: flowQadamUtil.getExactVersion(
-          parsed.data.qadamMetadata.qadamVersion,
+          parsed.data.qadamMetadata.qadamVersion
         ),
       })
     );
