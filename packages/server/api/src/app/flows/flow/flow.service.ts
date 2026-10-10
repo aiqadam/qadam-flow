@@ -433,12 +433,12 @@ export const flowService = (log: FastifyBaseLogger) => ({
                     projectId,
                     platformId,
                 })
-                await applyStatusChange({ id, projectId, newStatus: operation.request.status ?? FlowStatus.ENABLED }, log)
+                await applyStatusChange({ id, projectId, platformId, userId, newStatus: operation.request.status ?? FlowStatus.ENABLED, pinsAlreadyChecked: true }, log)
                 break
             }
 
             case FlowOperationType.CHANGE_STATUS: {
-                await applyStatusChange({ id, projectId, newStatus: operation.request.status }, log)
+                await applyStatusChange({ id, projectId, platformId, userId, newStatus: operation.request.status, pinsAlreadyChecked: false }, log)
                 break
             }
 
@@ -787,18 +787,25 @@ const assertFlowVersionPublishable = ({ flowVersion }: AssertFlowVersionPublisha
 // with its version as it was: the step is then left for the "update this step" marking, and the
 // run-time net (`qadamPinFallback`) still runs it meanwhile. Nothing here disables a flow (#435).
 async function moveUnavailableQadamPins({ flowVersion, projectId, platformId, userId, cause, log }: MoveUnavailableQadamPinsParams): Promise<FlowVersion> {
-    const { data, error } = await tryCatch(() => qadamPinMoveService(log).moveUnavailablePins({ flowVersion, projectId, platformId, cause, actorUserId: userId ?? undefined }))
+    const { data, error } = await tryCatch(() => qadamPinMoveService({ log }).moveUnavailablePins({ flowVersion, projectId, platformId, cause, actorUserId: userId ?? undefined }))
     if (error) {
         log.warn({ err: error, flowId: flowVersion.flowId, flowVersionId: flowVersion.id, cause }, '[flowService] could not check the flow\'s qadam pins for an unavailable version; leaving them as they are')
         return flowVersion
     }
+    data.stayed.forEach((stay) => {
+        log.warn({ flowId: flowVersion.flowId, flowVersionId: flowVersion.id, stepName: stay.stepName, qadamName: stay.qadamName, pinnedVersion: stay.version, reason: stay.reason, detail: stay.detail, cause }, '[flowService] a step is pinned to an unavailable qadam version and was not moved')
+    })
     return data.flowVersion
 }
 
 async function applyStatusChange(params: {
     id: FlowId
     projectId: ProjectId
+    platformId: PlatformId
+    userId: UserId | null
     newStatus: FlowStatus
+    // A publish has just checked the pins in this same request, so enabling does not check them again.
+    pinsAlreadyChecked: boolean
 }, log: FastifyBaseLogger): Promise<void> {
     const triggerTimeout = system.getNumberOrThrow(AppSystemProp.TRIGGER_TIMEOUT_SECONDS)
     await distributedLock(log).runExclusive({
@@ -819,12 +826,12 @@ async function applyStatusChange(params: {
                 flowId: flowToUpdate.id,
                 versionId: publishedFlowVersionId,
             })
-            const publishedFlowVersion = params.newStatus === FlowStatus.ENABLED
+            const publishedFlowVersion = params.newStatus === FlowStatus.ENABLED && !params.pinsAlreadyChecked
                 ? await moveUnavailableQadamPins({
                     flowVersion: storedPublishedFlowVersion,
                     projectId: params.projectId,
-                    platformId: await projectService(log).getPlatformId(params.projectId),
-                    userId: null,
+                    platformId: params.platformId,
+                    userId: params.userId,
                     cause: 'ENABLE',
                     log,
                 })
@@ -972,7 +979,6 @@ type MoveUnavailableQadamPinsParams = {
     flowVersion: FlowVersion
     projectId: ProjectId
     platformId: PlatformId
-    // Null when a status change, not a person's publish, is the cause.
     userId: UserId | null
     cause: QadamPinMoveCause
     log: FastifyBaseLogger

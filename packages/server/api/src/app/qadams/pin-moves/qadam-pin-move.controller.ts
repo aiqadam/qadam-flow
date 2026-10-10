@@ -8,15 +8,15 @@ import { qadamPinMoveService } from './qadam-pin-move.service'
 
 export const qadamPinMoveController: FastifyPluginAsyncZod = async (app) => {
     app.get('/', ListQadamPinMovesRequest, async (req) => {
-        return qadamPinMoveService(req.log).list({ platformId: req.principal.platform.id, query: req.query })
+        return qadamPinMoveService({ log: req.log }).list({ platformId: req.principal.platform.id, query: req.query })
     })
 
     app.get('/:id', GetQadamPinMoveRequest, async (req) => {
-        return qadamPinMoveService(req.log).getOneOrThrow({ id: req.params.id, platformId: req.principal.platform.id })
+        return qadamPinMoveService({ log: req.log }).getOneOrThrow({ id: req.params.id, platformId: req.principal.platform.id })
     })
 
     app.post('/:id/revert', RevertQadamPinMoveRequest, async (req) => {
-        return qadamPinMoveService(req.log).revert({ id: req.params.id, platformId: req.principal.platform.id, userId: req.principal.id })
+        return qadamPinMoveService({ log: req.log }).revert({ id: req.params.id, platformId: req.principal.platform.id, userId: req.principal.id })
     })
 }
 

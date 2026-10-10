@@ -5,10 +5,16 @@ import { isNil, ParsedQadamVersion, qadamVersionParser } from '@aiqadam/shared'
 // only when ALL of these hold, and the verdict names the first that does not:
 //   1. the image's version is inside the pin's caret range (ADR-0001), prereleases counted
 //      (ADR-0004), and never below the pin;
-//   2. the props are compatible, where metadata for the pinned version exists. A pin with no
-//      metadata at all (never published: the #411 / #422 / #432 population) has no props check; a
-//      snapshot pin with no metadata is not moved, ADR-0004 adds no exception to ADR-0003;
+//   2. the props are compatible, where metadata for the pinned version exists. Only a pin the
+//      catalogue positively does not list (never published: the #411 / #422 / #432 population) has
+//      no props check. A pin whose metadata cannot be read is not moved, and neither is a snapshot
+//      pin without its own metadata: ADR-0004 adds no exception to ADR-0003;
 //   3. the target loaded successfully.
+// Release pins and snapshot builds: `decide` counts prereleases inside the caret (ADR-0004), so a
+// release pin may move onto a snapshot build the image ships, which `checkNet` never allows. That
+// difference is deliberate: ADR-0004 lets a `-main` instance's pins follow its snapshots, and the
+// audited move has the props, load and audit checks the net lacks. Reviewed and accepted in #882.
+//
 // It does no I/O. Whoever calls it reads the image, the metadata and the load result, and writes
 // the audit record (`qadamPinMoveService`, #808). What no check here can see: a target that loads
 // and describes compatible props but fails when an action runs (activepieces#15957). The audit
@@ -20,6 +26,7 @@ import { isNil, ParsedQadamVersion, qadamVersionParser } from '@aiqadam/shared'
 // It lives in `server-utils`, not in the API, because the engine's run-time net (`checkNet`) asks
 // the same caret rule; the engine takes it through its own alias like the version store's reader.
 export const qadamPinFallbackDecision = {
+    // Counts prereleases inside the caret: a release pin can move onto a snapshot build (see above).
     decide: ({ pinnedVersion, image, props }: DecideParams): MoveVerdict => {
         const pin = qadamVersionParser.parsePin({ pin: pinnedVersion })
         if (isNil(pin)) {
@@ -55,7 +62,9 @@ export const qadamPinFallbackDecision = {
     // image's release build inside the caret range. The engine and the API's per-lookup fallback
     // (#424) each carried their own copy of this rule; both are nets that #808's audited move
     // replaces once every path that can move a pin does so. A snapshot pin never gets a substitute
-    // here (it needs its own metadata), and a release pin never gets a snapshot build.
+    // here (it needs its own metadata), and a release pin never gets a snapshot build, unlike
+    // `decide`, which counts prereleases inside the caret: the net has no props, load or audit check
+    // to stand behind a move onto unreleased code.
     checkNet: ({ pinnedVersion, imageVersion }: CheckNetParams): NetVerdict => {
         const pin = qadamVersionParser.parse({ version: pinnedVersion })
         if (isNil(pin)) {
@@ -86,13 +95,20 @@ export const qadamPinFallbackDecision = {
 }
 
 function checkProps({ pinIsSnapshot, props }: { pinIsSnapshot: boolean, props: PropsInputs }): PropsStage {
-    if (isNil(props.pinMetadata)) {
-        if (pinIsSnapshot) {
-            return {
-                status: 'stay',
-                verdict: stay({ reason: 'snapshot-without-metadata', detail: 'a snapshot pin is moved only when its own metadata.json is available to check the props against (ADR-0004)' }),
-            }
+    const { pin } = props
+    if (pinIsSnapshot && pin.status !== 'found') {
+        return {
+            status: 'stay',
+            verdict: stay({ reason: 'snapshot-without-metadata', detail: 'a snapshot pin is moved only when its own metadata.json is available to check the props against (ADR-0004)' }),
         }
+    }
+    if (pin.status === 'unknown') {
+        return {
+            status: 'stay',
+            verdict: stay({ reason: 'props-unverifiable', detail: 'this instance cannot tell whether the pinned version was ever published or what it describes (the catalogue or the store cannot be read), so its props cannot be checked' }),
+        }
+    }
+    if (pin.status === 'never-published') {
         return { status: 'ok', propsCheck: 'not-checked-no-metadata' }
     }
     if (isNil(props.target) || isNil(props.imageMetadata)) {
@@ -101,7 +117,7 @@ function checkProps({ pinIsSnapshot, props }: { pinIsSnapshot: boolean, props: P
             verdict: stay({ reason: 'props-unverifiable', detail: 'metadata exists for the pinned version, but the step\'s action or trigger, or the image\'s metadata, is missing to compare it with' }),
         }
     }
-    const result = props.checker.check({ from: props.pinMetadata, to: props.imageMetadata, target: props.target })
+    const result = props.checker.check({ from: pin.metadata, to: props.imageMetadata, target: props.target })
     if (!result.compatible) {
         return { status: 'stay', verdict: stay({ reason: 'props-incompatible', detail: result.reason }) }
     }
@@ -184,15 +200,22 @@ export type LoadOutcome =
     | { loaded: false, reason: string }
 
 export type PropsInputs = {
-    // `metadata.json` of the pinned version, or null where none exists (never published; a snapshot
-    // missing from this instance's store).
-    pinMetadata: unknown
+    pin: PinMetadata
     // `metadata.json` of the image's build.
     imageMetadata: unknown
     // The action or trigger the step uses; the props check compares that one only.
     target: StepTarget | null
     checker: PropsCompatibilityChecker
 }
+
+// What this instance knows about the pinned version's metadata. `never-published` is a positive
+// answer, not a missing one: the catalogue was read and has no entry for the version (the #411 /
+// #422 / #432 population, ADR-0003), and only that population skips the props check. An unreadable
+// catalogue or store is `unknown`, which never moves a step.
+export type PinMetadata =
+    | { status: 'found', metadata: unknown }
+    | { status: 'never-published' }
+    | { status: 'unknown' }
 
 export type StepTarget = {
     kind: 'action' | 'trigger'

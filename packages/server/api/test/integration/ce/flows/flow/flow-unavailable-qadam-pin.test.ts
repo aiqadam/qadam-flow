@@ -32,7 +32,7 @@ const IMAGE_VERSION = '0.1.5'
 // publish and enable paths.
 const seams = vi.hoisted(() => ({
     imageBuild: vi.fn(),
-    pinMetadata: vi.fn(async () => null),
+    pinMetadata: vi.fn(async (): Promise<{ status: 'never-published' }> => ({ status: 'never-published' })),
     propsChecker: { check: () => ({ compatible: true as const }) },
 }))
 
@@ -74,7 +74,7 @@ describe('publishing and enabling a flow with a qadam pin that is not available 
         expect((await db.findOneByOrFail<Flow>('flow', { id: flow.id })).status).toBe(FlowStatus.ENABLED)
     })
 
-    it('moves the pin of an already published version when the flow is enabled, attributed to the status change', async () => {
+    it('moves the pin of an already published version when the flow is enabled, attributed to the person who enabled it', async () => {
         const ctx = await createTestContext(app)
         const { flow, flowVersion } = await seedFlow({ ctx, state: FlowVersionState.LOCKED, status: FlowStatus.DISABLED })
 
@@ -83,7 +83,7 @@ describe('publishing and enabling a flow with a qadam pin that is not available 
         expect(response.statusCode).toBe(StatusCodes.OK)
         expect(pinOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: flowVersion.id }) })).toBe(IMAGE_VERSION)
         const records = await db.find<QadamPinMove>('qadam_pin_move', { platformId: ctx.platform.id })
-        expect(records).toEqual([expect.objectContaining({ cause: 'ENABLE', movedBy: null, fromVersion: STALE_PIN, toVersion: IMAGE_VERSION })])
+        expect(records).toEqual([expect.objectContaining({ cause: 'ENABLE', movedBy: ctx.user.id, fromVersion: STALE_PIN, toVersion: IMAGE_VERSION })])
     })
 
     it('does not move a pin when disabling a flow', async () => {
@@ -109,6 +109,7 @@ describe('publishing and enabling a flow with a qadam pin that is not available 
         expect(published.state).toBe(FlowVersionState.LOCKED)
         expect(pinOf({ flowVersion: published })).toBe(STALE_PIN)
         expect(await db.find('qadam_pin_move', { platformId: ctx.platform.id })).toEqual([])
+        expect(seams.imageBuild).toHaveBeenCalledTimes(1)
     })
 
     it('still publishes, with the pin as it was, when checking the pin fails', async () => {
@@ -121,6 +122,38 @@ describe('publishing and enabling a flow with a qadam pin that is not available 
         expect(response.statusCode).toBe(StatusCodes.OK)
         expect(pinOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: flowVersion.id }) })).toBe(STALE_PIN)
         expect(await db.find('qadam_pin_move', { platformId: ctx.platform.id })).toEqual([])
+        expect(seams.imageBuild).toHaveBeenCalledTimes(1)
+    })
+
+    it('checks the pins once when a publish also enables the flow, and attributes the move to the publisher', async () => {
+        const ctx = await createTestContext(app)
+        const { flow } = await seedFlow({ ctx, state: FlowVersionState.DRAFT, status: FlowStatus.DISABLED })
+
+        await ctx.post(`/v1/flows/${flow.id}`, { type: FlowOperationType.LOCK_AND_PUBLISH, request: {} })
+
+        expect(seams.imageBuild).toHaveBeenCalledTimes(1)
+        expect(await db.find<QadamPinMove>('qadam_pin_move', { platformId: ctx.platform.id })).toEqual([expect.objectContaining({ cause: 'PUBLISH', movedBy: ctx.user.id })])
+    })
+
+    it('keeps a reverted pin when the draft an edit copied from the published version is published', async () => {
+        const ctx = await createTestContext(app)
+        const { flow, flowVersion } = await seedFlow({ ctx, state: FlowVersionState.DRAFT, status: FlowStatus.DISABLED })
+        await ctx.post(`/v1/flows/${flow.id}`, { type: FlowOperationType.LOCK_AND_PUBLISH, request: { status: FlowStatus.DISABLED } })
+        const [record] = await db.find<QadamPinMove>('qadam_pin_move', { platformId: ctx.platform.id })
+        // An edit after a publish: the builder copies the published version into a new draft.
+        const published = await db.findOneByOrFail<FlowVersion>('flow_version', { id: flowVersion.id })
+        const draft = createMockFlowVersion({ flowId: flow.id, updatedBy: ctx.user.id, state: FlowVersionState.DRAFT, valid: true, trigger: published.trigger, created: new Date().toISOString() })
+        await db.save('flow_version', draft)
+
+        const revert = await ctx.post(`/v1/qadam-pin-moves/${record.id}/revert`)
+        expect(revert.statusCode).toBe(StatusCodes.OK)
+        const publish = await ctx.post(`/v1/flows/${flow.id}`, { type: FlowOperationType.LOCK_AND_PUBLISH, request: { status: FlowStatus.DISABLED } })
+
+        expect(publish.statusCode).toBe(StatusCodes.OK)
+        const live = await db.findOneByOrFail<{ publishedVersionId: string }>('flow', { id: flow.id })
+        expect(live.publishedVersionId).toBe(draft.id)
+        expect(pinOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: draft.id }) })).toBe(STALE_PIN)
+        expect(await db.find('qadam_pin_move', { platformId: ctx.platform.id })).toEqual([expect.objectContaining({ id: record.id, status: 'REVERTED' })])
     })
 })
 

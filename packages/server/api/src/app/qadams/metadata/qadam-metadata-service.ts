@@ -1,5 +1,5 @@
 import { QadamMetadata, QadamMetadataModel, QadamMetadataModelSummary, QadamPackageInformation, qadamTranslation } from '@aiqadam/qadams-framework'
-import { apVersionUtil, qadamPinFallbackDecision } from '@aiqadam/server-utils'
+import { apVersionUtil, qadamPinFallbackDecision, qadamVersionStoreReader } from '@aiqadam/server-utils'
 import {
     apId,
     assertNotNullOrUndefined,
@@ -19,17 +19,20 @@ import {
     QadamType,
     qadamVersionParser,
     SuggestionType,
+    tryCatch,
 } from '@aiqadam/shared'
 import dayjs from 'dayjs'
 import { FastifyBaseLogger } from 'fastify'
 import semVer from 'semver'
 import { EntityManager, In, IsNull } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
+import { system } from '../../helper/system/system'
+import { AppSystemProp } from '../../helper/system/system-props'
 import { qadamTagService } from '../tags/qadams/qadam-tag.service'
 import { isOfficialQadamsInstallEnabled, qadamCache, QadamRegistryEntry, shadowKey } from './qadam-cache'
 import { qadamContextVersion } from './qadam-context-version'
 import { QadamMetadataEntity, QadamMetadataSchema } from './qadam-metadata-entity'
-import { filterQadamBasedOnType, isNewerVersion, isSupportedRelease, lastVersionOfEachQadam, loadBundledQadams, qadamListUtils } from './utils'
+import { filterQadamBasedOnType, findImageBuild, isNewerVersion, isSupportedRelease, lastVersionOfEachQadam, loadBundledQadams, qadamListUtils } from './utils'
 
 export const qadamRepos = repoFactory(QadamMetadataEntity)
 
@@ -84,13 +87,15 @@ export const qadamMetadataService = (log: FastifyBaseLogger) => {
         // Whether the instance holds exactly this pin, with no stand-in: `get` (and `resolveVersion`)
         // answer an exact pin that nothing holds with the image's build inside its caret range (#424,
         // the run-time net), so they cannot tell a pin that is there from one that is substituted.
-        // #808's move asks this instead. A range pin, or a pin that is not a version, is not asked.
+        // #808's move asks this instead. It holds the pin when the registry has it (database rows and
+        // the image's builds) or the version store does, which the engine reads first (#779). A range
+        // pin, or a pin that is not a version, is not asked.
         async isPinAvailable({ platformId, version, name }: IsPinAvailableParams): Promise<boolean> {
             if (!qadamVersionParser.isExact({ version })) {
                 return false
             }
             const match = await findExactVersion(log, { name, version, platformId, allowBundledFallback: false })
-            return !isNil(match)
+            return !isNil(match) || await storeHoldsPin({ name, version })
         },
         // The version `get` resolves a pin to, without reading the qadam row itself: the registry
         // it resolves through selects named columns only, so it answers on a database whose
@@ -375,7 +380,7 @@ const findExactVersion = async (
         if (!allowBundledFallback || (!isNil(version) && qadamVersionParser.isSnapshot({ version }))) {
             return undefined
         }
-        return findBundledFallback({ log, name, requestedBaseVersion: versionToSearch?.baseVersion, currentRelease, platformId })
+        return findBundledFallback({ log, name, requestedBaseVersion: versionToSearch?.baseVersion, platformId })
     }
 
     const sortedEntries = matchingRegistryEntries.sort(sortByVersionDescending)
@@ -390,22 +395,17 @@ const findExactVersion = async (
 // nothing holds, inside the pin's caret range (`qadamPinFallbackDecision.checkNet`, the rule the
 // engine's `qadamPinFallback` shares), and logs it. It is read-only, so it cannot audit or revert;
 // `qadamPinMoveService` moves the step itself, with both, when its flow is published or enabled.
-const findBundledFallback = async ({ log, name, requestedBaseVersion, currentRelease, platformId }: {
+const findBundledFallback = async ({ log, name, requestedBaseVersion, platformId }: {
     log: FastifyBaseLogger
     name: string
     requestedBaseVersion: string | undefined
-    currentRelease: string
     platformId: string | undefined
 }): Promise<{ name: string, version: string, platformId: string | undefined } | undefined> => {
-    const bundledQadams = await loadBundledQadams(log)
-    const bundled = bundledQadams.find((qadam) => qadam.name === name)
+    const bundled = findImageBuild({ bundled: await loadBundledQadams(log), name, platformId })
     if (isNil(bundled)) {
         return undefined
     }
     if (!isNil(requestedBaseVersion) && !qadamPinFallbackDecision.checkNet({ pinnedVersion: requestedBaseVersion, imageVersion: bundled.version }).allowed) {
-        return undefined
-    }
-    if (!filterQadamBasedOnType(platformId, bundled) || !isSupportedRelease(currentRelease, bundled)) {
         return undefined
     }
     if (!isNil(requestedBaseVersion) && requestedBaseVersion !== bundled.version) {
@@ -416,6 +416,21 @@ const findBundledFallback = async ({ log, name, requestedBaseVersion, currentRel
         version: bundled.version,
         platformId: bundled.platformId,
     }
+}
+
+// The official namespace of the version store only: a platform's custom qadams are not in it yet.
+// A store that cannot be opened or read holds nothing as far as this answer goes; the registry
+// answer stands.
+async function storeHoldsPin({ name, version }: { name: string, version: string }): Promise<boolean> {
+    if (!isOfficialQadamName(name)) {
+        return false
+    }
+    const { data: opened } = await tryCatch(() => qadamVersionStoreReader.open({ root: system.getOrThrow(AppSystemProp.QADAM_VERSION_STORE_PATH) }))
+    if (isNil(opened) || !opened.ok) {
+        return false
+    }
+    const { data: stored } = await tryCatch(() => opened.reader.read({ coordinates: { platformId: null, name, version } }))
+    return stored?.status === 'present'
 }
 
 const findNextExcludedVersion = (version: string | undefined): { baseVersion: string, nextExcludedVersion: string } | undefined => {

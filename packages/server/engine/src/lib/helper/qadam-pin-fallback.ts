@@ -14,17 +14,9 @@ import { qadamPinFallbackDecision } from '@aiqadam/server-utils/qadam-pin-fallba
 // `metadata.json` and a props check (ADR-0004), and a release pin never gets a snapshot build (a
 // release number names released bytes).
 export const qadamPinFallback = {
-    check: ({ pinnedVersion, imageVersion }: CheckParams): QadamPinFallbackVerdict => {
-        return qadamPinFallbackDecision.checkNet({ pinnedVersion, imageVersion })
-    },
+    check: (params: CheckParams): QadamPinFallbackVerdict => qadamPinFallbackDecision.checkNet(params),
 }
 
-type CheckParams = {
-    pinnedVersion: string
-    // What the image ships for the qadam's name, or null when it ships none (or no readable version).
-    imageVersion: string | null
-}
+type CheckParams = Parameters<typeof qadamPinFallbackDecision.checkNet>[0]
 
-export type QadamPinFallbackVerdict =
-    | { allowed: true }
-    | { allowed: false, reason: string }
+export type QadamPinFallbackVerdict = ReturnType<typeof qadamPinFallbackDecision.checkNet>

@@ -4,8 +4,8 @@ import { Migration } from '../../migration'
 // ADR-0003 / #808: the audit record of a step moved off an unavailable qadam version, which the
 // revert action works from. Additive: a new table, nothing existing is touched, so rolling back only
 // drops the records.
-export class AddQadamPinMove1791625957069 implements Migration {
-    name = 'AddQadamPinMove1791625957069'
+export class AddQadamPinMove1791630589901 implements Migration {
+    name = 'AddQadamPinMove1791630589901'
     breaking = false
     release = '2.0.0'
 
@@ -34,6 +34,9 @@ export class AddQadamPinMove1791625957069 implements Migration {
         `)
         await queryRunner.query(`
             CREATE INDEX "idx_qadam_pin_move_platform_id_created" ON "qadam_pin_move" ("platformId", "created")
+        `)
+        await queryRunner.query(`
+            CREATE INDEX "idx_qadam_pin_move_project_id" ON "qadam_pin_move" ("projectId")
         `)
         await queryRunner.query(`
             CREATE INDEX "idx_qadam_pin_move_flow_id" ON "qadam_pin_move" ("flowId")
@@ -77,6 +80,9 @@ export class AddQadamPinMove1791625957069 implements Migration {
         `)
         await queryRunner.query(`
             DROP INDEX "public"."idx_qadam_pin_move_flow_id"
+        `)
+        await queryRunner.query(`
+            DROP INDEX "public"."idx_qadam_pin_move_project_id"
         `)
         await queryRunner.query(`
             DROP INDEX "public"."idx_qadam_pin_move_platform_id_created"

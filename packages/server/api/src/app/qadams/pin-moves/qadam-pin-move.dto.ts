@@ -9,8 +9,9 @@ export const QadamPinMoveStatus = z.enum(['APPLIED', 'REVERTED'])
 // What caused the move: the step's flow was published, or enabled with its published version.
 export const QadamPinMoveCause = z.enum(['PUBLISH', 'ENABLE'])
 
-// How the props were checked: against the pinned version's metadata, or not at all because none
-// exists (a pin that was never published, ADR-0003 "Versions that were never published").
+// How the props were checked: against the pinned version's metadata, or not at all because the
+// catalogue was read and has no entry for it (a pin that was never published, ADR-0003 "Versions
+// that were never published"). An unreadable catalogue is not this: that step is not moved.
 export const QadamPinMovePropsCheck = z.enum(['compatible', 'not-checked-no-metadata'])
 
 export const QadamPinMove = z.object({

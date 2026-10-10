@@ -1,4 +1,5 @@
-import { FlowAction, FlowActionType, FlowStatus, FlowTrigger, FlowTriggerType, FlowVersion, FlowVersionState, PackageType, PlatformRole, PrincipalType, PropertyExecutionType, QadamType, SeekPage } from '@aiqadam/shared'
+import { PinMetadata } from '@aiqadam/server-utils'
+import { apId, FlowAction, FlowActionType, FlowStatus, FlowTrigger, FlowTriggerType, FlowVersion, FlowVersionState, PackageType, PlatformRole, PrincipalType, PropertyExecutionType, QadamType, SeekPage } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { qadamCache } from '../../../../src/app/qadams/metadata/qadam-cache'
@@ -116,7 +117,7 @@ describe('qadamPinMoveService.moveUnavailablePins', () => {
         const { flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
         const check = vi.fn(() => ({ compatible: true as const }))
 
-        const result = await moveWith({ ctx, flowVersion, seams: fakeSeams({ imageVersion: '0.4.5', pinMetadata: { pinned: true }, check }) })
+        const result = await moveWith({ ctx, flowVersion, seams: fakeSeams({ imageVersion: '0.4.5', pinMetadata: { status: 'found', metadata: { pinned: true } }, check }) })
 
         expect(check).toHaveBeenCalledWith({ from: { pinned: true }, to: { image: true }, target: { kind: 'trigger', name: 'do_it' } })
         expect(result.moved).toEqual([expect.objectContaining({ propsCheck: 'compatible' })])
@@ -126,11 +127,43 @@ describe('qadamPinMoveService.moveUnavailablePins', () => {
         const ctx = await createTestContext(app)
         const { flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
 
-        const result = await moveWith({ ctx, flowVersion, seams: fakeSeams({ imageVersion: '0.4.5', pinMetadata: { pinned: true }, check: () => ({ compatible: false, reason: 'prop name was removed' }) }) })
+        const result = await moveWith({ ctx, flowVersion, seams: fakeSeams({ imageVersion: '0.4.5', pinMetadata: { status: 'found', metadata: { pinned: true } }, check: () => ({ compatible: false, reason: 'prop name was removed' }) }) })
 
         expect(result.moved).toEqual([])
         expect(result.stayed).toEqual([expect.objectContaining({ reason: 'props-incompatible', detail: 'prop name was removed' })])
         expect(await db.find('qadam_pin_move', { platformId: ctx.platform.id })).toEqual([])
+    })
+
+    it('does not move a pin when the instance cannot tell whether it was ever published', async () => {
+        const ctx = await createTestContext(app)
+        const { flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
+
+        const result = await moveWith({ ctx, flowVersion, seams: fakeSeams({ imageVersion: '0.4.5', pinMetadata: { status: 'unknown' } }) })
+
+        expect(result.moved).toEqual([])
+        expect(result.stayed).toEqual([expect.objectContaining({ reason: 'props-unverifiable' })])
+        expect(await db.find('qadam_pin_move', { platformId: ctx.platform.id })).toEqual([])
+    })
+
+    it('drops a planned move whose step a person reverted while it was being planned', async () => {
+        const ctx = await createTestContext(app)
+        const { flow, flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
+        const seams = fakeSeams({ imageVersion: '0.4.5' })
+        seams.imageBuild.mockImplementation(async () => {
+            const now = new Date().toISOString()
+            await db.save('qadam_pin_move', {
+                id: apId(), created: now, updated: now, platformId: ctx.platform.id, projectId: ctx.project.id, flowId: flow.id, flowVersionId: flowVersion.id,
+                stepName: 'step_1', qadamName: QADAM, fromVersion: '0.4.2', toVersion: '0.4.5', propsCheck: 'not-checked-no-metadata', cause: 'PUBLISH', status: 'REVERTED',
+                movedBy: null, revertedAt: now, revertedBy: ctx.user.id,
+            })
+            return { build: { version: '0.4.5', load: { loaded: true } }, metadata: { image: true } }
+        })
+
+        const result = await moveWith({ ctx, flowVersion, seams })
+
+        expect(result.moved).toEqual([])
+        expect(result.stayed).toEqual([expect.objectContaining({ stepName: 'step_1', reason: 'reverted-by-user' })])
+        expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: flowVersion.id }) })).toEqual(['0.4.2'])
     })
 
     it('does not touch a pin the instance holds, and does not even look at the image for it', async () => {
@@ -201,7 +234,7 @@ describe('qadamPinMoveService.moveUnavailablePins', () => {
         const stranger = await createTestContext(app)
         const { flowVersion } = await seedFlow({ ctx: owner, pins: ['0.4.2'] })
 
-        await expect(moveWith({ ctx: stranger, flowVersion, seams: fakeSeams({ imageVersion: '0.4.5' }) })).rejects.toMatchObject({ error: { code: 'ENTITY_NOT_FOUND' } })
+        await expect(moveWith({ ctx: stranger, flowVersion, seams: fakeSeams({ imageVersion: '0.4.5' }) })).rejects.toMatchObject({ error: { code: 'ENTITY_NOT_FOUND', params: { entityType: 'flow' } } })
         expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: flowVersion.id }) })).toEqual(['0.4.2'])
     })
 
@@ -209,7 +242,7 @@ describe('qadamPinMoveService.moveUnavailablePins', () => {
         const ctx = await createTestContext(app)
         const { flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
         const first = await moveWith({ ctx, flowVersion, seams: fakeSeams({ imageVersion: '0.4.5' }) })
-        await qadamPinMoveService(app.log).revert({ id: first.moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })
+        await qadamPinMoveService({ log: app.log }).revert({ id: first.moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })
         const reverted = await db.findOneByOrFail<FlowVersion>('flow_version', { id: flowVersion.id })
 
         const second = await moveWith({ ctx, flowVersion: reverted, seams: fakeSeams({ imageVersion: '0.4.5' }) })
@@ -226,7 +259,7 @@ describe('qadamPinMoveService.revert', () => {
         const { flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
         const { moved } = await moveWith({ ctx, flowVersion, seams: fakeSeams({ imageVersion: '0.4.5' }) })
 
-        const reverted = await qadamPinMoveService(app.log).revert({ id: moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })
+        const reverted = await qadamPinMoveService({ log: app.log }).revert({ id: moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })
 
         expect(reverted).toMatchObject({ id: moved[0].id, status: 'REVERTED', revertedBy: ctx.user.id })
         expect(reverted.revertedAt).not.toBeNull()
@@ -234,13 +267,30 @@ describe('qadamPinMoveService.revert', () => {
         expect(await db.findOneByOrFail<QadamPinMove>('qadam_pin_move', { id: moved[0].id })).toMatchObject({ status: 'REVERTED', fromVersion: '0.4.2', toVersion: '0.4.5' })
     })
 
+    it('also puts the pin back in a draft that was copied from the moved version, so publishing it does not undo the revert', async () => {
+        const ctx = await createTestContext(app)
+        const { flow, flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
+        const { moved, flowVersion: movedVersion } = await moveWith({ ctx, flowVersion, seams: fakeSeams({ imageVersion: '0.4.5' }) })
+        await db.update('flow_version', flowVersion.id, { state: FlowVersionState.LOCKED })
+        const draft = createMockFlowVersion({ flowId: flow.id, updatedBy: ctx.user.id, state: FlowVersionState.DRAFT, valid: true, trigger: movedVersion.trigger })
+        await db.save('flow_version', draft)
+        const editedDraft = createMockFlowVersion({ flowId: flow.id, updatedBy: ctx.user.id, state: FlowVersionState.DRAFT, valid: true, trigger: { ...movedVersion.trigger, settings: { ...movedVersion.trigger.settings, qadamVersion: '0.4.9' } } })
+        await db.save('flow_version', editedDraft)
+
+        await qadamPinMoveService({ log: app.log }).revert({ id: moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })
+
+        expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: flowVersion.id }) })).toEqual(['0.4.2'])
+        expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: draft.id }) })).toEqual(['0.4.2'])
+        expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: editedDraft.id }) })).toEqual(['0.4.9'])
+    })
+
     it('refuses a second revert', async () => {
         const ctx = await createTestContext(app)
         const { flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
         const { moved } = await moveWith({ ctx, flowVersion, seams: fakeSeams({ imageVersion: '0.4.5' }) })
-        await qadamPinMoveService(app.log).revert({ id: moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })
+        await qadamPinMoveService({ log: app.log }).revert({ id: moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })
 
-        await expect(qadamPinMoveService(app.log).revert({ id: moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })).rejects.toMatchObject({ error: { code: 'VALIDATION' } })
+        await expect(qadamPinMoveService({ log: app.log }).revert({ id: moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })).rejects.toMatchObject({ error: { code: 'VALIDATION' } })
     })
 
     it('refuses when the step has been changed since, and leaves the record applied', async () => {
@@ -251,7 +301,7 @@ describe('qadamPinMoveService.revert', () => {
         edited.settings.qadamVersion = '0.4.9'
         await db.update('flow_version', flowVersion.id, { trigger: edited })
 
-        await expect(qadamPinMoveService(app.log).revert({ id: moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })).rejects.toMatchObject({ error: { code: 'VALIDATION' } })
+        await expect(qadamPinMoveService({ log: app.log }).revert({ id: moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })).rejects.toMatchObject({ error: { code: 'VALIDATION' } })
 
         expect(await db.findOneByOrFail<QadamPinMove>('qadam_pin_move', { id: moved[0].id })).toMatchObject({ status: 'APPLIED' })
         expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: flowVersion.id }) })).toEqual(['0.4.9'])
@@ -263,7 +313,7 @@ describe('qadamPinMoveService.revert', () => {
         const { flowVersion } = await seedFlow({ ctx: owner, pins: ['0.4.2'] })
         const { moved } = await moveWith({ ctx: owner, flowVersion, seams: fakeSeams({ imageVersion: '0.4.5' }) })
 
-        await expect(qadamPinMoveService(app.log).revert({ id: moved[0].id, platformId: stranger.platform.id, userId: stranger.user.id })).rejects.toMatchObject({ error: { code: 'ENTITY_NOT_FOUND' } })
+        await expect(qadamPinMoveService({ log: app.log }).revert({ id: moved[0].id, platformId: stranger.platform.id, userId: stranger.user.id })).rejects.toMatchObject({ error: { code: 'ENTITY_NOT_FOUND' } })
         expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: flowVersion.id }) })).toEqual(['0.4.5'])
         expect(await db.findOneByOrFail<QadamPinMove>('qadam_pin_move', { id: moved[0].id })).toMatchObject({ status: 'APPLIED' })
     })
@@ -276,7 +326,7 @@ describe('/v1/qadam-pin-moves', () => {
         const second = await seedFlow({ ctx, pins: ['0.4.1'] })
         const firstMove = await moveWith({ ctx, flowVersion: first.flowVersion, seams: fakeSeams({ imageVersion: '0.4.5' }) })
         await moveWith({ ctx, flowVersion: second.flowVersion, seams: fakeSeams({ imageVersion: '0.4.5' }) })
-        await qadamPinMoveService(app.log).revert({ id: firstMove.moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })
+        await qadamPinMoveService({ log: app.log }).revert({ id: firstMove.moved[0].id, platformId: ctx.platform.id, userId: ctx.user.id })
 
         const all = (await ctx.get('/v1/qadam-pin-moves')).json<SeekPage<QadamPinMove>>()
         const byFlow = (await ctx.get('/v1/qadam-pin-moves', { flowId: second.flow.id })).json<SeekPage<QadamPinMove>>()
@@ -338,17 +388,17 @@ describe('/v1/qadam-pin-moves', () => {
 
 // A call as `qadamPinMoveService` makes it from a publish, against the fixture qadam's fake image.
 function moveWith({ ctx, flowVersion, seams, actorUserId }: { ctx: TestContext, flowVersion: FlowVersion, seams: FakeSeams, actorUserId?: string }) {
-    return qadamPinMoveService(app.log, seams).moveUnavailablePins(moveParams({ ctx, flowVersion, actorUserId }))
+    return qadamPinMoveService({ log: app.log, seams }).moveUnavailablePins(moveParams({ ctx, flowVersion, actorUserId }))
 }
 
 function moveParams({ ctx, flowVersion, actorUserId }: { ctx: TestContext, flowVersion: FlowVersion, actorUserId?: string }) {
     return { flowVersion, projectId: ctx.project.id, platformId: ctx.platform.id, cause: 'PUBLISH' as const, actorUserId }
 }
 
-function fakeSeams({ imageVersion, loaded = true, pinMetadata = null, check = () => ({ compatible: true as const }) }: {
+function fakeSeams({ imageVersion, loaded = true, pinMetadata = { status: 'never-published' }, check = () => ({ compatible: true as const }) }: {
     imageVersion: string | null
     loaded?: boolean
-    pinMetadata?: unknown
+    pinMetadata?: PinMetadata
     check?: PinFallbackSeams['propsChecker']['check']
 }): FakeSeams {
     return {
@@ -361,7 +411,7 @@ function fakeSeams({ imageVersion, loaded = true, pinMetadata = null, check = ()
             }
             return { build: { version: imageVersion, load: loaded ? { loaded: true as const } : { loaded: false as const, reason: 'import.meta in CJS' } }, metadata: { image: true } }
         }),
-        pinMetadata: vi.fn(async () => pinMetadata),
+        pinMetadata: vi.fn(async (): Promise<PinMetadata> => pinMetadata),
         propsChecker: { check },
     }
 }

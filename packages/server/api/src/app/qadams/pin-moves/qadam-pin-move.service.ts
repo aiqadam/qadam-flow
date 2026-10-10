@@ -1,10 +1,11 @@
-import { MoveVerdict, qadamPinFallbackDecision, StayReason, StepTarget } from '@aiqadam/server-utils'
+import { MoveVerdict, PinMetadata, qadamPinFallbackDecision, StayReason, StepTarget } from '@aiqadam/server-utils'
 import {
     apId,
     ErrorCode,
     FlowId,
     FlowTriggerType,
     FlowVersion,
+    FlowVersionState,
     isNil,
     PlatformId,
     ProjectId,
@@ -29,7 +30,7 @@ import { QadamPinnedStep, qadamPinUtil } from '../metadata/qadam-pin-util'
 import { ImageBuildWithMetadata, PinFallbackSeams, qadamPinFallbackSeams } from './qadam-pin-fallback-seams'
 import { ListQadamPinMovesRequestQuery, QadamPinMove, QadamPinMoveCause } from './qadam-pin-move.dto'
 import { QadamPinMoveEntity } from './qadam-pin-move.entity'
-import { PinRewrite, qadamPinRewrite } from './qadam-pin-rewrite'
+import { qadamPinRewrite } from './qadam-pin-rewrite'
 
 export const qadamPinMoveRepo = repoFactory(QadamPinMoveEntity)
 
@@ -43,7 +44,7 @@ export const qadamPinMoveRepo = repoFactory(QadamPinMoveEntity)
 // It never disables a flow and never throws a step off a flow (#435): a step it does not move stays
 // as it is and is reported with the reason, which is what the "update this step" marking reads.
 // `seams` is where the image, the pinned version's metadata and the props checker come from.
-export const qadamPinMoveService = (log: FastifyBaseLogger, seams: PinFallbackSeams = qadamPinFallbackSeams(log)) => ({
+export const qadamPinMoveService = ({ log, seams = qadamPinFallbackSeams({ log }) }: { log: FastifyBaseLogger, seams?: PinFallbackSeams }) => ({
     async moveUnavailablePins({ flowVersion, projectId, platformId, cause, actorUserId }: MoveUnavailablePinsParams): Promise<MoveUnavailablePinsResult> {
         const steps = qadamPinUtil.getQadamSteps({ trigger: flowVersion.trigger }).filter(isExactPin)
         if (steps.length === 0) {
@@ -115,7 +116,10 @@ async function assertFlowBelongsTo({ flowId, projectId, platformId, log }: { flo
     const flow = await flowRepo().findOneBy({ id: flowId, projectId })
     const flowPlatformId = isNil(flow) ? null : await projectService(log).getPlatformId(projectId)
     if (isNil(flow) || flowPlatformId !== platformId) {
-        throw notFound({ id: flowId })
+        throw new QadamFlowError({
+            code: ErrorCode.ENTITY_NOT_FOUND,
+            params: { entityType: 'flow', entityId: flowId, message: `flow_not_found id=${flowId}` },
+        })
     }
 }
 
@@ -131,14 +135,14 @@ async function findUnavailablePins({ steps, platformId, log }: { steps: QadamPin
     return new Set(answers.filter(([, available]) => available === false).map(([pin]) => pin))
 }
 
-async function findHeldRewrites({ flowId, platformId }: { flowId: FlowId, platformId: PlatformId }): Promise<Set<string>> {
-    const reverted = await qadamPinMoveRepo().findBy({ flowId, platformId, status: 'REVERTED' })
+async function findHeldRewrites({ flowId, platformId, manager }: { flowId: FlowId, platformId: PlatformId, manager?: EntityManager }): Promise<Set<string>> {
+    const reverted = await qadamPinMoveRepo(manager).findBy({ flowId, platformId, status: 'REVERTED' })
     return new Set(reverted.map((record) => heldKey({ stepName: record.stepName, qadamName: record.qadamName, version: record.fromVersion })))
 }
 
 async function planMoves({ steps, held, platformId, seams }: { steps: QadamPinnedStep[], held: Set<string>, platformId: PlatformId, seams: PinFallbackSeams }): Promise<MovePlan> {
     const images = new Map<string, Promise<ImageBuildWithMetadata | null>>()
-    const pinMetadata = new Map<string, Promise<unknown>>()
+    const pinMetadata = new Map<string, Promise<PinMetadata>>()
     const outcomes = await Promise.all(steps.map(async (step): Promise<StepOutcome> => {
         const { qadamName, qadamVersion } = step.settings
         const base = { stepName: step.name, qadamName, version: qadamVersion }
@@ -150,7 +154,7 @@ async function planMoves({ steps, held, platformId, seams }: { steps: QadamPinne
         const verdict: MoveVerdict = qadamPinFallbackDecision.decide({
             pinnedVersion: qadamVersion,
             image: image?.build ?? null,
-            props: { pinMetadata: metadata, imageMetadata: image?.metadata ?? null, target: targetOf({ step }), checker: seams.propsChecker },
+            props: { pin: metadata, imageMetadata: image?.metadata ?? null, target: targetOf({ step }), checker: seams.propsChecker },
         })
         if (!verdict.move) {
             return { ...base, move: false, reason: verdict.reason, detail: verdict.detail }
@@ -171,17 +175,23 @@ async function commitMoves({ manager, flowVersion, platformId, projectId, cause,
     if (isNil(current)) {
         return { flowVersion, moved: [], lost: moves.map((move) => lostReason({ stepName: move.stepName, qadamName: move.qadamName, version: move.version })) }
     }
+    // Read again under the lock: a revert that committed after the plan was made holds the step.
+    const held = await findHeldRewrites({ flowId: current.flowId, platformId, manager })
+    const freshMoves = moves.filter((move) => !held.has(heldKey({ stepName: move.stepName, qadamName: move.qadamName, version: move.version })))
+    const heldMoves = moves.filter((move) => !freshMoves.includes(move))
     const { flowVersion: rewritten, applied, skipped } = qadamPinRewrite.applyAll({
         flowVersion: current,
-        rewrites: moves.map((move): PinRewrite => ({ stepName: move.stepName, qadamName: move.qadamName, fromVersion: move.version, toVersion: move.to })),
+        rewrites: freshMoves.map((move) => ({ stepName: move.stepName, qadamName: move.qadamName, fromVersion: move.version, toVersion: move.to, propsCheck: move.propsCheck })),
     })
-    const lost = skipped.map((rewrite) => lostReason({ stepName: rewrite.stepName, qadamName: rewrite.qadamName, version: rewrite.fromVersion }))
+    const lost = [
+        ...heldMoves.map((move) => lostReason({ stepName: move.stepName, qadamName: move.qadamName, version: move.version, reason: 'reverted-by-user', detail: 'a person reverted a move of this step, so it is not moved again until its version is changed' })),
+        ...skipped.map((rewrite) => lostReason({ stepName: rewrite.stepName, qadamName: rewrite.qadamName, version: rewrite.fromVersion })),
+    ]
     if (applied.length === 0) {
         return { flowVersion: current, moved: [], lost }
     }
     await flowVersionRepo(manager).update({ id: current.id }, { trigger: rewritten.trigger })
     const records = applied.map((rewrite): QadamPinMove => {
-        const move = moves.find((candidate) => candidate.stepName === rewrite.stepName)
         const now = dayjs().toISOString()
         return {
             id: apId(),
@@ -195,7 +205,7 @@ async function commitMoves({ manager, flowVersion, platformId, projectId, cause,
             qadamName: rewrite.qadamName,
             fromVersion: rewrite.fromVersion,
             toVersion: rewrite.toVersion,
-            propsCheck: move?.propsCheck ?? 'not-checked-no-metadata',
+            propsCheck: rewrite.propsCheck,
             cause,
             status: 'APPLIED',
             movedBy: actorUserId ?? null,
@@ -216,18 +226,24 @@ async function revertInTransaction({ manager, id, platformId, userId }: { manage
     if (record.status !== 'APPLIED') {
         throw refused({ message: 'This move was already reverted.' })
     }
-    const current = await flowVersionRepo(manager).findOne({ where: { id: record.flowVersionId, flowId: record.flowId }, lock: { mode: 'pessimistic_write' } })
-    if (isNil(current)) {
+    const rewrite = { stepName: record.stepName, qadamName: record.qadamName, fromVersion: record.toVersion, toVersion: record.fromVersion }
+    // The version the move wrote, and the flow's drafts: an edit after a publish copies the published
+    // version into a new draft that carries the moved pin, and publishing that draft would put it
+    // back. Each is rewritten only where the step is still on the version the move wrote.
+    const drafts = await flowVersionRepo(manager).find({ where: { flowId: record.flowId, state: FlowVersionState.DRAFT }, lock: { mode: 'pessimistic_write' } })
+    const moved = await flowVersionRepo(manager).findOne({ where: { id: record.flowVersionId, flowId: record.flowId }, lock: { mode: 'pessimistic_write' } })
+    if (isNil(moved)) {
         throw refused({ message: 'The flow version this move changed no longer exists.' })
     }
-    const rewritten = qadamPinRewrite.apply({
-        flowVersion: current,
-        rewrite: { stepName: record.stepName, qadamName: record.qadamName, fromVersion: record.toVersion, toVersion: record.fromVersion },
+    const candidates = [moved, ...drafts.filter((draft) => draft.id !== moved.id)]
+    const rewrites = candidates.flatMap((candidate) => {
+        const rewritten = qadamPinRewrite.apply({ flowVersion: candidate, rewrite })
+        return isNil(rewritten) ? [] : [{ id: candidate.id, trigger: rewritten.trigger }]
     })
-    if (isNil(rewritten)) {
+    if (rewrites.length === 0) {
         throw refused({ message: `The step ${record.stepName} is no longer pinned to ${record.toVersion}, so there is nothing to revert. Change its version in the builder.` })
     }
-    await flowVersionRepo(manager).update({ id: current.id }, { trigger: rewritten.trigger })
+    await Promise.all(rewrites.map((write) => flowVersionRepo(manager).update({ id: write.id }, { trigger: write.trigger })))
     const revertedAt = dayjs().toISOString()
     await qadamPinMoveRepo(manager).update({ id: record.id, platformId }, { status: 'REVERTED', revertedAt, revertedBy: userId })
     return { ...record, status: 'REVERTED', revertedAt, revertedBy: userId }
@@ -258,8 +274,8 @@ function memoize<T>({ cache, key, load }: { cache: Map<string, Promise<T>>, key:
     return loading
 }
 
-function lostReason({ stepName, qadamName, version }: { stepName: string, qadamName: string, version: string }): PinStay {
-    return { stepName, qadamName, version, reason: 'changed-meanwhile', detail: 'the step was edited or removed after the move was planned, so it was left as it is' }
+function lostReason({ stepName, qadamName, version, reason = 'changed-meanwhile', detail = 'the step was edited or removed after the move was planned, so it was left as it is' }: { stepName: string, qadamName: string, version: string, reason?: PinStayReason, detail?: string }): PinStay {
+    return { stepName, qadamName, version, reason, detail }
 }
 
 function notFound({ id }: { id: string }): QadamFlowError {

@@ -1,16 +1,19 @@
-import { PropsCompatibilityChecker, qadamPinFallbackDecision, StepTarget } from '../src/qadam-pin-fallback-decision'
+import { PinMetadata, PropsCompatibilityChecker, qadamPinFallbackDecision, StepTarget } from '../src/qadam-pin-fallback-decision'
 
 const TARGET: StepTarget = { kind: 'action', name: 'create_record' }
+const NEVER_PUBLISHED: PinMetadata = { status: 'never-published' }
+const UNKNOWN: PinMetadata = { status: 'unknown' }
+const found = (metadata: unknown): PinMetadata => ({ status: 'found', metadata })
 const LOADED = { loaded: true } as const
 
 // The seam #880's checker plugs into: these fakes decide by the metadata they are handed.
 const compatible: PropsCompatibilityChecker = { check: () => ({ compatible: true }) }
 const incompatible: PropsCompatibilityChecker = { check: () => ({ compatible: false, reason: 'prop name was removed' }) }
 
-function decide({ pinnedVersion, imageVersion, pinMetadata = null, checker = compatible, target = TARGET, imageMetadata = { image: true }, load = LOADED }: {
+function decide({ pinnedVersion, imageVersion, pinMetadata = NEVER_PUBLISHED, checker = compatible, target = TARGET, imageMetadata = { image: true }, load = LOADED }: {
     pinnedVersion: string
     imageVersion?: string | null
-    pinMetadata?: unknown
+    pinMetadata?: PinMetadata
     checker?: PropsCompatibilityChecker
     target?: StepTarget | null
     imageMetadata?: unknown
@@ -19,7 +22,7 @@ function decide({ pinnedVersion, imageVersion, pinMetadata = null, checker = com
     return qadamPinFallbackDecision.decide({
         pinnedVersion,
         image: imageVersion === null ? null : { version: imageVersion ?? '1.4.2', load },
-        props: { pinMetadata, imageMetadata, target, checker },
+        props: { pin: pinMetadata, imageMetadata, target, checker },
     })
 }
 
@@ -56,11 +59,11 @@ describe('qadamPinFallbackDecision.decide: the caret range', () => {
 
     it('puts a snapshot below its own release: a release is a candidate for the snapshot pin, an earlier snapshot is not', () => {
         const metadata = { pinned: true }
-        expect(decide({ pinnedVersion: '1.3.0-main.412', imageVersion: '1.3.0', pinMetadata: metadata })).toMatchObject({ move: true })
-        expect(decide({ pinnedVersion: '1.3.0-main.412', imageVersion: '1.3.0-main.500', pinMetadata: metadata })).toMatchObject({ move: true })
-        expect(decide({ pinnedVersion: '1.3.0-main.412', imageVersion: '1.3.0-main.400', pinMetadata: metadata })).toMatchObject({ move: false, reason: 'outside-caret' })
-        expect(decide({ pinnedVersion: '1.3.0-main.412', imageVersion: '1.2.9', pinMetadata: metadata })).toMatchObject({ move: false, reason: 'outside-caret' })
-        expect(decide({ pinnedVersion: '1.3.0-main.412', imageVersion: '2.0.0', pinMetadata: metadata })).toMatchObject({ move: false, reason: 'outside-caret' })
+        expect(decide({ pinnedVersion: '1.3.0-main.412', imageVersion: '1.3.0', pinMetadata: found(metadata) })).toMatchObject({ move: true })
+        expect(decide({ pinnedVersion: '1.3.0-main.412', imageVersion: '1.3.0-main.500', pinMetadata: found(metadata) })).toMatchObject({ move: true })
+        expect(decide({ pinnedVersion: '1.3.0-main.412', imageVersion: '1.3.0-main.400', pinMetadata: found(metadata) })).toMatchObject({ move: false, reason: 'outside-caret' })
+        expect(decide({ pinnedVersion: '1.3.0-main.412', imageVersion: '1.2.9', pinMetadata: found(metadata) })).toMatchObject({ move: false, reason: 'outside-caret' })
+        expect(decide({ pinnedVersion: '1.3.0-main.412', imageVersion: '2.0.0', pinMetadata: found(metadata) })).toMatchObject({ move: false, reason: 'outside-caret' })
     })
 
     it('reports a pin that is the image\'s own build as available, not as a move', () => {
@@ -101,43 +104,53 @@ describe('qadamPinFallbackDecision.decide: the props check', () => {
     })
 
     it('moves when the metadata exists and the checker finds the props compatible', () => {
-        expect(decide({ pinnedVersion: '0.3.1', imageVersion: '0.3.5', pinMetadata: { pinned: true } })).toEqual({ move: true, from: '0.3.1', to: '0.3.5', propsCheck: 'compatible' })
+        expect(decide({ pinnedVersion: '0.3.1', imageVersion: '0.3.5', pinMetadata: found({ pinned: true }) })).toEqual({ move: true, from: '0.3.1', to: '0.3.5', propsCheck: 'compatible' })
     })
 
     it('hands the checker both versions\' metadata and the step\'s action', () => {
         const check = vi.fn(() => ({ compatible: true as const }))
-        const pinMetadata = { pinned: true }
+        const pinMetadata = found({ pinned: true })
         const imageMetadata = { image: true }
 
         decide({ pinnedVersion: '0.3.1', imageVersion: '0.3.5', pinMetadata, imageMetadata, checker: { check } })
 
-        expect(check).toHaveBeenCalledWith({ from: pinMetadata, to: imageMetadata, target: TARGET })
+        expect(check).toHaveBeenCalledWith({ from: { pinned: true }, to: imageMetadata, target: TARGET })
     })
 
     it('stays, with the checker\'s reason, when the props are not compatible', () => {
-        expect(decide({ pinnedVersion: '0.3.1', imageVersion: '0.3.5', pinMetadata: { pinned: true }, checker: incompatible }))
+        expect(decide({ pinnedVersion: '0.3.1', imageVersion: '0.3.5', pinMetadata: found({ pinned: true }), checker: incompatible }))
             .toEqual({ move: false, reason: 'props-incompatible', detail: 'prop name was removed' })
     })
 
     it('stays when metadata exists but the step\'s action or the image\'s metadata is missing', () => {
-        expect(decide({ pinnedVersion: '0.3.1', imageVersion: '0.3.5', pinMetadata: { pinned: true }, target: null }))
+        expect(decide({ pinnedVersion: '0.3.1', imageVersion: '0.3.5', pinMetadata: found({ pinned: true }), target: null }))
             .toMatchObject({ move: false, reason: 'props-unverifiable' })
-        expect(decide({ pinnedVersion: '0.3.1', imageVersion: '0.3.5', pinMetadata: { pinned: true }, imageMetadata: null }))
+        expect(decide({ pinnedVersion: '0.3.1', imageVersion: '0.3.5', pinMetadata: found({ pinned: true }), imageMetadata: null }))
             .toMatchObject({ move: false, reason: 'props-unverifiable' })
+    })
+
+    it('does not move a release pin when the instance cannot tell whether it was ever published', () => {
+        const check = vi.fn(() => ({ compatible: true as const }))
+
+        expect(decide({ pinnedVersion: '0.3.1', imageVersion: '0.3.5', pinMetadata: UNKNOWN, checker: { check } }))
+            .toMatchObject({ move: false, reason: 'props-unverifiable' })
+        expect(check).not.toHaveBeenCalled()
     })
 
     it('does not move a snapshot pin without its own metadata (ADR-0004 adds no exception)', () => {
+        expect(decide({ pinnedVersion: '1.3.0-main.412', imageVersion: '1.3.0', pinMetadata: UNKNOWN })).toMatchObject({ move: false, reason: 'snapshot-without-metadata' })
         expect(decide({ pinnedVersion: '1.3.0-main.412', imageVersion: '1.3.0' })).toMatchObject({ move: false, reason: 'snapshot-without-metadata' })
+        expect(decide({ pinnedVersion: '1.3.0-main.412', imageVersion: '1.3.0', pinMetadata: UNKNOWN })).toMatchObject({ move: false, reason: 'snapshot-without-metadata' })
     })
 
     it('moves a snapshot pin that has metadata and compatible props', () => {
-        expect(decide({ pinnedVersion: '1.3.0-main.412', imageVersion: '1.3.1', pinMetadata: { pinned: true } }))
+        expect(decide({ pinnedVersion: '1.3.0-main.412', imageVersion: '1.3.1', pinMetadata: found({ pinned: true }) }))
             .toEqual({ move: true, from: '1.3.0-main.412', to: '1.3.1', propsCheck: 'compatible' })
     })
 
     it('does not check the props of a target outside the caret range', () => {
         const check = vi.fn(() => ({ compatible: true as const }))
-        expect(decide({ pinnedVersion: '0.3.1', imageVersion: '0.4.5', pinMetadata: { pinned: true }, checker: { check } }).move).toBe(false)
+        expect(decide({ pinnedVersion: '0.3.1', imageVersion: '0.4.5', pinMetadata: found({ pinned: true }), checker: { check } }).move).toBe(false)
         expect(check).not.toHaveBeenCalled()
     })
 })
@@ -149,12 +162,12 @@ describe('qadamPinFallbackDecision.decide: the load check', () => {
     })
 
     it('stays on a failed load even when every other check passes', () => {
-        const verdict = decide({ pinnedVersion: '0.3.1', imageVersion: '0.3.5', pinMetadata: { pinned: true }, load: { loaded: false, reason: 'x' } })
+        const verdict = decide({ pinnedVersion: '0.3.1', imageVersion: '0.3.5', pinMetadata: found({ pinned: true }), load: { loaded: false, reason: 'x' } })
         expect(verdict).toMatchObject({ move: false, reason: 'target-not-loaded' })
     })
 
     it('reports an incompatible prop before a failed load', () => {
-        expect(decide({ pinnedVersion: '0.3.1', imageVersion: '0.3.5', pinMetadata: { pinned: true }, checker: incompatible, load: { loaded: false, reason: 'x' } }))
+        expect(decide({ pinnedVersion: '0.3.1', imageVersion: '0.3.5', pinMetadata: found({ pinned: true }), checker: incompatible, load: { loaded: false, reason: 'x' } }))
             .toMatchObject({ reason: 'props-incompatible' })
     })
 })

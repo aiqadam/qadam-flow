@@ -65,7 +65,7 @@ The `[qadamLoader] cold load` line that the worker writes the first time it load
 A step can be pinned to a version that this instance cannot have: one that was never published to npm (the stale pins that image upgrades strand), or one that was removed. When you publish such a flow, or enable it, Qadam Flow moves each of its steps to the image's build of the same qadam, but only when all of these hold:
 
 1. The image's version is inside the pin's caret range: the same major, or on `0.x` the same minor, and never below the pin.
-2. The props are compatible, where metadata for the pinned version exists. A pin that was never published has no metadata, so it gets no props check, and a snapshot pin (`x.y.z-main.<n>`) is not moved without its own metadata.
+2. The props are compatible, where metadata for the pinned version exists in the catalogue (or, for a snapshot pin `x.y.z-main.<n>`, in the store). Only a pin that the catalogue was read and does not list (never published) gets no props check. When the catalogue or the store cannot be read, the step is not moved; until the catalogue is published, pins that were published stay as they are.
 3. The image's build loaded successfully.
 
 Each move is written as an audit record and the step's version is rewritten in the same transaction. Nothing is moved when a check fails: the step keeps its pin, and the flow is never disabled. Checking the pins never blocks a publish or an enable. If it fails, the flow carries on with its steps as they were.

@@ -21,8 +21,8 @@ export const qadamPinRewrite = {
     },
 
     // Several rewrites in turn; one that finds its step somewhere else is left out and reported.
-    applyAll: ({ flowVersion, rewrites }: { flowVersion: FlowVersion, rewrites: PinRewrite[] }): AppliedRewrites => {
-        return rewrites.reduce<AppliedRewrites>((applied, rewrite) => {
+    applyAll: <T extends PinRewrite>({ flowVersion, rewrites }: { flowVersion: FlowVersion, rewrites: T[] }): AppliedRewrites<T> => {
+        return rewrites.reduce<AppliedRewrites<T>>((applied, rewrite) => {
             const next = qadamPinRewrite.apply({ flowVersion: applied.flowVersion, rewrite })
             return isNil(next)
                 ? { ...applied, skipped: [...applied.skipped, rewrite] }
@@ -38,8 +38,8 @@ export type PinRewrite = {
     toVersion: string
 }
 
-export type AppliedRewrites = {
+export type AppliedRewrites<T extends PinRewrite = PinRewrite> = {
     flowVersion: FlowVersion
-    applied: PinRewrite[]
-    skipped: PinRewrite[]
+    applied: T[]
+    skipped: T[]
 }

@@ -71,6 +71,11 @@ export const QadamPinMoveEntity = new EntitySchema<QadamPinMoveSchema>({
             unique: false,
         },
         {
+            name: 'idx_qadam_pin_move_project_id',
+            columns: ['projectId'],
+            unique: false,
+        },
+        {
             name: 'idx_qadam_pin_move_flow_id',
             columns: ['flowId'],
             unique: false,
