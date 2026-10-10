@@ -98,11 +98,10 @@ export const ProjectWithLimitsWithPlatform = z.object({
 export type ProjectWithLimitsWithPlatform = z.infer<typeof ProjectWithLimitsWithPlatform>
 
 
-const ProjectColor = z.object({
-    textColor: z.string(),
-    color: z.string(),
-})
-type ProjectColor = z.infer<typeof ProjectColor>
+type ProjectColor = {
+    textColor: string
+    color: string
+}
 
 export const PROJECT_COLOR_PALETTE: Record<ColorName, ProjectColor> = {
     [ColorName.RED]: {
