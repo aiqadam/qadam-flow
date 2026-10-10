@@ -22,9 +22,9 @@ type UpdateThisStepLabelProps = {
 // ADR-0004: an import sets `exportedUnresolvedPin` on a step whose exporter could not move a
 // snapshot pin to a release. The mark is advisory builder state — a file or an editor can set it —
 // so it only points the person at the existing version update; it never moves or blocks anything.
-// A step's own mark holds while its version is still the recorded, snapshot one. A mark that came
-// from an agent tool records the agent step's own version (a release), so the importer cannot tell
-// the origins apart here and the tools' pins are what counts.
+// The exporter has already rewritten the pin to a release, so the importer records that release:
+// a step's own mark holds while its version still equals it, snapshot or not. A mark that came from
+// an agent tool records the agent step's own version, so a tool still pinned to a snapshot counts too.
 export function UpdateThisStepLabel({
   step,
   readonly,
@@ -37,9 +37,7 @@ export function UpdateThisStepLabel({
   const exactVersion = flowQadamUtil.getExactVersion(
     step.settings.qadamVersion,
   );
-  const isOwnPinMarked =
-    mark === exactVersion &&
-    qadamVersionParser.isSnapshot({ version: exactVersion });
+  const isOwnPinMarked = mark === exactVersion;
   const hasSnapshotTool = hasSnapshotToolPin({ input: step.settings.input });
   if (!isOwnPinMarked && !hasSnapshotTool) {
     return null;
@@ -53,7 +51,7 @@ export function UpdateThisStepLabel({
         <p className="text-sm font-medium">{t('Update this step')}</p>
       </div>
       <p className="text-sm text-muted-foreground">
-        {isOwnPinMarked
+        {!hasSnapshotTool
           ? t(
               'This step was imported with a pre-release build that could not be moved to a released version. Update its version.',
             )

@@ -137,17 +137,25 @@ describe('UpdateThisStepLabel', () => {
 
     expect(text).toContain('Update that tool.');
     expect(text).not.toContain('Update its version.');
-    expect(dialogCalls).toHaveLength(0);
   });
 
-  it('drops a mark equal to a release own pin when every tool is a release', async () => {
-    expect(
-      await render({
-        qadamVersion: '0.5.0',
-        mark: '0.5.0',
-        toolVersion: '1.3.0',
-      })
-    ).toBe('');
+  it('marks the state a real import leaves: a release own pin equal to the mark, no tools', async () => {
+    const text = await render({ qadamVersion: '1.3.0', mark: '1.3.0' });
+
+    expect(text).toContain('Update this step');
+    expect(text).toContain('Update its version.');
+    expect(dialogCalls).toHaveLength(1);
+  });
+
+  it('marks a release own pin equal to the mark when every tool is a release', async () => {
+    const text = await render({
+      qadamVersion: '0.5.0',
+      mark: '0.5.0',
+      toolVersion: '1.3.0',
+    });
+
+    expect(text).toContain('Update this step');
+    expect(dialogCalls).toHaveLength(1);
   });
 
   it('drops a tool-origin mark once every tool pin is a release', async () => {

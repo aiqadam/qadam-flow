@@ -243,7 +243,7 @@ export const FlowStepInputOutput = () => {
         <LoopRunNote step={selectedStep} stepOutput={selectedStepOutput} />
         {(selectedStep.type === FlowActionType.PIECE ||
           selectedStep.type === FlowTriggerType.PIECE) && (
-          <div className="mb-2 flex flex-col gap-2">
+          <div className="mb-2 flex flex-col gap-2 empty:hidden">
             <PreReleaseBuildLabel step={selectedStep} />
             <UpdateAvailableLabel step={selectedStep} readonly />
             <HeldStepLabel step={selectedStep} flowId={flowVersion.flowId} />
