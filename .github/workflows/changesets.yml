@@ -41,7 +41,7 @@ jobs:
     steps:
       # `persist-credentials: false`: the push below is done by the action with the PAT, and no
       # credential should sit in .git/config while `bun install` runs third-party install scripts.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false

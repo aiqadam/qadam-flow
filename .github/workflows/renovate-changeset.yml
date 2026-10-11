@@ -48,7 +48,7 @@ jobs:
           fi
 
       # No token in .git/config while code from the branch is around; the push supplies it one-shot.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.head_ref }}
           # The checker diffs PR_BASE_SHA...PR_HEAD_SHA, so both ends must be reachable locally.

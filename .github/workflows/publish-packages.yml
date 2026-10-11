@@ -180,7 +180,7 @@ jobs:
       # install runs here and nothing is built, so there is no node_modules for an `npx` to
       # resolve a shimmed `npm` out of. `persist-credentials: false` because a job holding an
       # npm publish token has no business also holding a git one.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 

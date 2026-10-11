@@ -42,7 +42,7 @@ jobs:
       # must be reachable locally, and a depth-1 checkout would only have HEAD.
       # Tags, spelled out like release.yml's breaking-change-gate does: check-changesets' platform
       # realignment rule (#798) reads the newest vX.Y.Z tag, and without tags it fails closed.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
