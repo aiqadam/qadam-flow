@@ -237,8 +237,8 @@ jobs:
           #   hashFiles       bun.lock (resolved versions), bunfig.toml (linker
           #                   and minimumReleaseAge), package.json (workspace
           #                   globs and the `rollup -> @rollup/wasm-node`
-          #                   resolution), .npmrc (scoped registry,
-          #                   legacy-peer-deps, save-exact — editing it can
+          #                   resolution), .npmrc (legacy-peer-deps,
+          #                   save-exact — editing it can
           #                   change what gets installed without touching any
           #                   of the other three), and tools/ci/install-deps.sh
           #                   itself, which sets the environment the install runs
