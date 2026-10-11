@@ -26,17 +26,32 @@ export const executeTriggerHookJob: JobHandler<ExecuteTriggerHookJobData, Synchr
             return { kind: JobResultKind.SYNCHRONOUS, status: EngineResponseStatus.OK, response: undefined }
         }
 
-        const provision = await ctx.timings.measure({ phase: 'provision', fn: () => provisionFlowPieces({ flowVersion, platformId: data.platformId, flowId: data.flowId, projectId: data.projectId, log: ctx.log, apiClient: ctx.apiClient }) })
+        const provisionResult = await tryCatch(
+            () => ctx.timings.measure({ phase: 'provision', fn: () => provisionFlowPieces({ flowVersion, platformId: data.platformId, flowId: data.flowId, projectId: data.projectId, log: ctx.log, apiClient: ctx.apiClient }) }),
+        )
+
+        // ON_DISABLE must still succeed on ANY provisioning failure — not only a missing pin, but an
+        // install, quota, signature or registry error too (#781). Refusing to disable a flow whose
+        // provisioning breaks would make the broken flow impossible to turn off, which is the opposite
+        // of what #432 wants. Every other hook — ON_ENABLE above all — fails loudly instead: a missing
+        // pin returns a non-OK status and any other error rejects the job, so enabling or publishing
+        // fails with the reason named rather than returning OK and leaving a flow that reads ENABLED
+        // and registers no webhook and polls nothing.
+        if (data.hookType === TriggerHookType.ON_DISABLE && (provisionResult.error !== null || !provisionResult.data?.provisioned)) {
+            ctx.log.info(
+                { flowId: data.flowId, hookType: data.hookType, provision: provisionResult.data, error: provisionResult.error === null ? undefined : String(provisionResult.error) },
+                'Failed to provision qadams for trigger hook; continuing because the hook is ON_DISABLE',
+            )
+            return { kind: JobResultKind.SYNCHRONOUS, status: EngineResponseStatus.OK, response: undefined }
+        }
+
+        if (provisionResult.error !== null) {
+            throw provisionResult.error
+        }
+
+        const provision = provisionResult.data
         if (!provision.provisioned) {
             ctx.log.info({ flowId: data.flowId, hookType: data.hookType, unavailableQadam: provision.unavailableQadam, usedBy: provision.usedBy }, 'Failed to provision qadams for trigger hook')
-            // ON_DISABLE must still succeed: refusing to disable a flow whose pin is gone would make
-            // the broken flow impossible to turn off, which is the opposite of what #432 wants. Every
-            // other hook — ON_ENABLE above all — reports the failure, so `assertEngineResponseIsOk`
-            // raises and enabling or publishing fails with the pin named, instead of returning OK and
-            // leaving a flow that reads ENABLED and registers no webhook and polls nothing.
-            if (data.hookType === TriggerHookType.ON_DISABLE) {
-                return { kind: JobResultKind.SYNCHRONOUS, status: EngineResponseStatus.OK, response: undefined }
-            }
             return {
                 kind: JobResultKind.SYNCHRONOUS,
                 status: EngineResponseStatus.INTERNAL_ERROR,
