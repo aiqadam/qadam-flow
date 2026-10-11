@@ -55,7 +55,7 @@ export const apDuplicateFlowTool = ({ mcp, userId }: McpToolContext, log: Fastif
                     const updatedFlow = await flowService(log).update({
                         id: newFlow.id,
                         projectId: mcp.projectId,
-                        userId: null,
+                        userId: userId ?? null,
                         platformId: project.platformId,
                         operation: {
                             type: FlowOperationType.IMPORT_FLOW,

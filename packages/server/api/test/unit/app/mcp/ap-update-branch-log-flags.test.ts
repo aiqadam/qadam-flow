@@ -72,7 +72,7 @@ function flowWithRouterStep(routerFlags: { skip?: boolean, logInput?: boolean, l
 }
 
 async function updateBranch(args: Record<string, unknown>): Promise<string> {
-    const result = await apUpdateBranchTool(mcp, log).execute({
+    const result = await apUpdateBranchTool({ mcp }, log).execute({
         flowId: 'flow-1',
         routerStepName: 'router_1',
         branchIndex: 0,

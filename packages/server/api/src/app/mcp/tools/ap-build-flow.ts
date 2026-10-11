@@ -139,12 +139,12 @@ export const apBuildFlowTool = ({ mcp, userId }: McpToolContext, log: FastifyBas
                     },
                 })
                 let currentFlow = await flowService(log).update({
-                    id: flowId, projectId, userId: null, platformId,
+                    id: flowId, projectId, userId: userId ?? null, platformId,
                     operation: { type: FlowOperationType.UPDATE_TRIGGER, request: triggerPayload },
                 })
                 if (!isNil(localeSource)) {
                     currentFlow = await flowService(log).update({
-                        id: flowId, projectId, userId: null, platformId,
+                        id: flowId, projectId, userId: userId ?? null, platformId,
                         operation: { type: FlowOperationType.UPDATE_LOCALE_SOURCE, request: { localeSource } },
                     })
                 }
@@ -197,7 +197,7 @@ export const apBuildFlowTool = ({ mcp, userId }: McpToolContext, log: FastifyBas
                     }
 
                     currentFlow = await flowService(log).update({
-                        id: flowId, projectId, userId: null, platformId,
+                        id: flowId, projectId, userId: userId ?? null, platformId,
                         operation: {
                             type: FlowOperationType.ADD_ACTION,
                             request: {

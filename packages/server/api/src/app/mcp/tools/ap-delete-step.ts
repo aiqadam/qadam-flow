@@ -3,9 +3,9 @@ import {
     FlowOperationType,
     flowStructureUtil,
     isNil,
+    McpToolContext,
     McpToolDefinition,
     Permission,
-    ProjectScopedMcpServer,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
@@ -18,7 +18,7 @@ const deleteStepInput = z.object({
     stepName: z.string(),
 })
 
-export const apDeleteStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
+export const apDeleteStepTool = ({ mcp, userId }: McpToolContext, log: FastifyBaseLogger): McpToolDefinition => {
     return {
         title: 'ap_delete_step',
         permission: Permission.WRITE_FLOW,
@@ -61,7 +61,7 @@ export const apDeleteStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLo
                 await flowService(log).update({
                     id: flow.id,
                     projectId: mcp.projectId,
-                    userId: null,
+                    userId: userId ?? null,
                     platformId: project.platformId,
                     operation,
                 })

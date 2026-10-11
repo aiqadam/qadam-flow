@@ -3,10 +3,10 @@ import {
     FlowOperationRequest,
     FlowOperationType,
     isNil,
+    McpToolContext,
     McpToolDefinition,
     NoteColorVariant,
     Permission,
-    ProjectScopedMcpServer,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
@@ -30,7 +30,7 @@ const manageNotesInput = z.object({
     }).optional(),
 })
 
-export const apManageNotesTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
+export const apManageNotesTool = ({ mcp, userId }: McpToolContext, log: FastifyBaseLogger): McpToolDefinition => {
     return {
         title: 'ap_manage_notes',
         permission: Permission.WRITE_FLOW,
@@ -126,7 +126,7 @@ export const apManageNotesTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseL
                 await flowService(log).update({
                     id: flow.id,
                     projectId: mcp.projectId,
-                    userId: null,
+                    userId: userId ?? null,
                     platformId: project.platformId,
                     operation,
                 })

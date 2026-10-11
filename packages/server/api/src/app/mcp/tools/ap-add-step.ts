@@ -5,9 +5,9 @@ import {
     FlowOperationType,
     flowStructureUtil,
     isNil,
+    McpToolContext,
     McpToolDefinition,
     Permission,
-    ProjectScopedMcpServer,
     RouterExecutionType,
     spreadIfDefined,
     StepLocationRelativeToParent,
@@ -42,7 +42,7 @@ const addStepInput = z.object({
     logOutput: z.boolean().optional(),
 })
 
-export const apAddStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
+export const apAddStepTool = ({ mcp, userId }: McpToolContext, log: FastifyBaseLogger): McpToolDefinition => {
     return {
         title: 'ap_add_step',
         permission: Permission.WRITE_FLOW,
@@ -230,7 +230,7 @@ export const apAddStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogge
                 const updatedFlow = await flowService(log).update({
                     id: flow.id,
                     projectId: mcp.projectId,
-                    userId: null,
+                    userId: userId ?? null,
                     platformId: project.platformId,
                     operation,
                 })

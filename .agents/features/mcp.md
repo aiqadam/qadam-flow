@@ -31,6 +31,7 @@ Exposes a Qadam Flow project as a Model Context Protocol (MCP) server so that AI
 - **MCP trigger piece** — `@aiqadam/qadam-mcp`; a flow with this trigger is exposed as a callable tool via MCP
 - **disabledTools** — JSONB array of controllable tool names currently disabled; `null` or `[]` means all controllable tools are enabled
 - **Flow attribution** — `ap_create_flow`, `ap_build_flow`, and `ap_duplicate_flow` stamp `ownerId` (the OAuth-authenticated user who connected the client) and `createdBy: { type: 'MCP', id: <mcpServerId> }` on every flow they create. `ProjectScopedMcpServer` carries `userId?` so the tools can attribute ownership.
+- **Edit attribution** (#578) — every tool that calls `flowService.update` on a user's flow takes `McpToolContext` (`{ mcp, userId }`) and passes `userId ?? null`, so `FlowVersion.updatedBy` records the OAuth-authenticated user (or the signed-in user, for the in-app chat agent). A non-null `userId` also stamps note `ownerId` (`ap_manage_notes`, `ap_import_flow`, `ap_duplicate_flow`, a draft cut from a published version) and `movedBy` on a publish-time pin move, as the REST path does. A project server built without a user is `DENY_ALL` for writes (`buildMcpServer`), so the `null` fallback is only reachable by calling a factory directly. `flow-run-utils.ts` keeps `userId: null` for the `__adhoc_*__` scratch flows of `ap_run_action`, which no user would look for in version history; the trigger sample-data write of `ap_test_flow` / `ap_test_step` goes to the user's real flow and carries `userId`.
 
 ## Entity
 

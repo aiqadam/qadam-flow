@@ -83,7 +83,7 @@ const STORED_INPUT = {
 }
 
 async function updateStep(input: Record<string, unknown>): Promise<string> {
-    const result = await apUpdateStepTool(mcp, log).execute({ flowId: 'flow-1', stepName: 'step_1', input })
+    const result = await apUpdateStepTool({ mcp }, log).execute({ flowId: 'flow-1', stepName: 'step_1', input })
     return (result.content?.[0] as { text: string }).text
 }
 

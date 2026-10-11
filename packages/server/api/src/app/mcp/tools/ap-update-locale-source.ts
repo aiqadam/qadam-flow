@@ -3,9 +3,9 @@ import {
     formErrors,
     isNil,
     LOCALE_SOURCE_MAX_LENGTH,
+    McpToolContext,
     McpToolDefinition,
     Permission,
-    ProjectScopedMcpServer,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
@@ -19,7 +19,7 @@ const updateLocaleSourceInput = z.object({
     localeSource: z.string().transform((value) => value.trim()).pipe(z.string().max(LOCALE_SOURCE_MAX_LENGTH, formErrors.localeSourceTooLong)).nullable(),
 })
 
-export const apUpdateLocaleSourceTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
+export const apUpdateLocaleSourceTool = ({ mcp, userId }: McpToolContext, log: FastifyBaseLogger): McpToolDefinition => {
     return {
         title: 'ap_update_locale_source',
         permission: Permission.WRITE_FLOW,
@@ -46,7 +46,7 @@ export const apUpdateLocaleSourceTool = (mcp: ProjectScopedMcpServer, log: Fasti
                 await flowService(log).update({
                     id: flow.id,
                     projectId: mcp.projectId,
-                    userId: null,
+                    userId: userId ?? null,
                     platformId: project.platformId,
                     operation: {
                         type: FlowOperationType.UPDATE_LOCALE_SOURCE,

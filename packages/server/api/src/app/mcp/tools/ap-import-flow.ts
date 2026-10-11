@@ -61,7 +61,7 @@ export const apImportFlowTool = ({ mcp, userId }: McpToolContext, log: FastifyBa
                     const updatedFlow = await flowService(log).update({
                         id: flowId,
                         projectId: mcp.projectId,
-                        userId: null,
+                        userId: userId ?? null,
                         platformId: project.platformId,
                         operation,
                     })
@@ -87,7 +87,7 @@ export const apImportFlowTool = ({ mcp, userId }: McpToolContext, log: FastifyBa
                     const importedFlow = await flowService(log).update({
                         id: newFlow.id,
                         projectId: mcp.projectId,
-                        userId: null,
+                        userId: userId ?? null,
                         platformId: project.platformId,
                         operation,
                     })

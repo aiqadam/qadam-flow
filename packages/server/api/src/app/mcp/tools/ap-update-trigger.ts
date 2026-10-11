@@ -3,9 +3,9 @@ import {
     FlowOperationType,
     FlowTriggerType,
     isNil,
+    McpToolContext,
     McpToolDefinition,
     Permission,
-    ProjectScopedMcpServer,
     QadamTrigger,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
@@ -25,7 +25,7 @@ const updateTriggerInput = z.object({
     logOutput: z.boolean().optional(),
 })
 
-export const apUpdateTriggerTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
+export const apUpdateTriggerTool = ({ mcp, userId }: McpToolContext, log: FastifyBaseLogger): McpToolDefinition => {
     return {
         title: 'ap_update_trigger',
         permission: Permission.WRITE_FLOW,
@@ -115,7 +115,7 @@ export const apUpdateTriggerTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
                 const updatedFlow = await flowService(log).update({
                     id: flow.id,
                     projectId: mcp.projectId,
-                    userId: null,
+                    userId: userId ?? null,
                     platformId: project.platformId,
                     operation,
                 })
