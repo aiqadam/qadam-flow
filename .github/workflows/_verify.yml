@@ -204,7 +204,7 @@ jobs:
         # install behaviour but no hashed manifest gets a cache hit, so its own run cannot
         # exercise the change it makes — which is how a broken install shipped unnoticed.
         if: ${{ !contains(github.event.pull_request.labels.*.name, 'refresh-cache') }}
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: |
             node_modules
@@ -320,7 +320,7 @@ jobs:
         # key validation rather than write anything. Skipping it is the correct outcome either way:
         # a run that deliberately bypassed the cache has not earned the right to publish to it.
         if: ${{ steps.node-modules.outputs.cache-hit != 'true' && !contains(github.event.pull_request.labels.*.name, 'refresh-cache') }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: |
             node_modules

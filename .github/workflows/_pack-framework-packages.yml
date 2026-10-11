@@ -235,7 +235,7 @@ jobs:
       # Restore-only, same key `_verify.yml`'s `verify` job writes — see that job's own
       # cache-restore step for what each key component is for.
       - name: Restore built node_modules
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: |
             node_modules
