@@ -133,7 +133,7 @@
     "@types/smtp-server": "3.5.13",
     "@types/tinycolor2": "1.4.6",
     "form-data": "4.0.6",
-    "smtp-server": "3.19.17",
+    "smtp-server": "3.19.18",
     "socket.io-client": "4.8.4",
     "vitest": "4.1.11",
     "webpack-ignore-dynamic-require": "1.0.0"
