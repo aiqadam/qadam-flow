@@ -71,6 +71,18 @@ export const websocketService = {
             }
         }
         for (const [event, handler] of Object.entries(listener[castedType])) {
+            // CONNECT and DISCONNECT are lifecycle keys, not wire events: registering them with
+            // `socket.on` would let a client run the listener by emitting the name itself. socket.io
+            // reports a close as the lowercase 'disconnect' on the socket (a `Server` emits none), so
+            // that is what the DISCONNECT listener hangs off (#825).
+            if (event === WebsocketServerEvent.CONNECT) {
+                rejectedPromiseHandler(handler(socket)(undefined, principal, projectId), log)
+                continue
+            }
+            if (event === WebsocketServerEvent.DISCONNECT) {
+                socket.on('disconnect', () => rejectedPromiseHandler(handler(socket)(undefined, principal, projectId), log))
+                continue
+            }
             socket.on(event, async (data, callback) => {
                 if (castedType === PrincipalType.USER) {
                     // Re-resolve on every client-to-server event instead of trusting the grant cached
@@ -98,16 +110,12 @@ export const websocketService = {
                 return rejectedPromiseHandler(handler(socket)(data, principal, projectId, callback), log)
             })
         }
-        for (const handler of Object.values(listener[castedType][WebsocketServerEvent.CONNECT] ?? {})) {
-            handler(socket)
-        }
     },
-    async onDisconnect(socket: Socket): Promise<void> {
-        const principal = await websocketService.verifyPrincipal(socket)
-        const castedType = principal.type as keyof typeof listener
-        for (const handler of Object.values(listener[castedType][WebsocketServerEvent.DISCONNECT] ?? {})) {
-            handler(socket)
-        }
+    // `fetchSockets` is adapter-aware, so behind the Redis adapter it also sees sockets that are
+    // connected to another API node.
+    async hasSocketsInRoom({ room }: HasSocketsInRoomParams): Promise<boolean> {
+        const sockets = await app!.io.in(room).fetchSockets()
+        return sockets.length > 0
     },
     async verifyPrincipal(socket: Socket): Promise<Principal> {
         return accessTokenManager(app!.log).verifyPrincipal(socket.handshake.auth.token)
@@ -197,6 +205,10 @@ const validateProjectId = async ({ userId, projectId }: ValidateProjectIdArgs): 
 type ValidateProjectIdArgs = {
     userId: string
     projectId?: string
+}
+
+type HasSocketsInRoomParams = {
+    room: string
 }
 
 type SocketHasPermissionParams = {

@@ -7,17 +7,20 @@ const onConnection = vi.fn().mockResolvedValue({ PUBLIC_URL: 'https://example.co
 const createHandlers = vi.fn().mockReturnValue({})
 const createRpcServer = vi.fn()
 const addListener = vi.fn()
+const onDisconnect = vi.fn().mockResolvedValue(undefined)
+const hasSocketsInRoom = vi.fn().mockResolvedValue(false)
 
 vi.mock('../../../../../src/app/core/websockets.service', () => ({
     websocketService: {
         addListener: (...args: unknown[]) => addListener(...args),
+        hasSocketsInRoom: (...args: unknown[]) => hasSocketsInRoom(...args),
     },
 }))
 
 const settingsOnly = vi.fn().mockResolvedValue({ ENVIRONMENT: 'test' })
 
 vi.mock('../../../../../src/app/workers/machine/machine-service', () => ({
-    machineService: () => ({ onConnection, onDisconnect: vi.fn(), settingsOnly }),
+    machineService: () => ({ onConnection, onDisconnect, settingsOnly }),
 }))
 
 vi.mock('../../../../../src/app/workers/rpc/worker-rpc-service', () => ({
@@ -168,6 +171,42 @@ describe('the RPC handlers learn when their socket disconnects', () => {
         await handler(validPayload, workerPrincipal(), null)
 
         expect(disconnectedSignal().aborted).toBe(true)
+    })
+})
+
+// #825: nothing ever called `onDisconnect`, so a stopped worker stayed listed until its TTL ran out.
+describe('a disconnecting worker leaves the registry', () => {
+    beforeEach(() => {
+        vi.clearAllMocks()
+        hasSocketsInRoom.mockResolvedValue(false)
+    })
+
+    it('removes the worker named in the handshake', async () => {
+        const handler = await handlerFor(WebsocketServerEvent.DISCONNECT, socketClaiming('any-group'))
+
+        await handler(undefined, workerPrincipal(), null)
+
+        expect(hasSocketsInRoom).toHaveBeenCalledWith({ room: 'worker-1' })
+        expect(onDisconnect).toHaveBeenCalledWith({ workerId: 'worker-1' })
+    })
+
+    it('keeps the entry while a newer socket of the same worker is connected', async () => {
+        hasSocketsInRoom.mockResolvedValue(true)
+        const handler = await handlerFor(WebsocketServerEvent.DISCONNECT, socketClaiming('any-group'))
+
+        await handler(undefined, workerPrincipal(), null)
+
+        expect(onDisconnect).not.toHaveBeenCalled()
+    })
+
+    it('does nothing for a handshake without a usable workerId', async () => {
+        const socket = { handshake: { auth: { workerId: { $ne: null } } }, on: vi.fn() } as unknown as Socket
+        const handler = await handlerFor(WebsocketServerEvent.DISCONNECT, socket)
+
+        await handler(undefined, workerPrincipal(), null)
+
+        expect(hasSocketsInRoom).not.toHaveBeenCalled()
+        expect(onDisconnect).not.toHaveBeenCalled()
     })
 })
 
