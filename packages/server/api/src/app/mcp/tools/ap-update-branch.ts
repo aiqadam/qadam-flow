@@ -5,9 +5,9 @@ import {
     FlowOperationRequest,
     FlowOperationType,
     isNil,
+    McpToolContext,
     McpToolDefinition,
     Permission,
-    ProjectScopedMcpServer,
     RouterActionSettings,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
@@ -24,7 +24,7 @@ const updateBranchInput = z.object({
     conditions: mcpUtils.BRANCH_CONDITIONS_INPUT_SCHEMA.optional(),
 })
 
-export const apUpdateBranchTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
+export const apUpdateBranchTool = ({ mcp, userId }: McpToolContext, log: FastifyBaseLogger): McpToolDefinition => {
     return {
         title: 'ap_update_branch',
         permission: Permission.WRITE_FLOW,
@@ -121,7 +121,7 @@ export const apUpdateBranchTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                 const updatedFlow = await flowService(log).update({
                     id: flow.id,
                     projectId: mcp.projectId,
-                    userId: null,
+                    userId: userId ?? null,
                     platformId: project.platformId,
                     operation,
                 })

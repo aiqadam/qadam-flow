@@ -77,7 +77,7 @@ describe('ap_update_step — loop collect and keepBodies', () => {
     })
 
     it('writes collect and keepBodies onto a loop step', async () => {
-        await apUpdateStepTool(mcp, log).execute({
+        await apUpdateStepTool({ mcp }, log).execute({
             flowId: 'flow-1',
             stepName: 'loop',
             loopCollect: { value: '{{inside.value}}', skipFailed: true },
@@ -92,7 +92,7 @@ describe('ap_update_step — loop collect and keepBodies', () => {
     })
 
     it('refuses them on a step that is not a loop, and writes nothing', async () => {
-        const result = await apUpdateStepTool(mcp, log).execute({
+        const result = await apUpdateStepTool({ mcp }, log).execute({
             flowId: 'flow-1',
             stepName: 'inside',
             loopCollect: { value: '{{inside}}' },

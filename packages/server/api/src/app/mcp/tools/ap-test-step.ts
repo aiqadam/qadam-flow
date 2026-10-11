@@ -1,4 +1,4 @@
-import { McpToolDefinition, Permission, ProjectScopedMcpServer } from '@aiqadam/shared'
+import { McpToolContext, McpToolDefinition, Permission } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
 import { executeFlowTest } from './flow-run-utils'
@@ -11,7 +11,7 @@ const testStepInput = z.object({
     triggerTestData: z.record(z.string(), z.unknown()).optional().describe('Mock trigger output data. Saved as sample data before running the test. Useful when the trigger has no prior test data.'),
 })
 
-export const apTestStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
+export const apTestStepTool = ({ mcp, userId }: McpToolContext, log: FastifyBaseLogger): McpToolDefinition => {
     return {
         title: 'ap_test_step',
         permission: Permission.WRITE_FLOW,
@@ -21,7 +21,7 @@ export const apTestStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogg
         execute: async (args) => {
             try {
                 const { flowId, stepName, triggerTestData } = testStepInput.parse(args)
-                return await executeFlowTest({ flowId, projectId: mcp.projectId, stepName, triggerTestData, log })
+                return await executeFlowTest({ flowId, projectId: mcp.projectId, userId, stepName, triggerTestData, log })
             }
             catch (err) {
                 log.error({ err, projectId: mcp.projectId }, 'ap_test_step failed')

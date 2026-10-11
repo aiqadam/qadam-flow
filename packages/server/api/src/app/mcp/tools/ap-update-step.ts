@@ -6,10 +6,10 @@ import {
     FlowOperationType,
     flowStructureUtil,
     isNil,
+    McpToolContext,
     McpToolDefinition,
     omit,
     Permission,
-    ProjectScopedMcpServer,
     QadamActionSettings,
     Step,
     UpdateActionRequest,
@@ -43,7 +43,7 @@ const updateStepInput = z.object({
     logOutput: z.boolean().optional(),
 })
 
-export const apUpdateStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
+export const apUpdateStepTool = ({ mcp, userId }: McpToolContext, log: FastifyBaseLogger): McpToolDefinition => {
     return {
         title: 'ap_update_step',
         permission: Permission.WRITE_FLOW,
@@ -232,7 +232,7 @@ export const apUpdateStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLo
                 const updatedFlow = await flowService(log).update({
                     id: flow.id,
                     projectId: mcp.projectId,
-                    userId: null,
+                    userId: userId ?? null,
                     platformId: project.platformId,
                     operation,
                 })

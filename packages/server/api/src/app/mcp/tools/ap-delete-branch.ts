@@ -2,9 +2,9 @@ import {
     FlowOperationRequest,
     FlowOperationType,
     isNil,
+    McpToolContext,
     McpToolDefinition,
     Permission,
-    ProjectScopedMcpServer,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
@@ -18,7 +18,7 @@ const deleteBranchInput = z.object({
     branchIndex: z.number().int().min(0),
 })
 
-export const apDeleteBranchTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
+export const apDeleteBranchTool = ({ mcp, userId }: McpToolContext, log: FastifyBaseLogger): McpToolDefinition => {
     return {
         title: 'ap_delete_branch',
         permission: Permission.WRITE_FLOW,
@@ -77,7 +77,7 @@ export const apDeleteBranchTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                 await flowService(log).update({
                     id: flow.id,
                     projectId: mcp.projectId,
-                    userId: null,
+                    userId: userId ?? null,
                     platformId: project.platformId,
                     operation,
                 })

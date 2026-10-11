@@ -21,9 +21,10 @@ const MAX_WAIT_MS = 120_000
 const STEP_OUTPUT_PREVIEW_MAX = 5000
 const STEP_ERROR_PREVIEW_MAX = 2000
 
-export async function executeFlowTest({ flowId, projectId, stepName, triggerTestData, log }: {
+export async function executeFlowTest({ flowId, projectId, userId, stepName, triggerTestData, log }: {
     flowId: string
     projectId: string
+    userId?: string
     stepName?: string
     triggerTestData?: Record<string, unknown>
     log: FastifyBaseLogger
@@ -66,7 +67,7 @@ export async function executeFlowTest({ flowId, projectId, stepName, triggerTest
         const updatedFlow = await flowService(log).update({
             id: flow.id,
             projectId,
-            userId: null,
+            userId: userId ?? null,
             platformId: project.platformId,
             operation: {
                 type: FlowOperationType.UPDATE_SAMPLE_DATA_INFO,

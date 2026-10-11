@@ -63,7 +63,7 @@ function flowWithTrigger(flags: { logOutput?: boolean }) {
 }
 
 async function updateTrigger(args: Record<string, unknown>): Promise<string> {
-    const result = await apUpdateTriggerTool(mcp, log).execute({
+    const result = await apUpdateTriggerTool({ mcp }, log).execute({
         flowId: 'flow-1',
         qadamName: '@aiqadam/qadam-telegram-bot',
         triggerName: 'new_message',

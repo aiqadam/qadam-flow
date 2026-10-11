@@ -4,9 +4,9 @@ import {
     FlowStatus,
     flowStructureUtil,
     isNil,
+    McpToolContext,
     McpToolDefinition,
     Permission,
-    ProjectScopedMcpServer,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
@@ -18,7 +18,7 @@ const lockAndPublishInput = z.object({
     flowId: z.string(),
 })
 
-export const apLockAndPublishTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
+export const apLockAndPublishTool = ({ mcp, userId }: McpToolContext, log: FastifyBaseLogger): McpToolDefinition => {
     return {
         title: 'ap_lock_and_publish',
         permission: Permission.UPDATE_FLOW_STATUS,
@@ -62,7 +62,7 @@ export const apLockAndPublishTool = (mcp: ProjectScopedMcpServer, log: FastifyBa
                 await flowService(log).update({
                     id: flow.id,
                     projectId: mcp.projectId,
-                    userId: null,
+                    userId: userId ?? null,
                     platformId: project.platformId,
                     operation,
                 })

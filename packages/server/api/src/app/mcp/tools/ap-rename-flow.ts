@@ -2,9 +2,9 @@ import {
     FlowOperationRequest,
     FlowOperationType,
     isNil,
+    McpToolContext,
     McpToolDefinition,
     Permission,
-    ProjectScopedMcpServer,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
@@ -17,7 +17,7 @@ const renameFlowInput = z.object({
     displayName: z.string(),
 })
 
-export const apRenameFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
+export const apRenameFlowTool = ({ mcp, userId }: McpToolContext, log: FastifyBaseLogger): McpToolDefinition => {
     return {
         title: 'ap_rename_flow',
         permission: Permission.WRITE_FLOW,
@@ -47,7 +47,7 @@ export const apRenameFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLo
                 await flowService(log).update({
                     id: flow.id,
                     projectId: mcp.projectId,
-                    userId: null,
+                    userId: userId ?? null,
                     platformId: project.platformId,
                     operation,
                 })

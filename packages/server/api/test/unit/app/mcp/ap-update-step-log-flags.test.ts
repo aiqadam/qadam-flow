@@ -66,7 +66,7 @@ function flowWithCodeStep(stepFlags: { skip?: boolean, logInput?: boolean, logOu
 }
 
 async function updateStep(args: Record<string, unknown>): Promise<string> {
-    const result = await apUpdateStepTool(mcp, log).execute({ flowId: 'flow-1', stepName: 'step_1', ...args })
+    const result = await apUpdateStepTool({ mcp }, log).execute({ flowId: 'flow-1', stepName: 'step_1', ...args })
     return (result.content?.[0] as { text: string }).text
 }
 
