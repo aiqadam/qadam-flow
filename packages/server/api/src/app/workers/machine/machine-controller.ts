@@ -57,10 +57,19 @@ export const workerMachineController: FastifyPluginAsyncZod = async (app) => {
         principalType: PrincipalType.WORKER,
         event: WebsocketServerEvent.DISCONNECT,
         handler: (socket) => {
-            return async (_request: unknown, _principal) => {
-                await machineService(app.log).onDisconnect({
-                    workerId: socket.handshake.auth.workerId,
-                })
+            return async () => {
+                const workerId = readHandshakeWorkerId(socket)
+                if (isNil(workerId)) {
+                    return
+                }
+                // A worker that reconnects registers on its new socket before the server notices
+                // that the old one is gone (a half-open connection is only dropped after the ping
+                // timeout). The worker's room is left by a closing socket before `disconnect`
+                // fires, so anyone still in it is a live connection that owns the entry now. This narrows the race rather than closing it: a newer socket that has not joined yet is not seen, and the entry then comes back with the worker's next poll.
+                if (await websocketService.hasSocketsInRoom({ room: workerId })) {
+                    return
+                }
+                await machineService(app.log).onDisconnect({ workerId })
             }
         },
     })

@@ -4,7 +4,7 @@
 Workers are separate Node processes that poll the app for jobs and execute flows/triggers in sandboxes. They connect to the app over a Socket.IO channel: on connect a worker fetches its runtime settings (`WorkerSettingsResponse`) and the app registers an RPC server (`WorkerToApiContract`) for that socket. Jobs are pulled by the worker via `poll()` rather than pushed. A worker advertises liveness and config through `MachineInformation` (heartbeat), whose `workerProps` carry its identity including `version`. In the Docker image `AP_CONTAINER_TYPE` (`APP` or `WORKER`, required — there is no default and `WORKER_AND_APP` was removed) selects which process starts from `WORKDIR /usr/src/app`; `docker-entrypoint.sh` `exec`s Node directly, so a crash exits the container instead of being restarted in place.
 
 ## Key Files
-- `packages/server/api/src/app/workers/machine/machine-controller.ts` — Socket.IO listeners (`FETCH_WORKER_SETTINGS`, `DISCONNECT`); registers the RPC server per connection
+- `packages/server/api/src/app/workers/machine/machine-controller.ts` — Socket.IO listeners (`FETCH_WORKER_SETTINGS`, `WORKER_HEALTHCHECK`, `DISCONNECT`); registers the RPC server per connection
 - `packages/server/api/src/app/workers/machine/machine-service.ts` — `onConnection` / `onDisconnect`, `buildSettingsResponse` (emits `APP_VERSION`), worker listing
 - `packages/server/api/src/app/workers/rpc/worker-rpc-service.ts` — `createHandlers()`: `poll` (with version gate), `stopPolling`, `completeJob`, `extendLock`, progress/log RPCs
 - `packages/server/worker/src/lib/worker.ts` — worker lifecycle (`worker.start/stop`), `pollAndExecute` loop (with version gate), `getWorkerProps`
@@ -27,7 +27,7 @@ Workers are separate Node processes that poll the app for jobs and execute flows
 2. Worker caches settings, opens the connection gate and, on the first connect only, spawns `concurrency` `pollAndExecute` loops, one per sandbox manager.
 3. Each loop calls `apiClient.poll(machineInfo)`; the app's `poll` handler returns the next job for the worker's queue, or `null`.
 4. On job: worker executes in a sandbox, renews the lease with `extendLock` every 30 s, then `completeJob`.
-5. On disconnect, `connectionGeneration++` closes the gate. Socket.IO reconnects (the worker drives it by hand after `io server disconnect`), and the gate reopens.
+5. On disconnect, the app removes the worker from the machine registry (#825) and the worker's `connectionGeneration++` closes the gate. Socket.IO reconnects (the worker drives it by hand after `io server disconnect`), and the gate reopens.
 
 ## Reconnect and Drain (#585)
 - **A reconnect keeps everything.** The loops, the sandbox managers and any running job survive it. Until #585, every connect shut all managers down and started fresh ones, which killed each engine that was mid-job; the run failed as `INTERNAL_ERROR` and waited out the 8-minute retry (#584).
@@ -50,6 +50,8 @@ Workers are separate Node processes that poll the app for jobs and execute flows
   - Logged: `Stopping: no new jobs taken, waiting for in-flight jobs to finish`; `Shutdown grace expired, abandoning in-flight jobs` with `abandonedJobs` when the grace ran out; `Worker stopped` with `inFlightJobsAtStop` and `abandonedJobs` always.
   - `main.ts` forces the exit only at grace + 15 s. The shipped `docker-compose.yml` sets `stop_grace_period: 90s` on the worker, strictly above that, since Docker's default 10 s would kill the drain; the two move together. Other deployments (QA's own compose file, Kubernetes) need the same. `docker compose pull` does not change an existing install's compose file: re-running `run.sh` refreshes it, and a git checkout gets it with `git pull` (`tools/update.sh`).
   - The API's CE suites that run a real worker pin the grace to 5 s in `vitest.setup.ts`, which is what `test/helpers/worker-teardown.ts`'s 15 s budget is sized for.
+
+**A disconnect clears the registry (#825).** `websocketService.init` hangs the `DISCONNECT` listener off the socket's own lowercase `disconnect` event; `CONNECT` and `DISCONNECT` are lifecycle keys, never registered as wire events a client could emit. `machine-controller.ts`'s listener calls `machineService.onDisconnect` unless another socket of the same `workerId` is still in the worker's room (`websocketService.hasSocketsInRoom`, adapter-aware): a worker that reconnects registers on its new socket before the server notices the old one is gone, and the late close must not delete the live entry. A half-open connection is still only noticed after socket.io's ping timeout, so until then the entry lives on its TTL (`WORKER_MACHINE_TTL_SECONDS`, 60 s).
 
 **A poll belongs to its socket (#589).** The app's `poll` is a long-poll: `queue-dispatcher.ts` parks it as a waiter for up to `WAITER_TIMEOUT_MS` (50 s) and hands the next dequeued job to the oldest waiter. `machine-controller.ts` gives each socket's handlers an `AbortSignal` (`disconnected`) that aborts on the socket's `disconnect`, and `jobBroker.poll({ queueName, signal })` passes it to the dispatcher.
 - On abort, the dispatcher drops that socket's waiters (they resolve `null`), so the next job goes to a live worker. A poll that arrives on an already-closed socket returns `null` at once, before the registry upsert, so it cannot re-register a worker that `onDisconnect` just removed.
