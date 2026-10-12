@@ -36,15 +36,13 @@ export const listMessages = createAction({
     }),
     startAt: Property.DateTime({
       displayName: 'Start Date and Time',
-      description: 'The start date and time (in UTC) to filter messages',
-      required: true,
-      defaultValue: dayjs().subtract(1, 'day').format('YYYY-MM-DDTHH:mm:ss[Z]'),
+      description: 'The start date and time (in UTC) to filter messages (defaults to 24 hours ago when empty)',
+      required: false,
     }),
     endAt: Property.DateTime({
       displayName: 'End Date and Time',
-      description: 'The end date and time (in UTC) to filter messages, should not exceed 7 days from start date',
-      required: true,
-      defaultValue: dayjs().format('YYYY-MM-DDTHH:mm:ss[Z]'),
+      description: 'The end date and time (in UTC) to filter messages, should not exceed 7 days from start date (defaults to now when empty)',
+      required: false,
     }),
     pageToken: Property.ShortText({
       displayName: 'Next Page Token',
@@ -53,7 +51,9 @@ export const listMessages = createAction({
     }),
   },
   async run(context) {
-    const { status, startAt, endAt, pageToken } = context.propsValue;
+    const { status, pageToken } = context.propsValue;
+    const startAt = context.propsValue.startAt || dayjs().subtract(1, 'day').format('YYYY-MM-DDTHH:mm:ss[Z]');
+    const endAt = context.propsValue.endAt || dayjs().format('YYYY-MM-DDTHH:mm:ss[Z]');
   
     const auth = context.auth.props;
 

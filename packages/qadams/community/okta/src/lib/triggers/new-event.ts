@@ -244,7 +244,7 @@ export const newEventTrigger = createTrigger({
 
   sampleData: {
     eventId: 'evt_123456789',
-    timestamp: new Date().toISOString(),
+    timestamp: '2024-01-01T00:00:00.000Z',
     version: '0',
     severity: 'INFO',
     eventType: 'user.lifecycle.create',
