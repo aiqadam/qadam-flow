@@ -1,5 +1,5 @@
-# pieces-common
+# qadams-common
 
 ## Building
 
-Run `turbo run build --filter=@aiqadam/pieces-common` to build the library.
+Run `turbo run build --filter=@aiqadam/qadams-common` to build the library.
