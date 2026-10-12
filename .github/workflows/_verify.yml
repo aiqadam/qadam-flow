@@ -399,8 +399,8 @@ jobs:
         run: npm run check-required-prop-defaults
 
       # ADR-0001 gate 2: the declared changeset level is not below the level computed from the
-      # qadam's actions/triggers/props diff (the SDK .d.ts half is not implemented yet — see the
-      # checker's header). The `semver-override` verdict comes from ci.yml's job of that name.
+      # qadam's actions/triggers/props diff and the SDK's public `.d.ts` surface. The
+      # `semver-override` verdict comes from ci.yml's job of that name.
       - name: Test the changeset-level gate
         run: tools/ci/test-changeset-levels-gate.sh
 

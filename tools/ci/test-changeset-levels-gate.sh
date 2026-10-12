@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # Fixture tests for tools/ci/check-changeset-levels.mjs — ADR-0001 gate 2 (the declared changeset
-# level is not below the level computed from the qadam's actions / triggers / props surface), and
-# the `semver-override` verdict it reads.
+# level is not below the level computed from the qadam's actions / triggers / props surface, or from
+# the SDK's public `.d.ts` surface), and the `semver-override` verdict it reads.
 #
 # Real throwaway git repositories; every reject case has an accept case that differs only in the
 # declared level, so a gate that computed nothing (and therefore demanded nothing) fails here.
@@ -81,6 +81,99 @@ change() {
   local dir="$1" level="$2"
   if [ "$level" != '-' ]; then
     write "$dir/.changeset/demo.md" "$(printf -- '---\n"@aiqadam/qadam-demo": %s\n---\n\nChange.' "$level")"
+  fi
+  git -C "$dir" add -A && git -C "$dir" commit -q -m change
+}
+
+# --- SDK fixtures: a repo whose only versioned src change is `@aiqadam/qadams-framework` ------------
+
+SDK_DIR='packages/qadams/framework'
+SDK_SRC="$SDK_DIR/src/index.ts"
+
+# The base public surface. `Level` is a union (narrowing it is a break), `Options` is an interface,
+# `sum` is a function (its body is invisible to the diff, its signature is not).
+SDK_TYPES="export type Level = 'a' | 'b'
+export interface Options {
+  name: string
+  retries: number
+}"
+SDK_BASE="$SDK_TYPES
+export function sum(a: number, b: number): number {
+  return a + b
+}"
+SDK_NO_SUM="$SDK_TYPES"
+SDK_NARROWED="export type Level = 'a'
+export interface Options {
+  name: string
+  retries: number
+}
+export function sum(a: number, b: number): number {
+  return a + b
+}"
+SDK_ADDED="$SDK_BASE
+export type Added = string"
+SDK_NEW_SIGNATURE="export type Level = 'a' | 'b'
+export interface Options {
+  name: string
+  retries: number
+}
+export function sum(a: number, b: number, c: number): number {
+  return a + b + c
+}"
+# Same signatures, different bodies — a fix, not a change to the surface.
+SDK_BODY_ONLY="$SDK_TYPES
+export function sum(a: number, b: number): number {
+  return b + a
+}"
+
+# new_sdk_pkg_repo <name> <pkg-name> <pkg-dir> <version> <src> [extra-workspace...]
+new_sdk_pkg_repo() {
+  local dir="${tmp}/$1" pkgname="$2" pkgdir="$3" version="$4" src="$5"
+  shift 5
+  local workspaces="\"packages/platform\", \"${pkgdir}\"" extra
+  for extra in "$@"; do workspaces="${workspaces}, \"${extra}\""; done
+  rm -rf "$dir"; mkdir -p "$dir"
+  git -C "$dir" init -q -b main
+  git -C "$dir" config commit.gpgsign false
+  write "$dir/package.json" "{ \"name\": \"qadam-flow\", \"version\": \"2.0.0\", \"private\": true, \"workspaces\": [${workspaces}] }"
+  write "$dir/packages/platform/package.json" '{ "name": "@aiqadam/platform", "version": "2.0.0", "private": true }'
+  write "$dir/${pkgdir}/package.json" "{ \"name\": \"${pkgname}\", \"version\": \"${version}\" }"
+  write "$dir/${pkgdir}/src/index.ts" "$src"
+  write "$dir/.changeset/config.json" '{ "privatePackages": { "version": true, "tag": false }, "ignore": [] }'
+  git -C "$dir" add -A
+  git -C "$dir" commit -q -m base
+  git -C "$dir" tag base
+  printf '%s\n' "$dir"
+}
+
+new_sdk_repo() { new_sdk_pkg_repo "$1" '@aiqadam/qadams-framework' "$SDK_DIR" "$2" "$SDK_BASE"; }
+
+# A framework that re-exports a `shared` type through its entry, resolved through the workspace
+# `tsconfig.base.json` `paths` — the shape #822 ships (the framework bundles `shared` at publish).
+new_sdk_shared_repo() {
+  local dir="${tmp}/$1" version="$2"
+  rm -rf "$dir"; mkdir -p "$dir"
+  git -C "$dir" init -q -b main
+  git -C "$dir" config commit.gpgsign false
+  write "$dir/package.json" '{ "name": "qadam-flow", "version": "2.0.0", "private": true, "workspaces": ["packages/platform", "packages/qadams/framework", "packages/shared"] }'
+  write "$dir/packages/platform/package.json" '{ "name": "@aiqadam/platform", "version": "2.0.0", "private": true }'
+  write "$dir/packages/shared/package.json" '{ "name": "@aiqadam/shared", "version": "0.1.0", "private": true }'
+  write "$dir/packages/shared/src/index.ts" "export type Level = 'a' | 'b'"
+  write "$dir/${SDK_DIR}/package.json" "{ \"name\": \"@aiqadam/qadams-framework\", \"version\": \"${version}\" }"
+  write "$dir/$SDK_SRC" "export type { Level } from '@aiqadam/shared'"
+  write "$dir/tsconfig.base.json" '{ "compilerOptions": { "baseUrl": ".", "paths": { "@aiqadam/shared": ["packages/shared/src/index.ts"] } } }'
+  write "$dir/.changeset/config.json" '{ "privatePackages": { "version": true, "tag": false }, "ignore": [] }'
+  git -C "$dir" add -A
+  git -C "$dir" commit -q -m base
+  git -C "$dir" tag base
+  printf '%s\n' "$dir"
+}
+
+# sdk_change <dir> <package-name> <level|-> — commits the working tree plus (unless `-`) a changeset.
+sdk_change() {
+  local dir="$1" name="$2" level="$3"
+  if [ "$level" != '-' ]; then
+    write "$dir/.changeset/sdk.md" "$(printf -- '---\n"%s": %s\n---\n\nChange.' "$name" "$level")"
   fi
   git -C "$dir" add -A && git -C "$dir" commit -q -m change
 }
@@ -181,11 +274,68 @@ $(printf "%s\n" "$BASE_PROPS" | grep -v note)")"
 change "$d" patch
 expect 0 'a props-level spread makes removals untrustworthy, so none is reported' "$d" 'computed patch'
 
-d="$(new_repo sdk 1.2.0)"
-write "$d/packages/qadams/framework/src/index.ts" 'export const y = 2'
-write "$d/.changeset/sdk.md" $'---\n"@aiqadam/qadams-framework": patch\n---\n\nSDK.'
-git -C "$d" add -A && git -C "$d" commit -q -m sdk
-expect 0 'the SDK half is not computed yet and says so' "$d" 'not computed: the SDK public .d.ts diff is not implemented yet'
+echo "== SDK: the public .d.ts surface of qadams-framework / qadams-common =="
+
+# pair_sdk <label> <framework-version> <too-low> <enough> <needle> <mutation...>
+pair_sdk() {
+  local label="$1" version="$2" low="$3" enough="$4" needle="$5" mutation="$6" d
+  d="$(new_sdk_repo "sdk-low-${label// /-}" "$version")"; eval "$mutation"; sdk_change "$d" '@aiqadam/qadams-framework' "$low"
+  expect 1 "SDK ${label}: declared ${low} -> FAIL" "$d" "$needle"
+  d="$(new_sdk_repo "sdk-ok-${label// /-}" "$version")"; eval "$mutation"; sdk_change "$d" '@aiqadam/qadams-framework' "$enough"
+  expect 0 "SDK ${label}: declared ${enough} -> PASS" "$d" ''
+}
+
+pair_sdk 'export removed on 0.x' 0.35.0 patch minor "export 'sum' removed" \
+  "write \"\$d/$SDK_SRC\" \"\$SDK_NO_SUM\""
+pair_sdk 'export removed on 1.x' 1.2.0 minor major "export 'sum' removed" \
+  "write \"\$d/$SDK_SRC\" \"\$SDK_NO_SUM\""
+pair_sdk 'type narrowed' 1.2.0 minor major "export 'Level' signature changed" \
+  "write \"\$d/$SDK_SRC\" \"\$SDK_NARROWED\""
+pair_sdk 'function signature changed' 1.2.0 minor major "export 'sum' signature changed" \
+  "write \"\$d/$SDK_SRC\" \"\$SDK_NEW_SIGNATURE\""
+pair_sdk 'export added on 1.x' 1.2.0 patch minor "export 'Added' added" \
+  "write \"\$d/$SDK_SRC\" \"\$SDK_ADDED\""
+
+d="$(new_sdk_repo sdk-added-0x 0.35.0)"
+write "$d/$SDK_SRC" "$SDK_ADDED"
+sdk_change "$d" '@aiqadam/qadams-framework' patch
+expect 0 'a new SDK export on 0.x needs only a patch' "$d" 'computed patch'
+
+d="$(new_sdk_repo sdk-fix 1.2.0)"
+write "$d/$SDK_SRC" "$SDK_BODY_ONLY"
+sdk_change "$d" '@aiqadam/qadams-framework' patch
+expect 0 'an SDK change whose signatures are unchanged needs only a patch' "$d" 'computed patch'
+
+# An entry file that is not a module (no imports/exports) has no surface; it must not crash.
+d="$(new_sdk_pkg_repo sdk-no-module '@aiqadam/qadams-framework' packages/qadams/framework 1.2.0 'const x = 1')"
+write "$d/$SDK_SRC" 'const y = 2'
+sdk_change "$d" '@aiqadam/qadams-framework' patch
+expect 0 'an SDK entry with no exports is reported as no public surface, not UNKNOWN' "$d" 'no public surface'
+
+# Deleting the entry drops the whole public surface: every export is removed, so a patch is too low.
+pair_sdk 'entry deleted' 0.35.0 patch minor "export 'sum' removed" \
+  "rm \"\$d/$SDK_SRC\""
+
+# qadams-common is the other SDK package; its surface is computed by the same path.
+d="$(new_sdk_pkg_repo sdk-common '@aiqadam/qadams-common' packages/qadams/common 0.17.1 'export function ping(): string { return "pong" }')"
+write "$d/packages/qadams/common/src/index.ts" 'export const other = 1'
+sdk_change "$d" '@aiqadam/qadams-common' minor
+expect 0 'a removed export from qadams-common computes the common level' "$d" 'computed minor'
+d="$(new_sdk_pkg_repo sdk-common-low '@aiqadam/qadams-common' packages/qadams/common 0.17.1 'export function ping(): string { return "pong" }')"
+write "$d/packages/qadams/common/src/index.ts" 'export const other = 1'
+sdk_change "$d" '@aiqadam/qadams-common' patch
+expect 1 'a qadams-common export removed fails a patch' "$d" "export 'ping' removed"
+
+# A `shared` narrowing reaches qadam authors through the framework's re-export, so it is the
+# framework's level that must cover it — even though no framework src file changed (#799/#822).
+d="$(new_sdk_shared_repo sdk-shared-low 0.35.0)"
+write "$d/packages/shared/src/index.ts" "export type Level = 'a'"
+sdk_change "$d" '@aiqadam/qadams-framework' patch
+expect 1 'a shared narrowing seen through the framework re-export fails a framework patch' "$d" "export 'Level' signature changed"
+d="$(new_sdk_shared_repo sdk-shared-ok 0.35.0)"
+write "$d/packages/shared/src/index.ts" "export type Level = 'a'"
+sdk_change "$d" '@aiqadam/qadams-framework' minor
+expect 0 'a shared narrowing seen through the framework re-export passes a framework minor' "$d" ''
 
 echo "== OVERRIDE =="
 

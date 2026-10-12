@@ -14,9 +14,14 @@
 //     fix      — any other `src/` change.
 //   The level that satisfies each follows ADR-0001's table and the 0.x rule: on 0.x a break is a
 //   minor and a feature a patch; from 1.0.0 a break is a major and a feature a minor.
-// - SDK (`@aiqadam/qadams-framework`, `@aiqadam/qadams-common`): NOT YET. The public `.d.ts` diff
-//   is the other half of this gate and is not implemented here (TODO, #797; #786 lists the same
-//   deliverable). Until it is, an SDK change is reported as "not computed" and only gate 1 applies.
+// - SDK (`@aiqadam/qadams-framework`, `@aiqadam/qadams-common`): the public `.d.ts` surface of the
+//   package entry (`src/index.ts`), emitted from source at the base and the head and diffed by
+//   exported name (tools/ci/sdk-api-surface.mjs). A removed export, or an export whose declaration
+//   text changed (a changed signature or a narrowed type), is breaking; a new export is a feature;
+//   anything else is a fix. A re-exported `shared` symbol is compared by its own declaration, so a
+//   narrowing that reaches a qadam through the framework's re-exports is seen, and a `shared` src
+//   change computes the framework's level too (the framework bundles and re-exports it, #799/#822).
+//   The level that satisfies each follows the same table and 0.x rule as qadams.
 // - `@aiqadam/shared` and `@aiqadam/platform` have no computable surface; nothing is demanded.
 //
 // WHAT IT CANNOT SEE — read before trusting a clean run
@@ -53,6 +58,7 @@ import fs from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import ts from 'typescript'
 import { changesetGate } from './check-changesets.mjs'
+import { sdkApiSurface } from './sdk-api-surface.mjs'
 
 export const changesetLevels = {
   extractSurface: (...args) => extractSurface(...args),
@@ -62,6 +68,8 @@ export const changesetLevels = {
 
 const QADAM_DIR = /^packages\/qadams\/(core|community)\/[^/]+$/
 const SDK_PACKAGES = new Set(['@aiqadam/qadams-framework', '@aiqadam/qadams-common'])
+const SHARED_PACKAGE = '@aiqadam/shared'
+const BUNDLED_INTO = { [SHARED_PACKAGE]: '@aiqadam/qadams-framework' }
 const LEVEL_RANK = { none: 0, patch: 1, minor: 2, major: 3 }
 const CREATE_FACTORIES = new Map([['createAction', 'action'], ['createTrigger', 'trigger']])
 const PROPERTY_NAMESPACES = new Set(['Property', 'QadamAuth'])
@@ -124,14 +132,35 @@ const evaluate = ({ range }) => {
     }
   }
 
-  const rows = [...changed.values()].map((pkg) => evaluatePackage({ pkg, range, declared: declared.get(pkg.name) ?? 'none' }))
+  // A `shared` src change reaches qadam authors only through the framework's re-exports, and the
+  // framework vendors all of it at publish (#799/#822), so its level is computed from the same diff.
+  if (changed.has(SHARED_PACKAGE)) {
+    const bundler = workspace.byName.get(BUNDLED_INTO[SHARED_PACKAGE])
+    if (bundler?.versioned) {
+      changed.set(bundler.name, bundler)
+    }
+  }
+
+  const sdkPackages = [...changed.values()].filter((pkg) => SDK_PACKAGES.has(pkg.name))
+  const sdkChanges = sdkPackages.length > 0
+    ? sdkApiSurface.computeChanges({ range, packages: sdkPackages, repoRoot: process.cwd() })
+    : new Map()
+
+  const rows = [...changed.values()].map((pkg) => evaluatePackage({ pkg, range, declared: declared.get(pkg.name) ?? 'none', sdkChanges }))
   const violations = rows.filter((row) => row.computed !== null && LEVEL_RANK[row.declared] < LEVEL_RANK[row.computed])
   return { rows, violations }
 }
 
-const evaluatePackage = ({ pkg, range, declared }) => {
+const evaluatePackage = ({ pkg, range, declared, sdkChanges }) => {
   if (SDK_PACKAGES.has(pkg.name)) {
-    return { name: pkg.name, declared, computed: null, findings: [], note: 'not computed: the SDK public .d.ts diff is not implemented yet (TODO, ADR-0001 gate 2)' }
+    const change = sdkChanges.get(pkg.name)
+    if (!change) {
+      return { name: pkg.name, declared, computed: null, findings: [], note: 'no public surface to compare at this range' }
+    }
+    if (change.baseVersion === null) {
+      return { name: pkg.name, declared, computed: null, findings: [], note: change.note }
+    }
+    return { name: pkg.name, declared, computed: requiredLevel({ kind: change.kind, baseVersion: change.baseVersion }), findings: change.findings, drivingKind: change.kind, baseVersion: change.baseVersion, note: change.note }
   }
   if (!QADAM_DIR.test(pkg.dir)) {
     return { name: pkg.name, declared, computed: null, findings: [], note: 'no computable surface' }

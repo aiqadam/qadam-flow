@@ -111,10 +111,11 @@ and `tools/scripts/changesets/version.mjs`.
 
 ## 6. When gate 2 disagrees
 
-Gate 2 computes a level from the actions / triggers / props / output-schema diff (qadams) and fails
-when the declared level is lower. The SDK `.d.ts` half is not implemented yet (TODO in
-`tools/ci/check-changeset-levels.mjs`), so an SDK change is reported as "not computed" and only
-gate 1 applies.
+Gate 2 computes a level from the actions / triggers / props / output-schema diff (qadams) and, for
+the SDK, from the public `.d.ts` surface of `qadams-framework` / `qadams-common`
+(`tools/ci/sdk-api-surface.mjs`: a removed export, a changed signature or a narrowed type is
+breaking, a new export is a feature). It fails when the declared level is lower. A `shared` change
+is measured on the framework too, which re-exports and vendors it.
 
 - Assume CI is right first. Read what it reports; if it found a removal or a narrowing you missed,
   raise the level.
