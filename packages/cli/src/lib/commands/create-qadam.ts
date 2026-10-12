@@ -70,7 +70,7 @@ const scaffoldQadam = async (
       tslib: '2.6.2',
     },
     scripts: {
-      build: 'tsc -p tsconfig.lib.json && cp package.json dist/',
+      build: 'tsc -p tsconfig.lib.json && cp package.json dist/ && rm -rf dist/src/i18n && cp -r src/i18n dist/src/i18n',
       lint: "eslint 'src/**/*.ts'",
     },
   };
