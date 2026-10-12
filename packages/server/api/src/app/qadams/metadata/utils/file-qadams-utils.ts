@@ -147,7 +147,8 @@ const findAllDistQadamFolders = async (sourcePiecesPath: string): Promise<string
 }
 
 const isTranslationLoadingEnabled = (): boolean => {
-    return environmentVariables.getBooleanEnvironment(AppSystemProp.LOAD_TRANSLATIONS_FOR_DEV_QADAMS) ?? false
+    // On unless opted out: without the catalogues `?locale=<non-en>` has nothing to apply (#606).
+    return environmentVariables.getBooleanEnvironment(AppSystemProp.LOAD_TRANSLATIONS_FOR_DEV_QADAMS) ?? true
 }
 
 const loadQadamFromFolder = async ({ folderPath, loadTranslations }: LoadQadamFromFolderParams): Promise<QadamMetadata | null> => {
