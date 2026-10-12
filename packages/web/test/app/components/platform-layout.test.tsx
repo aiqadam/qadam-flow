@@ -99,7 +99,7 @@ describe('platform layout on mobile', () => {
     await act(async () => {
       connectionsItem()?.click();
     });
-    expect(pageText()).toContain('connections page');
+    expect(document.body).toHaveTextContent('connections page');
     expect(mobileSheet()).toBeNull();
   });
   // #714: PlatformLayout pins SidebarProvider open, so a desktop toggle would write to a state
@@ -241,9 +241,4 @@ function connectionsItem(): HTMLElement | null {
 
 function mobileSheet(): Element | null {
   return document.querySelector('[data-slot="sidebar"][data-mobile="true"]');
-}
-
-// No jest-dom in this harness, so read the text directly.
-function pageText(): string {
-  return document.body.textContent ?? '';
 }
