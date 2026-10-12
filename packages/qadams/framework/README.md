@@ -1,5 +1,5 @@
-# pieces-framework
+# qadams-framework
 
 ## Building
 
-Run `turbo run build --filter=@aiqadam/pieces-framework` to build the library.
+Run `turbo run build --filter=@aiqadam/qadams-framework` to build the library.
