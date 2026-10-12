@@ -46,7 +46,7 @@ const systemPropDefaultValues: Partial<Record<SystemProp, string>> = {
     [AppSystemProp.ENVIRONMENT]: 'prod',
     [AppSystemProp.EXECUTION_MODE]: ExecutionMode.UNSANDBOXED,
     [AppSystemProp.WEBHOOK_TIMEOUT_SECONDS]: '30',
-    [AppSystemProp.LOAD_TRANSLATIONS_FOR_DEV_QADAMS]: 'false',
+    [AppSystemProp.LOAD_TRANSLATIONS_FOR_DEV_QADAMS]: 'true',
     [AppSystemProp.LOG_LEVEL]: 'info',
     [AppSystemProp.LOG_PRETTY]: 'false',
     [AppSystemProp.S3_USE_SIGNED_URLS]: 'false',

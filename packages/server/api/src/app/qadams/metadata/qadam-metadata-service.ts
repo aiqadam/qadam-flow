@@ -488,9 +488,9 @@ async function fetchLatestQadams({ platformId, locale = LocalesEnum.ENGLISH, log
     const translatedQadams = translatePieces(latestQadams, locale)
 
     const bundledQadams = await loadBundledQadams(log)
-    const translatedBundled = bundledQadams.map((qadam) =>
-        qadamTranslation.translatePiece<QadamMetadataSchema>({ piece: qadam, locale, mutate: true }),
-    )
+    // `loadBundledQadams` is cached per process: translating must copy, never mutate, or a
+    // non-`en` request leaves translated strings behind for later `en` requests (#606).
+    const translatedBundled = translatePieces(bundledQadams, locale)
 
     // Must key the same way `qadamCache.loadRegistry()` does, or a row shadowed there stays
     // resolvable (and executable) through `get()`/`registry()` while disappearing from this
@@ -563,8 +563,9 @@ function translatePieces(qadams: QadamMetadataSchema[], locale: LocalesEnum): Qa
         const translated = locale === LocalesEnum.ENGLISH
             ? { ...qadam }
             : qadamTranslation.translatePiece<QadamMetadataSchema>({ piece: qadam, locale, mutate: false })
-        translated.i18n = undefined
-        return translated
+        // A fresh object either way: on a locale miss `translatePiece` returns the cached piece
+        // itself, and stripping `i18n` on it would delete the catalogues from the shared cache.
+        return { ...translated, i18n: undefined }
     })
 }
 
