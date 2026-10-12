@@ -309,17 +309,9 @@ describe('ConfigureLdapDialog — a server validation error is translated, not s
     });
     await flush();
 
-    // `jest-dom`'s `toHaveTextContent` matcher isn't wired into this project's vitest setup (no
-    // test file here registers `@testing-library/jest-dom`), so the plain DOM property is what
-    // actually runs; the recommended-config lint rule that prefers the matcher doesn't fit this
-    // repo's test infra yet.
-    // eslint-disable-next-line jest-dom/prefer-to-have-text-content -- see comment above
-    expect(document.body.textContent).toContain(
+    expect(document.body).toHaveTextContent(
       "This group DN can't be reliably compared to a directory group name",
     );
-    // eslint-disable-next-line jest-dom/prefer-to-have-text-content -- see comment above
-    expect(document.body.textContent).not.toContain(
-      'invalidLdapGroupDnEncoding',
-    );
+    expect(document.body).not.toHaveTextContent('invalidLdapGroupDnEncoding');
   });
 });

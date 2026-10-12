@@ -207,10 +207,9 @@ describe('provider dialog: reasoning in chat (#566)', () => {
       await submit();
 
       expect(upsert).not.toHaveBeenCalled();
-      // Read into a string first: jest-dom's matchers are not registered here (#557), and its lint
-      // rule would otherwise rewrite this into `toHaveTextContent`.
-      const rendered = document.body.textContent ?? '';
-      expect(rendered).toContain('reasoningBudgetTokensOutOfRange');
+      expect(document.body).toHaveTextContent(
+        'reasoningBudgetTokensOutOfRange',
+      );
     },
   );
 

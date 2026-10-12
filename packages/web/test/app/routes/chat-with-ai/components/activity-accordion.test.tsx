@@ -54,8 +54,6 @@ const trigger = (): HTMLButtonElement => {
   return button;
 };
 
-// Read through a helper rather than asserted with `toHaveAttribute`: no test file here registers
-// `@testing-library/jest-dom`, so its matchers do not exist in this harness.
 const isExpanded = () => trigger().getAttribute('aria-expanded') === 'true';
 const label = () => trigger().textContent;
 

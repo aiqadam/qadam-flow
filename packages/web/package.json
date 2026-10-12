@@ -123,6 +123,8 @@
   "devDependencies": {
     "@tailwindcss/postcss": "4.3.3",
     "@tailwindcss/vite": "4.3.3",
+    "@testing-library/dom": "10.4.2",
+    "@testing-library/jest-dom": "7.0.1",
     "@types/canvas-confetti": "^1.9.0",
     "@types/deep-equal": "1.0.4",
     "@types/pako": "2.0.4",
