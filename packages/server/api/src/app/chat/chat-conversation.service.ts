@@ -9,6 +9,7 @@ import {
     PersistedChatMessage,
     PersistedToolApprovalRequestPart,
     QadamFlowError,
+    sanitizeObjectForPostgresql,
     SeekPage,
     spreadIfNotUndefined,
     UpdateChatConversationRequest,
@@ -161,13 +162,18 @@ export const chatConversationService = {
                 status: ChatConversationStatus.IDLE,
                 activeRunId: null,
                 runHeartbeat: null,
-                messages,
+                // Tool outputs are persisted verbatim — including `structuredContent` carrying a
+                // raw third-party response — and a NUL in any of it reaches a `json` column that a
+                // `jsonb` cast (or a stricter Postgres) rejects, failing the write and losing the
+                // user's own assistant turn (#490). Stripped on the way in, like every other
+                // external-data write in this repo.
+                messages: sanitizeObjectForPostgresql(messages),
                 // Nullable because a run cancelled before the first token has no assistant turn to
                 // record, and an empty bubble reads worse than none — but the conversation still
                 // has to leave STREAMING or the client's stale-check spins forever.
                 uiMessages: isNil(assistantMessage)
                     ? conversation.uiMessages
-                    : [...(conversation.uiMessages ?? []), assistantMessage],
+                    : [...(conversation.uiMessages ?? []), sanitizeObjectForPostgresql(assistantMessage)],
             })
         })
     },
