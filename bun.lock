@@ -2906,7 +2906,7 @@
         "@types/smtp-server": "3.5.13",
         "@types/tinycolor2": "1.4.6",
         "form-data": "4.0.6",
-        "smtp-server": "3.19.20",
+        "smtp-server": "3.19.21",
         "socket.io-client": "4.8.4",
         "vitest": "4.1.11",
         "webpack-ignore-dynamic-require": "1.0.0",
@@ -7842,7 +7842,7 @@
 
     "smart-buffer": ["smart-buffer@4.2.0", "", {}, "sha512-94hK0Hh8rPqQl2xXc3HsaBoOXKV20MToPkcXvwbISWLEs+64sBq5kFgn2kJDHb1Pry9yrP0dxrCI9RRci7RXKg=="],
 
-    "smtp-server": ["smtp-server@3.19.20", "", { "dependencies": { "ipv6-normalize": "1.0.1", "nodemailer": "10.1.0", "punycode.js": "2.3.1" } }, "sha512-om7ICo37Bky05P24xrcKXJe5dSxJvr9RXNsZmm6NIAiGnD1L2mPzweJ5vlKbvFhTQoIu/ZRzorrz5yhT2VcCuw=="],
+    "smtp-server": ["smtp-server@3.19.21", "", { "dependencies": { "ipv6-normalize": "1.0.1", "nodemailer": "10.1.0", "punycode.js": "2.3.1" } }, "sha512-d0wWijB5dK4gImQidwWMlcGsycqcDCJV0VdQbfz61rgkDqnzAx0Epvi0o5JN2nnr/YwriVC+XV0T8YgcoB0bng=="],
 
     "snowflake-sdk": ["snowflake-sdk@3.4.0", "", { "dependencies": { "@aws-crypto/sha256-js": "^5.2.0", "@aws-sdk/client-s3": "^3.1051.0", "@aws-sdk/client-sts": "^3.1051.0", "@aws-sdk/credential-provider-node": "^3.972.43", "@aws-sdk/ec2-metadata-service": "^3.1051.0", "@azure/identity": "^4.10.1", "@azure/storage-blob": "12.26.x", "@smithy/node-http-handler": "^4.4.9", "@smithy/protocol-http": "^5.3.8", "@smithy/signature-v4": "^5.3.8", "@techteamer/ocsp": "1.0.1", "asn1.js": "^5.0.0", "asn1.js-rfc2560": "^5.0.0", "asn1.js-rfc5280": "^3.0.0", "axios": "^1.15.1", "big-integer": "^1.6.43", "bignumber.js": "^9.1.2", "expand-tilde": "^2.0.2", "fast-xml-parser": "^5.4.1", "fastest-levenshtein": "^1.0.16", "generic-pool": "^3.8.2", "google-auth-library": "^10.1.0", "https-proxy-agent": "^7.0.2", "jsonwebtoken": "^9.0.3", "mime-types": "^2.1.29", "moment": "^2.29.4", "moment-timezone": "^0.5.15", "oauth4webapi": "^3.0.1", "open": "^7.3.1", "simple-lru-cache": "^0.0.2", "toml": "^5.0.0", "winston": "^3.1.0" } }, "sha512-hUTlJH0nXBs3RBBLmkYUt2n9K3k6DanwbfCgvR7kOpMXuodMDrkCM++tJMo0uEq2kIrKJ7S3wJ3F2v/IRPBDUQ=="],
 
