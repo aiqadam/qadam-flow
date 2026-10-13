@@ -55,7 +55,7 @@ describe('ap_update_record — the lossy echo needs a byte-exact counterpart (#4
         // The prose copy must not let the value forge a second `Record ID:` line.
         expect(text(result).split('\n').filter(line => line.trim().startsWith('Record ID:'))).toHaveLength(1)
         // The structured copy must be the value as sent, newline and all.
-        expect(result.structuredContent).toEqual({ record: { id: 'record-1', cells: { Notes: value } } })
+        expect(result.structuredContent).toEqual({ record: { id: 'record-1', cells: { 'field-1': { fieldName: 'Notes', value } } } })
     })
 
     it('does not truncate in structuredContent what the prose rendering caps', async () => {
@@ -74,6 +74,6 @@ describe('ap_update_record — the lossy echo needs a byte-exact counterpart (#4
         })
 
         expect(text(result)).toContain('... (truncated)')
-        expect((result.structuredContent as { record: { cells: Record<string, unknown> } }).record.cells.Notes).toBe(value)
+        expect((result.structuredContent as { record: { cells: Record<string, { fieldName: string, value: unknown }> } }).record.cells['field-1']).toEqual({ fieldName: 'Notes', value })
     })
 })

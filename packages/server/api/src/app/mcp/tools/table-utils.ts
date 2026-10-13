@@ -76,15 +76,20 @@ export function formatPopulatedRecord(record: PopulatedRecord): string {
 }
 
 // The byte-exact counterpart to `formatPopulatedRecord`'s lossy prose (see the
-// `CELL_VALUE_PREVIEW_MAX` comment above): raw, unwrapped `cell.value`s keyed by field name, meant
-// to travel only in `structuredContent`, never interpolated into text a model reads as prose.
-// Shared by `ap_find_records` and `ap_update_record` so both tools expose the same shape for the
-// same data instead of drifting.
+// `CELL_VALUE_PREVIEW_MAX` comment above): raw, unwrapped `cell.value`s keyed by field id,
+// meant to travel only in `structuredContent`, never interpolated into text a model reads as
+// prose. Shared by `ap_find_records` and `ap_update_record` so both tools expose the same shape
+// for the same data instead of drifting.
+//
+// Cells are keyed by `fieldId`, not by field name: `Field.name` is unconstrained `z.string()`
+// and is not unique, so two fields can share a name and name-keying silently drops every cell
+// but the last (#492). The field name rides along as a nested property so callers can still
+// display it without re-resolving ids.
 export function toStructuredRecord(record: PopulatedRecord): StructuredRecord {
     return {
         id: record.id,
         cells: Object.fromEntries(
-            Object.entries(record.cells).map(([fieldId, cell]) => [cell.fieldName ?? fieldId, cell.value]),
+            Object.entries(record.cells).map(([fieldId, cell]) => [fieldId, { fieldName: cell.fieldName ?? fieldId, value: cell.value }]),
         ),
     }
 }
@@ -146,5 +151,10 @@ type ResolveFieldNameToIdParams = {
 
 type StructuredRecord = {
     id: string
-    cells: Record<string, unknown>
+    cells: Record<string, StructuredCell>
+}
+
+type StructuredCell = {
+    fieldName: string
+    value: unknown
 }

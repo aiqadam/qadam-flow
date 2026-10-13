@@ -158,7 +158,7 @@ describe('formatPopulatedRecord — a table cell is third-party data and gets wr
 // structured copy is the byte-exact counterpart to `formatPopulatedRecord`'s lossy prose, so a wrap,
 // a collapse or a truncation leaking into it would defeat the reason it exists.
 describe('toStructuredRecord — the byte-exact counterpart to the wrapped prose (#485)', () => {
-    it('keys cells by field name and leaves the value untouched', () => {
+    it('keys cells by field id with the field name nested, leaving the value untouched', () => {
         const record = baseRecord({
             cells: {
                 'field-1': { created: '2024-01-01T00:00:00.000Z', updated: '2024-01-01T00:00:00.000Z', fieldName: 'Email', value: 'a@b.com' },
@@ -166,7 +166,7 @@ describe('toStructuredRecord — the byte-exact counterpart to the wrapped prose
             },
         })
 
-        expect(toStructuredRecord(record)).toEqual({ id: 'record-1', cells: { Email: 'a@b.com', Age: 42 } })
+        expect(toStructuredRecord(record)).toEqual({ id: 'record-1', cells: { 'field-1': { fieldName: 'Email', value: 'a@b.com' }, 'field-2': { fieldName: 'Age', value: 42 } } })
     })
 
     // The whole point of the structured channel: `formatPopulatedRecord` collapses this newline and
@@ -179,7 +179,7 @@ describe('toStructuredRecord — the byte-exact counterpart to the wrapped prose
             },
         })
 
-        expect(toStructuredRecord(record).cells.Notes).toBe(value)
+        expect(toStructuredRecord(record).cells['field-1']).toEqual({ fieldName: 'Notes', value })
         expect(formatPopulatedRecord(record)).not.toContain('line one\nline two')
     })
 
@@ -192,7 +192,7 @@ describe('toStructuredRecord — the byte-exact counterpart to the wrapped prose
             },
         })
 
-        expect(toStructuredRecord(record).cells.Blob).toBe(value)
+        expect(toStructuredRecord(record).cells['field-1']).toEqual({ fieldName: 'Blob', value })
         expect(formatPopulatedRecord(record)).toContain('... (truncated)')
     })
 
@@ -204,6 +204,39 @@ describe('toStructuredRecord — the byte-exact counterpart to the wrapped prose
             },
         })
 
-        expect(toStructuredRecord(record)).toEqual({ id: 'record-1', cells: { id: 'not-the-record-id' } })
+        expect(toStructuredRecord(record)).toEqual({ id: 'record-1', cells: { 'field-1': { fieldName: 'id', value: 'not-the-record-id' } } })
+    })
+
+    // `Field.name` is unconstrained and not unique — name-keying kept only the last cell when two
+    // fields shared a name (#492). Id-keying keeps both.
+    it('keeps both cells when two fields share a name', () => {
+        const record = baseRecord({
+            cells: {
+                'field-1': { created: '2024-01-01T00:00:00.000Z', updated: '2024-01-01T00:00:00.000Z', fieldName: 'Email', value: 'first@b.com' },
+                'field-2': { created: '2024-01-01T00:00:00.000Z', updated: '2024-01-01T00:00:00.000Z', fieldName: 'Email', value: 'second@b.com' },
+            },
+        })
+
+        expect(toStructuredRecord(record)).toEqual({
+            id: 'record-1',
+            cells: {
+                'field-1': { fieldName: 'Email', value: 'first@b.com' },
+                'field-2': { fieldName: 'Email', value: 'second@b.com' },
+            },
+        })
+    })
+
+    // A field literally named `__proto__` is an ordinary id-keyed entry here, never a prototype
+    // write on the `cells` object.
+    it('does not treat a field named __proto__ as a prototype write', () => {
+        const record = baseRecord({
+            cells: {
+                'field-1': { created: '2024-01-01T00:00:00.000Z', updated: '2024-01-01T00:00:00.000Z', fieldName: '__proto__', value: 'pollution-attempt' },
+            },
+        })
+
+        const structured = toStructuredRecord(record)
+        expect(structured.cells['field-1']).toEqual({ fieldName: '__proto__', value: 'pollution-attempt' })
+        expect(Object.getPrototypeOf(structured.cells)).toBe(Object.prototype)
     })
 })
