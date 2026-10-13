@@ -209,16 +209,6 @@ export const qadamMetadataService = (log: FastifyBaseLogger) => {
             }
             return savedQadam
         },
-
-        async bulkDelete(pieces: { name: string, version: string }[]): Promise<void> {
-            const results = await Promise.all(pieces.map((qadam) =>
-                qadamRepos().delete({ name: qadam.name, version: qadam.version }),
-            ))
-            const anyDeleted = results.some((result) => !isNil(result.affected) && result.affected > 0)
-            if (anyDeleted) {
-                await qadamCache(log).invalidate()
-            }
-        },
     }
 }
 

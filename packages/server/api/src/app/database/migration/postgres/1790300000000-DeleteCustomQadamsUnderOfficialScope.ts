@@ -16,8 +16,8 @@ export class DeleteCustomQadamsUnderOfficialScope1790300000000 implements Migrat
     // Only rows with a `platformId` match: official qadams are never persisted (they are read off
     // disk by `loadBundledQadams`), so a NULL `platformId` under this scope is not something this
     // repo writes, and is left alone rather than guessed at. The archive `file` row an ARCHIVE
-    // qadam points at is left in place too — `bulkDelete` in the service does the same, and the
-    // FK runs from `qadam_metadata` to `file`, so the delete is not blocked by it.
+    // qadam points at is left in place too — the FK runs from `qadam_metadata` to `file`, so the
+    // delete is not blocked by it.
     //
     // `LOWER(name)` for the same reason `isOfficialQadamName` lower-cases: npm would refuse an
     // upper-cased name, but an uploaded archive's `package.json` can carry one.
