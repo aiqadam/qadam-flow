@@ -144,6 +144,29 @@ describe('Engine Services Integration', () => {
             expect(result.data[0].externalId).toBe(ext1)
         })
 
+        it('should return every flow when the project holds more than one page (#577)', async () => {
+            const flowCount = 1001
+            const flows = Array.from({ length: flowCount }, () => createMockFlow({ projectId }))
+            await db.save('flow', flows)
+            await db.save('flow_version', flows.map((flow) => createMockFlowVersion({ flowId: flow.id })))
+
+            const flowsContext = createFlowsContext({
+                engineToken,
+                internalApiUrl: apiUrl,
+                flowId: flows[0].id,
+                flowVersionId: apId(),
+            })
+
+            const result = await flowsContext.list({})
+
+            expect(result.data.length).toBe(flowCount)
+            const returnedIds = new Set(result.data.map((flow) => flow.id))
+            for (const flow of flows) {
+                expect(returnedIds.has(flow.id)).toBe(true)
+            }
+            expect(result.next).toBeNull()
+        })
+
         it('should throw FetchError with invalid token', async () => {
             const flowsContext = createFlowsContext({
                 engineToken: 'invalid-token',
