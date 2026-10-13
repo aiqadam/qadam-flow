@@ -139,6 +139,28 @@ describe('GET /v1/engine/populated-flows', () => {
         expect(body.data).toHaveLength(0)
     })
 
+    it('reads one bounded page when no limit is sent, and the cursor walks the rest (#577)', async () => {
+        const { mockProject, engineToken } = await setupProject()
+
+        const flows = Array.from({ length: 12 }, () => createMockFlow({ projectId: mockProject.id }))
+        await db.save('flow', flows)
+        await db.save('flow_version', flows.map((flow) => createMockFlowVersion({ flowId: flow.id })))
+
+        const firstPage = await listPopulatedFlows({ engineToken, query: '' })
+
+        expect(firstPage.data).toHaveLength(10)
+        expect(firstPage.next).not.toBeNull()
+
+        const secondPage = await listPopulatedFlows({ engineToken, query: `cursor=${encodeURIComponent(firstPage.next)}` })
+
+        expect(secondPage.data).toHaveLength(2)
+        const returnedIds = new Set([
+            ...firstPage.data.map((f: { id: string }) => f.id),
+            ...secondPage.data.map((f: { id: string }) => f.id),
+        ])
+        expect(returnedIds.size).toBe(12)
+    })
+
     describe('externalIdsOrIds', () => {
         it('matches a flow by its primary-key id', async () => {
             const { mockProject, engineToken } = await setupProject()

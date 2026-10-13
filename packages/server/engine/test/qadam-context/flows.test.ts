@@ -98,6 +98,45 @@ describe('createFlowsContext', () => {
             const ctx = createFlowsContext(CONTEXT_PARAMS)
             await expect(ctx.list({ externalIds: ['idA'] })).rejects.toThrow(FetchError)
         })
+
+        it('sends a bounded limit on every request (#577)', async () => {
+            const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(
+                new Response(JSON.stringify(emptyPage), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+            )
+
+            const ctx = createFlowsContext(CONTEXT_PARAMS)
+            await ctx.list({})
+
+            const calledUrl = (fetchSpy.mock.calls[0][0] as string).toString()
+            expect(calledUrl).toContain('limit=1000')
+        })
+
+        it('walks the cursor and returns every flow as one page (#577)', async () => {
+            const flowA = { id: 'flow-a' } as unknown as PopulatedFlow
+            const flowB = { id: 'flow-b' } as unknown as PopulatedFlow
+            const flowC = { id: 'flow-c' } as unknown as PopulatedFlow
+            const firstPage: SeekPage<PopulatedFlow> = { data: [flowA, flowB], next: 'cursor-abc', previous: null }
+            const secondPage: SeekPage<PopulatedFlow> = { data: [flowC], next: null, previous: null }
+
+            const fetchSpy = vi.spyOn(global, 'fetch')
+                .mockResolvedValueOnce(
+                    new Response(JSON.stringify(firstPage), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+                )
+                .mockResolvedValueOnce(
+                    new Response(JSON.stringify(secondPage), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+                )
+
+            const ctx = createFlowsContext(CONTEXT_PARAMS)
+            const result = await ctx.list({})
+
+            expect(fetchSpy).toHaveBeenCalledTimes(2)
+            const secondUrl = (fetchSpy.mock.calls[1][0] as string).toString()
+            expect(secondUrl).toContain('cursor=cursor-abc')
+            expect(secondUrl).toContain('limit=1000')
+            expect(result.data.map((flow) => flow.id)).toEqual(['flow-a', 'flow-b', 'flow-c'])
+            expect(result.next).toBeNull()
+            expect(result.previous).toBeNull()
+        })
     })
 
     describe('current', () => {
