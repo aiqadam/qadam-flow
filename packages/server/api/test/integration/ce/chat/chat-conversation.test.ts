@@ -1,4 +1,4 @@
-import { apId, ChatConversationStatus, DefaultProjectRole, ErrorCode, PersistedChatPartType, PersistedChatRole, Project } from '@aiqadam/shared'
+import { apId, ChatConversationStatus, DefaultProjectRole, ErrorCode, PersistedChatPartType, PersistedChatRole, PersistedToolCallStatus, Project } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { chatConversationService } from '../../../../src/app/chat/chat-conversation.service'
@@ -348,6 +348,46 @@ describe('Chat conversations API', () => {
             expect(row?.status).toBe(ChatConversationStatus.IDLE)
             expect(row?.activeRunId).toBeNull()
             expect((row?.uiMessages as any[])[0].parts[0].text).toBe('real reply')
+        })
+
+        // #490: a tool result is persisted verbatim — the whole `McpToolResult`, `structuredContent`
+        // included — so a NUL in a raw third-party response reaches the `json` columns. `jsonb`
+        // rejects `\u0000` at cast time, and this write is what records the user's own assistant
+        // turn, so the strip happens on the way in rather than anywhere upstream.
+        it('strips NUL bytes from the tool outputs the owning run persists', async () => {
+            const id = await streamingConversation('the-live-run')
+            const nul = String.fromCharCode(0)
+
+            await chatConversationService.finishRun({
+                id,
+                platformId: ctx.platform.id,
+                userId: ctx.user.id,
+                runId: 'the-live-run',
+                messages: [{ role: 'assistant', content: `says${nul}nothing` }],
+                assistantMessage: {
+                    role: PersistedChatRole.ASSISTANT,
+                    parts: [{
+                        type: PersistedChatPartType.TOOL_CALL,
+                        toolCallId: 'call-1',
+                        toolName: 'ap_find_records',
+                        input: {},
+                        output: {
+                            content: [{ type: 'text', text: 'records' }],
+                            structuredContent: { record: { cells: { Notes: `x${nul}y` } } },
+                        },
+                        status: PersistedToolCallStatus.COMPLETED,
+                    }],
+                },
+            })
+
+            const row = await db.findOneBy<Record<string, unknown>>('chat_conversation', { id })
+            expect(row?.status).toBe(ChatConversationStatus.IDLE)
+            expect(JSON.stringify(row)).not.toContain('\\u0000')
+            expect((row?.uiMessages as any[])[0].parts[0].output).toEqual({
+                content: [{ type: 'text', text: 'records' }],
+                structuredContent: { record: { cells: { Notes: 'xy' } } },
+            })
+            expect(row?.messages).toEqual([{ role: 'assistant', content: 'saysnothing' }])
         })
     })
 
