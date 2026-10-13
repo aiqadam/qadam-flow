@@ -15,7 +15,11 @@ export const flowEngineWorker: FastifyPluginAsyncZod = async (app) => {
     app.get('/populated-flows', GetAllFlowsByProjectParams, async (request) => {
         return flowService(request.log).list({
             projectIds: [request.principal.projectId],
-            limit: request.query.limit,
+            // Bounded like every other list route (#577): the engine walks the cursor
+            // with an explicit limit, so a missing limit defaults to one page instead
+            // of reading every flow. Safe against an old engine by the app/worker
+            // version gate, which withholds jobs on any release mismatch.
+            limit: request.query.limit ?? DEFAULT_PAGE_SIZE,
             cursorRequest: request.query.cursor ?? null,
             folderId: request.query.folderId,
             status: request.query.status,
@@ -46,6 +50,10 @@ export const flowEngineWorker: FastifyPluginAsyncZod = async (app) => {
 const EngineListFlowsRequest = ListFlowsRequest.omit({ projectId: true }).extend({
     externalIdsOrIds: OptionalArrayFromQuery(z.string()),
 })
+
+// Same default as the public flow list: a caller without a limit gets one page,
+// and the paginator clamps an oversized limit to MAX_PAGE_SIZE (#577).
+const DEFAULT_PAGE_SIZE = 10
 
 const GetAllFlowsByProjectParams = {
     config: {
