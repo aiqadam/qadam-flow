@@ -110,7 +110,7 @@ export const pushRowsToDatasetTableAction = createAction({
                     Id: 1,
                     Name: "Example",
                     Value: 42.5,
-                    Timestamp: new Date().toISOString()
+                    Timestamp: '2024-01-01T00:00:00.000Z'
                 }
             ]
             }
