@@ -84,7 +84,11 @@ export const sampleDataService = (log: FastifyBaseLogger) => ({
             return { [step.name]: data }
         })
         const sampleDataArray = await Promise.all(sampleDataPromises)
-        return Object.assign({}, ...sampleDataArray)
+        // `step.name` can be `__proto__` (`STEP_NAME_REGEX` admits it, and it survives
+        // `ap_import_flow` verbatim). `Object.assign` walks the prototype chain for that key and
+        // reassigns the target's own prototype instead of creating an own property.
+        // `Object.fromEntries` uses `[[DefineOwnProperty]]`, so it doesn't have that problem.
+        return Object.fromEntries(sampleDataArray.flatMap(Object.entries))
     },
 })
 
