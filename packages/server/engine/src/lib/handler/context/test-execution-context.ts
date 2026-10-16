@@ -1,5 +1,6 @@
 import { LATEST_CONTEXT_VERSION } from '@aiqadam/qadams-framework'
 import {
+    executionJournal,
     FlowActionType,
     flowStructureUtil,
     FlowTriggerType,
@@ -53,7 +54,7 @@ export const testExecutionContext = {
                             input: step.settings,
                             type: stepType,
                             status: StepOutputStatus.SUCCEEDED,
-                            ...spreadIfDefined('output', sampleData?.[step.name]),
+                            ...spreadIfDefined('output', executionJournal.getOwnStep({ target: sampleData ?? {}, stepName: step.name })),
                         }),
                     )
                     break
@@ -89,7 +90,7 @@ export const testExecutionContext = {
                         input: {},
                         type: stepType,
                         status: StepOutputStatus.SUCCEEDED,
-                        ...spreadIfDefined('output', sampleData?.[step.name]),
+                        ...spreadIfDefined('output', executionJournal.getOwnStep({ target: sampleData ?? {}, stepName: step.name })),
                     }))
                     break
             }
