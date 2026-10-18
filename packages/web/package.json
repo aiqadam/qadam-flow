@@ -139,7 +139,7 @@
     "vite": "8.3.4",
     "vite-plugin-checker": "0.14.5",
     "vite-tsconfig-paths": "6.1.1",
-    "vitest": "4.1.11"
+    "vitest": "4.1.12"
   },
   "scripts": {
     "build": "vite build",
