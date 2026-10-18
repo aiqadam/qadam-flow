@@ -3,7 +3,7 @@
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "activepieces",
+      "name": "qadam-flow",
       "dependencies": {
         "@logtail/pino": "0.5.12",
         "@rollup/wasm-node": "4.21.2",
