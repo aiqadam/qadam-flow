@@ -135,11 +135,7 @@ export const FlowCanvas = React.memo(
           const shouldRemoveSelectionRect =
             !targetIsSelectionRect && !targetIsSelectionChevron;
           if (shouldRemoveSelectionRect) {
-            document
-              .querySelector(
-                `.${flowCanvasConsts.NODE_SELECTION_RECT_CLASS_NAME}`,
-              )
-              ?.remove();
+            clearNodesSelectionActive(reactFlowStore);
           }
         }
       },
@@ -153,6 +149,7 @@ export const FlowCanvas = React.memo(
         ) !== null;
       if (isUnselectingNodes) {
         reactFlowStore.getState().addSelectedNodes([]);
+        clearNodesSelectionActive(reactFlowStore);
         return;
       }
       const selectedSteps = selectedNodes
@@ -265,6 +262,15 @@ export const FlowCanvas = React.memo(
 );
 
 FlowCanvas.displayName = 'FlowCanvas';
+
+// Clearing nodesSelectionActive (rather than removing the rendered selection-rect DOM node by
+// hand) is what actually tears the group-selection box down — a manual DOM removal leaves this
+// flag true, so the next unrelated re-render resurrects the rect around whatever is selected.
+const clearNodesSelectionActive = (
+  reactFlowStore: ReturnType<typeof useStoreApi>,
+) => {
+  reactFlowStore.setState({ nodesSelectionActive: false });
+};
 const getChildrenKey = (step: Step) => {
   switch (step.type) {
     case FlowActionType.LOOP_ON_ITEMS:
