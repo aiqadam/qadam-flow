@@ -101,7 +101,7 @@
     "eslint-plugin-testing-library": "7.16.2",
     "globals": "17.13.0",
     "husky": "9.1.7",
-    "prettier": "3.9.9",
+    "prettier": "3.9.10",
     "ts-loader": "9.5.1",
     "ts-node": "10.9.2",
     "tsx": "4.21.0",
