@@ -3203,7 +3203,7 @@
   "overrides": {
     "@opentelemetry/api": "1.9.1",
     "@xmldom/xmldom": "0.8.15",
-    "basic-ftp": "6.2.2",
+    "basic-ftp": "6.2.3",
     "rollup": "npm:@rollup/wasm-node",
     "vite": "8.3.4",
   },
@@ -5698,7 +5698,7 @@
 
     "baseline-browser-mapping": ["baseline-browser-mapping@2.10.24", "", { "bin": { "baseline-browser-mapping": "dist/cli.cjs" } }, "sha512-I2NkZOOrj2XuguvWCK6OVh9GavsNjZjK908Rq3mIBK25+GD8vPX5w2WdxVqnQ7xx3SrZJiCiZFu+/Oz50oSYSA=="],
 
-    "basic-ftp": ["basic-ftp@6.2.2", "", {}, "sha512-LIkJcf/F6bTTfvE3k2YcTxrJsLKKVXiEpHZYkQP6JoqTb7khng7c13ckRTDQbqRh5IkehVH3F00sSlAa2F6DwA=="],
+    "basic-ftp": ["basic-ftp@6.2.3", "", {}, "sha512-T7GYtQ2eKJUN5YORG7A8u2WfB9JMN0a4/wl3MI64qq2qTRfa3FXzoNq0DDojZDkDyStcL+TkfKsz4JHEZx5kGQ=="],
 
     "bcrypt": ["bcrypt@6.0.0", "", { "dependencies": { "node-addon-api": "^8.3.0", "node-gyp-build": "^4.8.4" } }, "sha512-cU8v/EGSrnH+HnxV2z0J7/blxH8gq7Xh2JFT6Aroax7UohdmiJJlxApMxtKfuI7z68NvvVcmR78k2LbT6efhRg=="],
 
