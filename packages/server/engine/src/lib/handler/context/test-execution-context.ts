@@ -1,5 +1,6 @@
 import { LATEST_CONTEXT_VERSION } from '@aiqadam/qadams-framework'
 import {
+    executionJournal,
     FlowActionType,
     flowStructureUtil,
     FlowTriggerType,
@@ -53,7 +54,7 @@ export const testExecutionContext = {
                             input: step.settings,
                             type: stepType,
                             status: StepOutputStatus.SUCCEEDED,
-                            ...spreadIfDefined('output', sampleData?.[step.name]),
+                            ...spreadIfDefined('output', getOwnSampleOutput({ sampleData, stepName: step.name })),
                         }),
                     )
                     break
@@ -89,7 +90,7 @@ export const testExecutionContext = {
                         input: {},
                         type: stepType,
                         status: StepOutputStatus.SUCCEEDED,
-                        ...spreadIfDefined('output', sampleData?.[step.name]),
+                        ...spreadIfDefined('output', getOwnSampleOutput({ sampleData, stepName: step.name })),
                     }))
                     break
             }
@@ -134,6 +135,12 @@ async function withCollectedSamples({ flowExecutionContext, flowSteps, apiUrl, p
         }))
     }
     return context
+}
+
+// #489: `sampleData` is keyed by step name, and a bare index resolves `constructor`, `toString` and
+// friends off `Object.prototype` when the step has no own sample.
+function getOwnSampleOutput({ sampleData, stepName }: { sampleData: Record<string, unknown> | undefined, stepName: string }): unknown {
+    return executionJournal.getOwnStep({ target: sampleData ?? {}, stepName })
 }
 
 
