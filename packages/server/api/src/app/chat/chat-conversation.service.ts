@@ -163,10 +163,10 @@ export const chatConversationService = {
                 activeRunId: null,
                 runHeartbeat: null,
                 // Tool outputs are persisted verbatim — including `structuredContent` carrying a
-                // raw third-party response — and a NUL in any of it reaches a `json` column that a
-                // `jsonb` cast (or a stricter Postgres) rejects, failing the write and losing the
-                // user's own assistant turn (#490). Stripped on the way in, like every other
-                // external-data write in this repo.
+                // raw third-party response. The `json` columns accept an escaped NUL today, but any
+                // `jsonb` cast of them (a query, a future column type) rejects it, and this write is
+                // what records the user's own assistant turn (#490). Stripped on the way in, like
+                // every other external-data write in this repo.
                 messages: sanitizeObjectForPostgresql(messages),
                 // Nullable because a run cancelled before the first token has no assistant turn to
                 // record, and an empty bubble reads worse than none — but the conversation still
