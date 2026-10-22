@@ -27,6 +27,10 @@ on:
 
 permissions:
   contents: read
+  # The guard step comments on the tracking issue when it refuses to auto-merge a release PR. The
+  # merge itself is performed with CHANGESETS_TOKEN (the PAT), which already owns the PR, so
+  # GITHUB_TOKEN needs no pull-requests scope.
+  issues: write
 
 # Two pushes in quick succession must not race on the same release branch; the newer one wins.
 concurrency:
@@ -102,6 +106,30 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
 
+      # THE RELEASE GUARD MUST READ THE PLAN BEFORE THE ACTION RUNS (#852). changesets/action checks
+      # out `changeset-release/main` and runs the version script, which CONSUMES every pending
+      # `.changeset/*.md`; the working tree the later steps see has none left. A guard run after the
+      # action would read an empty plan and report SAFE every time — a fail-open that voids both
+      # limits. So the verdict is taken here, on the tree that still has the changesets, and handed
+      # to the merge step as outputs. The step always exits 0: refusing is the later step's job.
+      - name: Run the release guard on the pending changesets
+        id: guard
+        if: steps.pending.outputs.count != '0'
+        env:
+          MAX_QADAMS_PER_RELEASE: '30'
+        run: |
+          set +e
+          reason="$(node tools/ci/release-guard.mjs --max-qadams "$MAX_QADAMS_PER_RELEASE" 2>&1)"
+          status=$?
+          set -e
+          echo "$reason"
+          {
+            echo "status=${status}"
+            echo 'reason<<RELEASE_GUARD_EOF'
+            echo "$reason"
+            echo 'RELEASE_GUARD_EOF'
+          } >> "$GITHUB_OUTPUT"
+
       # Pinned to the commit of v2.1.2: a third-party action that is handed a write token.
       # `push-with-git-cli: true` so the commit is authored by the identity above; through the
       # GitHub API it would be attributed to the PAT's owner and fail DCO.
@@ -117,3 +145,74 @@ jobs:
             chore(release): version packages
 
             Signed-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+
+      # THE ZERO-TOUCH PUBLISH LOOP, PART 1 (#852). The release PR is merged with no person: the
+      # guard (run above, before the action) decides whether it MAY leave, and native auto-merge (squash — the `main protect`
+      # ruleset's only allowed method) merges it the moment the four required checks pass.
+      #
+      # WHY A GUARD AND NOT A REVIEWER. The loop's two invariants cannot rest on someone reading the
+      # PR: at most 30 qadams per release (the npm publish cap — a 429 fails the publish run at once,
+      # tools/ci/publish-packed-tarballs.sh), and no `"@aiqadam/platform": major` leaving before the
+      # v2.0.0 milestone is done (ADR-0001: the root holds the LAST RELEASED version). Both are
+      # properties of the pending `.changeset/*.md`, which tools/ci/release-guard.mjs reads and this
+      # step enforces. A refusal leaves the PR open and comments on the tracking issue so a person
+      # can act; it never guesses.
+      #
+      # THE MERGE IS DONE BY CHANGESETS_TOKEN, not GITHUB_TOKEN: that PAT already owns the PR (it
+      # opened it), so it can enable auto-merge, and a GITHUB_TOKEN-initiated merge would suppress
+      # the workflows the merge's own push to main should trigger. The issue comment uses
+      # GITHUB_TOKEN, which carries only the `issues: write` scope this workflow grants.
+      #
+      # IDEMPOTENT BY DESIGN: this step runs on every push to main while changesets are pending, so
+      # it re-checks an already-armed auto-merge rather than re-arming it.
+      - name: Enable auto-merge on the release PR, if the guard allowed it
+        if: steps.pending.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.CHANGESETS_TOKEN }}
+          ISSUES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TRACKING_ISSUE: ${{ vars.PUBLISH_LOOP_TRACKING_ISSUE || '852' }}
+          MAX_QADAMS_PER_RELEASE: '30'
+          GUARD_STATUS: ${{ steps.guard.outputs.status }}
+          GUARD_REASON: ${{ steps.guard.outputs.reason }}
+        run: |
+          set -uo pipefail
+          pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --head changeset-release/main --state open --json number --jq '.[0].number // empty')"
+          if [ -z "$pr" ]; then
+            echo '::warning::the version step ran, but there is no open changeset-release/main PR to auto-merge.'
+            exit 0
+          fi
+
+          # A missing verdict (the guard step skipped or died) is a refusal, never a pass.
+          reason="${GUARD_REASON:-the release guard produced no verdict}"
+          guard_status="${GUARD_STATUS:-unknown}"
+          echo "$reason"
+
+          if [ "$guard_status" != '0' ]; then
+            body="$(printf '%s\n' \
+              '<!-- publish-loop-guard -->' \
+              "The zero-touch publish loop (#852) refused to auto-merge release PR #${pr}." \
+              '' \
+              '```' \
+              "$reason" \
+              '```' \
+              '' \
+              'A person must act: reduce the batch to at most '"$MAX_QADAMS_PER_RELEASE"' qadams, or hold the pending `@aiqadam/platform` major changeset back until the final batch (the `v2.0.0` cut). The release PR is left open and unmerged.')"
+            GH_TOKEN="$ISSUES_TOKEN" gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" --body "$body"
+            exit 1
+          fi
+
+          state="$(gh pr view "$pr" --repo "$GITHUB_REPOSITORY" --json autoMergeRequest,mergedAt --jq 'if .mergedAt then "merged" elif .autoMergeRequest then "auto" else "none" end')"
+          case "$state" in
+            merged) echo "release PR #${pr} is already merged." ;;
+            auto)   echo "auto-merge is already enabled on release PR #${pr}." ;;
+            *)
+              # GitHub refuses to *enable* auto-merge on a PR that is already in a fully-mergeable
+              # state; merging directly is the same outcome. The `main protect` ruleset still
+              # enforces the four required checks on the merge itself, so this cannot jump them.
+              if ! gh pr merge "$pr" --repo "$GITHUB_REPOSITORY" --auto --squash; then
+                gh pr merge "$pr" --repo "$GITHUB_REPOSITORY" --squash
+              fi
+              echo "release PR #${pr} is set to merge (squash) once its required checks pass."
+              ;;
+          esac
+
