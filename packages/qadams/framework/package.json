@@ -19,7 +19,7 @@
   "dependencies": {
     "@aiqadam/shared": "workspace:*",
     "zod": "4.3.6",
-    "ai": "7.0.133",
+    "ai": "7.0.143",
     "semver": "7.6.0",
     "tslib": "2.6.2"
   },
