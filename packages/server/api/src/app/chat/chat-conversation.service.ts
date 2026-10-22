@@ -166,7 +166,7 @@ export const chatConversationService = {
                 // raw third-party response. The `json` columns accept an escaped NUL today, but any
                 // `jsonb` cast of them (a query, a future column type) rejects it, and this write is
                 // what records the user's own assistant turn (#490). Stripped on the way in, like
-                // every other external-data write in this repo.
+                // the compaction summary, flow versions and store entries.
                 messages: sanitizeObjectForPostgresql(messages),
                 // Nullable because a run cancelled before the first token has no assistant turn to
                 // record, and an empty bubble reads worse than none — but the conversation still
