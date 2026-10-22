@@ -7,6 +7,7 @@ import {
     SampleDataDataType,
     SampleDataFileType,
 } from '@aiqadam/shared'
+import pino from 'pino'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { mockGetDataOrUndefined } = vi.hoisted(() => ({
@@ -30,7 +31,7 @@ vi.mock('../../../../../src/app/flows/flow-version/flow-version.service', () => 
 // `ap_import_flow` verbatim). `Object.assign({}, ...sampleDataArray)` walks the prototype chain for
 // that key, silently replacing the merged object's own prototype instead of giving it an own
 // `__proto__` property — so the step's sample data vanishes from `Object.keys`/`JSON.stringify`
-// (and from the request body the engine receives) even though it is briefly live in memory.
+// (and from the queued job that carries it to the engine) even though it is briefly live in memory.
 describe('sampleDataService#getSampleDataForFlow — step named __proto__', () => {
     beforeEach(() => {
         mockGetDataOrUndefined.mockReset()
@@ -83,7 +84,7 @@ describe('sampleDataService#getSampleDataForFlow — step named __proto__', () =
         }
 
         const { sampleDataService } = await import('../../../../../src/app/flows/step-run/sample-data.service')
-        const result = await sampleDataService({ error: vi.fn(), warn: vi.fn() } as never).getSampleDataForFlow(
+        const result = await sampleDataService(pino({ level: 'silent' })).getSampleDataForFlow(
             'projectId',
             flowVersion,
             SampleDataFileType.OUTPUT,

@@ -101,6 +101,13 @@ export const PollingJobData = z.object({
 })
 export type PollingJobData = z.infer<typeof PollingJobData>
 
+// Sample data is keyed by step name, and `STEP_NAME_REGEX` admits `__proto__`. `z.record` drops an
+// own `__proto__` key instead of copying it (zod skips it to stay clear of the prototype setter), so
+// a step named that lost its sample data when the worker parsed the job (#489). Passing the plain
+// object through untouched keeps every own key; Redis, socket.io (JSON-only packets — a packet with
+// binary data is rebuilt by assignment) and the engine RPC all preserve it.
+const StepNameKeyedRecord = z.custom<Record<string, unknown>>(isPlainRecord)
+
 const ExecuteFlowJobDataCommon = z.object({
     projectId: z.string(),
     platformId: z.string(),
@@ -115,7 +122,7 @@ const ExecuteFlowJobDataCommon = z.object({
     payload: JobPayload,
     streamStepProgress: z.nativeEnum(StreamStepProgress),
     stepNameToTest: z.string().optional(),
-    sampleData: z.record(z.string(), z.unknown()).optional(),
+    sampleData: StepNameKeyedRecord.optional(),
     logsFileId: z.string(),
     traceContext: z.record(z.string(), z.string()).optional(),
     // The resolved run locale of the parent run, for a subflow child dispatched via queue-mode
@@ -206,7 +213,7 @@ export const ExecutePropertyJobData = z.object({
     qadam: QadamPackage,
     actionOrTriggerName: z.string(),
     input: z.record(z.string(), z.unknown()),
-    sampleData: z.record(z.string(), z.unknown()),
+    sampleData: StepNameKeyedRecord,
     searchValue: z.string().optional(),
     requestId: z.string(),
     webserverId: z.string(),
@@ -266,5 +273,14 @@ export const JobData = z.union([
     UserInteractionJobData,
     ExecuteChatAgentJobData,
 ])
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+    if (typeof value !== 'object' || value === null) {
+        return false
+    }
+    const prototype = Object.getPrototypeOf(value)
+    return prototype === Object.prototype || prototype === null
+}
+
 export type JobData = z.infer<typeof JobData>
 export type JobPayload = z.infer<typeof JobPayload>
