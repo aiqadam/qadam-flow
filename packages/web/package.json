@@ -117,7 +117,7 @@
     "use-ripple-hook": "1.0.24",
     "use-stick-to-bottom": "1.1.6",
     "vaul": "1.1.2",
-    "zod": "4.3.6",
+    "zod": "4.6.6",
     "zustand": "5.0.15"
   },
   "devDependencies": {
