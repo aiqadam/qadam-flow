@@ -105,7 +105,7 @@
         "https-proxy-agent": "7.0.6",
         "mime-types": "2.1.35",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@aiqadam/shared": "workspace:*",
@@ -152,7 +152,7 @@
         "ajv": "8.18.0",
         "mime-types": "2.1.35",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/mime-types": "2.1.1",
@@ -367,7 +367,7 @@
         "@azure/openai": "1.0.0-beta.11",
         "tiktoken": "1.0.11",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
     },
     "packages/qadams/community/baserow": {
@@ -509,7 +509,7 @@
         "ajv": "8.18.0",
         "mime-types": "2.1.35",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/mime-types": "2.1.1",
@@ -533,7 +533,7 @@
         "dayjs": "1.11.9",
         "qs": "6.16.0",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/qs": "6.14.0",
@@ -555,7 +555,7 @@
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
         "tslib": "2.8.1",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
     },
     "packages/qadams/community/cloudinary": {
@@ -587,7 +587,7 @@
         "form-data": "4.0.6",
         "tslib": "2.6.2",
         "xml2js": "0.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/xml2js": "0.4.14",
@@ -601,7 +601,7 @@
         "@aiqadam/qadams-framework": "workspace:*",
         "contentful-management": "11.48.1",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
     },
     "packages/qadams/community/couchbase": {
@@ -622,7 +622,7 @@
         "@aiqadam/qadams-framework": "workspace:*",
         "@datadog/datadog-api-client": "1.57.0",
         "tslib": "2.8.1",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
     },
     "packages/qadams/community/deepgram": {
@@ -655,7 +655,7 @@
         "@aiqadam/qadams-framework": "workspace:*",
         "openai": "4.67.1",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
     },
     "packages/qadams/community/digital-ocean": {
@@ -990,7 +990,7 @@
         "mime-types": "2.1.35",
         "tslib": "2.6.2",
         "wav": "1.0.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/mime-types": "2.1.1",
@@ -1005,7 +1005,7 @@
         "@aiqadam/qadams-framework": "workspace:*",
         "dayjs": "1.11.9",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
     },
     "packages/qadams/community/google-search": {
@@ -1042,7 +1042,7 @@
         "lodash": "4.18.1",
         "nanoid": "3.3.18",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
     },
     "packages/qadams/community/google-slides": {
@@ -1087,7 +1087,7 @@
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
         "tslib": "2.8.1",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
     },
     "packages/qadams/community/grok-xai": {
@@ -1097,7 +1097,7 @@
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
         "tslib": "2.8.1",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
     },
     "packages/qadams/community/groq": {
@@ -1227,7 +1227,7 @@
         "dayjs": "1.11.9",
         "form-data": "4.0.6",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
     },
     "packages/qadams/community/jira-data-center": {
@@ -1239,7 +1239,7 @@
         "dayjs": "1.11.9",
         "form-data": "4.0.6",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
     },
     "packages/qadams/community/jotform": {
@@ -1354,7 +1354,7 @@
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
     },
     "packages/qadams/community/matrix": {
@@ -1621,7 +1621,7 @@
         "@aiqadam/qadams-framework": "workspace:*",
         "mongodb": "6.15.0",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
     },
     "packages/qadams/community/mysql": {
@@ -1687,7 +1687,7 @@
         "tslib": "2.6.2",
         "url": "0.11.3",
         "xmlrpc": "1.3.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/xmlrpc": "1.3.10",
@@ -1709,7 +1709,7 @@
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
     },
     "packages/qadams/community/openai": {
@@ -1723,7 +1723,7 @@
         "openai": "4.67.1",
         "tiktoken": "1.0.11",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/mime-types": "2.1.1",
@@ -1768,7 +1768,7 @@
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
     },
     "packages/qadams/community/pinecone": {
@@ -1910,7 +1910,7 @@
         "@aiqadam/qadams-framework": "workspace:*",
         "@runwayml/sdk": "2.9.0",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
     },
     "packages/qadams/community/salesforce": {
@@ -1984,7 +1984,7 @@
         "dayjs": "1.11.9",
         "form-data": "4.0.6",
         "tslib": "2.8.1",
-        "zod": "3.25.76",
+        "zod": "4.6.6",
       },
     },
     "packages/qadams/community/shopify": {
@@ -1994,7 +1994,7 @@
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
     },
     "packages/qadams/community/slack": {
@@ -2006,7 +2006,7 @@
         "@slack/web-api": "7.9.0",
         "slackify-markdown": "4.4.0",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
     },
     "packages/qadams/community/snowflake": {
@@ -2184,7 +2184,7 @@
         "mime-types": "2.1.35",
         "tslib": "2.6.2",
         "twitter-api-v2": "1.15.1",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/mime-types": "2.1.1",
@@ -2261,7 +2261,7 @@
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
     },
     "packages/qadams/community/wordpress": {
@@ -2317,7 +2317,7 @@
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
         "tslib": "2.8.1",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
     },
     "packages/qadams/community/zoho-books": {
@@ -2337,7 +2337,7 @@
         "@aiqadam/qadams-framework": "workspace:*",
         "dayjs": "1.11.9",
         "tslib": "2.8.1",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
     },
     "packages/qadams/community/zoho-crm": {
@@ -2419,7 +2419,7 @@
         "buffer": "6.0.3",
         "openpgp": "6.3.0",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "vitest": "4.1.11",
@@ -2474,7 +2474,7 @@
         "@aiqadam/qadams-framework": "workspace:*",
         "dayjs": "1.11.9",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "vitest": "4.1.11",
@@ -2488,7 +2488,7 @@
         "@aiqadam/qadams-framework": "workspace:*",
         "dayjs": "1.11.9",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
     },
     "packages/qadams/core/file-helper": {
@@ -2578,7 +2578,7 @@
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "vitest": "4.1.11",
@@ -2636,7 +2636,7 @@
         "ssh2": "1.16.0",
         "ssh2-sftp-client": "9.1.0",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/ssh2": "1.15.5",
@@ -2665,7 +2665,7 @@
         "@aiqadam/qadams-framework": "workspace:*",
         "deep-equal": "2.2.2",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/deep-equal": "1.0.4",
@@ -2692,7 +2692,7 @@
         "@aiqadam/qadams-framework": "workspace:*",
         "qs": "6.16.0",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/qs": "6.14.0",
@@ -2720,7 +2720,7 @@
         "string-strip-html": "8.5.0",
         "tslib": "2.6.2",
         "turndown": "7.2.0",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/jsdom": "21.1.7",
@@ -2766,7 +2766,7 @@
         "ai": "7.0.143",
         "semver": "7.6.0",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/semver": "7.5.6",
@@ -2885,7 +2885,7 @@
         "tslib": "2.6.2",
         "typeorm": "0.3.31",
         "unpdf": "1.4.0",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@aiqadam/qadam-facebook-leads": "workspace:*",
@@ -2931,7 +2931,7 @@
         "socket.io-client": "4.8.4",
         "tslib": "2.6.2",
         "undici": "7.30.1",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/node": "24.11.0",
@@ -2969,7 +2969,7 @@
         "systeminformation": "5.31.7",
         "tar": "7.5.22",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/node": "24.11.0",
@@ -3037,7 +3037,7 @@
         "semver": "7.6.0",
         "socket.io-client": "4.8.4",
         "tslib": "2.6.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
       },
       "devDependencies": {
         "@types/node": "24.11.0",
@@ -3174,7 +3174,7 @@
         "use-ripple-hook": "1.0.24",
         "use-stick-to-bottom": "1.1.6",
         "vaul": "1.1.2",
-        "zod": "4.3.6",
+        "zod": "4.6.6",
         "zustand": "5.0.15",
       },
       "devDependencies": {
@@ -8354,7 +8354,7 @@
 
     "zip-stream": ["zip-stream@6.0.1", "", { "dependencies": { "archiver-utils": "^5.0.0", "compress-commons": "^6.0.2", "readable-stream": "^4.0.0" } }, "sha512-zK7YHHz4ZXpW89AHXUPbQVGKI7uvkd3hzusTdotCg1UxyaVtg0zFJSTfW/Dq5f7OBBVnq6cZIaC8Ti4hb6dtCA=="],
 
-    "zod": ["zod@4.3.6", "", {}, "sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg=="],
+    "zod": ["zod@4.6.6", "", {}, "sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA=="],
 
     "zod-to-json-schema": ["zod-to-json-schema@3.25.2", "", { "peerDependencies": { "zod": "^3.25.28 || ^4" } }, "sha512-O/PgfnpT1xKSDeQYSCfRI5Gy3hPf91mKVDuYLUHZJMiDFptvP41MSnWofm8dnCm0256ZNfZIM7DSzuSMAFnjHA=="],
 
@@ -8615,8 +8615,6 @@
     "@aiqadam/qadam-service-now/dayjs": ["dayjs@1.11.9", "", {}, "sha512-QvzAURSbQ0pKdIye2txOzNaHmxtUBXerpY0FJsFXUMKbIZeFm5ht1LS/jFsrncjnmtv8HsG0W2g6c0zUjZWmpA=="],
 
     "@aiqadam/qadam-service-now/tslib": ["tslib@2.8.1", "", {}, "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w=="],
-
-    "@aiqadam/qadam-service-now/zod": ["zod@3.25.76", "", {}, "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ=="],
 
     "@aiqadam/qadam-sftp/dayjs": ["dayjs@1.11.9", "", {}, "sha512-QvzAURSbQ0pKdIye2txOzNaHmxtUBXerpY0FJsFXUMKbIZeFm5ht1LS/jFsrncjnmtv8HsG0W2g6c0zUjZWmpA=="],
 
@@ -11514,7 +11512,7 @@
 
     "supergateway/@modelcontextprotocol/sdk/express": ["express@5.2.1", "", { "dependencies": { "accepts": "^2.0.0", "body-parser": "^2.2.1", "content-disposition": "^1.0.0", "content-type": "^1.0.5", "cookie": "^0.7.1", "cookie-signature": "^1.2.1", "debug": "^4.4.0", "depd": "^2.0.0", "encodeurl": "^2.0.0", "escape-html": "^1.0.3", "etag": "^1.8.1", "finalhandler": "^2.1.0", "fresh": "^2.0.0", "http-errors": "^2.0.0", "merge-descriptors": "^2.0.0", "mime-types": "^3.0.0", "on-finished": "^2.4.1", "once": "^1.4.0", "parseurl": "^1.3.3", "proxy-addr": "^2.0.7", "qs": "^6.14.0", "range-parser": "^1.2.1", "router": "^2.2.0", "send": "^1.1.0", "serve-static": "^2.2.0", "statuses": "^2.0.1", "type-is": "^2.0.1", "vary": "^1.1.2" } }, "sha512-hIS4idWWai69NezIdRt2xFVofaF4j+6INOpJlVOLDO8zXGpUVEVzIYk12UUi2JzjEzWL3IOAxcTubgz9Po0yXw=="],
 
-    "supergateway/@modelcontextprotocol/sdk/zod": ["zod@4.3.6", "", {}, "sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg=="],
+    "supergateway/@modelcontextprotocol/sdk/zod": ["zod@4.6.6", "", {}, "sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA=="],
 
     "supergateway/express/cookie": ["cookie@0.7.2", "", {}, "sha512-yki5XnKuf750l50uGTllt6kKILY4nQ1eNIQatoXEByZ5dWgnKqbnqmTrBE5B4N7lrMJKQ2ytWMiTO2o0v6Ew/w=="],
 
