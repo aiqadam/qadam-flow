@@ -1,9 +1,9 @@
 import { ContextVersion } from '@aiqadam/qadams-framework'
 import { AppConnection, AppConnectionStatus, AppConnectionType, AppConnectionValue, ConnectionExpiredError, ConnectionLoadingError, ConnectionNotFoundError, ExecutionError, FetchError } from '@aiqadam/shared'
-import { retryingFetch } from '../retrying-fetch'
+import { retryingFetch, RetryPolicy } from '../retrying-fetch'
 import { utils } from '../utils'
 
-export const createConnectionResolver = ({ projectId, engineToken, apiUrl, contextVersion }: CreateConnectionResolverParams): ConnectionResolver => {
+export const createConnectionResolver = ({ projectId, engineToken, apiUrl, contextVersion, retryPolicy }: CreateConnectionResolverParams): ConnectionResolver => {
     return {
         async obtain(externalId: string): Promise<AppConnectionValue> {
             const url = `${apiUrl}v1/worker/app-connections/${encodeURIComponent(externalId)}?projectId=${projectId}`
@@ -18,6 +18,7 @@ export const createConnectionResolver = ({ projectId, engineToken, apiUrl, conte
                         },
                     },
                     idempotent: true,
+                    policy: retryPolicy,
                 })
 
                 if (!response.ok) {
@@ -54,6 +55,7 @@ export const createConnectionResolver = ({ projectId, engineToken, apiUrl, conte
                 url,
                 init: { method: 'GET', headers: { Authorization: `Bearer ${engineToken}` } },
                 idempotent: true,
+                policy: retryPolicy,
             })
             if (!response.ok) {
                 throw new Error(`Could not read connection metadata: ${response.status}`)
@@ -113,6 +115,7 @@ type CreateConnectionResolverParams = {
     apiUrl: string
     engineToken: string
     contextVersion: ContextVersion | undefined
+    retryPolicy?: RetryPolicy
 }
 
 type HandleResponseErrorParams = {

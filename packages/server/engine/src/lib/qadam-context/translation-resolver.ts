@@ -1,8 +1,8 @@
 import { EngineGenericError, ExecutionError, FetchError, GetTranslationsForWorkerResponse } from '@aiqadam/shared'
-import { retryingFetch } from '../retrying-fetch'
+import { retryingFetch, RetryPolicy } from '../retrying-fetch'
 import { utils } from '../utils'
 
-export const createTranslationResolver = ({ engineToken, apiUrl }: CreateTranslationResolverParams): TranslationResolver => {
+export const createTranslationResolver = ({ engineToken, apiUrl, retryPolicy }: CreateTranslationResolverParams): TranslationResolver => {
     return {
         async obtainAll(): Promise<TranslationRow[]> {
             const url = `${apiUrl}v1/worker/translations`
@@ -17,6 +17,7 @@ export const createTranslationResolver = ({ engineToken, apiUrl }: CreateTransla
                         },
                     },
                     idempotent: true,
+                    policy: retryPolicy,
                 })
                 if (!response.ok) {
                     throw new EngineGenericError('TranslationFetchError', `Failed to fetch project translations (HTTP ${response.status})`)
@@ -48,4 +49,5 @@ type TranslationResolver = {
 type CreateTranslationResolverParams = {
     apiUrl: string
     engineToken: string
+    retryPolicy?: RetryPolicy
 }

@@ -194,7 +194,7 @@ async function flushSnapshot({ onlyIfDirty, retryPolicy }: FlushSnapshotParams):
             type: FileType.FLOW_RUN_LOG,
             compression: FileCompression.ZSTD,
             data: executionState,
-            retryPolicy,
+            retryPolicy: engineConstants.retryPolicy(retryPolicy),
         })
 
         const stepResponse = extractStepResponse({

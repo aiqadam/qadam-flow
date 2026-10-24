@@ -252,7 +252,7 @@ function normalizeInvalidDotKeys(expr: string): string {
 }
 
 async function handleVariable(params: ResolveSingleTokenParams): Promise<unknown> {
-    const { variableName, engineToken, projectId, apiUrl, censoredInput } = params
+    const { variableName, engineToken, projectId, apiUrl, censoredInput, constants } = params
     const name = parseVariableName(variableName)
     // Same defect as `{{VAR}}`, one level further in: the expression declares itself a project
     // variable and then names nothing this can read, and returning `''` made it a working HMAC key
@@ -263,7 +263,7 @@ async function handleVariable(params: ResolveSingleTokenParams): Promise<unknown
     if (censoredInput) {
         return '**REDACTED**'
     }
-    return createVariableResolver({ engineToken, projectId, apiUrl }).obtain(name)
+    return createVariableResolver({ engineToken, projectId, apiUrl, retryPolicy: constants.retryPolicy() }).obtain(name)
 }
 
 function parseVariableName(variableName: string): string | null {
@@ -347,7 +347,7 @@ async function resolveExplicitLocale(params: { localeExpr: string, currentState:
 }
 
 async function handleConnection(params: ResolveSingleTokenParams): Promise<unknown> {
-    const { variableName, engineToken, projectId, apiUrl, censoredInput } = params
+    const { variableName, engineToken, projectId, apiUrl, censoredInput, constants } = params
     const connectionName = parseConnectionNameOnly(variableName)
     if (isNil(connectionName)) {
         throw new UnresolvedTemplateReferenceError({ expression: variableName })
@@ -355,7 +355,7 @@ async function handleConnection(params: ResolveSingleTokenParams): Promise<unkno
     if (censoredInput) {
         return '**REDACTED**'
     }
-    const connection = await createConnectionResolver({ engineToken, projectId, apiUrl, contextVersion: params.contextVersion }).obtain(connectionName)
+    const connection = await createConnectionResolver({ engineToken, projectId, apiUrl, contextVersion: params.contextVersion, retryPolicy: constants.retryPolicy() }).obtain(connectionName)
     const pathAfterConnectionName = parsePathAfterConnectionName(variableName, connectionName)
     if (isNil(pathAfterConnectionName) || pathAfterConnectionName.length === 0) {
         return connection

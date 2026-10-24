@@ -248,6 +248,34 @@ describe('retryingFetch', () => {
     })
 })
 
+// #604: a short-deadline operation (a trigger/property/validation hook's TRIGGER_TIMEOUT_SECONDS,
+// or a loop checkpoint) must give up retrying before the worker's own killProcess timer fires.
+describe('retryingFetch.forOperationDeadline', () => {
+    it('leaves the policy alone when the deadline is far past its own budget', () => {
+        const capped = retryingFetch.forOperationDeadline({ policy: FAST, timeoutInSeconds: 3600, executionStartedAt: Date.now() })
+        expect(capped.budgetMs).toBe(FAST.budgetMs)
+        expect(capped.attemptTimeoutMs).toBe(FAST.attemptTimeoutMs)
+    })
+
+    it('caps the budget to what a short deadline has left, minus the safety margin', () => {
+        // 10 s deadline, just started: ~10 s left minus the 5 s margin ≈ 5 s, well under the default 60 s.
+        const capped = retryingFetch.forOperationDeadline({ policy: retryingFetch.defaultPolicy, timeoutInSeconds: 10, executionStartedAt: Date.now() })
+        expect(capped.budgetMs).toBeLessThan(retryingFetch.defaultPolicy.budgetMs)
+        expect(capped.budgetMs).toBeGreaterThan(0)
+        expect(capped.budgetMs).toBeLessThanOrEqual(5_000)
+    })
+
+    it('floors at 0 rather than going negative once the deadline has already passed', () => {
+        const capped = retryingFetch.forOperationDeadline({ policy: retryingFetch.defaultPolicy, timeoutInSeconds: 1, executionStartedAt: Date.now() - 10_000 })
+        expect(capped.budgetMs).toBe(0)
+    })
+
+    it('defaults to retryingFetch.defaultPolicy when no policy is given', () => {
+        const capped = retryingFetch.forOperationDeadline({ timeoutInSeconds: 3600, executionStartedAt: Date.now() })
+        expect(capped.attemptTimeoutMs).toBe(retryingFetch.defaultPolicy.attemptTimeoutMs)
+    })
+})
+
 function answerAfter({ ms, signal }: { ms: number, signal: AbortSignal | null | undefined }): Promise<Response> {
     return new Promise((resolve, reject) => {
         const timer = setTimeout(() => resolve(new Response('ok', { status: 200 })), ms)

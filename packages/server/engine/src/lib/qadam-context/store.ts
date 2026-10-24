@@ -1,14 +1,14 @@
 import { URL } from 'node:url'
 import { Store, StorePutIfAbsentResult, StorePutOptions, StoreScope } from '@aiqadam/qadams-framework'
 import { DeleteStoreEntryRequest, ExecutionError, FetchError, FlowId, isNil, PutStoreEntryRequest, StorageError, StorageInvalidKeyError, StorageLimitError, STORE_KEY_MAX_LENGTH, STORE_VALUE_MAX_SIZE, StoreEntry } from '@aiqadam/shared'
-import { retryingFetch } from '../retrying-fetch'
+import { retryingFetch, RetryPolicy } from '../retrying-fetch'
 import { utils } from '../utils'
 
-export function createContextStore({ apiUrl, prefix, flowId, engineToken }: { apiUrl: string, prefix: string, flowId: FlowId, engineToken: string }): Store {
+export function createContextStore({ apiUrl, prefix, flowId, engineToken, retryPolicy }: { apiUrl: string, prefix: string, flowId: FlowId, engineToken: string, retryPolicy?: RetryPolicy }): Store {
     return {
         async put<T>(key: string, value: T, scope = StoreScope.FLOW, options?: StorePutOptions): Promise<T> {
             const modifiedKey = createKey(prefix, scope, flowId, key)
-            await createStoreClient({ apiUrl, engineToken }).put({
+            await createStoreClient({ apiUrl, engineToken, retryPolicy }).put({
                 key: modifiedKey,
                 value,
                 ttlSeconds: options?.ttlSeconds,
@@ -17,7 +17,7 @@ export function createContextStore({ apiUrl, prefix, flowId, engineToken }: { ap
         },
         async putIfAbsent<T>(key: string, value: T, scope = StoreScope.FLOW, options?: StorePutOptions): Promise<StorePutIfAbsentResult<T>> {
             const modifiedKey = createKey(prefix, scope, flowId, key)
-            const result = await createStoreClient({ apiUrl, engineToken }).putIfAbsent({
+            const result = await createStoreClient({ apiUrl, engineToken, retryPolicy }).putIfAbsent({
                 key: modifiedKey,
                 value,
                 ttlSeconds: options?.ttlSeconds,
@@ -29,13 +29,13 @@ export function createContextStore({ apiUrl, prefix, flowId, engineToken }: { ap
         },
         async delete(key: string, scope = StoreScope.FLOW): Promise<void> {
             const modifiedKey = createKey(prefix, scope, flowId, key)
-            await createStoreClient({ apiUrl, engineToken }).delete({
+            await createStoreClient({ apiUrl, engineToken, retryPolicy }).delete({
                 key: modifiedKey,
             })
         },
         async get<T>(key: string, scope = StoreScope.FLOW): Promise<T | null> {
             const modifiedKey = createKey(prefix, scope, flowId, key)
-            const storeEntry = await createStoreClient({ apiUrl, engineToken }).get(modifiedKey)
+            const storeEntry = await createStoreClient({ apiUrl, engineToken, retryPolicy }).get(modifiedKey)
             if (storeEntry === null) {
                 return null
             }
@@ -44,7 +44,7 @@ export function createContextStore({ apiUrl, prefix, flowId, engineToken }: { ap
     }
 }
 
-function createStoreClient({ engineToken, apiUrl }: CreateStoreClientParams): StoreClient {
+function createStoreClient({ engineToken, apiUrl, retryPolicy }: CreateStoreClientParams): StoreClient {
     return {
         async get(key: string): Promise<StoreEntry | null> {
             if (isNil(key) || key.length === 0) {
@@ -61,6 +61,7 @@ function createStoreClient({ engineToken, apiUrl }: CreateStoreClientParams): St
                         },
                     },
                     idempotent: true,
+                    policy: retryPolicy,
                 })
                 if (!response.ok) {
                     return handleResponseError({
@@ -102,6 +103,7 @@ function createStoreClient({ engineToken, apiUrl }: CreateStoreClientParams): St
                         body: JSON.stringify(request),
                     },
                     idempotent: false,
+                    policy: retryPolicy,
                 })
                 if (!response.ok) {
                     return handleResponseError({ key: request.key, response })
@@ -136,6 +138,7 @@ function createStoreClient({ engineToken, apiUrl }: CreateStoreClientParams): St
                         body: JSON.stringify(request),
                     },
                     idempotent: false,
+                    policy: retryPolicy,
                 })
 
                 if (!response.ok) {
@@ -175,6 +178,7 @@ function createStoreClient({ engineToken, apiUrl }: CreateStoreClientParams): St
                         },
                     },
                     idempotent: false,
+                    policy: retryPolicy,
                 })
 
                 if (!response.ok) {
@@ -239,6 +243,7 @@ const handleResponseError = async ({ key, response }: HandleResponseErrorParams)
 type CreateStoreClientParams = {
     engineToken: string
     apiUrl: string
+    retryPolicy?: RetryPolicy
 }
 
 type StoreClient = {

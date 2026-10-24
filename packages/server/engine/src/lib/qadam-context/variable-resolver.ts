@@ -1,10 +1,10 @@
 import { EngineGenericError, ExecutionError, FetchError, VariableNotFoundError } from '@aiqadam/shared'
-import { retryingFetch } from '../retrying-fetch'
+import { retryingFetch, RetryPolicy } from '../retrying-fetch'
 import { utils } from '../utils'
 
 const HTTP_NOT_FOUND = 404
 
-export const createVariableResolver = ({ projectId: _projectId, engineToken, apiUrl }: CreateVariableResolverParams): VariableResolver => {
+export const createVariableResolver = ({ projectId: _projectId, engineToken, apiUrl, retryPolicy }: CreateVariableResolverParams): VariableResolver => {
     return {
         async obtain(name: string): Promise<string> {
             const url = `${apiUrl}v1/worker/variables/${encodeURIComponent(name)}`
@@ -19,6 +19,7 @@ export const createVariableResolver = ({ projectId: _projectId, engineToken, api
                         },
                     },
                     idempotent: true,
+                    policy: retryPolicy,
                 })
 
                 if (!response.ok) {
@@ -57,4 +58,5 @@ type CreateVariableResolverParams = {
     projectId: string
     apiUrl: string
     engineToken: string
+    retryPolicy?: RetryPolicy
 }

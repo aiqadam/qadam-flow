@@ -8,6 +8,7 @@ import { createFileUploader } from '../qadam-context/file-uploader'
 import { createFlowsContext } from '../qadam-context/flows'
 import { createPropertyContext } from '../qadam-context/property-context'
 import { createContextStore } from '../qadam-context/store'
+import { RetryPolicy } from '../retrying-fetch'
 import { utils } from '../utils'
 import { propsProcessor } from '../variables/props-processor'
 import { createPropsResolver } from '../variables/props-resolver'
@@ -50,6 +51,7 @@ export const triggerHelper = {
                 prefix: '',
                 flowId: constants.flowId,
                 engineToken: constants.engineToken,
+                retryPolicy: constants.retryPolicy(),
             }),
             auth: processedInput[AUTHENTICATION_PROPERTY_NAME],
             propsValue: processedInput,
@@ -70,6 +72,7 @@ export const triggerHelper = {
                 engineToken: constants.engineToken,
                 target: 'triggers',
                 contextVersion: qadam.getContextInfo?.().version,
+                retryPolicy: constants.retryPolicy(),
             }),
         }
         await qadamTrigger.onStart(context)
@@ -109,6 +112,7 @@ export const triggerHelper = {
                 prefix,
                 flowId: params.flowVersion.flowId,
                 engineToken: params.engineToken,
+                retryPolicy: constants.retryPolicy(),
             }),
             step: {
                 name: triggerName,
@@ -133,6 +137,7 @@ export const triggerHelper = {
                 internalApiUrl: constants.internalApiUrl,
                 flowId: params.flowVersion.flowId,
                 flowVersionId: params.flowVersion.id,
+                retryPolicy: constants.retryPolicy(),
             }),
             webhookUrl: params.webhookUrl,
             auth: processedInput[AUTHENTICATION_PROPERTY_NAME],
@@ -154,6 +159,7 @@ export const triggerHelper = {
                 engineToken: constants.engineToken,
                 target: 'triggers',
                 contextVersion: qadam.getContextInfo?.().version,
+                retryPolicy: constants.retryPolicy(),
             }),
         }
         switch (params.hookType) {
@@ -189,6 +195,7 @@ export const triggerHelper = {
                     files: createFileUploader({
                         apiUrl: constants.internalApiUrl,
                         engineToken: params.engineToken!,
+                        retryPolicy: constants.retryPolicy(),
                     }),
                 }))
 
@@ -231,6 +238,7 @@ export const triggerHelper = {
                         files: createFileUploader({
                             apiUrl: constants.internalApiUrl,
                             engineToken: params.engineToken!,
+                            retryPolicy: constants.retryPolicy(),
                         }),
                     })
                     return {
@@ -292,7 +300,7 @@ async function prepareTriggerExecution({ qadamName, qadamVersion, triggerName, i
     // Only for the hook paths that can act on it. `run` is on the hot path for every inbound
     // event and has no use for a setting that belongs to the credential.
     const authMetadata = !isNil(authMetadataMode)
-        ? await readAuthMetadata({ input, projectId, apiUrl, engineToken, contextVersion: qadam.getContextInfo?.().version, required: authMetadataMode === 'required' })
+        ? await readAuthMetadata({ input, projectId, apiUrl, engineToken, contextVersion: qadam.getContextInfo?.().version, required: authMetadataMode === 'required', retryPolicy: constants.retryPolicy() })
         : undefined
 
     return { qadam, qadamTrigger, processedInput, authMetadata }
@@ -310,7 +318,7 @@ const authMetadataModeFor = (hookType: TriggerHookType): AuthMetadataMode | unde
     }
 }
 
-async function readAuthMetadata({ input, projectId, apiUrl, engineToken, contextVersion, required }: ReadAuthMetadataParams): Promise<Record<string, unknown> | undefined> {
+async function readAuthMetadata({ input, projectId, apiUrl, engineToken, contextVersion, required, retryPolicy }: ReadAuthMetadataParams): Promise<Record<string, unknown> | undefined> {
     if (typeof input !== 'object' || input === null || !(AUTHENTICATION_PROPERTY_NAME in input)) {
         return undefined
     }
@@ -323,7 +331,7 @@ async function readAuthMetadata({ input, projectId, apiUrl, engineToken, context
         return undefined
     }
     const read = (): Promise<Record<string, unknown> | undefined> =>
-        createConnectionResolver({ apiUrl, projectId, engineToken, contextVersion }).obtainMetadata(externalId)
+        createConnectionResolver({ apiUrl, projectId, engineToken, contextVersion, retryPolicy }).obtainMetadata(externalId)
     if (required) {
         return read()
     }
@@ -345,6 +353,7 @@ type ReadAuthMetadataParams = {
     apiUrl: string
     engineToken: string
     contextVersion: ContextVersion | undefined
+    retryPolicy?: RetryPolicy
 }
 
 type PrepareTriggerExecutionParams = {

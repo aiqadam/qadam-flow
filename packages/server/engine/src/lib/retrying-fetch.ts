@@ -53,9 +53,31 @@ const BEST_EFFORT_POLICY: RetryPolicy = {
     maxDelayMs: 3_000,
 }
 
+/**
+ * Safety margin subtracted from an operation's own remaining deadline when capping a retry
+ * budget (#604). The worker's `killProcess` fires at the operation's exact `timeoutInSeconds`
+ * deadline (`sandbox.ts`), so the cap must leave the engine enough room to notice its budget is
+ * exhausted, give up the in-flight attempt and return its own clean error before that happens.
+ */
+const DEADLINE_SAFETY_MARGIN_MS = 5_000
+
 export const retryingFetch = {
     defaultPolicy: DEFAULT_POLICY,
     bestEffortPolicy: BEST_EFFORT_POLICY,
+    /**
+     * Caps `policy.budgetMs` to what an operation's own deadline has left, so a short-deadline
+     * operation — a trigger/property/validation hook (`TRIGGER_TIMEOUT_SECONDS`, 60 s default) or
+     * a durable loop checkpoint, whose own margin is itself ≥ 60 s — gives up with a clean,
+     * specific error instead of retrying into the worker's `killProcess` (#604, follow-up to
+     * #595/#603). `Math.min` only ever lowers the budget, so an operation whose deadline is well
+     * past the policy's own budget (a flow's `FLOW_TIMEOUT_SECONDS`, 600 s default) is unaffected.
+     * Floored at 0: an operation whose deadline has already passed gets no retries, not a negative
+     * budget, but still lets the in-flight attempt's own answer (success or failure) through.
+     */
+    forOperationDeadline({ policy = DEFAULT_POLICY, timeoutInSeconds, executionStartedAt }: ForOperationDeadlineParams): RetryPolicy {
+        const remainingMs = timeoutInSeconds * 1000 - (Date.now() - executionStartedAt) - DEADLINE_SAFETY_MARGIN_MS
+        return { ...policy, budgetMs: Math.max(0, Math.min(policy.budgetMs, remainingMs)) }
+    },
     /**
      * `fetch` that retries a transient failure with backoff until `policy.budgetMs` has passed, then
      * returns the last response or throws the last error, exactly as a plain `fetch` would have.
@@ -266,6 +288,12 @@ type RetryingFetchParams = {
     init: RequestInit
     idempotent: boolean
     policy?: RetryPolicy
+}
+
+type ForOperationDeadlineParams = {
+    policy?: RetryPolicy
+    timeoutInSeconds: number
+    executionStartedAt: number
 }
 
 type Failure = 'NOT_SENT' | 'MAYBE_SENT' | 'NONE'

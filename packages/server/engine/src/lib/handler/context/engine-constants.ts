@@ -3,7 +3,7 @@ import { BeginExecuteFlowOperation, DEFAULT_EXECUTE_PROPERTY_RUN_ID, DEFAULT_MCP
 import { z } from 'zod'
 import { logRedaction, StepLogPolicy } from '../../helper/log-redaction'
 import { createTranslationResolver } from '../../qadam-context/translation-resolver'
-import { retryingFetch } from '../../retrying-fetch'
+import { retryingFetch, RetryPolicy } from '../../retrying-fetch'
 import { createPropsResolver, PropsResolver, resolveInputAsync } from '../../variables/props-resolver'
 import type { FlowExecutorContext } from './flow-execution-context'
 
@@ -279,6 +279,18 @@ export class EngineConstants {
             stepLogPolicy: logRedaction.buildStepLogPolicy({ trigger: input.flowVersion.trigger }),
         })
     }
+    // How much of this operation's own `timeoutInSeconds` deadline is left, from when it started.
+    // The loop executor's checkpoint margin is computed against this same clock (#604).
+    public remainingTimeoutMs(): number {
+        return this.timeoutInSeconds * 1000 - (Date.now() - this.executionStartedAt)
+    }
+
+    // Caps a retry policy's budget to this operation's own remaining deadline, so every
+    // engine→app call this operation makes shares it (#604). See `retryingFetch.forOperationDeadline`.
+    public retryPolicy(policy: RetryPolicy = retryingFetch.defaultPolicy): RetryPolicy {
+        return retryingFetch.forOperationDeadline({ policy, timeoutInSeconds: this.timeoutInSeconds, executionStartedAt: this.executionStartedAt })
+    }
+
     public getPropsResolver(contextVersion: ContextVersion | undefined): PropsResolver {
         return createPropsResolver({
             projectId: this.projectId,
@@ -311,6 +323,7 @@ export class EngineConstants {
                     },
                 },
                 idempotent: true,
+                policy: this.retryPolicy(),
             })
 
             if (!response.ok) {
@@ -355,7 +368,7 @@ export class EngineConstants {
 
     private async fetchTranslationsOnce(): Promise<Map<string, Map<string, string>>> {
         try {
-            const rows = await createTranslationResolver({ engineToken: this.engineToken, apiUrl: this.internalApiUrl }).obtainAll()
+            const rows = await createTranslationResolver({ engineToken: this.engineToken, apiUrl: this.internalApiUrl, retryPolicy: this.retryPolicy() }).obtainAll()
             const translations = new Map<string, Map<string, string>>()
             for (const row of rows) {
                 translations.set(row.key, new Map(Object.entries(row.values)))

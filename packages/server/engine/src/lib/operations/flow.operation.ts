@@ -33,6 +33,7 @@ import { testExecutionContext } from '../handler/context/test-execution-context'
 import { flowExecutor } from '../handler/flow-executor'
 import { flowRunProgressReporter } from '../helper/flow-run-progress-reporter'
 import { triggerHelper } from '../helper/trigger-helper'
+import { retryingFetch, RetryPolicy } from '../retrying-fetch'
 import { utils } from '../utils'
 import { workerSocket } from '../worker-socket'
 import { resolveJobPayload } from './utils/resolve-job-payload'
@@ -149,6 +150,7 @@ const executieSingleStepOrFlowOperation = async (input: ResolvedExecuteFlowOpera
         engineApi: {
             engineToken: constants.engineToken,
             internalApiUrl: constants.internalApiUrl,
+            retryPolicy: constants.retryPolicy(),
         },
         stepLogPolicy: constants.stepLogPolicy,
     })
@@ -265,7 +267,7 @@ async function resolveExecuteFlowOperation(operation: ExecuteFlowOperation): Pro
     if (operation.executionType === ExecutionType.BEGIN) {
         return {
             ...operation,
-            triggerPayload: await resolveJobPayload({ payload: operation.triggerPayload, apiUrl: operation.internalApiUrl, engineToken: operation.engineToken }),
+            triggerPayload: await resolveJobPayload({ payload: operation.triggerPayload, apiUrl: operation.internalApiUrl, engineToken: operation.engineToken, retryPolicy: preambleRetryPolicy(operation) }),
         }
     }
     const executionState = await fetchExecutionStateFromLogs(operation.logsFileId, operation)
@@ -274,9 +276,16 @@ async function resolveExecuteFlowOperation(operation: ExecuteFlowOperation): Pro
     }
     return {
         ...operation,
-        resumePayload: await resolveJobPayload({ payload: operation.resumePayload, apiUrl: operation.internalApiUrl, engineToken: operation.engineToken }) as ResumePayload,
+        resumePayload: await resolveJobPayload({ payload: operation.resumePayload, apiUrl: operation.internalApiUrl, engineToken: operation.engineToken, retryPolicy: preambleRetryPolicy(operation) }) as ResumePayload,
         executionState,
     }
+}
+
+// This runs before EngineConstants exists, essentially at this operation's own t=0, so
+// `executionStartedAt: Date.now()` here is that operation's own clock (#604) — the same
+// FLOW_TIMEOUT_SECONDS deadline `EngineConstants.fromExecuteFlowInput` below will use.
+function preambleRetryPolicy(operation: ExecuteFlowOperation): RetryPolicy {
+    return retryingFetch.forOperationDeadline({ timeoutInSeconds: operation.timeoutInSeconds, executionStartedAt: Date.now() })
 }
 
 async function fetchExecutionStateFromLogs(logsFileId: string | undefined, operation: ExecuteFlowOperation): Promise<ExecutionState> {
@@ -287,6 +296,7 @@ async function fetchExecutionStateFromLogs(logsFileId: string | undefined, opera
         fileId: logsFileId,
         apiUrl: operation.internalApiUrl,
         engineToken: operation.engineToken,
+        retryPolicy: preambleRetryPolicy(operation),
     })
     const parsed = JSON.parse(new TextDecoder('utf-8').decode(bytes))
     if (isNil(parsed?.executionState)) {

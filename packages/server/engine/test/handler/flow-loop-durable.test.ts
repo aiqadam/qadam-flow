@@ -3,6 +3,7 @@ import { EngineConstants } from '../../src/lib/handler/context/engine-constants'
 import { FlowExecutorContext } from '../../src/lib/handler/context/flow-execution-context'
 import { flowExecutor } from '../../src/lib/handler/flow-executor'
 import { waitpointClient } from '../../src/lib/qadam-context/waitpoint-client'
+import { retryingFetch } from '../../src/lib/retrying-fetch'
 import { mockHttpServer } from './mock-http-server'
 import { buildQadamAction, buildSimpleLoopAction, generateMockEngineConstants } from './test-helper'
 
@@ -86,6 +87,10 @@ describe('durable loop', () => {
         // A durable loop keeps only failed bodies unless told otherwise.
         expect(loop.output?.iterations[0]).toEqual({})
         expect(waitpointClient.create).toHaveBeenCalledWith(expect.objectContaining({ type: 'DELAY', stepName: 'loop' }))
+        // #604: the checkpoint's own waitpoint create shares the loop's near-exhausted budget, so it
+        // gives up retrying well before the worker's killProcess fires on this run's 10 s deadline.
+        const retryPolicy = vi.mocked(waitpointClient.create).mock.calls[0][0].retryPolicy
+        expect(retryPolicy?.budgetMs).toBeLessThan(retryingFetch.defaultPolicy.budgetMs)
     }, 20000)
 
     it('resumes where it stopped and sends every item exactly once across checkpoints', async () => {

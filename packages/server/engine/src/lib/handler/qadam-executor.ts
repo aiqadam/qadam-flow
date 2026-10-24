@@ -117,6 +117,7 @@ const executeAction: ActionHandler<QadamAction> = async ({ action, executionStat
                 prefix: '',
                 flowId: constants.flowId,
                 engineToken: constants.engineToken,
+                retryPolicy: constants.retryPolicy(),
             }),
             output: outputContext,
             flows: createFlowsContext({
@@ -124,6 +125,7 @@ const executeAction: ActionHandler<QadamAction> = async ({ action, executionStat
                 internalApiUrl: constants.internalApiUrl,
                 flowId: constants.flowId,
                 flowVersionId: constants.flowVersionId,
+                retryPolicy: constants.retryPolicy(),
             }),
             step: {
                 name: action.name,
@@ -132,6 +134,7 @@ const executeAction: ActionHandler<QadamAction> = async ({ action, executionStat
             files: createFileUploader({
                 apiUrl: constants.internalApiUrl,
                 engineToken: constants.engineToken,
+                retryPolicy: constants.retryPolicy(),
             }),
             server: {
                 token: constants.engineToken,
@@ -155,6 +158,7 @@ const executeAction: ActionHandler<QadamAction> = async ({ action, executionStat
                 target: 'actions',
                 hookResponse: params.hookResponse,
                 contextVersion: qadam.getContextInfo?.().version,
+                retryPolicy: constants.retryPolicy(),
             }),
             run: {
                 id: constants.flowRunId,
@@ -335,6 +339,7 @@ function createWaitpointHook({ constants, stepName, hookParams, pauseRefusal }: 
             httpRequestId: constants.httpRequestId ?? undefined,
             internal: req.internal,
             join: req.join,
+            retryPolicy: constants.retryPolicy(),
         })
         return {
             ...result,
