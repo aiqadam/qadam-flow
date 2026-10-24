@@ -392,6 +392,26 @@ async function saveProjectWithConnection({ platformId, ownerId, qadamName, displ
 
 describe('Chat agent API', () => {
     describe('POST /v1/chat/conversations/:id/messages', () => {
+        // #942: a string `file.data` reaches `streamText` as a `file` part, and the AI SDK tries it
+        // as a URL before falling back to inline data — so a URL here made the API server fetch it
+        // with the SDK's own downloader, never `safeHttp` / `AP_SSRF_ALLOW_LIST`. The schema now
+        // restricts `data` to bare base64, so the request never reaches `chatAgentService.start`
+        // (no provider or model is even configured here) and no outbound fetch — to the provider or
+        // to the attacker's URL — happens at all.
+        it('rejects a file attachment whose data is a URL instead of base64', async () => {
+            const conversationId = await createConversation(ctx)
+
+            const response = await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, {
+                content: '',
+                files: [{ name: 'x.png', mimeType: 'image/png', data: 'https://169.254.169.254/latest/meta-data/' }],
+                runId: apId(),
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
+            expect(response!.json().code).toBe('FST_ERR_VALIDATION')
+            expect(providerCalls).toEqual([])
+        })
+
         it('refuses with a stated cause, not a 500, when no AI provider is enabled for chat', async () => {
             const conversationId = await createConversation(ctx)
 

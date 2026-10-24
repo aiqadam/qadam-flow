@@ -293,6 +293,9 @@ async function runAttempt(params: RunAttemptParams): Promise<void> {
             ...spreadIfDefined('providerOptions', params.providerOptions ?? undefined),
             // #264: which tools the model may not run on its own word is decided in `chatTools`.
             toolApproval: params.toolApproval,
+            // Without this the SDK downloads any `file`-part URL itself, through `fetchUntrustedUrl`
+            // rather than `safeHttp` — a second, unfiltered SSRF path (#942).
+            experimental_download: chatAiUtils.createSafeDownloadFunction(abortController.signal),
             stopWhen: isStepCount(MAX_AGENT_STEPS),
             abortSignal: abortController.signal,
             onError: ({ error: streamError }) => {
