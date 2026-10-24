@@ -224,7 +224,7 @@ describe('flow-run-progress-reporter upload retry budget', () => {
 
     // A long `timeoutInSeconds` keeps the #604 deadline cap a no-op here, so these pin the
     // *selected* policy (final vs. periodic/best-effort) on its own — the cap itself is covered
-    // below and in engine-constants.test.ts.
+    // below and in engine-constants-retry-policy.test.ts.
     it('gives the final backup the full budget', async () => {
         await flowRunProgressReporter.sendUpdate(buildUpdateParams({ status: FlowRunStatus.SUCCEEDED, timeoutInSeconds: 3600 }))
         await flowRunProgressReporter.backup()
