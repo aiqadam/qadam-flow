@@ -50,6 +50,18 @@ describe('qadamWarmup.warmupUsedQadams', () => {
         expect(mockInstall).toHaveBeenCalledExactlyOnceWith({ pieces: [good], includeFilters: true })
     })
 
+    // #879: `qadams/<name>@<version>` is one path segment; a name at npm's limit with a long
+    // snapshot version does not fit, so the warmup sets it aside instead of failing the batch.
+    it('sets aside an entry whose member directory is past one path segment', async () => {
+        const good = makeQadam({ qadamName: '@acme/qadam-a', qadamVersion: '1.0.0' })
+        const bad = makeQadam({ qadamName: 'a'.repeat(214), qadamVersion: '999999999.999999999.999999999-main.999999999' })
+        const { apiClient } = fakeApiClient({ usedQadams: [good, bad] })
+
+        await qadamWarmup.warmupUsedQadams({ apiClient, log })
+
+        expect(mockInstall).toHaveBeenCalledExactlyOnceWith({ pieces: [good], includeFilters: true })
+    })
+
     it('installs nothing when every entry is set aside', async () => {
         const { apiClient, calls } = fakeApiClient({ usedQadams: [makeQadam({ qadamName: '../x', qadamVersion: '1.0.0' })] })
 

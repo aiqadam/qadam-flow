@@ -3,6 +3,7 @@ import {
     FlowActionType,
     FlowTriggerType,
     FlowVersionState,
+    MAX_AGENT_TOOL_PINS,
     PackageType,
     QadamType,
 } from '@aiqadam/shared'
@@ -239,6 +240,33 @@ describe('extractQadamPackages — agent tools', () => {
         expect(packages.filter((p) => p.qadamName === '@aiqadam/qadam-tables').map((p) => p.qadamVersion)).toEqual(['0.5.0', '0.5.1'])
     })
 
+    // #879: a flow can pin many qadams, and each one is an API round trip. They go out at a
+    // bounded concurrency instead of all at once, so one flow cannot flood the API.
+    it('bounds how many pin lookups are in flight at once', async () => {
+        let inFlight = 0
+        let maxInFlight = 0
+        mockGetPiece.mockImplementation(async ({ qadamName, qadamVersion }: { qadamName: string, qadamVersion: string }) => {
+            inFlight++
+            maxInFlight = Math.max(maxInFlight, inFlight)
+            await new Promise((resolve) => setTimeout(resolve, 1))
+            inFlight--
+            return { qadamName, qadamVersion, packageType: PackageType.REGISTRY, qadamType: QadamType.OFFICIAL }
+        })
+        const fv = flowWith({
+            agentTools: Array.from({ length: 20 }, (_, index) => qadamTool({
+                toolName: `t${index}`,
+                qadamName: `@acme/qadam-tool-${index}`,
+                qadamVersion: '1.0.0',
+            })),
+        })
+
+        await extractQadamPackages({ flowVersion: fv, platformId: mockPlatformId, log: mockLog, apiClient: mockApiClient })
+
+        expect(mockGetPiece).toHaveBeenCalledTimes(22)
+        expect(maxInFlight).toBeLessThanOrEqual(8)
+        expect(maxInFlight).toBeGreaterThan(1)
+    })
+
     it('ignores tools that name no qadam, malformed entries and a run-time value', async () => {
         const fvWithOtherTools = flowWith({
             agentTools: [
@@ -252,6 +280,32 @@ describe('extractQadamPackages — agent tools', () => {
 
         expect(await extractQadamPackages({ flowVersion: fvWithOtherTools, platformId: mockPlatformId, log: mockLog, apiClient: mockApiClient })).toHaveLength(2)
         expect(await extractQadamPackages({ flowVersion: fvWithVariable, platformId: mockPlatformId, log: mockLog, apiClient: mockApiClient })).toHaveLength(2)
+    })
+
+    // #879: an over-cap flow saved before the cap must fail closed, not provision a prefix and let
+    // the engine load the rest outside the API's pin check.
+    it('refuses to provision an agent step over the tool limit', async () => {
+        mockProvision.mockReset()
+        const fv = flowWith({
+            agentTools: Array.from({ length: MAX_AGENT_TOOL_PINS + 1 }, (_, index) => qadamTool({
+                toolName: `t${index}`,
+                qadamName: `@acme/qadam-tool-${index}`,
+                qadamVersion: '1.0.0',
+            })),
+        })
+
+        const result = await provisionFlowPieces({
+            flowVersion: fv,
+            platformId: mockPlatformId,
+            flowId: 'flow-1',
+            projectId: 'project-1',
+            log: { error: vi.fn() } as any,
+            apiClient: mockApiClient,
+        })
+
+        expect(result).toEqual({ provisioned: false, unavailableQadam: `more than ${MAX_AGENT_TOOL_PINS} agent tools`, usedBy: 'the step agent' })
+        expect(mockGetPiece).not.toHaveBeenCalled()
+        expect(mockProvision).not.toHaveBeenCalled()
     })
 
     it('fails provisioning with the tool\'s pin named when the API does not know it', async () => {

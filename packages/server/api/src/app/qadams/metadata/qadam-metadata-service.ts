@@ -84,6 +84,59 @@ export const qadamMetadataService = (log: FastifyBaseLogger) => {
             }
             return qadam
         },
+        // The same answer as `get`, for many pins, resolving them against the registry once
+        // (#879). Keyed by `name@version`. Each pin keeps its own outcome: a failing read is
+        // `error` for that pin only, never for the whole batch — the tri-state `resolvePins`
+        // contract depends on telling "not there" from "could not tell" per pin.
+        async getMany({ pins, platformId }: GetManyParams): Promise<Map<string, QadamMetadataLookup>> {
+            const uniquePins = distinctVersionRequests({ pins })
+            const entriesByName = await loadRegistryIndex({ log, platformId })
+            const entries = await Promise.all(uniquePins.map(async (pin): Promise<[string, QadamMetadataLookup]> => {
+                const { data: bestMatch, error: matchError } = await tryCatch(() => findExactVersionFor({
+                    log,
+                    request: pin,
+                    entries: entriesByName.get(pin.name) ?? [],
+                    platformId,
+                    allowBundledFallback: true,
+                }))
+                if (!isNil(matchError) || isNil(bestMatch)) {
+                    return [pinKey(pin), isNil(matchError) ? { status: 'missing' } : { status: 'error' }]
+                }
+                const { data: qadam, error } = await tryCatch(() => dedupe(`qadam:${bestMatch.name}:${bestMatch.version}:${bestMatch.platformId ?? ''}`, () => fetchQadamVersion({
+                    qadamName: bestMatch.name,
+                    version: bestMatch.version,
+                    platformId: bestMatch.platformId,
+                    log,
+                })))
+                if (!isNil(error)) {
+                    return [pinKey(pin), { status: 'error' }]
+                }
+                return [pinKey(pin), isNil(qadam) ? { status: 'missing' } : { status: 'found', metadata: qadam }]
+            }))
+            return new Map(entries)
+        },
+        // Registry-only resolution for callers that need "does this pin resolve", not the qadam's
+        // metadata (`qadamPinUtil.resolvePins`). No row read per pin: the registry is the same
+        // source `get` resolves through, and this is the hot path a flow's many tool pins take
+        // (#879).
+        async resolveVersions({ pins, platformId }: GetManyParams): Promise<Map<string, QadamVersionLookup>> {
+            const uniquePins = distinctVersionRequests({ pins })
+            const entriesByName = await loadRegistryIndex({ log, platformId })
+            const entries = await Promise.all(uniquePins.map(async (pin): Promise<[string, QadamVersionLookup]> => {
+                const { data: match, error } = await tryCatch(() => findExactVersionFor({
+                    log,
+                    request: pin,
+                    entries: entriesByName.get(pin.name) ?? [],
+                    platformId,
+                    allowBundledFallback: true,
+                }))
+                if (!isNil(error)) {
+                    return [pinKey(pin), { status: 'error' }]
+                }
+                return [pinKey(pin), isNil(match) ? { status: 'missing' } : { status: 'resolved', version: match.version }]
+            }))
+            return new Map(entries)
+        },
         // Whether the instance holds exactly this pin, with no stand-in: `get` (and `resolveVersion`)
         // answer an exact pin that nothing holds with the image's build inside its caret range (#424,
         // the run-time net), so they cannot tell a pin that is there from one that is substituted.
@@ -339,19 +392,82 @@ const sortByVersionDescending = <T extends { version: string }>(a: T, b: T): num
     return semVer.rcompare(a.version, b.version)
 }
 
+const pinKey = ({ name, version }: QadamVersionRequest): string => `${name}@${version}`
+
+const distinctVersionRequests = ({ pins }: { pins: QadamVersionRequest[] }): QadamVersionRequest[] => {
+    return [...new Map(pins.map((pin) => [pinKey(pin), pin])).values()]
+}
+
 const findExactVersion = async (
     log: FastifyBaseLogger,
     params: { name: string, version: string | undefined, platformId: string | undefined, allowBundledFallback?: boolean },
-): Promise<{ name: string, version: string, platformId: string | undefined } | undefined> => {
-    const { name, version, platformId, allowBundledFallback = true } = params
-    const versionToSearch = findNextExcludedVersion(version)
+): Promise<QadamVersionMatch | undefined> => {
+    const [match] = await findExactVersions(log, {
+        requests: [{ name: params.name, version: params.version }],
+        platformId: params.platformId,
+        allowBundledFallback: params.allowBundledFallback,
+    })
+    return match
+}
+
+// One registry load and one `filterRegistry` pass for the whole batch, with the result indexed by
+// name. `getMany` / `resolveVersions` share the index so a flow's many pins cost one pass;
+// filtering the registry again per pin is the measured cost this removes (#879).
+const findExactVersions = async (
+    log: FastifyBaseLogger,
+    { requests, platformId, allowBundledFallback = true }: {
+        requests: QadamVersionRequest[]
+        platformId: string | undefined
+        allowBundledFallback?: boolean
+    },
+): Promise<(QadamVersionMatch | undefined)[]> => {
+    if (requests.length === 0) {
+        return []
+    }
+    const entriesByName = await loadRegistryIndex({ log, platformId })
+    return Promise.all(requests.map((request) => findExactVersionFor({
+        log,
+        request,
+        entries: entriesByName.get(request.name) ?? [],
+        platformId,
+        allowBundledFallback,
+    })))
+}
+
+const loadRegistryIndex = async ({ log, platformId }: {
+    log: FastifyBaseLogger
+    platformId: string | undefined
+}): Promise<Map<string, QadamRegistryEntry[]>> => {
     const currentRelease = apVersionUtil.getCurrentRelease()
     const registry = filterRegistry(await loadRegistry(log), { release: currentRelease, platformId })
-    const isExactPin = !isNil(version) && qadamVersionParser.isExact({ version })
-    const matchingRegistryEntries = registry.filter((entry) => {
-        if (entry.name !== name) {
-            return false
+    return indexRegistryByName({ registry })
+}
+
+const indexRegistryByName = ({ registry }: { registry: QadamRegistryEntry[] }): Map<string, QadamRegistryEntry[]> => {
+    const entriesByName = new Map<string, QadamRegistryEntry[]>()
+    for (const entry of registry) {
+        const entries = entriesByName.get(entry.name)
+        if (isNil(entries)) {
+            entriesByName.set(entry.name, [entry])
         }
+        else {
+            entries.push(entry)
+        }
+    }
+    return entriesByName
+}
+
+const findExactVersionFor = async ({ log, request, entries, platformId, allowBundledFallback }: {
+    log: FastifyBaseLogger
+    request: QadamVersionRequest
+    entries: QadamRegistryEntry[]
+    platformId: string | undefined
+    allowBundledFallback: boolean
+}): Promise<QadamVersionMatch | undefined> => {
+    const { name, version } = request
+    const versionToSearch = findNextExcludedVersion(version)
+    const isExactPin = !isNil(version) && qadamVersionParser.isExact({ version })
+    const matchingRegistryEntries = entries.filter((entry) => {
         if (isNil(versionToSearch)) {
             return true
         }
@@ -613,6 +729,32 @@ type GetParams = {
     platformId?: string
     locale?: LocalesEnum
 }
+
+type GetManyParams = {
+    pins: QadamVersionRequest[]
+    platformId?: string
+}
+
+type QadamVersionRequest = {
+    name: string
+    version: string | undefined
+}
+
+type QadamVersionMatch = {
+    name: string
+    version: string
+    platformId: string | undefined
+}
+
+export type QadamMetadataLookup =
+    | { status: 'found', metadata: QadamMetadataModel }
+    | { status: 'missing' }
+    | { status: 'error' }
+
+export type QadamVersionLookup =
+    | { status: 'resolved', version: string }
+    | { status: 'missing' }
+    | { status: 'error' }
 
 type GetOrThrowParams = GetParams & {
     // STOPGAP for #843, removed when #808 lands. See `findInstalledForPin`.

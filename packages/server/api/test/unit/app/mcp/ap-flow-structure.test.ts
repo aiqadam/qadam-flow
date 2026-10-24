@@ -11,6 +11,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mockGetOnePopulated = vi.fn()
 const mockGetPlatformId = vi.fn()
 const mockGet = vi.fn()
+const mockGetMany = vi.fn()
+const mockResolveVersions = vi.fn()
 const mockUnsupportedPins = vi.fn()
 
 vi.mock('../../../../src/app/flows/flow/flow.service', () => ({
@@ -28,8 +30,23 @@ vi.mock('../../../../src/app/project/project-service', () => ({
 vi.mock('../../../../src/app/qadams/metadata/qadam-metadata-service', () => ({
     qadamMetadataService: vi.fn(() => ({
         get: mockGet,
+        getMany: mockGetMany,
+        resolveVersions: mockResolveVersions,
     })),
 }))
+
+// Pin resolution goes through `getMany`; delegate it to each test's own `get` answer so the
+// existing per-pin expectations keep deciding the result.
+mockGetMany.mockImplementation(async ({ pins }: { pins: { name: string, version: string }[] }) =>
+    new Map(await Promise.all(pins.map(async (pin) => {
+        const metadata = await mockGet({ name: pin.name, version: pin.version })
+        return [`${pin.name}@${pin.version}`, metadata ? { status: 'found', metadata } : { status: 'missing' }] as const
+    }))))
+mockResolveVersions.mockImplementation(async ({ pins }: { pins: { name: string, version: string }[] }) =>
+    new Map(await Promise.all(pins.map(async (pin) => {
+        const metadata = await mockGet({ name: pin.name, version: pin.version })
+        return [`${pin.name}@${pin.version}`, metadata ? { status: 'resolved', version: metadata.version } : { status: 'missing' }] as const
+    }))))
 
 vi.mock('../../../../src/app/qadams/census/framework-census-marking', () => ({
     frameworkCensusMarking: vi.fn(() => ({

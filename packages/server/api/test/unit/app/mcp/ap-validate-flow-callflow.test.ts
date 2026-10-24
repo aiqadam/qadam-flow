@@ -29,6 +29,14 @@ vi.mock('../../../../src/app/project/project-service', () => ({
 vi.mock('../../../../src/app/qadams/metadata/qadam-metadata-service', () => ({
     qadamMetadataService: vi.fn(() => ({
         get: mockGetMetadata,
+        getMany: async ({ pins }: { pins: { name: string, version: string }[] }) => new Map(await Promise.all(pins.map(async (pin) => {
+            const metadata = await mockGetMetadata({ name: pin.name, version: pin.version })
+            return [`${pin.name}@${pin.version}`, metadata ? { status: 'found', metadata } : { status: 'missing' }] as const
+        }))),
+        resolveVersions: async ({ pins }: { pins: { name: string, version: string }[] }) => new Map(await Promise.all(pins.map(async (pin) => {
+            const metadata = await mockGetMetadata({ name: pin.name, version: pin.version })
+            return [`${pin.name}@${pin.version}`, metadata ? { status: 'resolved', version: metadata.version } : { status: 'missing' }] as const
+        }))),
     })),
 }))
 

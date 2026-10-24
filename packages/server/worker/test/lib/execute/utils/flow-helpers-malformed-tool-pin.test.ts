@@ -126,11 +126,13 @@ describe('provisionFlowPieces — an agent tool with a malformed version', () =>
         expect(result).toEqual({ provisioned: false, unavailableQadam: 'a malformed pin', usedBy: 'an agent tool of step agent' })
     })
 
-    // ON_DISABLE provisions the flow too and must not throw on a pin the filesystem cannot hold (#432, #779).
-    it.each([
-        ['a 214-character name at a 44-character snapshot version', 'a'.repeat(214), '999999999.999999999.999999999-main.999999999'],
-        ['a 200-character name at a 44-character snapshot version', 'a'.repeat(200), '999999999.999999999.999999999-main.999999999'],
-    ])('provisions a flow with %s without throwing', async (_label, qadamName, qadamVersion) => {
+    // ON_DISABLE provisions the flow too and must not throw on a pin the filesystem cannot hold
+    // (#432, #779, #879): the member directory `qadams/<name>@<version>` past one path segment's
+    // 255 bytes is answered as unavailable instead of reaching the installer. A 200-character name
+    // at the same version is 245 bytes, fits, and is provisioned as before.
+    it('reports a pin whose member directory is past one path segment as unavailable without throwing', async () => {
+        const qadamName = 'a'.repeat(214)
+        const qadamVersion = '999999999.999999999.999999999-main.999999999'
         const getQadam = vi.fn().mockResolvedValue({ packageType: PackageType.REGISTRY, name: qadamName, version: qadamVersion, qadamType: QadamType.OFFICIAL })
         const params = {
             flowVersion: flowWithToolVersion({ qadamVersion, qadamName }),
@@ -141,9 +143,26 @@ describe('provisionFlowPieces — an agent tool with a malformed version', () =>
             apiClient: { getQadam } as any,
         }
 
-        await expect(provisionFlowPieces(params)).resolves.toEqual({ provisioned: true })
+        await expect(provisionFlowPieces(params)).resolves.toMatchObject({ provisioned: false, usedBy: 'an agent tool of step agent' })
 
         getQadam.mockResolvedValue(null)
-        await expect(provisionFlowPieces(params)).resolves.toMatchObject({ provisioned: false, usedBy: expect.stringContaining('an agent tool of step agent') })
+        await expect(provisionFlowPieces(params)).resolves.toMatchObject({ provisioned: false, usedBy: 'an agent tool of step agent' })
+    })
+
+    it('provisions a 200-character name at a long snapshot version, its member directory fitting', async () => {
+        const qadamName = 'a'.repeat(200)
+        const qadamVersion = '999999999.999999999.999999999-main.999999999'
+        const getQadam = vi.fn().mockResolvedValue({ packageType: PackageType.REGISTRY, name: qadamName, version: qadamVersion, qadamType: QadamType.OFFICIAL })
+
+        const result = await provisionFlowPieces({
+            flowVersion: flowWithToolVersion({ qadamVersion, qadamName }),
+            platformId: 'p'.repeat(21),
+            flowId: 'flow-1',
+            projectId: 'project-1',
+            log: { error: vi.fn(), info: vi.fn() } as any,
+            apiClient: { getQadam } as any,
+        })
+
+        expect(result).toEqual({ provisioned: true })
     })
 })

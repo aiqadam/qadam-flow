@@ -26,11 +26,16 @@ vi.mock('../../../../src/app/project/project-service', () => ({
     })),
 }))
 
-vi.mock('../../../../src/app/qadams/metadata/qadam-metadata-service', () => ({
-    qadamMetadataService: vi.fn(() => ({
-        get: vi.fn().mockResolvedValue({ name: '@aiqadam/qadam-data-mapper', version: '0.4.14', actions: {} }),
-    })),
-}))
+vi.mock('../../../../src/app/qadams/metadata/qadam-metadata-service', () => {
+    const metadata = { name: '@aiqadam/qadam-data-mapper', version: '0.4.14', actions: {} }
+    return {
+        qadamMetadataService: vi.fn(() => ({
+            get: vi.fn().mockResolvedValue(metadata),
+            getMany: async ({ pins }: { pins: { name: string, version: string }[] }) => new Map(pins.map((pin) => [`${pin.name}@${pin.version}`, { status: 'found', metadata }])),
+            resolveVersions: async ({ pins }: { pins: { name: string, version: string }[] }) => new Map(pins.map((pin) => [`${pin.name}@${pin.version}`, { status: 'resolved', version: pin.version }])),
+        })),
+    }
+})
 
 vi.mock('../../../../src/app/translation/translation.service', () => ({
     translationService: vi.fn(() => ({

@@ -1,5 +1,5 @@
 import path from 'path'
-import { NPM_PACKAGE_NAME_MAX_LENGTH } from '@aiqadam/server-utils'
+import { NPM_PACKAGE_NAME_MAX_LENGTH, qadamMemberSegmentFits } from '@aiqadam/server-utils'
 import { ApEnvironment, NPM_PACKAGE_NAME_REGEX, PackageType, QadamPackage, QadamType, qadamVersionParser, WorkerToApiContract } from '@aiqadam/shared'
 import { trace } from '@opentelemetry/api'
 import { Logger } from 'pino'
@@ -26,6 +26,14 @@ export const qadamCache = (log: Logger, apiClient: WorkerToApiContract) => ({
         // it, which provisioning rethrows, and ON_DISABLE and every tick would fail on it (#432).
         // Agent tools carry their version unvalidated, so they can reach this (#779).
         if (qadamVersionParser.parsePin({ pin: qadamVersion }) === null) {
+            throw new PieceNotFoundError(qadamName, qadamVersion)
+        }
+        // The installer's workspace member is `qadams/<name>@<version>`, another one-segment path.
+        // A 214-character name (npm's limit) at a 44-character snapshot version is 259 bytes;
+        // `qadamPath` refuses it, and provisioning rethrows that refusal, failing ON_DISABLE
+        // (#432, #879). Answering it as not found here keeps provisioning's existing
+        // `provisioned: false` path.
+        if (!qadamMemberSegmentFits({ qadamName, qadamVersion })) {
             throw new PieceNotFoundError(qadamName, qadamVersion)
         }
         const isExactVersion = qadamVersionParser.isExact({ version: qadamVersion })

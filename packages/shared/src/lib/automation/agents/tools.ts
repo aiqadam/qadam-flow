@@ -2,6 +2,11 @@ import { z } from 'zod'
 
 export const TASK_COMPLETION_TOOL_NAME = 'updateTaskStatus'
 
+// The most qadam tools one agent step may hold. Each distinct pin costs a registry resolution on
+// the API and a provisioning RPC on the worker, so an unbounded `agentTools` array is a
+// per-tenant denial of service (#879). A real agent does not come near this.
+export const MAX_AGENT_TOOL_PINS = 100
+
 export enum FieldControlMode {
     AGENT_DECIDE = 'agent-decide',
     CHOOSE_YOURSELF = 'choose-yourself',

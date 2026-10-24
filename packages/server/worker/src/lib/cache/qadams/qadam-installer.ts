@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path, { dirname, join } from 'node:path'
-import { fileLock, fileSystemUtils } from '@aiqadam/server-utils'
+import { fileLock, fileSystemUtils, qadamMemberSegmentFits } from '@aiqadam/server-utils'
 import {
     ExecutionMode,
     getLegacyPackageAliasForQadam,
@@ -27,6 +27,7 @@ import writeFileAtomic from 'write-file-atomic'
 import { workerSettings } from '../../config/worker-settings'
 import { getGlobalCacheCommonPath, getGlobalCachePathLatestVersion } from '../cache-paths'
 import { bunRunner } from '../code/bun-runner'
+import { PieceNotFoundError } from './qadam-cache'
 import { qadamIntegrity } from './qadam-integrity'
 
 const tracer = trace.getTracer('qadam-installer')
@@ -832,6 +833,14 @@ function qadamPath({ rootWorkspace, piece }: QadamPathParams): string {
     if (!isSinglePathSegment(piece.qadamVersion)) {
         throw new Error(`[qadamInstaller] Refusing qadam version ${JSON.stringify(piece.qadamVersion)} for ${piece.qadamName}: it is not a single path segment`)
     }
+    // A member is one path segment, at most 255 bytes on the filesystems a worker runs on. The
+    // npm name limit alone does not keep it inside that: a 211-character name at a 44-character
+    // snapshot version is 256 bytes. This is an unavailable pin, not a broken installer, so it is
+    // answered with the error provisioning already degrades on instead of a plain Error that
+    // would fail ON_DISABLE (#432, #879).
+    if (!qadamMemberSegmentFits(piece)) {
+        throw new PieceNotFoundError(piece.qadamName, piece.qadamVersion)
+    }
     const member = join(rootWorkspace, QADAMS_DIR, memberDirectoryName({ rootWorkspace, piece }))
     const membersRoot = path.resolve(rootWorkspace, QADAMS_DIR)
     if (!path.resolve(member).startsWith(`${membersRoot}${path.sep}`)) {
@@ -864,10 +873,10 @@ function memberDirectoryKey({ rootWorkspace, piece }: QadamPathParams): string {
     return JSON.stringify([rootWorkspace, piece.qadamName, piece.qadamVersion])
 }
 
-// The same two checks `qadamPath` throws on, for callers that would rather set such a qadam
-// aside than fail the batch it arrived in.
+// The same checks `qadamPath` throws on — name grammar, single-segment version, member segment
+// length — for callers that would rather set such a qadam aside than fail the batch it arrived in.
 function hasInstallableCoordinates(piece: QadamPackage): boolean {
-    return isInstallableName(piece.qadamName) && isSinglePathSegment(piece.qadamVersion)
+    return isInstallableName(piece.qadamName) && isSinglePathSegment(piece.qadamVersion) && qadamMemberSegmentFits(piece)
 }
 
 function isInstallableName(qadamName: string): boolean {

@@ -14,6 +14,19 @@ describe('AddQadamRequestBody qadamName', () => {
         expect(AddQadamRequestBody.safeParse(archiveBody({ qadamName })).success).toBe(true)
     })
 
+    // #879: npm's name limit is 214 characters. The worker treats a longer name as not found, so
+    // it must not be storable as a custom qadam in the first place.
+    it('accepts a name at npm\'s 214-character limit and rejects one past it', () => {
+        expect(AddQadamRequestBody.safeParse(registryBody({ qadamName: 'a'.repeat(214) })).success).toBe(true)
+        expect(AddQadamRequestBody.safeParse(archiveBody({ qadamName: 'a'.repeat(214) })).success).toBe(true)
+
+        for (const body of [registryBody({ qadamName: 'a'.repeat(215) }), archiveBody({ qadamName: 'a'.repeat(215) })]) {
+            const result = AddQadamRequestBody.safeParse(body)
+            expect(result.success).toBe(false)
+            expect(JSON.stringify(result.error?.issues)).toContain(formErrors.invalidQadamPackageName)
+        }
+    })
+
     it.each([
         [''],
         ['Upper'],

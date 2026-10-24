@@ -9,6 +9,7 @@ import {
     localeUtil,
     LoopExecutionMode,
     LoopOnItemsAction,
+    MAX_AGENT_TOOL_PINS,
     McpToolDefinition,
     parseTranslationToken,
     Permission,
@@ -79,7 +80,7 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                         log,
                     }),
                 ])
-                const allIssues = [...structural.issues, ...qadamVersionIssues, ...frameworkVersionIssues, ...validatePreReleaseBuilds({ trigger: flow.version.trigger }), ...callFlowIssues, ...concurrentLoopIssues, ...translationIssues]
+                const allIssues = [...structural.issues, ...qadamVersionIssues, ...frameworkVersionIssues, ...validatePreReleaseBuilds({ trigger: flow.version.trigger }), ...validateAgentToolCounts({ trigger: flow.version.trigger }), ...callFlowIssues, ...concurrentLoopIssues, ...translationIssues]
                 const result = { ...structural, issues: allIssues }
                 // A warning is reported in the output but never blocks `valid` or counts toward
                 // "invalid" in the summary — today that is exactly (and only) the translation
@@ -252,6 +253,27 @@ async function validatePinnedQadamVersions({ trigger, platformId, log }: {
         }]
     })
     return [...stepIssues, ...toolIssues]
+}
+
+// The per-agent-step cap the write path and the publish gate enforce (#879), reported here for a
+// flow saved before it existed. An over-cap step costs one registry resolution and one
+// provisioning RPC per tool, so it is a defect rather than a note: it blocks publishing until
+// tools are removed.
+function validateAgentToolCounts({ trigger }: { trigger: Step }): ValidationIssue[] {
+    return flowStructureUtil.getAllSteps(trigger).flatMap((step): ValidationIssue[] => {
+        if (step.type !== FlowActionType.PIECE) {
+            return []
+        }
+        const count = flowQadamUtil.countAgentToolPins({ input: step.settings.input })
+        if (count <= MAX_AGENT_TOOL_PINS) {
+            return []
+        }
+        return [{
+            category: 'agent_tool_limit',
+            stepName: step.name,
+            message: `${mcpUtils.wrapUntrustedValue(step.displayName)} has ${count} agent tools; the limit is ${MAX_AGENT_TOOL_PINS}. Remove tools until it is at or below the limit.`,
+        }]
+    })
 }
 
 // ADR-0004: a step pinned to a snapshot (`x.y.z-main.<n>`) runs a build from `main`, not a release.
@@ -478,15 +500,23 @@ async function loadPauseMarkers({ graph, platformId, log }: {
 }): Promise<Map<string, QadamMetadataModel | undefined>> {
     const steps = [...graph.values()].flatMap(node => node.qadamSteps)
     const pins = qadamPinUtil.collectDistinctPins({ steps })
-    const entries = await Promise.all(pins.map(async (pin): Promise<[string, QadamMetadataModel | undefined]> => {
-        const { name, version } = qadamPinUtil.splitPin({ pin })
-        const { data, error } = await tryCatch(() => qadamMetadataService(log).get({ name, version, platformId }))
-        if (!isNil(error)) {
-            log.warn({ err: error, pin }, 'ap_validate_flow: qadam metadata lookup failed while reading pause markers')
-        }
-        return [pin, data ?? undefined]
+    if (pins.length === 0) {
+        return new Map()
+    }
+    // One batched resolution, not one `get` per pin: the registry is filtered and indexed once
+    // (#879).
+    const { data, error } = await tryCatch(() => qadamMetadataService(log).getMany({
+        pins: pins.map((pin) => qadamPinUtil.splitPin({ pin })),
+        platformId,
     }))
-    return new Map(entries)
+    if (!isNil(error)) {
+        log.warn({ err: error, pinCount: pins.length }, 'ap_validate_flow: qadam metadata lookup failed while reading pause markers')
+        return new Map(pins.map((pin) => [pin, undefined]))
+    }
+    return new Map(pins.map((pin) => {
+        const lookup = data?.get(pin)
+        return [pin, lookup?.status === 'found' ? lookup.metadata : undefined]
+    }))
 }
 
 function findPausingStepIn({ node, markers }: { node: FlowNode, markers: PauseMarkers }): PausingStep | null {
@@ -969,10 +999,11 @@ const CONDITIONAL_PAUSE_EVALUATORS: Record<string, (step: QadamStep) => string |
     [`${ASSEMBLYAI_QADAM}:${ASSEMBLYAI_TRANSCRIBE_ACTION}`]: readTranscribePauseReason,
 }
 
-const CATEGORY_ORDER: ValidationIssue['category'][] = ['step_validity', 'qadam_version', 'pre_release_build', 'framework_version', 'template_reference', 'translation_key', 'translation_default_locale', 'translation_locale', 'empty_branch', 'subflow_payload', 'inline_pause', 'concurrent_pause']
+const CATEGORY_ORDER: ValidationIssue['category'][] = ['step_validity', 'qadam_version', 'agent_tool_limit', 'pre_release_build', 'framework_version', 'template_reference', 'translation_key', 'translation_default_locale', 'translation_locale', 'empty_branch', 'subflow_payload', 'inline_pause', 'concurrent_pause']
 const CATEGORY_LABELS: Record<ValidationIssue['category'], string> = {
     step_validity: 'Step Validity',
     qadam_version: 'Unavailable Qadam Versions',
+    agent_tool_limit: 'Agent Tool Limits',
     pre_release_build: 'Pre-Release Builds',
     framework_version: 'Unsupported Framework Versions',
     template_reference: 'Template References',
@@ -1069,7 +1100,7 @@ function formatIssueGroups(issues: ValidationIssue[]): string[] {
 }
 
 type ValidationIssue = {
-    category: 'step_validity' | 'qadam_version' | 'pre_release_build' | 'framework_version' | 'template_reference' | 'translation_key' | 'translation_locale' | 'translation_default_locale' | 'empty_branch' | 'subflow_payload' | 'inline_pause' | 'concurrent_pause'
+    category: 'step_validity' | 'qadam_version' | 'agent_tool_limit' | 'pre_release_build' | 'framework_version' | 'template_reference' | 'translation_key' | 'translation_locale' | 'translation_default_locale' | 'empty_branch' | 'subflow_payload' | 'inline_pause' | 'concurrent_pause'
     stepName: string
     message: string
     // Omitted (or 'error') blocks `structuredContent.valid` and counts toward "invalid" in the

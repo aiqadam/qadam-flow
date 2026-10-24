@@ -242,3 +242,94 @@ describe('qadamMetadataService.isPinAvailable() — the pin itself, never a stan
         expect(loadRegistry).not.toHaveBeenCalled()
     })
 })
+
+// #879: the two MCP tools resolve every distinct pin of a flow in one batch. The registry used to
+// be filtered per pin, which is what made a flow with thousands of agent-tool pins block the API.
+describe('qadamMetadataService.getMany() — one registry pass per batch (unit)', () => {
+    const pins = Array.from({ length: 25 }, (_, index) => ({
+        name: `@aiqadam/qadam-fixture-${index}`,
+        version: '1.0.0',
+    }))
+
+    beforeEach(() => {
+        vi.clearAllMocks()
+        loadRegistry.mockResolvedValue([])
+        loadBundledQadams.mockResolvedValue(pins.map((pin) => bundledQadam(pin)))
+    })
+
+    it('loads and filters the registry once, keyed by name, for many distinct pins', async () => {
+        const result = await qadamMetadataService(logger).getMany({ pins, platformId: undefined })
+
+        expect(loadRegistry).toHaveBeenCalledTimes(1)
+        expect(result.size).toBe(pins.length)
+        for (const pin of pins) {
+            expect(result.get(`${pin.name}@${pin.version}`)).toMatchObject({ status: 'found', metadata: expect.objectContaining({ version: '1.0.0' }) })
+        }
+    })
+
+    it('asks the registry once even when the same pin is repeated', async () => {
+        const result = await qadamMetadataService(logger).getMany({ pins: [pins[0], pins[0], pins[1]], platformId: undefined })
+
+        expect(loadRegistry).toHaveBeenCalledTimes(1)
+        expect(result.size).toBe(2)
+    })
+
+    it('maps a pin that resolves nowhere to missing', async () => {
+        const result = await qadamMetadataService(logger).getMany({
+            pins: [{ name: '@aiqadam/qadam-fixture-0', version: '1.0.0' }, { name: '@aiqadam/qadam-missing', version: '1.0.0' }],
+            platformId: undefined,
+        })
+
+        expect(result.get('@aiqadam/qadam-fixture-0@1.0.0')).toMatchObject({ status: 'found' })
+        expect(result.get('@aiqadam/qadam-missing@1.0.0')).toEqual({ status: 'missing' })
+    })
+
+    // The tri-state `resolvePins` contract: one pin's failed read must not turn every other pin
+    // "unknown", which would stop the heal migration rewriting a definite miss in the same flow.
+    it('keeps a failing pin to itself instead of failing the whole batch', async () => {
+        const result = await qadamMetadataService(logger).getMany({
+            pins: [
+                { name: '@aiqadam/qadam-fixture-0', version: '1.0.0' },
+                { name: '@aiqadam/qadam-fixture-1', version: 'not-a-version' },
+            ],
+            platformId: undefined,
+        })
+
+        expect(result.get('@aiqadam/qadam-fixture-0@1.0.0')).toMatchObject({ status: 'found' })
+        expect(result.get('@aiqadam/qadam-fixture-1@not-a-version')).toEqual({ status: 'error' })
+    })
+})
+
+// #879: `resolvePins` only needs "does it resolve", so it reads the registry, never one row per
+// pin. The tri-state answer stays per pin.
+describe('qadamMetadataService.resolveVersions() — registry only (unit)', () => {
+    const NAME = '@aiqadam/qadam-fixture'
+    const entry = { name: NAME, version: '1.0.0', qadamType: QadamType.OFFICIAL, platformId: undefined }
+
+    beforeEach(() => {
+        vi.clearAllMocks()
+        loadRegistry.mockResolvedValue([entry])
+        loadBundledQadams.mockResolvedValue([])
+    })
+
+    it('resolves every pin from one registry pass, without reading a row per pin', async () => {
+        const result = await qadamMetadataService(logger).resolveVersions({
+            pins: [{ name: NAME, version: '1.0.0' }, { name: NAME, version: '2.0.0' }, { name: NAME, version: '1.0.0' }],
+            platformId: undefined,
+        })
+
+        expect(loadRegistry).toHaveBeenCalledTimes(1)
+        expect(result.get(`${NAME}@1.0.0`)).toEqual({ status: 'resolved', version: '1.0.0' })
+        expect(result.get(`${NAME}@2.0.0`)).toEqual({ status: 'missing' })
+    })
+
+    it('keeps a failing pin to itself', async () => {
+        const result = await qadamMetadataService(logger).resolveVersions({
+            pins: [{ name: NAME, version: '1.0.0' }, { name: NAME, version: 'not-a-version' }],
+            platformId: undefined,
+        })
+
+        expect(result.get(`${NAME}@1.0.0`)).toEqual({ status: 'resolved', version: '1.0.0' })
+        expect(result.get(`${NAME}@not-a-version`)).toEqual({ status: 'error' })
+    })
+})

@@ -3,10 +3,11 @@ import type { FastifyBaseLogger } from 'fastify'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockGet = vi.fn()
+const mockResolveVersions = vi.fn()
 const mockRegistry = vi.fn()
 
 vi.mock('../../../../src/app/qadams/metadata/qadam-metadata-service', () => ({
-    qadamMetadataService: (): { get: typeof mockGet, registry: typeof mockRegistry } => ({ get: mockGet, registry: mockRegistry }),
+    qadamMetadataService: (): { get: typeof mockGet, resolveVersions: typeof mockResolveVersions, registry: typeof mockRegistry } => ({ get: mockGet, resolveVersions: mockResolveVersions, registry: mockRegistry }),
 }))
 
 import { MALFORMED_TOOL_PIN, qadamPinUtil } from '../../../../src/app/qadams/metadata/qadam-pin-util'
@@ -139,7 +140,7 @@ describe('qadamPinUtil.resolvePins — tri-state', () => {
     })
 
     it('reports true for a resolved pin', async () => {
-        mockGet.mockResolvedValue({ name: '@aiqadam/qadam-slack', version: '0.2.0' })
+        mockResolveVersions.mockResolvedValue(new Map([['@aiqadam/qadam-slack@0.2.0', { status: 'resolved', version: '0.2.0' }]]))
 
         const resolutions = await qadamPinUtil.resolvePins({ pins: ['@aiqadam/qadam-slack@0.2.0'], platformId: PLATFORM_ID, log })
 
@@ -147,7 +148,7 @@ describe('qadamPinUtil.resolvePins — tri-state', () => {
     })
 
     it('reports false for a definite miss', async () => {
-        mockGet.mockResolvedValue(undefined)
+        mockResolveVersions.mockResolvedValue(new Map([['@aiqadam/qadam-slack@0.0.1-gone', { status: 'missing' }]]))
 
         const resolutions = await qadamPinUtil.resolvePins({ pins: ['@aiqadam/qadam-slack@0.0.1-gone'], platformId: PLATFORM_ID, log })
 
@@ -158,12 +159,45 @@ describe('qadamPinUtil.resolvePins — tri-state', () => {
     // a caller that persists a rewrite on `false` (the heal migration) must not do so on a
     // transient failure. See `qadam-pin-util.ts` for why this cannot just collapse to `false`.
     it('reports undefined, not false, when the lookup throws', async () => {
-        mockGet.mockRejectedValue(new Error('ECONNRESET'))
+        mockResolveVersions.mockRejectedValue(new Error('ECONNRESET'))
 
         const resolutions = await qadamPinUtil.resolvePins({ pins: ['@aiqadam/qadam-slack@0.2.0'], platformId: PLATFORM_ID, log })
 
         expect(resolutions.get('@aiqadam/qadam-slack@0.2.0')).toBeUndefined()
         expect(resolutions.has('@aiqadam/qadam-slack@0.2.0')).toBe(true)
+    })
+
+    // One round trip for the whole batch, however many distinct pins: the registry is filtered and
+    // indexed once per flow, not once per pin (#879).
+    it('resolves every distinct pin with one batched call', async () => {
+        mockResolveVersions.mockResolvedValue(new Map([
+            ['@aiqadam/qadam-slack@0.2.0', { status: 'resolved', version: '0.2.0' }],
+            ['@acme/qadam-internal@1.0.0', { status: 'missing' }],
+        ]))
+
+        const resolutions = await qadamPinUtil.resolvePins({
+            pins: ['@aiqadam/qadam-slack@0.2.0', '@acme/qadam-internal@1.0.0', '@aiqadam/qadam-slack@0.2.0'],
+            platformId: PLATFORM_ID,
+            log,
+        })
+
+        expect(mockResolveVersions).toHaveBeenCalledTimes(1)
+        expect(mockResolveVersions).toHaveBeenCalledWith({
+            pins: [
+                { name: '@aiqadam/qadam-slack', version: '0.2.0' },
+                { name: '@acme/qadam-internal', version: '1.0.0' },
+            ],
+            platformId: PLATFORM_ID,
+        })
+        expect(resolutions.get('@aiqadam/qadam-slack@0.2.0')).toBe(true)
+        expect(resolutions.get('@acme/qadam-internal@1.0.0')).toBe(false)
+    })
+
+    it('does not call the resolver for a malformed version', async () => {
+        const resolutions = await qadamPinUtil.resolvePins({ pins: ['@acme/qadam-tool@latest'], platformId: PLATFORM_ID, log })
+
+        expect(mockResolveVersions).not.toHaveBeenCalled()
+        expect(resolutions.get('@acme/qadam-tool@latest')).toBe(false)
     })
 })
 
@@ -234,7 +268,7 @@ describe('qadamPinUtil — a malformed agent tool pin', () => {
     }
 
     it('does not collide with the valid pin it reads like, so validate cannot call it resolvable', async () => {
-        mockGet.mockResolvedValue({ name: '@scope/foo', version: '1.0.0' })
+        mockResolveVersions.mockResolvedValue(new Map([['@scope/foo@1.0.0', { status: 'resolved', version: '1.0.0' }]]))
         const valid = tool({ qadamName: '@scope/foo', qadamVersion: '1.0.0' })
         const lookalike = tool({ qadamName: '', qadamVersion: 'scope/foo@1.0.0' })
 
@@ -244,7 +278,8 @@ describe('qadamPinUtil — a malformed agent tool pin', () => {
         expect(pins).toHaveLength(2)
         expect(resolutions.get(qadamPinUtil.pinOfTool({ tool: valid }))).toBe(true)
         expect(resolutions.get(qadamPinUtil.pinOfTool({ tool: lookalike }))).toBe(false)
-        expect(mockGet).toHaveBeenCalledTimes(1)
+        expect(mockResolveVersions).toHaveBeenCalledTimes(1)
+        expect(mockResolveVersions).toHaveBeenCalledWith({ pins: [{ name: '@scope/foo', version: '1.0.0' }], platformId: PLATFORM_ID })
     })
 
     it.each([

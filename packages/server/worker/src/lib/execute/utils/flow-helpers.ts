@@ -1,5 +1,5 @@
 import { agentToolPins, NPM_PACKAGE_NAME_MAX_LENGTH } from '@aiqadam/server-utils'
-import { FlowActionType, flowStructureUtil, FlowTriggerType, FlowVersion, NPM_PACKAGE_NAME_REGEX, QadamPackage, qadamVersionParser, tryCatch, WorkerToApiContract } from '@aiqadam/shared'
+import { FlowActionType, flowQadamUtil, flowStructureUtil, FlowTriggerType, FlowVersion, isNil, MAX_AGENT_TOOL_PINS, NPM_PACKAGE_NAME_REGEX, QadamPackage, qadamVersionParser, tryCatch, WorkerToApiContract } from '@aiqadam/shared'
 import { Logger } from 'pino'
 import { CodeArtifact } from '../../cache/code/code-builder'
 import { provisioner } from '../../cache/provisioner'
@@ -21,6 +21,12 @@ export async function provisionFlowPieces(params: {
         await provisioner(log, apiClient).provision({ pieces, codeSteps })
     })
     if (error) {
+        // Over the cap is a flow-level refusal, not a pin the filesystem cannot hold: it fails
+        // closed rather than provisioning a prefix and letting the engine load the rest (#879).
+        if (error instanceof TooManyAgentToolPinsError) {
+            log.error({ error: String(error), flowId, projectId, stepName: error.stepName }, 'A flow step has more agent tools than the limit; skipping provisioning')
+            return { provisioned: false, unavailableQadam: `more than ${MAX_AGENT_TOOL_PINS} agent tools`, usedBy: `the step ${error.stepName}` }
+        }
         if (!(error instanceof PieceNotFoundError)) {
             throw error
         }
@@ -45,6 +51,13 @@ export async function provisionFlowPieces(params: {
 
 export async function extractQadamPackages({ flowVersion, platformId, log, apiClient }: ExtractQadamPackagesParams): Promise<QadamPackage[]> {
     const steps = flowStructureUtil.getAllSteps(flowVersion.trigger)
+    // A flow saved before the cap, or imported, can carry more tools than the write path allows.
+    // Provisioning a prefix would let the engine load the rest outside the API's platform-scoped
+    // pin check, so refuse the flow instead (#879).
+    const overCapStep = steps.find((step) => step.type === FlowActionType.PIECE && flowQadamUtil.countAgentToolPins({ input: step.settings.input }) > MAX_AGENT_TOOL_PINS)
+    if (!isNil(overCapStep)) {
+        throw new TooManyAgentToolPinsError({ stepName: overCapStep.name })
+    }
     const stepPins = steps
         .filter((step) => step.type === FlowActionType.PIECE || step.type === FlowTriggerType.PIECE)
         .map((step): QadamPin => ({ qadamName: step.settings.qadamName, qadamVersion: step.settings.qadamVersion, usedBy: `the step ${step.name}` }))
@@ -57,8 +70,10 @@ export async function extractQadamPackages({ flowVersion, platformId, log, apiCl
             usedBy: `an agent tool of step ${step.name}`,
         })))
 
-    return Promise.all(
-        uniquePins({ pins: [...stepPins, ...toolPins] }).map(async (pin) => {
+    return mapWithConcurrency({
+        items: uniquePins({ pins: [...stepPins, ...toolPins] }),
+        limit: MAX_CONCURRENT_PIN_LOOKUPS,
+        fn: async (pin) => {
             const { data, error } = await tryCatch(() => qadamCache(log, apiClient).getPiece({
                 qadamName: pin.qadamName,
                 qadamVersion: pin.qadamVersion,
@@ -71,8 +86,18 @@ export async function extractQadamPackages({ flowVersion, platformId, log, apiCl
                 throw error
             }
             return data
-        }),
-    )
+        },
+    })
+}
+
+export class TooManyAgentToolPinsError extends Error {
+    public readonly stepName: string
+
+    constructor({ stepName }: { stepName: string }) {
+        super(`Step ${stepName} has more than ${MAX_AGENT_TOOL_PINS} agent tools`)
+        this.name = 'TooManyAgentToolPinsError'
+        this.stepName = stepName
+    }
 }
 
 export function extractCodeArtifacts(flowVersion: FlowVersion): CodeArtifact[] {
@@ -98,6 +123,37 @@ function uniquePins({ pins }: { pins: QadamPin[] }): QadamPin[] {
     // 'scope/foo@1.0.0' would read as the valid pin @scope/foo@1.0.0 and hide behind it.
     const byKey = new Map(pins.map((pin) => [JSON.stringify([pin.qadamName, pin.qadamVersion]), pin]))
     return [...byKey.values()]
+}
+
+// Each pinned qadam is one `getQadam` RPC, and the API resolves every one of them; a flow with
+// many tool pins used to send them all at once (#879). The bound is small on purpose: it is the
+// API's event loop the fan-out competes for.
+const MAX_CONCURRENT_PIN_LOOKUPS = 8
+
+async function mapWithConcurrency<T, R>({ items, limit, fn }: {
+    items: T[]
+    limit: number
+    fn: (item: T) => Promise<R>
+}): Promise<R[]> {
+    const results = new Array<R>(items.length)
+    let nextIndex = 0
+    // The first failure is the provisioning result; there is nothing left worth fetching, so the
+    // other workers stop pulling instead of hitting the API for the rest of the flow (#879).
+    let stopped = false
+    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+        while (!stopped && nextIndex < items.length) {
+            const index = nextIndex++
+            try {
+                results[index] = await fn(items[index])
+            }
+            catch (error) {
+                stopped = true
+                throw error
+            }
+        }
+    })
+    await Promise.all(workers)
+    return results
 }
 
 type QadamPin = {

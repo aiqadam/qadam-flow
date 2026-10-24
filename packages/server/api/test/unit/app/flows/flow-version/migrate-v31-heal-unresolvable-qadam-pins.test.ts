@@ -7,7 +7,21 @@ const mockGetOneById = vi.fn()
 const mockGetPlatformId = vi.fn()
 
 vi.mock('../../../../../src/app/qadams/metadata/qadam-metadata-service', () => ({
-    qadamMetadataService: (): { get: typeof mockGet, registry: typeof mockRegistry } => ({ get: mockGet, registry: mockRegistry }),
+    qadamMetadataService: (): { get: typeof mockGet, getMany: (params: { pins: { name: string, version: string }[] }) => Promise<Map<string, unknown>>, resolveVersions: (params: { pins: { name: string, version: string }[] }) => Promise<Map<string, unknown>>, registry: typeof mockRegistry } => ({
+        get: mockGet,
+        // Pin resolution is batched; delegate to this test's own `get` answer per pin.
+        getMany: async ({ pins }: { pins: { name: string, version: string }[] }) =>
+            new Map(await Promise.all(pins.map(async (pin) => {
+                const metadata = await mockGet(pin)
+                return [`${pin.name}@${pin.version}`, metadata ? { status: 'found', metadata } : { status: 'missing' }] as const
+            }))),
+        resolveVersions: async ({ pins }: { pins: { name: string, version: string }[] }) =>
+            new Map(await Promise.all(pins.map(async (pin) => {
+                const metadata = await mockGet(pin)
+                return [`${pin.name}@${pin.version}`, metadata ? { status: 'resolved', version: metadata.version } : { status: 'missing' }] as const
+            }))),
+        registry: mockRegistry,
+    }),
 }))
 
 vi.mock('../../../../../src/app/flows/flow/flow.service', () => ({
