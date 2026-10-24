@@ -1,10 +1,12 @@
-import { FlowActionType, FlowTriggerType, McpServerType, ProjectScopedMcpServer } from '@aiqadam/shared'
+import { FlowActionType, FlowTriggerType, MAX_AGENT_TOOL_PINS, McpServerType, ProjectScopedMcpServer } from '@aiqadam/shared'
 import type { FastifyBaseLogger } from 'fastify'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockGetOnePopulated = vi.fn()
 const mockGetPlatformId = vi.fn()
 const mockGet = vi.fn()
+const mockGetMany = vi.fn()
+const mockResolveVersions = vi.fn()
 
 vi.mock('../../../../src/app/flows/flow/flow.service', () => ({
     flowService: vi.fn(() => ({
@@ -21,8 +23,23 @@ vi.mock('../../../../src/app/project/project-service', () => ({
 vi.mock('../../../../src/app/qadams/metadata/qadam-metadata-service', () => ({
     qadamMetadataService: vi.fn(() => ({
         get: mockGet,
+        getMany: mockGetMany,
+        resolveVersions: mockResolveVersions,
     })),
 }))
+
+// Pin resolution goes through `getMany`; delegate it to each test's own `get` answer so the
+// existing per-pin expectations keep deciding the result.
+mockGetMany.mockImplementation(async ({ pins }: { pins: { name: string, version: string }[] }) =>
+    new Map(await Promise.all(pins.map(async (pin) => {
+        const metadata = await mockGet({ name: pin.name, version: pin.version })
+        return [`${pin.name}@${pin.version}`, metadata ? { status: 'found', metadata } : { status: 'missing' }] as const
+    }))))
+mockResolveVersions.mockImplementation(async ({ pins }: { pins: { name: string, version: string }[] }) =>
+    new Map(await Promise.all(pins.map(async (pin) => {
+        const metadata = await mockGet({ name: pin.name, version: pin.version })
+        return [`${pin.name}@${pin.version}`, metadata ? { status: 'resolved', version: metadata.version } : { status: 'missing' }] as const
+    }))))
 
 import { apValidateFlowTool } from '../../../../src/app/mcp/tools/ap-validate-flow'
 import { MALFORMED_TOOL_PIN } from '../../../../src/app/qadams/metadata/qadam-pin-util'
@@ -185,6 +202,23 @@ describe('ap_validate_flow — agent tool pins (#779)', () => {
         mockGetOnePopulated.mockResolvedValue(flowWithAgentTool({ qadamVersion: '0.3.1' }))
 
         expect(await validate()).not.toContain('Unavailable Qadam Versions')
+    })
+
+    // #879: the write path refuses a new over-cap step; an older flow is reported here.
+    it('reports an agent step that pins more tools than the limit', async () => {
+        const flow = flowWithAgentTool({ qadamVersion: '0.3.1' })
+        const version = flow.version as { trigger: { nextAction: { settings: { input: { agentTools: unknown[] } } } } }
+        version.trigger.nextAction.settings.input.agentTools = Array.from({ length: MAX_AGENT_TOOL_PINS + 1 }, (_, index) => ({
+            type: 'PIECE',
+            toolName: `tool-${index}`,
+            qadamMetadata: { qadamName: `@aiqadam/qadam-test-tool-${index}`, qadamVersion: '0.3.1', actionName: 'go' },
+        }))
+        mockGetOnePopulated.mockResolvedValue(flow)
+
+        const text = await validate()
+
+        expect(text).toContain('Agent Tool Limits')
+        expect(text).toContain(`the limit is ${MAX_AGENT_TOOL_PINS}`)
     })
 
     it('reports each of two different malformed tools by name, in its own words and without their text', async () => {

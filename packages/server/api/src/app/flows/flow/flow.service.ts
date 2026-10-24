@@ -20,6 +20,7 @@ import {
     FlowVersionId,
     FlowVersionState,
     isNil,
+    MAX_AGENT_TOOL_PINS,
     Metadata,
     PlatformId,
     PopulatedFlow,
@@ -799,6 +800,12 @@ const lockFlowVersionIfNotLocked = async ({
 // the single choke point both callers pass through — so the gate is universal (#436).
 const assertFlowVersionPublishable = ({ flowVersion }: AssertFlowVersionPublishableParams): void => {
     const invalidSteps = flowStructureUtil.getAllSteps(flowVersion.trigger).filter((step) => {
+        // The agent-tool cap is recomputed here, not trusted from `step.valid`: an IMPORT_FLOW or
+        // duplicate keeps the imported `valid: true`, and `skip` exempts a step from the validity
+        // gate while the worker still provisions its tools (#879). Neither may publish over-cap.
+        if (step.type === FlowActionType.PIECE && flowQadamUtil.countAgentToolPins({ input: step.settings.input }) > MAX_AGENT_TOOL_PINS) {
+            return true
+        }
         if ('skip' in step && step.skip === true) {
             return false
         }

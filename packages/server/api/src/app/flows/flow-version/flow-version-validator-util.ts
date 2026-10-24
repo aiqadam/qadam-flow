@@ -14,6 +14,7 @@ import {
     FlowVersion,
     isNil,
     LoopOnItemsActionSettings,
+    MAX_AGENT_TOOL_PINS,
     PlatformId,
     QadamActionSettings,
     QadamTriggerSettings,
@@ -301,7 +302,13 @@ function validateProps(
     const declaredInput = Object.fromEntries(schemaKeys.map(key => [key, input[key]]))
     const undeclaredKeys = Object.keys(input).filter(key => !schemaKeys.includes(key))
     return {
-        valid: propsSchema.safeParse(declaredInput).success,
+        // `countAgentToolPins` inspects `input.agentTools` on any PIECE step, declared or not: an
+        // undeclared key is preserved below, and the worker reads it anyway, so gating on the
+        // declaration would leave a way around the cap. It counts entries, because a repeated
+        // entry is still walked at run time. This is a step-invalidity, not a write refusal: the
+        // input is still stored, and the publish gate refuses the invalid step (#879).
+        valid: flowQadamUtil.countAgentToolPins({ input }) <= MAX_AGENT_TOOL_PINS
+            && propsSchema.safeParse(declaredInput).success,
         cleanInput: {
             ...declaredInput,
             ...Object.fromEntries(undeclaredKeys.map(key => [key, input[key]])),
@@ -309,7 +316,6 @@ function validateProps(
         undeclaredKeys,
     }
 }
-
 
 type PrepareRequestParams = {
     platformId?: PlatformId

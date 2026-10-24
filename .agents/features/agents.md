@@ -41,7 +41,13 @@ Agents is a flow step type (backed by `@aiqadam/qadam-agent`) that executes an L
 
 ## Agent Step Configuration (stored in flow version)
 The agent step is a `PIECE` action on `@aiqadam/qadam-agent`. Its `settings.input` contains:
-- `agentTools` — `AgentTool[]`
+- `agentTools` — `AgentTool[]`, allowed at most `MAX_AGENT_TOOL_PINS` (100) entries per step. Each
+  entry is walked by the engine and costs a pin lookup on the API/worker, so the flow write stores
+  an over-cap step but marks it invalid (`flow-version-validator-util.ts`), the publish gate
+  recomputes the cap so `skip` and imported steps cannot slip past it, and `ap_validate_flow`
+  reports it under "Agent Tool Limits". The worker refuses to provision such a step, and
+  `agentToolPins.fromInput` reads at most the same 100 entries so an MCP report cannot fan out
+  (#879).
 - `structuredOutput` — `AgentOutputField[]`
 - `prompt` — string (may include `{{variables}}`)
 - `maxSteps` — number

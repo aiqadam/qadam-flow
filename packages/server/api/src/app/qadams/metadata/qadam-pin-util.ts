@@ -122,20 +122,36 @@ export const qadamPinUtil = {
         platformId: string | undefined
         log: FastifyBaseLogger
     }): Promise<Map<string, boolean | undefined>> {
-        return new Map(await Promise.all(pins.map(async (pin): Promise<[string, boolean | undefined]> => {
+        // An agent tool's version is not validated when it is stored, so it can be no version at
+        // all ('latest'): a definite miss, not a failed lookup, and not something to ask the
+        // resolver (it throws on it).
+        const malformed = new Map<string, false>()
+        const requests = pins.flatMap((pin): { pin: string, request: { name: string, version: string } }[] => {
             const { name, version } = qadamPinUtil.splitPin({ pin })
-            // An agent tool's version is not validated when it is stored, so it can be no version at
-            // all ('latest'): a definite miss, not a failed lookup, and not something to ask the
-            // resolver (it throws on it).
             if (qadamVersionParser.parsePin({ pin: version }) === null) {
-                return [pin, false]
+                malformed.set(pin, false)
+                return []
             }
-            const { data: resolvedVersion, error } = await tryCatch(() => qadamPinUtil.resolvePinVersion({ name, version, platformId, log }))
-            if (!isNil(error)) {
-                return [pin, undefined]
-            }
-            return [pin, !isNil(resolvedVersion)]
-        })))
+            return [{ pin, request: { name, version } }]
+        })
+        if (requests.length === 0) {
+            return new Map(pins.map((pin) => [pin, malformed.get(pin)]))
+        }
+        // One call for the whole batch: the registry is filtered and indexed once, not once per
+        // distinct pin, and no row is read per pin (#879).
+        const uniqueRequests = [...new Map(requests.map(({ request }) => [`${request.name}@${request.version}`, request])).values()]
+        const { data: resolved, error } = await tryCatch(() => qadamMetadataService(log).resolveVersions({ pins: uniqueRequests, platformId }))
+        const resolutions = new Map<string, boolean | undefined>()
+        for (const { pin, request } of requests) {
+            const lookup = isNil(error) ? resolved?.get(`${request.name}@${request.version}`) : undefined
+            // `error` (the whole registry could not be read) and a per-pin `error` lookup are both
+            // "unknown", never "definitely dead" — the heal migration persists on `false` only.
+            resolutions.set(pin, lookup?.status === 'resolved' ? true : lookup?.status === 'missing' ? false : undefined)
+        }
+        for (const [pin, resolvable] of malformed) {
+            resolutions.set(pin, resolvable)
+        }
+        return new Map(pins.map((pin) => [pin, resolutions.get(pin)]))
     },
 
     // Heal path only: given a qadam name whose pinned version no longer resolves, find a version

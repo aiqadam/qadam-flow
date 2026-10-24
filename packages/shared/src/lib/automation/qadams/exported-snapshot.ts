@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { BoundedArray, STEP_NAME_REGEX } from '../../core/common'
 import { formErrors } from '../../form-errors'
-import { VersionType } from './dto/qadam-requests'
+import { NPM_PACKAGE_NAME_MAX_LENGTH, VersionType } from './dto/qadam-requests'
 import { QADAM_VERSION_MAX_LENGTH, qadamVersionParser } from './qadam-version'
 
 // ADR-0004 "Export and import": the two optional fields an export adds to a flow in a template.
@@ -10,10 +10,9 @@ import { QADAM_VERSION_MAX_LENGTH, qadamVersionParser } from './qadam-version'
 export const EXPORTED_UNRESOLVED_MAX_STEPS = 10_000
 export const EMBEDDED_SNAPSHOT_METADATA_MAX_ENTRIES = 32
 export const EMBEDDED_SNAPSHOT_METADATA_MAX_BYTES = 1024 * 1024
-const QADAM_NAME_MAX_LENGTH = 214
 const STEP_NAME_MAX_LENGTH = 256
 // `name@version`.
-const SNAPSHOT_KEY_MAX_LENGTH = QADAM_NAME_MAX_LENGTH + 1 + QADAM_VERSION_MAX_LENGTH
+const SNAPSHOT_KEY_MAX_LENGTH = NPM_PACKAGE_NAME_MAX_LENGTH + 1 + QADAM_VERSION_MAX_LENGTH
 
 export const embeddedSnapshotMetadataUtil = {
     key: ({ name, version }: { name: string, version: string }): string => `${name}@${version}`,
@@ -38,7 +37,7 @@ export type ExportedUnresolvedReason = z.infer<typeof ExportedUnresolvedReason>
 // `pin` is what the source flow had; for an agent tool `qadamName` is the tool's, not the step's.
 export const ExportedUnresolvedStep = z.object({
     stepName: z.string().max(STEP_NAME_MAX_LENGTH).regex(STEP_NAME_REGEX),
-    qadamName: z.string().max(QADAM_NAME_MAX_LENGTH),
+    qadamName: z.string().max(NPM_PACKAGE_NAME_MAX_LENGTH),
     pin: VersionType,
     reason: ExportedUnresolvedReason.optional(),
 })
@@ -53,7 +52,7 @@ const PropsOwner = z.looseObject({
 })
 
 export const EmbeddedSnapshotMetadata = z.looseObject({
-    name: z.string().max(QADAM_NAME_MAX_LENGTH),
+    name: z.string().max(NPM_PACKAGE_NAME_MAX_LENGTH),
     version: z.string().refine((version) => qadamVersionParser.isSnapshot({ version }), formErrors.snapshotMetadataInvalid),
     actions: z.record(z.string(), PropsOwner),
     triggers: z.record(z.string(), PropsOwner),

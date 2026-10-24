@@ -23,7 +23,13 @@ const PlatformReleaseType = z.string().regex(new RegExp(QADAM_VERSION_PATTERN))
 // worker's filter-path check does not accept it, so such a name could never install.
 export const NPM_PACKAGE_NAME_REGEX = /^(?:@[a-z0-9-][a-z0-9-._]*\/)?[a-z0-9-][a-z0-9-._]*$/
 
-export const QadamPackageName = z.string().regex(NPM_PACKAGE_NAME_REGEX, formErrors.invalidQadamPackageName)
+// npm's own limit on a package name. The grammar above has no length bound, so every schema that
+// accepts a name and every path or message built from one checks this as well (#879).
+export const NPM_PACKAGE_NAME_MAX_LENGTH = 214
+
+export const QadamPackageName = z.string()
+    .max(NPM_PACKAGE_NAME_MAX_LENGTH, formErrors.invalidQadamPackageName)
+    .regex(NPM_PACKAGE_NAME_REGEX, formErrors.invalidQadamPackageName)
 
 export enum SuggestionType {
     ACTION = 'ACTION',

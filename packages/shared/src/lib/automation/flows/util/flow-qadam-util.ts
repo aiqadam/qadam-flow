@@ -30,6 +30,14 @@ export const flowQadamUtil = {
             .filter((step) => step.type === FlowActionType.PIECE || step.type === FlowTriggerType.PIECE)
             .map((step) => step.settings.qadamName)
     },
+    // How many entries an agent step's `agentTools` holds. Entries, not distinct pins: a repeated
+    // entry is still a tool the engine and the worker walk at run time, and counting distinct pins
+    // would let an imported array of duplicates through (#879). The write path, the publish gate
+    // and `ap_validate_flow` all count it the same way.
+    countAgentToolPins({ input }: { input: Record<string, unknown> | undefined }): number {
+        const tools = input?.[AgentQadamProps.AGENT_TOOLS]
+        return Array.isArray(tools) ? tools.length : 0
+    },
 }
 
 function markKey({ stepName, qadamName }: { stepName: string, qadamName: string }): string {

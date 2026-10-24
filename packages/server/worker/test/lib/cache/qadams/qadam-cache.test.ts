@@ -67,24 +67,45 @@ describe('qadamCache.getPiece', () => {
         expect(await readdir(cacheRoot)).toEqual([])
     })
 
-    // The cache folder is one path segment named `<name>-<version>-<platform>`, so a name inside npm's
-    // 214 characters with a long exact version is still past the filesystem's 255 bytes: the read
-    // rethrew ENAMETOOLONG as a plain Error (#779). Such a pin is not cached; it asks the API.
     const SNAPSHOT_44 = '999999999.999999999.999999999-main.999999999'
     const PLATFORM_21 = 'p'.repeat(21)
 
+    // The installer's member is `qadams/<name>@<version>`: past 255 bytes the installer refused
+    // it with a plain Error that provisioning rethrew, failing ON_DISABLE (#432, #879). Such a pin
+    // is answered as unavailable before the API is asked. A 200-character name at the same
+    // version is 245 bytes and still fits, as it did before.
     it.each([
-        ['a 214-character name with a 44-character snapshot version', 'a'.repeat(214), SNAPSHOT_44, false],
-        ['a 200-character name with a 44-character snapshot version', 'a'.repeat(200), SNAPSHOT_44, false],
-        ['a 214-character name with a short snapshot version', 'a'.repeat(214), '1.0.0-main.999999999', false],
-        ['a long scoped name whose scope folder already exists', `@aiqadam/${'a'.repeat(200)}`, SNAPSHOT_44, true],
-    ])('resolves %s through the API without a cache folder or ENAMETOOLONG', async (_label, qadamName, qadamVersion, scopeFolderExists) => {
-        if (scopeFolderExists) {
-            await mkdir(join(cacheRoot, '@aiqadam'))
-        }
+        ['a 214-character name with a 44-character snapshot version', 'a'.repeat(214), SNAPSHOT_44],
+    ])('answers %s as not found without asking the API', async (_label, qadamName, qadamVersion) => {
+        const { apiClient, methods } = fakeApiClient()
+
+        await expect(qadamCache(log, apiClient).getPiece({ qadamName, qadamVersion, platformId: PLATFORM_21 }))
+            .rejects.toBeInstanceOf(PieceNotFoundError)
+
+        expect(methods).toEqual([])
+        expect(await readdir(cacheRoot)).toEqual([])
+    })
+
+    it.each([
+        ['a 200-character name with a 44-character snapshot version', 'a'.repeat(200), SNAPSHOT_44],
+        ['a long scoped name with a 44-character snapshot version', `@aiqadam/${'a'.repeat(200)}`, SNAPSHOT_44],
+    ])('resolves %s through the API, its member segments fitting', async (_label, qadamName, qadamVersion) => {
         const { apiClient, methods } = fakeApiClient()
 
         const piece = await qadamCache(log, apiClient).getPiece({ qadamName, qadamVersion, platformId: PLATFORM_21 })
+
+        expect(piece).toMatchObject({ packageType: PackageType.REGISTRY })
+        expect(methods).toEqual(['getQadam'])
+    })
+
+    // The cache folder is one path segment named `<name>-<version>-<platform>`, so a name inside npm's
+    // 214 characters with a long exact version is still past the filesystem's 255 bytes: the read
+    // rethrew ENAMETOOLONG as a plain Error (#779). Such a pin is not cached; it asks the API. Its
+    // alias does fit, so this is the cache-key guard, not the installer one.
+    it('resolves a name whose cache key is too long through the API without writing a long folder', async () => {
+        const { apiClient, methods } = fakeApiClient()
+
+        const piece = await qadamCache(log, apiClient).getPiece({ qadamName: 'a'.repeat(214), qadamVersion: '1.0.0-main.999999999', platformId: PLATFORM_21 })
 
         expect(piece).toMatchObject({ packageType: PackageType.REGISTRY })
         expect(methods).toEqual(['getQadam'])

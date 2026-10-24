@@ -281,7 +281,15 @@ qadam, Store Entry): say "qadam version store".
   the same `qadamCache.getPiece` check as steps (a version that is no pin is `PieceNotFoundError`,
   carrying `usedBy` for the error text), and `needsInstalling` never installs a snapshot
   from a registry. The API resolves an exact pin by equality, and gives a snapshot pin no bundled
-  stand-in (`findExactVersion`).
+  stand-in (`findExactVersion`). A flow's pins are resolved in one registry pass
+  (`qadamMetadataService.resolveVersions`, registry-only): the registry is loaded and filtered once
+  per flow and indexed by name, instead of once per pin. The pause-marker path uses `getMany`,
+  which adds the metadata read per pin (#879). The worker's lookups are bounded to 8 in flight
+  (`MAX_CONCURRENT_PIN_LOOKUPS` in `flow-helpers.ts`). A pin whose install folder
+  `qadams/<name>@<version>` is past the filesystem's 255-byte path segment (the 214-character npm name limit
+  does not count a long snapshot version) is answered as unavailable
+  (`PieceNotFoundError`) rather than reaching the installer, so `ON_DISABLE` still succeeds; the
+  installer and the warmup apply the same predicate (#879).
   **Platform-provided libraries** (`qadam-platform-modules.ts`): before the first stored version
   loads, the engine registers a `module.registerHooks` resolve hook for modules under the store's
   `qadams/` (both namespaces). Builtins are Node's. A `PLATFORM_PROVIDED_PACKAGES` specifier (or a

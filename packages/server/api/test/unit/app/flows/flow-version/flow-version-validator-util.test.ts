@@ -3,6 +3,7 @@ import {
     FlowActionType,
     FlowOperationRequest,
     FlowOperationType,
+    MAX_AGENT_TOOL_PINS,
 } from '@aiqadam/shared'
 import type { FastifyBaseLogger } from 'fastify'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -176,5 +177,55 @@ describe('flowVersionValidationUtil.prepareRequest', () => {
         const { valid } = await prepare(callFlowInput({ executionMode: '{{ step_1[\'output\'].mode }}' }))
 
         expect(valid).toBe(true)
+    })
+})
+
+// #879: every distinct agent-tool pin costs a registry resolution on the API and a provisioning
+// RPC on the worker, so one agent step may not hold an unbounded `agentTools` array.
+describe('flowVersionValidationUtil — the agent-tool pin cap', () => {
+    const AGENT_PROPS = {
+        agentTools: {
+            type: PropertyType.ARRAY,
+            required: false,
+            displayName: 'Agent Tools',
+            properties: {},
+        },
+    } as unknown as QadamPropertyMap
+
+    function tool(index: number): Record<string, unknown> {
+        return {
+            type: 'PIECE',
+            toolName: `tool-${index}`,
+            qadamMetadata: { qadamName: `@acme/qadam-tool-${index}`, qadamVersion: '1.0.0', actionName: 'run' },
+        }
+    }
+
+    it('accepts exactly the limit', async () => {
+        const { valid } = await prepare({ agentTools: Array.from({ length: MAX_AGENT_TOOL_PINS }, (_, index) => tool(index)) }, AGENT_PROPS)
+
+        expect(valid).toBe(true)
+    })
+
+    it('marks the step invalid above the limit, without dropping the tools', async () => {
+        const { valid, input } = await prepare({ agentTools: Array.from({ length: MAX_AGENT_TOOL_PINS + 1 }, (_, index) => tool(index)) }, AGENT_PROPS)
+
+        expect(valid).toBe(false)
+        expect(input.agentTools).toHaveLength(MAX_AGENT_TOOL_PINS + 1)
+    })
+
+    // `validateProps` preserves undeclared keys, and the worker reads `input.agentTools` on any
+    // PIECE step, so gating the cap on the declaration would be a way around it (#879).
+    it('applies the cap to an undeclared agentTools key too', async () => {
+        const { valid } = await prepare({ agentTools: Array.from({ length: MAX_AGENT_TOOL_PINS + 1 }, (_, index) => tool(index)) }, CALL_FLOW_PROPS)
+
+        expect(valid).toBe(false)
+    })
+
+    // Entries, not distinct pins: a repeated entry is still walked by the engine and the worker,
+    // so an array of duplicates must not slip past the cap (#879).
+    it('bounds the array itself, so repeated entries do not slip past the cap', async () => {
+        const { valid } = await prepare({ agentTools: Array.from({ length: MAX_AGENT_TOOL_PINS + 1 }, () => tool(0)) }, AGENT_PROPS)
+
+        expect(valid).toBe(false)
     })
 })
