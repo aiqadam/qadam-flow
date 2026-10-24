@@ -31,10 +31,15 @@ import {
     QadamFlowError,
     splitCloudflareGatewayModelId,
     spreadIfDefined,
+    tryCatch,
 } from '@aiqadam/shared'
 import { createOpenRouter } from '@openrouter/ai-sdk-provider'
-import { LanguageModel, SystemModelMessage } from 'ai'
+import { DownloadError, Experimental_DownloadFunction as DownloadFunction, LanguageModel, SystemModelMessage } from 'ai'
 import { safeHttp } from './safe-http'
+
+// Caps only a chat turn's own URL downloads, not any other `safeHttp` caller — far under the SDK's
+// own 2 GiB default, generous for the files a chat attachment or tool result would plausibly carry.
+const MAX_DOWNLOADED_ASSET_BYTES = 25 * 1024 * 1024
 
 // Every provider gets `fetch: safeHttp.fetch`, not just CUSTOM. CUSTOM is the obvious SSRF case —
 // its `baseUrl` is admin config — but AZURE (`resourceName`) and CLOUDFLARE_GATEWAY
@@ -127,6 +132,42 @@ function createChatModel({ provider, auth, config, modelId }: {
             throw new Error(`Unsupported chat provider: ${exhaustiveCheck}`)
         }
     }
+}
+
+// Without this, `streamText` downloads any `file`-part URL it is handed with the AI SDK's own
+// `fetchUntrustedUrl`, never `safeHttp` — a second SSRF implementation `.agents/rules/safe-http.md`
+// forbids, and one that ignores `AP_SSRF_ALLOW_LIST` and the egress-proxy handling in
+// `safe-http-proxy.ts` (#942). `ChatMessageFile.data` is now restricted to base64 so a user
+// attachment can no longer carry a URL, but `downloadAssets` (`ai/dist/index.js`) walks every
+// `file` part in the prompt, tool results included — so this stays the one place in the chat agent
+// a URL could still reach a fetch, and it goes through the filtered client like everywhere else.
+async function downloadAssetSafely({ url, abortSignal }: { url: URL, abortSignal?: AbortSignal }): Promise<{ data: Uint8Array, mediaType: string | undefined }> {
+    const { data: response, error } = await tryCatch(() => safeHttp.axios.get<ArrayBuffer>(url.toString(), {
+        responseType: 'arraybuffer',
+        maxContentLength: MAX_DOWNLOADED_ASSET_BYTES,
+        maxBodyLength: MAX_DOWNLOADED_ASSET_BYTES,
+        signal: abortSignal,
+    }))
+    if (error) {
+        throw new DownloadError({ url: url.toString(), cause: error })
+    }
+    const contentType = response.headers['content-type']
+    return {
+        data: new Uint8Array(response.data),
+        mediaType: typeof contentType === 'string' ? contentType : undefined,
+    }
+}
+
+// Mirrors the SDK's own default (`createDefaultDownloadFunction`): skip a URL the model declares
+// support for, download everything else — the only change is which client does the fetching.
+// `DownloadFunction` itself carries no `abortSignal` — the SDK closes over it when it builds its
+// own default, so a caller supplying `experimental_download` has to do the same to let a cancelled
+// run (`chatAgentService`'s `abortController`) cancel an in-flight download too.
+function createSafeDownloadFunction(abortSignal?: AbortSignal): DownloadFunction {
+    return (requestedDownloads) => Promise.all(requestedDownloads.map(({ url, isUrlSupportedByModel }) =>
+        isUrlSupportedByModel
+            ? Promise.resolve(null)
+            : downloadAssetSafely({ url, abortSignal })))
 }
 
 // `AI_REQUEST_NOT_SUPPORTED` for the same reason `chatModel.resolve` uses it for a missing
@@ -370,6 +411,7 @@ function buildStepParts({ content }: {
 
 export const chatAiUtils = {
     createChatModel,
+    createSafeDownloadFunction,
     buildProviderOptions,
     buildSystemPromptWithCaching,
     buildStepParts,

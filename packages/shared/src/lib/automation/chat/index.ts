@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { BaseModelSchema, isObject, Nullable } from '../../core/common'
+import { BaseModelSchema, isBase64, isObject, Nullable } from '../../core/common'
 import { formErrors } from '../../form-errors'
 import { DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS } from '../../management/ai-providers'
 
@@ -29,7 +29,17 @@ const ChatMessageFile = z.object({
         { message: formErrors.invalidFileName },
     ),
     mimeType: z.enum(CHAT_ALLOWED_MIME_TYPES),
-    data: z.string().max(MAX_FILE_BASE64_CHARS),
+    // Restricted to bare base64 (no `data:` prefix, via `isBase64`'s default `allowMime: false`) so
+    // neither an `http(s)://` URL nor a `data:` URI can pass: both contain a `:`, which base64 never
+    // does. `streamText` hands a string `data` to the AI SDK's own `convertUrlStringToFilePartData`,
+    // which tries it as a URL before falling back to inline data — a URL there makes the API server
+    // fetch it with the SDK's own downloader, bypassing `safeHttp` / `AP_SSRF_ALLOW_LIST` entirely
+    // (#942). The legitimate client never sends one: it reads the file with
+    // `FileReader.readAsDataURL` and posts only the payload after the comma.
+    data: z.string().max(MAX_FILE_BASE64_CHARS).refine(
+        (v) => isBase64(v),
+        { message: formErrors.invalidFileData },
+    ),
 })
 
 export enum PersistedChatPartType {
