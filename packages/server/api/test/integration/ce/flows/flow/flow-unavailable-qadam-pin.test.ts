@@ -208,6 +208,33 @@ describe('publishing a flow with a qadam pin that is not available (#808)', () =
     })
 })
 
+describe('editing and republishing an already-published flow whose pin is unavailable (#782)', () => {
+    it('keeps the step publishable after an unrelated edit, rather than IMPORT_FLOW invalidating the stranded pin', async () => {
+        const ctx = await createTestContext(app)
+        // `^0.0.1` resolves only `>=0.0.1 <0.0.2` (zero-major semver), so `qadamMetadataService.get`
+        // cannot resolve it from any build this environment happens to have on disk — the throw this
+        // test depends on must not be conditional on which qadams `test-ce`'s build step bundles.
+        const UNRESOLVABLE_PIN = '0.0.1'
+        seams.imageBuild.mockResolvedValue({ build: { version: '0.2.0', load: { loaded: true } }, metadata: { image: true } })
+        const { flow } = await seedFlow({ ctx, state: FlowVersionState.LOCKED, status: FlowStatus.DISABLED, pin: UNRESOLVABLE_PIN })
+
+        // Any edit of a published flow re-imports the locked version first
+        // (`createNewDraftIfVersionIsPublished`), which runs the stale trigger through IMPORT_FLOW's
+        // pin normalisation/validity recompute (#782) before applying the requested edit.
+        const edit = await ctx.post(`/v1/flows/${flow.id}`, { type: FlowOperationType.CHANGE_NAME, request: { displayName: 'Renamed' } })
+        expect(edit.statusCode).toBe(StatusCodes.OK)
+
+        const draft = await db.findOneByOrFail<FlowVersion>('flow_version', { flowId: flow.id, state: FlowVersionState.DRAFT })
+        expect(draft.valid).toBe(true)
+        expect(pinOf({ flowVersion: draft })).toBe(UNRESOLVABLE_PIN)
+
+        const publish = await ctx.post(`/v1/flows/${flow.id}`, { type: FlowOperationType.LOCK_AND_PUBLISH, request: { status: FlowStatus.DISABLED } })
+
+        expect(publish.statusCode).toBe(StatusCodes.OK)
+        expect(pinOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: draft.id }) })).toBe(UNRESOLVABLE_PIN)
+    })
+})
+
 async function seedFlow({ ctx, state, status, pin = STALE_PIN }: { ctx: TestContext, state: FlowVersionState, status: FlowStatus, pin?: string }): Promise<{ flow: Flow, flowVersion: FlowVersion }> {
     const flow = createMockFlow({ projectId: ctx.project.id, status })
     await db.save('flow', flow)

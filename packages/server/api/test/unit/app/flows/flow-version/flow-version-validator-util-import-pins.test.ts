@@ -1,16 +1,13 @@
 import { PropertyType, QadamMetadataModel } from '@aiqadam/qadams-framework'
 import {
-    ErrorCode,
     FlowActionType,
     FlowOperationRequest,
     FlowOperationType,
     FlowTriggerType,
     PackageType,
-    QadamFlowError,
     QadamType,
     TriggerStrategy,
     TriggerTestStrategy,
-    tryCatch,
 } from '@aiqadam/shared'
 import pino from 'pino'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -136,17 +133,12 @@ async function prepare(request: FlowOperationRequest): Promise<FlowOperationRequ
     })
 }
 
-async function captureError(fn: () => Promise<unknown>): Promise<QadamFlowError | undefined> {
-    const { error } = await tryCatch(fn)
-    return error instanceof QadamFlowError ? error : undefined
-}
-
-function readImportedTrigger(prepared: FlowOperationRequest): { valid: boolean, qadamVersion: string } {
+function readImportedTrigger(prepared: FlowOperationRequest): { valid: boolean, qadamVersion: string, input: Record<string, unknown> } {
     if (prepared.type !== FlowOperationType.IMPORT_FLOW || prepared.request.trigger.type !== FlowTriggerType.PIECE) {
         throw new Error('expected a PIECE trigger on an IMPORT_FLOW request')
     }
     const { valid, settings } = prepared.request.trigger
-    return { valid, qadamVersion: settings.qadamVersion }
+    return { valid, qadamVersion: settings.qadamVersion, input: settings.input }
 }
 
 function readImportedAction(prepared: FlowOperationRequest): { valid: boolean, qadamVersion: string } {
@@ -190,16 +182,25 @@ describe('flowVersionValidationUtil.prepareRequest — IMPORT_FLOW pin normalisa
         expect(readImportedAction(prepared).valid).toBe(false)
     })
 
-    it('refuses an import whose pin this instance cannot resolve, the same way ADD_ACTION refuses a new unresolvable pin — even though the import payload says valid: true', async () => {
-        const error = await captureError(() => prepare(importFlowRequest({
+    it('keeps the caller\'s reported validity, rather than throwing or forcing invalid, when this instance cannot resolve the pin', async () => {
+        // Unlike ADD_ACTION/UPDATE_TRIGGER, IMPORT_FLOW must neither throw on an unresolvable pin
+        // nor force the step invalid. It is also how a published flow's own stored version is
+        // re-imported on every edit (`createNewDraftIfVersionIsPublished`), and ADR-0003 is explicit
+        // that an unavailable version is advisory ("marked 'update this step'... the flow is never
+        // disabled") — forcing `valid: false` here would route that same case through the unrelated
+        // `!step.valid` publish gate and block it anyway, just by a different door
+        // (`flow-unavailable-qadam-pin.test.ts`, #808).
+        const prepared = await prepare(importFlowRequest({
             triggerVersion: '9.9.9',
             actionVersion: INSTALLED_VERSION,
+            triggerInput: { subject: 'untouched' },
             triggerValid: true,
             actionValid: true,
-        })))
+        }))
 
-        expect(error?.error.code).toBe(ErrorCode.ENTITY_NOT_FOUND)
-        expect(JSON.stringify(error?.error.params)).toContain('qadam_metadata_not_found')
+        expect(readImportedTrigger(prepared).valid).toBe(true)
+        expect(readImportedTrigger(prepared).input).toEqual({ subject: 'untouched' })
+        expect(readImportedAction(prepared).valid).toBe(true)
     })
 
     it('does not mark a well-formed, resolvable step valid just because the caller said so — it is independently true', async () => {
