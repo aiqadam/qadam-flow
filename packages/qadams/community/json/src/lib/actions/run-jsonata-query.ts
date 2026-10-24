@@ -5,13 +5,17 @@ import jsonata from 'jsonata';
 // a runaway expression (e.g. a self-recursive lambda, or a query that grows an unbounded sequence)
 // is only stopped by the worker sandbox's 600s kill timer. These bound a single evaluation well
 // below that, regardless of who wrote the expression (flow author, or trigger data an outside
-// sender controls).
+// sender controls). `stack` counts jsonata's own per-AST-node evaluation depth, not user recursion
+// levels directly — an ordinary (non-tail) recursive call costs several of those per level, so 500
+// is roughly 150-200 levels of recursion, not 500.
 const MAX_TIMEOUT_SECONDS = 10;
 const MAX_STACK_DEPTH = 500;
 const MAX_SEQUENCE_LENGTH = 1_000_000;
 
-// jsonata error codes raised by the guardrails above (D1011 stack depth, D1012 timeout, D2014/D2015
-// sequence length) rather than by a malformed expression.
+// D1011 (stack) and D1012 (timeout) come only from the guardrails above. D2014/D2015 (sequence
+// length) can also come from jsonata's own built-in 1e7 range-operator cap, which applies
+// regardless of what we pass — grouped here anyway because all four mean "hit a safety limit", not
+// "malformed expression", for the purpose of the error message below.
 const GUARDRAIL_ERROR_CODES = new Set(['D1011', 'D1012', 'D2014', 'D2015']);
 
 export const runJsonataQuery = createAction({

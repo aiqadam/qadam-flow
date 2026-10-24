@@ -125,6 +125,22 @@ describe('run_jsonata_query guardrails against a runaway expression', () => {
     }
   });
 
+  it('falls back to the default timeout instead of disabling the guardrail when set to 0', async () => {
+    let calls = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => {
+      calls += 1;
+      return calls === 1 ? 0 : Number.MAX_SAFE_INTEGER;
+    });
+    try {
+      const { error } = await tryCatch(() =>
+        runJsonataQuery.run(contextWith({ json: {}, query: '$sum([1,2,3])', timeoutInSeconds: 0 }))
+      );
+      expect(error?.message).toMatch(/Evaluation timeout after 10000 milliseconds/);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it('rejects a sequence that would grow past the conservative maximum instead of allocating it', async () => {
     const start = Date.now();
     const { error } = await tryCatch(() =>
