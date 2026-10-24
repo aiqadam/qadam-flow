@@ -1,8 +1,9 @@
 import { FilesService } from '@aiqadam/qadams-framework'
 import { apId, FileSizeError, FileType } from '@aiqadam/shared'
 import { engineFileApi } from '../engine-file-api'
+import { RetryPolicy } from '../retrying-fetch'
 
-export function createFileUploader({ engineToken, apiUrl }: CreateFileUploaderParams): FilesService {
+export function createFileUploader({ engineToken, apiUrl, retryPolicy }: CreateFileUploaderParams): FilesService {
     const maxFileSizeMb = Number(process.env.AP_MAX_FILE_SIZE_MB)
     return {
         write: async ({ fileName, data }: { fileName: string, data: Buffer }): Promise<string> => {
@@ -19,6 +20,7 @@ export function createFileUploader({ engineToken, apiUrl }: CreateFileUploaderPa
                 type: FileType.FLOW_STEP_FILE,
                 fileName,
                 data,
+                retryPolicy,
             })
             return readUrl
         },
@@ -35,4 +37,5 @@ function validateFileSize(data: Buffer, maxFileSizeMb: number): void {
 type CreateFileUploaderParams = {
     apiUrl: string
     engineToken: string
+    retryPolicy?: RetryPolicy
 }

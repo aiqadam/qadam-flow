@@ -29,7 +29,7 @@ export const testExecutionContext = {
         engineConstants,
     }: TestExecutionParams): Promise<FlowExecutorContext> {
         let flowExecutionContext = FlowExecutorContext.empty({
-            engineApi: { engineToken, internalApiUrl: apiUrl },
+            engineApi: { engineToken, internalApiUrl: apiUrl, retryPolicy: engineConstants.retryPolicy() },
             slicingEnabled: false,
             stepLogPolicy: engineConstants.stepLogPolicy,
         })

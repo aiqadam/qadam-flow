@@ -35,12 +35,13 @@ import { flowRunProgressReporter } from '../../src/lib/helper/flow-run-progress-
 import { retryingFetch, RetryPolicy } from '../../src/lib/retrying-fetch'
 import { generateMockEngineConstants } from '../handler/test-helper'
 
-const buildUpdateParams = ({ status }: { status: FlowRunStatus }) => {
+const buildUpdateParams = ({ status, timeoutInSeconds }: { status: FlowRunStatus, timeoutInSeconds?: number }) => {
     const engineConstants = generateMockEngineConstants({
         streamStepProgress: StreamStepProgress.NONE,
         engineToken: 'mock-engine-token',
         internalApiUrl: 'http://127.0.0.1:65535/',
         logsFileId: 'logs-1',
+        timeoutInSeconds,
     })
     const flowExecutorContext = new FlowExecutorContext()
     flowExecutorContext.verdict = status === FlowRunStatus.RUNNING
@@ -221,23 +222,35 @@ describe('flow-run-progress-reporter upload retry budget', () => {
 
     const lastUploadPolicy = (): RetryPolicy | undefined => retryingFetchMock.mock.calls.at(-1)?.[0].policy
 
+    // A long `timeoutInSeconds` keeps the #604 deadline cap a no-op here, so these pin the
+    // *selected* policy (final vs. periodic/best-effort) on its own — the cap itself is covered
+    // below and in engine-constants.test.ts.
     it('gives the final backup the full budget', async () => {
-        await flowRunProgressReporter.sendUpdate(buildUpdateParams({ status: FlowRunStatus.SUCCEEDED }))
+        await flowRunProgressReporter.sendUpdate(buildUpdateParams({ status: FlowRunStatus.SUCCEEDED, timeoutInSeconds: 3600 }))
         await flowRunProgressReporter.backup()
 
         expect(retryingFetchMock).toHaveBeenCalledTimes(1)
-        expect(lastUploadPolicy()).toBe(retryingFetch.defaultPolicy)
+        expect(lastUploadPolicy()?.budgetMs).toBe(retryingFetch.defaultPolicy.budgetMs)
         expect(retryingFetch.defaultPolicy.budgetMs).toBe(60_000)
     })
 
     it('gives a periodic flush and a best-effort backup the short budget', async () => {
-        await flowRunProgressReporter.sendUpdate(buildUpdateParams({ status: FlowRunStatus.RUNNING }))
+        await flowRunProgressReporter.sendUpdate(buildUpdateParams({ status: FlowRunStatus.RUNNING, timeoutInSeconds: 3600 }))
         await flowRunProgressReporter.flushIfDirty()
-        expect(lastUploadPolicy()).toBe(retryingFetch.bestEffortPolicy)
+        expect(lastUploadPolicy()?.budgetMs).toBe(retryingFetch.bestEffortPolicy.budgetMs)
 
         await flowRunProgressReporter.backup({ bestEffort: true })
-        expect(lastUploadPolicy()).toBe(retryingFetch.bestEffortPolicy)
+        expect(lastUploadPolicy()?.budgetMs).toBe(retryingFetch.bestEffortPolicy.budgetMs)
         expect(retryingFetch.bestEffortPolicy.budgetMs).toBeLessThan(retryingFetch.defaultPolicy.budgetMs)
+    })
+
+    // #604: a flow whose own FLOW_TIMEOUT_SECONDS is shorter than the final backup's 60 s budget
+    // must still give up before the worker's killProcess fires, not retry past it.
+    it('caps the final backup to a short-deadline flow\'s own remaining time', async () => {
+        await flowRunProgressReporter.sendUpdate(buildUpdateParams({ status: FlowRunStatus.SUCCEEDED, timeoutInSeconds: 10 }))
+        await flowRunProgressReporter.backup()
+
+        expect(lastUploadPolicy()?.budgetMs).toBeLessThan(retryingFetch.defaultPolicy.budgetMs)
     })
 })
 

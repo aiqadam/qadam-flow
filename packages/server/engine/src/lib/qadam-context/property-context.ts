@@ -19,7 +19,7 @@ export const createPropertyContext = ({ constants, stepName, contextVersion, sea
         id: constants.projectId,
         externalId: constants.externalProjectId,
     },
-    flows: createFlowsContext(constants),
+    flows: createFlowsContext({ engineToken: constants.engineToken, internalApiUrl: constants.internalApiUrl, flowId: constants.flowId, flowVersionId: constants.flowVersionId, retryPolicy: constants.retryPolicy() }),
     step: {
         name: stepName,
     },
@@ -29,6 +29,7 @@ export const createPropertyContext = ({ constants, stepName, contextVersion, sea
         apiUrl: constants.internalApiUrl,
         target: 'properties',
         contextVersion,
+        retryPolicy: constants.retryPolicy(),
     }),
 })
 

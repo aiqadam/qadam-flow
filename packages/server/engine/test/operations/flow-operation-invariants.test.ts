@@ -568,11 +568,11 @@ describe('flow operation invariants', () => {
                 // downstream may fail; we only assert RPC call shape
             }
 
-            expect(mockDownload).toHaveBeenCalledWith({
+            expect(mockDownload).toHaveBeenCalledWith(expect.objectContaining({
                 apiUrl: 'http://localhost:3000/',
                 engineToken: 'test-token',
                 fileId: 'payload-file-1',
-            })
+            }))
         })
     })
 
@@ -693,11 +693,11 @@ describe('flow operation invariants', () => {
                 // downstream execution may fail; we only assert the resume payload was resolved
             }
 
-            expect(mockDownload).toHaveBeenCalledWith({
+            expect(mockDownload).toHaveBeenCalledWith(expect.objectContaining({
                 apiUrl: 'http://localhost:3000/',
                 engineToken: 'test-token',
                 fileId: 'resume-file-1',
-            })
+            }))
         })
     })
 

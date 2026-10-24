@@ -86,11 +86,11 @@ describe('triggerHookOperation payload resolution', () => {
 
         await triggerHookOperation.execute(makeOperation({ type: 'ref', fileId: 'payload-file-1' }))
 
-        expect(mockDownload).toHaveBeenCalledWith({
+        expect(mockDownload).toHaveBeenCalledWith(expect.objectContaining({
             apiUrl: 'http://localhost:3000/',
             engineToken: 'test-token',
             fileId: 'payload-file-1',
-        })
+        }))
         expect(mockExecuteTrigger.mock.calls[0][0].params.triggerPayload).toEqual({ hello: 'ref' })
     })
 

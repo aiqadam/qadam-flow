@@ -5,13 +5,17 @@ import { FlowExecutorContext } from '../../src/lib/handler/context/flow-executio
 import { StepExecutionPath } from '../../src/lib/handler/context/step-execution-path'
 import { propsProcessor } from '../../src/lib/variables/props-processor'
 import { createPropsResolver } from '../../src/lib/variables/props-resolver'
+import { generateMockEngineConstants } from '../handler/test-helper'
+
+const STEP_NAMES = ['trigger', 'step_1', 'step_2', 'step_3', 'step_4', 'step_5', 'step_6', 'step_7', 'step_8']
 
 const propsResolverService = createPropsResolver({
     projectId: 'PROJECT_ID',
     engineToken: 'WORKER_TOKEN',
     apiUrl: 'http://127.0.0.1:3000',
     contextVersion: LATEST_CONTEXT_VERSION,
-    stepNames: ['trigger', 'step_1', 'step_2', 'step_3', 'step_4', 'step_5', 'step_6', 'step_7', 'step_8'],
+    stepNames: STEP_NAMES,
+    constants: generateMockEngineConstants({ projectId: 'PROJECT_ID', engineToken: 'WORKER_TOKEN', internalApiUrl: 'http://127.0.0.1:3000/', stepNames: STEP_NAMES }),
 })
 
 const buildExecutionState = async (): Promise<FlowExecutorContext> => {
@@ -346,6 +350,7 @@ describe('Props resolver', () => {
                 apiUrl: `http://127.0.0.1:${address.port}/`,
                 contextVersion: LATEST_CONTEXT_VERSION,
                 stepNames: ['trigger', 'step_1', 'step_2'],
+                constants: generateMockEngineConstants({ projectId: 'PROJECT_ID', engineToken: 'WORKER_TOKEN', internalApiUrl: `http://127.0.0.1:${address.port}/`, stepNames: ['trigger', 'step_1', 'step_2'] }),
             })
         })
         afterAll(async () => {

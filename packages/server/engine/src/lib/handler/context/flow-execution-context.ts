@@ -22,6 +22,7 @@ import { engineFileApi } from '../../engine-file-api'
 import { logRedaction, StepLogPolicy } from '../../helper/log-redaction'
 import { loggingUtils } from '../../helper/logging-utils'
 import { StepErrorView, stepErrorView } from '../../helper/step-error-view'
+import { RetryPolicy } from '../../retrying-fetch'
 import { utils } from '../../utils'
 import { StepExecutionPath } from './step-execution-path'
 
@@ -332,6 +333,7 @@ async function maybeSliceOutput(value: unknown, engineApi?: EngineApiConfig): Pr
         type: FileType.FLOW_RUN_LOG_SLICE,
         fileName: 'output.json',
         data,
+        retryPolicy: engineApi.retryPolicy,
     })
     return { ref: { fileId, size, url: readUrl } }
 }
@@ -348,7 +350,7 @@ async function resolveStepOutput(step: StepOutput, engineApi: EngineApiConfig | 
     if (!isNil(existing)) {
         return existing
     }
-    const promise = engineFileApi.download({ apiUrl: engineApi.internalApiUrl, engineToken: engineApi.engineToken, fileId: ref.fileId })
+    const promise = engineFileApi.download({ apiUrl: engineApi.internalApiUrl, engineToken: engineApi.engineToken, fileId: ref.fileId, retryPolicy: engineApi.retryPolicy })
         .then((bytes) => JSON.parse(new TextDecoder('utf-8').decode(bytes)))
     cache.set(ref.fileId, promise)
     return promise
@@ -383,6 +385,7 @@ export type FlowVerdict = {
 export type EngineApiConfig = {
     engineToken: string
     internalApiUrl: string
+    retryPolicy?: RetryPolicy
 }
 
 type WithIterationItemParams = {

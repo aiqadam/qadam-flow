@@ -1,19 +1,19 @@
 import { FlowsContext, ListFlowsContextParams } from '@aiqadam/qadams-framework'
 import { FetchError, isNil, PopulatedFlow, SeekPage } from '@aiqadam/shared'
-import { retryingFetch } from '../retrying-fetch'
+import { retryingFetch, RetryPolicy } from '../retrying-fetch'
 
 // One page stays bounded by the server's MAX_PAGE_SIZE: list() walks the cursor
 // instead of asking for every flow at once, so bounding
 // GET /v1/engine/populated-flows cannot silently cut a large project off (#577).
 const FLOWS_PAGE_SIZE = 1000
 
-export const createFlowsContext = ({ engineToken, internalApiUrl, flowId, flowVersionId }: CreateFlowsServiceParams): FlowsContext => {
+export const createFlowsContext = ({ engineToken, internalApiUrl, flowId, flowVersionId, retryPolicy }: CreateFlowsServiceParams): FlowsContext => {
     return {
         async list(params: ListFlowsContextParams): Promise<SeekPage<PopulatedFlow>> {
             const data: PopulatedFlow[] = []
             let cursor: string | undefined = undefined
             do {
-                const page = await fetchFlowsPage({ engineToken, internalApiUrl, params, cursor })
+                const page = await fetchFlowsPage({ engineToken, internalApiUrl, params, cursor, retryPolicy })
                 data.push(...page.data)
                 cursor = isNil(page.next) ? undefined : page.next
             } while (!isNil(cursor))
@@ -28,7 +28,7 @@ export const createFlowsContext = ({ engineToken, internalApiUrl, flowId, flowVe
     }
 }
 
-async function fetchFlowsPage({ engineToken, internalApiUrl, params, cursor }: FetchFlowsPageParams): Promise<SeekPage<PopulatedFlow>> {
+async function fetchFlowsPage({ engineToken, internalApiUrl, params, cursor, retryPolicy }: FetchFlowsPageParams): Promise<SeekPage<PopulatedFlow>> {
     const queryParams = new URLSearchParams()
     queryParams.set('limit', String(FLOWS_PAGE_SIZE))
     if (!isNil(cursor)) {
@@ -54,6 +54,7 @@ async function fetchFlowsPage({ engineToken, internalApiUrl, params, cursor }: F
             },
         },
         idempotent: true,
+        policy: retryPolicy,
     })
     if (!response.ok) {
         throw new FetchError(url, `status=${response.status}`)
@@ -66,6 +67,7 @@ type CreateFlowsServiceParams = {
     internalApiUrl: string
     flowId: string
     flowVersionId: string
+    retryPolicy?: RetryPolicy
 }
 
 type FetchFlowsPageParams = {
@@ -73,4 +75,5 @@ type FetchFlowsPageParams = {
     internalApiUrl: string
     params: ListFlowsContextParams | undefined
     cursor: string | undefined
+    retryPolicy?: RetryPolicy
 }

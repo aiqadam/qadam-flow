@@ -101,7 +101,7 @@ export async function callFlowInline(params: { constants: EngineConstants, execu
     })
 
     const withTriggerStep = await FlowExecutorContext.empty({
-        engineApi: { engineToken: childConstants.engineToken, internalApiUrl: childConstants.internalApiUrl },
+        engineApi: { engineToken: childConstants.engineToken, internalApiUrl: childConstants.internalApiUrl, retryPolicy: childConstants.retryPolicy() },
         stepLogPolicy: childConstants.stepLogPolicy,
     }).upsertStep(flowVersion.trigger.name, GenericStepOutput.create({
         type: flowVersion.trigger.type,
@@ -199,6 +199,7 @@ async function finalizeInlineChildRun(params: { constants: EngineConstants, fina
         type: FileType.FLOW_RUN_LOG,
         compression: FileCompression.ZSTD,
         data: compressed,
+        retryPolicy: constants.retryPolicy(),
     })
 
     const request: UploadRunLogsRequest = {

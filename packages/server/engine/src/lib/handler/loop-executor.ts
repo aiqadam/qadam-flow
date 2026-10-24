@@ -297,7 +297,7 @@ function checkpointNeeded({ constants, limiter, finishedThisExecution, dispatche
 }
 
 function remainingBudgetMs(constants: EngineConstants): number {
-    return constants.timeoutInSeconds * 1000 - (Date.now() - constants.executionStartedAt)
+    return constants.remainingTimeoutMs()
 }
 
 // A loop that cannot checkpoint would sleep in its slot until the run times out; failing now says why.
@@ -329,6 +329,7 @@ async function takeCheckpoint({ action, constants, stepOutput, reason, items, li
         resumeDateTime,
         workerHandlerId: constants.workerHandlerId ?? undefined,
         httpRequestId: constants.httpRequestId ?? undefined,
+        retryPolicy: constants.retryPolicy(),
     })
     const checkpoint: LoopCheckpoint = {
         count: (stepOutput.output?.checkpoint?.count ?? 0) + 1,
