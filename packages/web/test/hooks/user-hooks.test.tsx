@@ -132,7 +132,9 @@ describe('userHooks.useCurrentUser', () => {
   // Logging out clears the token and then navigates away. A refetch invalidated a moment
   // before that runs against a stale render snapshot; without the token guard it requests
   // /users/me with no bearer token, the 401 rejection pops the error dialog, and the user
-  // sees it on the way out. This is the #897 defect, reproduced at the hook level.
+  // sees it on the way out. This reproduces the hypothesised #897 mechanism at the hook
+  // level; the issue's server-side evidence is not conclusive enough to call it the only
+  // one.
   it('does not call the API or open the error dialog when the token was cleared before an invalidated refetch', async () => {
     const user = { id: 'user-1', email: 'a@b.com' } as UserWithBadges;
     harness.state.getCurrentUser = () => Promise.resolve(user);
