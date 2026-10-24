@@ -1,5 +1,4 @@
 import { isNil } from '@aiqadam/shared';
-import { useQueryClient } from '@tanstack/react-query';
 import { t } from 'i18next';
 import { ChevronsUpDown, LogOut, UserCogIcon } from 'lucide-react';
 import { useState } from 'react';
@@ -33,7 +32,6 @@ export function SidebarUser() {
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
   const { embedState } = useEmbedding();
   const { data: user } = userHooks.useCurrentUser();
-  const queryClient = useQueryClient();
   const { reset } = useTelemetry();
   const { state } = useSidebar();
   const isCollapsed = state === 'collapsed';
@@ -42,7 +40,10 @@ export function SidebarUser() {
   }
 
   const handleLogout = () => {
-    userHooks.invalidateCurrentUser(queryClient);
+    // Invalidate nothing here: a logout ends in a full navigation to /sign-in, so a
+    // refetch of the current user would only race that navigation — firing with the
+    // token already cleared, which surfaced a "couldn't load your profile" dialog on
+    // the way out.
     authenticationSession.logOut();
     reset();
   };

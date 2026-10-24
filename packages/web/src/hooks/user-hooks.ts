@@ -33,10 +33,23 @@ export const userHooks = {
         if (!userId || expired || onboarding) {
           return null;
         }
+        // `userId` and `expired` are a render-time snapshot. Logging out clears the token and
+        // navigates away, but a refetch scheduled just before can still run against the stale
+        // snapshot — it would then 401 and open the "couldn't load your profile" dialog on the
+        // way out. Without a token there is no profile to load.
+        if (isNil(authenticationSession.getToken())) {
+          return null;
+        }
         try {
           const result = await userApi.getCurrentUser();
           return result;
         } catch (error) {
+          // A request that outlived the session it was issued for (logout cleared the token
+          // while it was in flight) is an expected part of signing out, not a profile-loading
+          // failure worth a dialog.
+          if (isNil(authenticationSession.getToken())) {
+            return null;
+          }
           console.error(error);
           // Unlike the expired-JWT case above, this is a real failure (network, 5xx, an
           // unexpectedly invalid session) and must not disappear into the console — the

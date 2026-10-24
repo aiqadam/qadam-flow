@@ -14,10 +14,12 @@ const harness = vi.hoisted(() => {
     getCurrentUser: () => Promise<UserWithBadges>;
     isJwtExpired: boolean;
     isOnboarding: boolean;
+    token: string | null;
   } = {
     getCurrentUser: () => Promise.reject(new Error('not configured')),
     isJwtExpired: false,
     isOnboarding: false,
+    token: 'token',
   };
   return { state };
 });
@@ -25,7 +27,7 @@ const harness = vi.hoisted(() => {
 vi.mock('@/lib/authentication-session', () => ({
   authenticationSession: {
     getCurrentUserId: () => 'user-1',
-    getToken: () => 'token',
+    getToken: () => harness.state.token,
     isJwtExpired: () => harness.state.isJwtExpired,
     isOnboarding: () => harness.state.isOnboarding,
   },
@@ -46,7 +48,7 @@ const Harness = () => {
   return null;
 };
 
-const mount = async (): Promise<void> => {
+const mount = async (): Promise<QueryClient> => {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -65,6 +67,7 @@ const mount = async (): Promise<void> => {
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));
   });
+  return queryClient;
 };
 
 beforeAll(() => {
@@ -81,6 +84,7 @@ afterEach(async () => {
   result = undefined;
   harness.state.isJwtExpired = false;
   harness.state.isOnboarding = false;
+  harness.state.token = 'token';
   useApErrorDialogStore.setState({ params: null });
 });
 
@@ -121,6 +125,58 @@ describe('userHooks.useCurrentUser', () => {
     await mount();
 
     expect(getCurrentUser).not.toHaveBeenCalled();
+    expect(result?.data).toBeNull();
+    expect(useApErrorDialogStore.getState().params).toBeNull();
+  });
+
+  // Logging out clears the token and then navigates away. A refetch invalidated a moment
+  // before that runs against a stale render snapshot; without the token guard it requests
+  // /users/me with no bearer token, the 401 rejection pops the error dialog, and the user
+  // sees it on the way out. This reproduces the hypothesised #897 mechanism at the hook
+  // level; the issue's server-side evidence is not conclusive enough to call it the only
+  // one.
+  it('does not call the API or open the error dialog when the token was cleared before an invalidated refetch', async () => {
+    const user = { id: 'user-1', email: 'a@b.com' } as UserWithBadges;
+    harness.state.getCurrentUser = () => Promise.resolve(user);
+    const queryClient = await mount();
+    expect(result?.data).toEqual(user);
+
+    const getCurrentUser = vi.fn(() =>
+      Promise.reject(new Error('401 unauthorized')),
+    );
+    harness.state.getCurrentUser = getCurrentUser;
+    harness.state.token = null;
+
+    await act(async () => {
+      await queryClient.invalidateQueries({
+        queryKey: ['currentUser', 'user-1'],
+      });
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(getCurrentUser).not.toHaveBeenCalled();
+    expect(result?.data).toBeNull();
+    expect(useApErrorDialogStore.getState().params).toBeNull();
+  });
+
+  // The other half of the logout race: the request was already in flight with a valid
+  // token when the user clicked Log out, then failed after the token was cleared. It must
+  // not surface as a profile-loading failure either.
+  it('does not open the error dialog when the token is cleared while the request is in flight', async () => {
+    let rejectRequest: (error: Error) => void = () => {};
+    harness.state.getCurrentUser = () =>
+      new Promise<UserWithBadges>((_, reject) => {
+        rejectRequest = reject;
+      });
+
+    await mount();
+    harness.state.token = null;
+
+    await act(async () => {
+      rejectRequest(new Error('401 unauthorized'));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
     expect(result?.data).toBeNull();
     expect(useApErrorDialogStore.getState().params).toBeNull();
   });
