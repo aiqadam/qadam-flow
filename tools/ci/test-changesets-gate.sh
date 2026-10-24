@@ -17,7 +17,7 @@ export GIT_AUTHOR_NAME='Fixture Author'
 export GIT_AUTHOR_EMAIL='fixture@example.invalid'
 export GIT_COMMITTER_NAME='Fixture Author'
 export GIT_COMMITTER_EMAIL='fixture@example.invalid'
-unset GITHUB_HEAD_REF GITHUB_BASE_REF PR_BASE_SHA PR_HEAD_SHA
+unset GITHUB_HEAD_REF GITHUB_BASE_REF PR_BASE_SHA PR_HEAD_SHA PR_NUMBER
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 gate="${here}/check-changesets.mjs"
@@ -450,6 +450,144 @@ if [ -z "$(ls "$d/.changeset" | grep -v -e config.json -e README.md)" ]; then
 else
   fail_case 'the writer never covers a src change — only a dependency change is the bot'"'"'s to declare' "$(ls "$d/.changeset")"
 fi
+
+# #907: main already has `${branch}.md` (from an earlier PR), and the packages are changed in
+# separate pushes — the exact #896 shape. The writer must leave main's file alone, keep updating one
+# file of its own with the union, and see "nothing to write" on the next run instead of swapping
+# which package it names.
+d="$(new_repo renovate-collision)"
+changeset "$d" renovate-ai-sdk $'---\n"@aiqadam/qadam-tables": patch\n---\n\nEarlier PR.'
+commit_all "$d" 'earlier PR'
+git -C "$d" tag -f base >/dev/null
+main_changeset="$(cat "$d/.changeset/renovate-ai-sdk.md")"
+write "$d/packages/qadams/core/tables/package.json" '{ "name": "@aiqadam/qadam-tables", "version": "0.5.1", "dependencies": { "@aiqadam/shared": "workspace:*", "dayjs": "1.11.13" } }'
+commit_all "$d" 'renovate: bump dayjs in tables'
+last_out="$(cd "$d" && PR_BASE_SHA=base PR_HEAD_SHA=HEAD GITHUB_HEAD_REF='renovate/ai-sdk' PR_NUMBER=896 node "$gate" --write-renovate-changeset 2>&1)"
+written="$d/.changeset/renovate-ai-sdk-pr-896.md"
+if [ -f "$written" ] \
+  && grep -qF '"@aiqadam/qadam-tables": patch' "$written" \
+  && [ "$(cat "$d/.changeset/renovate-ai-sdk.md")" = "$main_changeset" ]; then
+  ok
+else
+  fail_case '#907: a base-name collision gets its own file and the base file is untouched' \
+    "written: $(cat "$written" 2>&1)" "base: $(cat "$d/.changeset/renovate-ai-sdk.md" 2>&1)"
+fi
+commit_all "$d" 'chore(deps): changeset'
+write "$d/packages/qadams/core/slack/package.json" '{ "name": "@aiqadam/qadam-slack", "version": "1.2.0", "dependencies": { "dayjs": "1.11.13" } }'
+commit_all "$d" 'renovate: bump dayjs in slack too'
+last_out="$(cd "$d" && PR_BASE_SHA=base PR_HEAD_SHA=HEAD GITHUB_HEAD_REF='renovate/ai-sdk' PR_NUMBER=896 node "$gate" --write-renovate-changeset 2>&1)"
+if grep -qF '"@aiqadam/qadam-tables": patch' "$written" \
+  && grep -qF '"@aiqadam/qadam-slack": patch' "$written" \
+  && [ "$(cat "$d/.changeset/renovate-ai-sdk.md")" = "$main_changeset" ] \
+  && [ ! -e "$d/.changeset/renovate-ai-sdk-$(git -C "$d" rev-parse --short=7 HEAD).md" ]; then
+  ok
+else
+  fail_case '#907: the second push merges into the same file and still leaves the base file alone' \
+    "written: $(cat "$written" 2>&1)" "base: $(cat "$d/.changeset/renovate-ai-sdk.md" 2>&1)"
+fi
+commit_all "$d" 'chore(deps): changeset'
+last_out="$(cd "$d" && PR_BASE_SHA=base PR_HEAD_SHA=HEAD GITHUB_HEAD_REF='renovate/ai-sdk' PR_NUMBER=896 node "$gate" --write-renovate-changeset 2>&1)"
+if printf '%s' "$last_out" | grep -qF 'nothing to write'; then
+  ok
+else
+  fail_case '#907: the third run on a colliding branch writes nothing' "$last_out"
+fi
+expect 0 '#907: the gate passes with the new file covering both packages' "$d" 'OK'
+
+# The fallback when the workflow supplies no PR number must be stable across pushes too. Deriving the
+# name from the head SHA would write a new file every run instead of merging into the first one.
+d="$(new_repo renovate-collision-no-pr)"
+changeset "$d" renovate-ai-sdk $'---\n"@aiqadam/qadam-tables": patch\n---\n\nEarlier PR.'
+commit_all "$d" 'earlier PR'
+git -C "$d" tag -f base >/dev/null
+main_changeset="$(cat "$d/.changeset/renovate-ai-sdk.md")"
+write "$d/packages/qadams/core/tables/package.json" '{ "name": "@aiqadam/qadam-tables", "version": "0.5.1", "dependencies": { "@aiqadam/shared": "workspace:*", "dayjs": "1.11.13" } }'
+commit_all "$d" 'renovate: bump dayjs in tables'
+last_out="$(cd "$d" && PR_BASE_SHA=base PR_HEAD_SHA=HEAD GITHUB_HEAD_REF='renovate/ai-sdk' node "$gate" --write-renovate-changeset 2>&1)"
+commit_all "$d" 'chore(deps): changeset'
+write "$d/packages/qadams/core/slack/package.json" '{ "name": "@aiqadam/qadam-slack", "version": "1.2.0", "dependencies": { "dayjs": "1.11.13" } }'
+commit_all "$d" 'renovate: bump dayjs in slack too'
+last_out="$(cd "$d" && PR_BASE_SHA=base PR_HEAD_SHA=HEAD GITHUB_HEAD_REF='renovate/ai-sdk' node "$gate" --write-renovate-changeset 2>&1)"
+written="$d/.changeset/renovate-ai-sdk-renovate.md"
+extra="$(ls "$d/.changeset" | grep -v -e config.json -e README.md -e '^renovate-ai-sdk\.md$' -e '^renovate-ai-sdk-renovate\.md$')"
+if grep -qF '"@aiqadam/qadam-tables": patch' "$written" \
+  && grep -qF '"@aiqadam/qadam-slack": patch' "$written" \
+  && [ -z "$extra" ] \
+  && [ "$(cat "$d/.changeset/renovate-ai-sdk.md")" = "$main_changeset" ]; then
+  ok
+else
+  fail_case '#907: without PR_NUMBER the fallback file is stable and still merges' \
+    "written: $(cat "$written" 2>&1)" "extra: ${extra:-none}" "base: $(cat "$d/.changeset/renovate-ai-sdk.md" 2>&1)"
+fi
+commit_all "$d" 'chore(deps): changeset'
+last_out="$(cd "$d" && PR_BASE_SHA=base PR_HEAD_SHA=HEAD GITHUB_HEAD_REF='renovate/ai-sdk' node "$gate" --write-renovate-changeset 2>&1)"
+if printf '%s' "$last_out" | grep -qF 'nothing to write'; then
+  ok
+else
+  fail_case '#907: the no-PR fallback converges after the merged write' "$last_out"
+fi
+expect 0 '#907: the gate passes with the no-PR fallback file' "$d" 'OK'
+
+# #907: two dependency changes arrive in separate pushes. The second run must merge into the file it
+# wrote on the first run, not replace it with only the newly uncovered package.
+d="$(new_repo renovate-incremental)"
+write "$d/packages/qadams/core/tables/package.json" '{ "name": "@aiqadam/qadam-tables", "version": "0.5.1", "dependencies": { "@aiqadam/shared": "workspace:*", "dayjs": "1.11.13" } }'
+commit_all "$d" 'renovate: bump dayjs'
+last_out="$(cd "$d" && PR_BASE_SHA=base PR_HEAD_SHA=HEAD GITHUB_HEAD_REF='renovate/ai-sdk' node "$gate" --write-renovate-changeset 2>&1)"
+commit_all "$d" 'chore(deps): changeset'
+write "$d/packages/qadams/core/slack/package.json" '{ "name": "@aiqadam/qadam-slack", "version": "1.2.0", "dependencies": { "dayjs": "1.11.13" } }'
+commit_all "$d" 'renovate: bump dayjs in slack too'
+last_out="$(cd "$d" && PR_BASE_SHA=base PR_HEAD_SHA=HEAD GITHUB_HEAD_REF='renovate/ai-sdk' node "$gate" --write-renovate-changeset 2>&1)"
+merged="$d/.changeset/renovate-ai-sdk.md"
+if grep -qF '"@aiqadam/qadam-tables": patch' "$merged" && grep -qF '"@aiqadam/qadam-slack": patch' "$merged"; then
+  ok
+else
+  fail_case '#907: a later dependency change is merged into the existing changeset, not written over it' "$(cat "$merged" 2>&1)"
+fi
+commit_all "$d" 'chore(deps): changeset'
+last_out="$(cd "$d" && PR_BASE_SHA=base PR_HEAD_SHA=HEAD GITHUB_HEAD_REF='renovate/ai-sdk' node "$gate" --write-renovate-changeset 2>&1)"
+if printf '%s' "$last_out" | grep -qF 'nothing to write'; then
+  ok
+else
+  fail_case '#907: the incremental branch converges after the merged write' "$last_out"
+fi
+expect 0 '#907: the gate passes after the merged write' "$d" 'OK'
+
+# A bump Renovate later reverts must not leave a changelog line behind — including when nothing new is
+# uncovered, which is the path that does not otherwise touch the file.
+d="$(new_repo renovate-prune)"
+tables_manifest="$d/packages/qadams/core/tables/package.json"
+write "$tables_manifest" '{ "name": "@aiqadam/qadam-tables", "version": "0.5.1", "dependencies": { "@aiqadam/shared": "workspace:*", "dayjs": "1.11.13" } }'
+commit_all "$d" 'renovate: bump dayjs in tables'
+last_out="$(cd "$d" && PR_BASE_SHA=base PR_HEAD_SHA=HEAD GITHUB_HEAD_REF='renovate/prune' node "$gate" --write-renovate-changeset 2>&1)"
+commit_all "$d" 'chore(deps): changeset'
+write "$tables_manifest" '{ "name": "@aiqadam/qadam-tables", "version": "0.5.1", "dependencies": { "@aiqadam/shared": "workspace:*", "dayjs": "1.11.0" } }'
+write "$d/packages/qadams/core/slack/package.json" '{ "name": "@aiqadam/qadam-slack", "version": "1.2.0", "dependencies": { "dayjs": "1.11.13" } }'
+commit_all "$d" 'renovate: revert tables, bump slack'
+last_out="$(cd "$d" && PR_BASE_SHA=base PR_HEAD_SHA=HEAD GITHUB_HEAD_REF='renovate/prune' node "$gate" --write-renovate-changeset 2>&1)"
+pruned="$d/.changeset/renovate-prune.md"
+if ! grep -qF 'qadam-tables' "$pruned" && grep -qF '"@aiqadam/qadam-slack": patch' "$pruned"; then
+  ok
+else
+  fail_case '#907: a reverted bump is dropped from the writer changeset' "$(cat "$pruned" 2>&1)"
+fi
+commit_all "$d" 'chore(deps): changeset'
+write "$d/packages/qadams/core/slack/package.json" '{ "name": "@aiqadam/qadam-slack", "version": "1.2.0" }'
+commit_all "$d" 'renovate: revert slack too'
+last_out="$(cd "$d" && PR_BASE_SHA=base PR_HEAD_SHA=HEAD GITHUB_HEAD_REF='renovate/prune' node "$gate" --write-renovate-changeset 2>&1)"
+if [ -f "$pruned" ] && ! grep -qE '"[^"]+":' "$pruned"; then
+  ok
+else
+  fail_case '#907: reverting every bump empties the writer changeset instead of keeping a stale line' "$(cat "$pruned" 2>&1)"
+fi
+commit_all "$d" 'chore(deps): changeset'
+last_out="$(cd "$d" && PR_BASE_SHA=base PR_HEAD_SHA=HEAD GITHUB_HEAD_REF='renovate/prune' node "$gate" --write-renovate-changeset 2>&1)"
+if printf '%s' "$last_out" | grep -qF 'nothing to write' && [ -z "$(git -C "$d" status --porcelain -- .changeset)" ]; then
+  ok
+else
+  fail_case '#907: the empty changeset is terminal — the next run writes nothing' "$last_out" "$(git -C "$d" status --porcelain -- .changeset)"
+fi
+expect 0 '#907: the gate passes with no packages left to cover' "$d" 'OK'
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
