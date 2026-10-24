@@ -52,6 +52,7 @@ import { SystemJobName } from '../../helper/system-jobs/common'
 import { systemJobsSchedule } from '../../helper/system-jobs/system-job'
 import { telemetry } from '../../helper/telemetry.utils'
 import { projectService } from '../../project/project-service'
+import { qadamPinUtil } from '../../qadams/metadata/qadam-pin-util'
 import { QadamPinMoveCause } from '../../qadams/pin-moves/qadam-pin-move.dto'
 import { qadamPinMoveService } from '../../qadams/pin-moves/qadam-pin-move.service'
 import { SnapshotExportSources, snapshotExportSources } from '../../qadams/snapshot-export/snapshot-export-sources'
@@ -545,7 +546,7 @@ export const flowService = (log: FastifyBaseLogger) => ({
             versionId: undefined,
         })
 
-        assertFlowVersionPublishable({ flowVersion: latestFlowVersion })
+        await assertFlowVersionPublishable({ flowVersion: latestFlowVersion, platformId, log })
         const flowVersionToPublish = latestFlowVersion.state === FlowVersionState.DRAFT
             ? await moveUnavailableQadamPins({ flowVersion: latestFlowVersion, projectId, platformId, userId, cause: 'PUBLISH', log })
             : latestFlowVersion
@@ -572,7 +573,7 @@ export const flowService = (log: FastifyBaseLogger) => ({
                 throw new QadamFlowError({ code: ErrorCode.ENTITY_NOT_FOUND, params: { entityType: 'flow_version', entityId: flowVersionToPublish.id, message: `flow_version_not_found id=${flowVersionToPublish.id}` } })
             }
             // The gate again, on what is about to be locked: an edit may have landed since it ran above.
-            assertFlowVersionPublishable({ flowVersion: currentFlowVersion })
+            await assertFlowVersionPublishable({ flowVersion: currentFlowVersion, platformId, log })
             const lockedFlowVersion = await lockFlowVersionIfNotLocked({
                 flowVersion: currentFlowVersion,
                 userId,
@@ -797,7 +798,22 @@ const lockFlowVersionIfNotLocked = async ({
 // The publish gate is `step.valid`: the MCP tool and the web builder both refuse to publish with
 // invalid steps, but the REST LOCK_AND_PUBLISH route locked whatever the draft held. Reject here —
 // the single choke point both callers pass through — so the gate is universal (#436).
-const assertFlowVersionPublishable = ({ flowVersion }: AssertFlowVersionPublishableParams): void => {
+//
+// `step.valid` alone is trusted for everything except a PIECE pin's resolvability, which is
+// re-checked against the qadam store rather than read off the stored flag (#782): the flag is a
+// point-in-time fact (IMPORT_FLOW's sub-operations never ran it through `qadamMetadataService`
+// before #782 either, so an imported pin could carry `valid: true` on the caller's say-so alone),
+// and a pin that resolved when a version was first locked can stop resolving later — an image
+// upgrade dropping it is exactly the re-publish scenario #781 left uncaught. A confirmed miss
+// (`false`) blocks publishing; a lookup error (`undefined`, a transient DB hiccup) does not — the
+// same tri-state `ap_validate_flow` already treats this way, so a flaky lookup never turns into a
+// publish outage.
+const assertFlowVersionPublishable = async ({ flowVersion, platformId, log }: AssertFlowVersionPublishableParams): Promise<void> => {
+    const qadamSteps = qadamPinUtil.getQadamSteps({ trigger: flowVersion.trigger })
+        .filter((step) => !('skip' in step && step.skip === true))
+    const pins = qadamPinUtil.collectDistinctPins({ steps: qadamSteps })
+    const resolutions = await qadamPinUtil.resolvePins({ pins, platformId, log })
+
     const invalidSteps = flowStructureUtil.getAllSteps(flowVersion.trigger).filter((step) => {
         if ('skip' in step && step.skip === true) {
             return false
@@ -808,7 +824,13 @@ const assertFlowVersionPublishable = ({ flowVersion }: AssertFlowVersionPublisha
         // A router stored as valid before #429 (or smuggled in through IMPORT_FLOW before #436)
         // keeps its flag on a LOCKED version that is never re-validated — recompute instead of
         // trusting it, the way `ap_validate_flow` does.
-        return step.type === FlowActionType.ROUTER && !RouterActionSettingsWithValidation.safeParse(step.settings).success
+        if (step.type === FlowActionType.ROUTER) {
+            return !RouterActionSettingsWithValidation.safeParse(step.settings).success
+        }
+        if (step.type === FlowActionType.PIECE || step.type === FlowTriggerType.PIECE) {
+            return resolutions.get(qadamPinUtil.pinOf({ step })) === false
+        }
+        return false
     })
     if (invalidSteps.length > 0) {
         const stepList = invalidSteps.map((step) => `"${step.name}" (${step.displayName})`).join(', ')
@@ -1042,6 +1064,8 @@ type MoveUnavailableQadamPinsParams = {
 
 type AssertFlowVersionPublishableParams = {
     flowVersion: FlowVersion
+    platformId: PlatformId
+    log: FastifyBaseLogger
 }
 
 type ExistsByProjectAndStatusParams = {

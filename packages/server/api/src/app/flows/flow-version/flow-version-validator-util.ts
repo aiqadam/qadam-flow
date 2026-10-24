@@ -10,6 +10,7 @@ import {
     FlowOperationType,
     flowQadamUtil,
     flowStructureUtil,
+    FlowTrigger,
     FlowTriggerType,
     FlowVersion,
     isNil,
@@ -156,6 +157,7 @@ export const flowVersionValidationUtil = (log: FastifyBaseLogger) => ({
                         ownerId: userId,
                     }))
                 }
+                await normalizeAndValidateImportedPieceSteps({ trigger: clonedRequest.request.trigger, platformId, log })
                 break
             }
             default:
@@ -185,6 +187,45 @@ function warnOnUndeclaredKeys({ log, qadamName, qadamVersion, component, result 
         undeclaredKeyCount: result.undeclaredKeys.length,
         undeclaredKeys: result.undeclaredKeys.slice(0, MAX_LOGGED_UNDECLARED_KEYS),
     }, 'Step input carries keys the resolved qadam metadata does not declare; keeping them rather than erasing the caller\'s write')
+}
+
+// IMPORT_FLOW expands into ADD_ACTION / UPDATE_TRIGGER sub-operations inside `flowOperations.apply`,
+// i.e. after this function returns, so those sub-operations never reach `qadamMetadataService` and
+// only re-parse the step's shape structurally (`add-action.ts`'s `createAction`, `update-trigger.ts`'s
+// `createTrigger`). Without this, every PIECE step and trigger an import brings in keeps whichever
+// `qadamVersion`/`valid` the caller supplied: a ranged pin (`~0.4.0`, MCP's default,
+// `mcp-utils.ts`) is stored unnormalised, and a pin to a version this instance cannot resolve is
+// stored `valid: true` on the caller's say-so — exactly what `assertFlowVersionPublishable` then
+// trusts (#782). This re-runs the same normalise-then-resolve step every other PIECE-writing path
+// gets, strictly (no `fallbackToInstalledVersion`): an import always names a pin fresh rather than
+// editing one already stored on this flow, so there is no "kept the existing pin" case to exempt.
+async function normalizeAndValidateImportedPieceSteps({ trigger, platformId, log }: {
+    trigger: FlowTrigger
+    platformId: PlatformId | undefined
+    log: FastifyBaseLogger
+}): Promise<void> {
+    const steps = flowStructureUtil.getAllSteps(trigger)
+    await Promise.all(steps.map(async (step) => {
+        if (step.type === FlowTriggerType.PIECE) {
+            step.settings.qadamVersion = flowQadamUtil.getExactVersion(step.settings.qadamVersion)
+            const result = await validateTrigger({ settings: step.settings, platformId, log })
+            step.valid = result.valid
+            if (!isNil(result.cleanInput)) {
+                step.settings.input = result.cleanInput
+            }
+            warnOnUndeclaredKeys({ log, qadamName: step.settings.qadamName, qadamVersion: step.settings.qadamVersion, component: step.settings.triggerName, result })
+            return
+        }
+        if (step.type === FlowActionType.PIECE) {
+            step.settings.qadamVersion = flowQadamUtil.getExactVersion(step.settings.qadamVersion)
+            const result = await validateAction({ settings: step.settings, platformId, log })
+            step.valid = result.valid
+            if (!isNil(result.cleanInput)) {
+                step.settings.input = result.cleanInput
+            }
+            warnOnUndeclaredKeys({ log, qadamName: step.settings.qadamName, qadamVersion: step.settings.qadamVersion, component: step.settings.actionName, result })
+        }
+    }))
 }
 
 // STOPGAP for #843, to be removed when #808 gives an unavailable pin its proper handling (ADR-0003:
