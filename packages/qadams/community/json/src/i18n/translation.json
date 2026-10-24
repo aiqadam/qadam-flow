@@ -11,5 +11,7 @@
   "JSON Data": "JSON Data",
   "JSONata Query": "JSONata Query",
   "Map the array or object you want to manipulate.": "Map the array or object you want to manipulate.",
-  "Write a JSONata expression to manipulate your data. You can filter arrays, extract specific fields, group items, or reshape the JSON. (e.g., $[status=\"active\"])": "Write a JSONata expression to manipulate your data. You can filter arrays, extract specific fields, group items, or reshape the JSON. (e.g., $[status=\"active\"])"
+  "Write a JSONata expression to manipulate your data. You can filter arrays, extract specific fields, group items, or reshape the JSON. (e.g., $[status=\"active\"])": "Write a JSONata expression to manipulate your data. You can filter arrays, extract specific fields, group items, or reshape the JSON. (e.g., $[status=\"active\"])",
+  "Timeout (in seconds)": "Timeout (in seconds)",
+  "How long to let the query run before it is cancelled. Capped at 10 seconds.": "How long to let the query run before it is cancelled. Capped at 10 seconds."
 }
