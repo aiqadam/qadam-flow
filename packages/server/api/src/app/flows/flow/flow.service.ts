@@ -797,6 +797,14 @@ const lockFlowVersionIfNotLocked = async ({
 // The publish gate is `step.valid`: the MCP tool and the web builder both refuse to publish with
 // invalid steps, but the REST LOCK_AND_PUBLISH route locked whatever the draft held. Reject here —
 // the single choke point both callers pass through — so the gate is universal (#436).
+//
+// This deliberately does NOT re-resolve a PIECE pin's availability: ADR-0003 is explicit that an
+// unavailable version does not block anything — "the step is marked 'version unavailable — update
+// this step'... and the flow is never disabled" — and `flow-unavailable-qadam-pin.test.ts` (#808)
+// asserts exactly that a publish with a stale, unresolvable pin still succeeds once
+// `moveUnavailableQadamPins` has had its try. Gating on resolvability here would block that publish
+// outright, contradicting the accepted ADR. #782's second half (re-resolve PIECE pins in this gate)
+// was attempted and reverted for that reason — see the comment on #782 for the full rationale.
 const assertFlowVersionPublishable = ({ flowVersion }: AssertFlowVersionPublishableParams): void => {
     const invalidSteps = flowStructureUtil.getAllSteps(flowVersion.trigger).filter((step) => {
         if ('skip' in step && step.skip === true) {
