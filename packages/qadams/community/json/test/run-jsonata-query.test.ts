@@ -71,7 +71,7 @@ describe('run_jsonata_query', () => {
 
   it('wraps a syntax error', async () => {
     await expect(runJsonataQuery.run(contextWith({ json: ORDERS, query: 'orders[' }))).rejects.toThrow(
-      /JSONata Execution Failed/
+      /JSONata Execution Failed.*check your query syntax/
     );
   });
 });
@@ -86,24 +86,24 @@ describe('run_jsonata_query', () => {
 describe('run_jsonata_query guardrails against a runaway expression', () => {
   it('fails fast on a non-tail-recursive expression that never terminates', async () => {
     const start = Date.now();
-    await expect(
-      runJsonataQuery.run(
-        contextWith({ json: {}, query: '($f := function($x){$f($x+1)+0}; $f(0))' })
-      )
-    ).rejects.toThrow(/JSONata Execution Failed/);
+    const { error } = await tryCatch(() =>
+      runJsonataQuery.run(contextWith({ json: {}, query: '($f := function($x){$f($x+1)+0}; $f(0))' }))
+    );
     expect(Date.now() - start).toBeLessThan(1000);
+    expect(error?.message).toMatch(/JSONata Execution Failed.*safety limit/);
   });
 
   it('bounds a tail-recursive infinite loop by the configured timeout, not the sandbox kill timer', async () => {
     const start = Date.now();
-    await expect(
+    const { error } = await tryCatch(() =>
       runJsonataQuery.run(
         contextWith({ json: {}, query: '($f := function($x){$f($x+1)}; $f(0))', timeoutInSeconds: 1 })
       )
-    ).rejects.toThrow(/Evaluation timeout/);
+    );
     const elapsed = Date.now() - start;
     expect(elapsed).toBeGreaterThanOrEqual(900);
     expect(elapsed).toBeLessThan(4000);
+    expect(error?.message).toMatch(/JSONata Execution Failed.*safety limit.*Evaluation timeout/);
   });
 
   it('caps a user-set timeout at the conservative maximum rather than trusting it outright', async () => {
@@ -116,9 +116,10 @@ describe('run_jsonata_query guardrails against a runaway expression', () => {
       return calls === 1 ? 0 : Number.MAX_SAFE_INTEGER;
     });
     try {
-      await expect(
+      const { error } = await tryCatch(() =>
         runJsonataQuery.run(contextWith({ json: {}, query: '$sum([1,2,3])', timeoutInSeconds: 999_999 }))
-      ).rejects.toThrow(/Evaluation timeout after 10000 milliseconds/);
+      );
+      expect(error?.message).toMatch(/Evaluation timeout after 10000 milliseconds/);
     } finally {
       vi.restoreAllMocks();
     }
@@ -126,10 +127,18 @@ describe('run_jsonata_query guardrails against a runaway expression', () => {
 
   it('rejects a sequence that would grow past the conservative maximum instead of allocating it', async () => {
     const start = Date.now();
-    await expect(
+    const { error } = await tryCatch(() =>
       runJsonataQuery.run(contextWith({ json: {}, query: '[1..2000000]' }))
-    ).rejects.toThrow(/maximum sequence length/i);
+    );
     expect(Date.now() - start).toBeLessThan(1000);
+    expect(error?.message).toMatch(/safety limit.*maximum sequence length/i);
+  });
+
+  it('does not leak jsonata internal file paths from its guardrail errors', async () => {
+    const { error } = await tryCatch(() =>
+      runJsonataQuery.run(contextWith({ json: {}, query: '[1..2000000]' }))
+    );
+    expect(error?.message).not.toMatch(/node_modules|\.js:\d+:\d+/);
   });
 });
 

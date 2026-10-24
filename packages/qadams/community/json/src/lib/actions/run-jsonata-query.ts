@@ -10,6 +10,10 @@ const MAX_TIMEOUT_SECONDS = 10;
 const MAX_STACK_DEPTH = 500;
 const MAX_SEQUENCE_LENGTH = 1_000_000;
 
+// jsonata error codes raised by the guardrails above (D1011 stack depth, D1012 timeout, D2014/D2015
+// sequence length) rather than by a malformed expression.
+const GUARDRAIL_ERROR_CODES = new Set(['D1011', 'D1012', 'D2014', 'D2015']);
+
 export const runJsonataQuery = createAction({
   name: 'run_jsonata_query',
   displayName: 'Run JSONata Query',
@@ -56,8 +60,32 @@ export const runJsonataQuery = createAction({
       // We convert this to `null` so Activepieces receives valid, serializable JSON.
       return result === undefined ? null : result;
     } catch (error) {
-      const message = error instanceof Error ? error.message : JSON.stringify(error);
-      throw new Error(`JSONata Execution Failed. Please check your query syntax. Details: ${message}`);
+      const message = jsonataErrorMessage(error);
+      const code = jsonataErrorCode(error);
+      const guidance =
+        code !== undefined && GUARDRAIL_ERROR_CODES.has(code)
+          ? 'The query exceeded a safety limit (timeout, recursion depth, or sequence length)'
+          : 'Please check your query syntax';
+      throw new Error(`JSONata Execution Failed. ${guidance}. Details: ${message}`);
     }
   },
 });
+
+// jsonata's own guardrail failures (and ordinary parse/evaluation errors) are plain objects, not
+// `Error` instances, but jsonata populates a human-readable `.message` on all of them before
+// rethrowing — reading that (rather than JSON.stringify-ing the whole object) also avoids leaking
+// the object's own `stack: (new Error()).stack` property, which points at this package's internal
+// file paths, into the error a flow author sees.
+function jsonataErrorMessage(error: unknown): string {
+  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') {
+    return error.message;
+  }
+  return JSON.stringify(error);
+}
+
+function jsonataErrorCode(error: unknown): string | undefined {
+  if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') {
+    return error.code;
+  }
+  return undefined;
+}
