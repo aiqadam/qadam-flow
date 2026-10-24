@@ -285,31 +285,38 @@ const writeRenovateChangeset = ({ report, range }) => {
 // `${slug}.md` unless the base branch already owns that name; then a name carrying the PR number so
 // the file can be added and updated by this PR alone. Without a PR number the suffix is the stable
 // `-renovate`, never the head SHA: a SHA changes on every bot push, so each run would write a new
-// file instead of merging into the one it wrote last time.
+// file instead of merging into the one it wrote last time. If the stable name is taken too there is
+// no name left to update, so fail loudly rather than start another oscillating file.
 const resolveRenovateChangesetFile = ({ range, slug }) => {
   const plain = path.posix.join(CHANGESET_DIR, `${slug}.md`)
   if (readFileAt({ sha: range.base, file: plain }) === null) {
     return plain
   }
   const prNumber = process.env.PR_NUMBER
-  const shortSha = git({ args: ['rev-parse', '--short=7', range.head] })
-  const fullSha = git({ args: ['rev-parse', range.head] })
-  const candidates = [
-    prNumber !== undefined && /^\d+$/.test(prNumber) ? `${slug}-pr-${prNumber}.md` : `${slug}-renovate.md`,
-    `${slug}-${shortSha}.md`,
-    `${slug}-${fullSha}.md`,
-  ].map((name) => path.posix.join(CHANGESET_DIR, name))
-  const free = candidates.find((file) => readFileAt({ sha: range.base, file }) === null)
-  if (free === undefined) {
-    throw new Error(`every candidate name for the Renovate changeset already exists on ${range.base}: ${candidates.join(', ')}`)
+  const file = path.posix.join(CHANGESET_DIR, /^\d+$/.test(prNumber ?? '') ? `${slug}-pr-${prNumber}.md` : `${slug}-renovate.md`)
+  if (readFileAt({ sha: range.base, file }) !== null) {
+    throw new Error(`both ${plain} and ${file} already exist on ${range.base} — rename one of them so the Renovate writer has a stable file to update`)
   }
-  return free
+  return file
 }
 
 const readRenovateChangeset = ({ file }) => {
+  // Only "does not exist" means an empty file. Any other read failure (or a symlink planted in the
+  // PR tree) must abort: treating it as empty would rewrite the file with the delta only, which is
+  // the overwrite #907 is about.
+  const stat = tryCatchSync(() => fs.lstatSync(file))
+  if (stat.error) {
+    if (stat.error.code !== 'ENOENT') {
+      throw stat.error
+    }
+    return { releases: [], summary: '' }
+  }
+  if (!stat.data.isFile()) {
+    throw new Error(`${file} is not a regular file — refusing to overwrite it`)
+  }
   const read = tryCatchSync(() => fs.readFileSync(file, 'utf-8'))
   if (read.error) {
-    return { releases: [], summary: '' }
+    throw read.error
   }
   const parsed = parseChangeset({ text: read.data })
   if (parsed.problems.length > 0) {

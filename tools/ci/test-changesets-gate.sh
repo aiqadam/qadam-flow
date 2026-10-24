@@ -589,6 +589,69 @@ else
 fi
 expect 0 '#907: the gate passes with no packages left to cover' "$d" 'OK'
 
+# A reviewer can raise the level of a line the writer produced; the merge must keep it instead of
+# resetting the line to `patch` when a second package arrives.
+d="$(new_repo renovate-level)"
+write "$d/packages/qadams/core/tables/package.json" '{ "name": "@aiqadam/qadam-tables", "version": "0.5.1", "dependencies": { "@aiqadam/shared": "workspace:*", "dayjs": "1.11.13" } }'
+commit_all "$d" 'renovate: bump dayjs in tables'
+last_out="$(cd "$d" && PR_BASE_SHA=base PR_HEAD_SHA=HEAD GITHUB_HEAD_REF='renovate/level' node "$gate" --write-renovate-changeset 2>&1)"
+changeset "$d" renovate-level $'---\n"@aiqadam/qadam-tables": minor\n---\n\nA reviewer raised this to minor.'
+commit_all "$d" 'raise the level'
+write "$d/packages/qadams/core/slack/package.json" '{ "name": "@aiqadam/qadam-slack", "version": "1.2.0", "dependencies": { "dayjs": "1.11.13" } }'
+commit_all "$d" 'renovate: bump dayjs in slack too'
+last_out="$(cd "$d" && PR_BASE_SHA=base PR_HEAD_SHA=HEAD GITHUB_HEAD_REF='renovate/level' node "$gate" --write-renovate-changeset 2>&1)"
+if grep -qF '"@aiqadam/qadam-tables": minor' "$d/.changeset/renovate-level.md" \
+  && grep -qF '"@aiqadam/qadam-slack": patch' "$d/.changeset/renovate-level.md"; then
+  ok
+else
+  fail_case '#907: a reviewer-raised level survives the merge with a new package' "$(cat "$d/.changeset/renovate-level.md" 2>&1)"
+fi
+commit_all "$d" 'chore(deps): changeset'
+last_out="$(cd "$d" && PR_BASE_SHA=base PR_HEAD_SHA=HEAD GITHUB_HEAD_REF='renovate/level' node "$gate" --write-renovate-changeset 2>&1)"
+if printf '%s' "$last_out" | grep -qF 'nothing to write'; then
+  ok
+else
+  fail_case '#907: the raised-level branch converges after the merged write' "$last_out"
+fi
+expect 0 '#907: the gate passes with the reviewer-raised level' "$d" 'OK'
+
+# If main owns both the plain name and the stable fallback there is no file left to update. Fail
+# closed instead of inventing a name per push, which would never merge or prune.
+d="$(new_repo renovate-double-collision)"
+changeset "$d" renovate-x $'---\n"@aiqadam/qadam-tables": patch\n---\n\nEarlier PR.'
+changeset "$d" renovate-x-renovate $'---\n"@aiqadam/qadam-tables": patch\n---\n\nAnother earlier PR.'
+commit_all "$d" 'earlier PRs'
+git -C "$d" tag -f base >/dev/null
+plain_before="$(cat "$d/.changeset/renovate-x.md")"
+fallback_before="$(cat "$d/.changeset/renovate-x-renovate.md")"
+write "$d/packages/qadams/core/tables/package.json" '{ "name": "@aiqadam/qadam-tables", "version": "0.5.1", "dependencies": { "@aiqadam/shared": "workspace:*", "dayjs": "1.11.13" } }'
+commit_all "$d" 'renovate: bump dayjs in tables'
+last_out="$(cd "$d" && PR_BASE_SHA=base PR_HEAD_SHA=HEAD GITHUB_HEAD_REF='renovate/x' node "$gate" --write-renovate-changeset 2>&1)"
+if [ $? -ne 0 ] \
+  && printf '%s' "$last_out" | grep -qF 'already exist on base' \
+  && [ "$(cat "$d/.changeset/renovate-x.md")" = "$plain_before" ] \
+  && [ "$(cat "$d/.changeset/renovate-x-renovate.md")" = "$fallback_before" ]; then
+  ok
+else
+  fail_case '#907: no stable name left fails closed and leaves the base files alone' "$last_out"
+fi
+
+# The writer reads and writes a working-tree path; a symlink planted there must not be followed (it
+# could point at a runner-local file).
+d="$(new_repo renovate-symlink)"
+write "$d/outside.txt" 'do not touch'
+ln -s ../outside.txt "$d/.changeset/renovate-x.md"
+write "$d/packages/qadams/core/tables/package.json" '{ "name": "@aiqadam/qadam-tables", "version": "0.5.1", "dependencies": { "@aiqadam/shared": "workspace:*", "dayjs": "1.11.13" } }'
+commit_all "$d" 'renovate: symlink and bump'
+last_out="$(cd "$d" && PR_BASE_SHA=base PR_HEAD_SHA=HEAD GITHUB_HEAD_REF='renovate/x' node "$gate" --write-renovate-changeset 2>&1)"
+if [ $? -ne 0 ] \
+  && printf '%s' "$last_out" | grep -qF 'not a regular file' \
+  && [ "$(cat "$d/outside.txt")" = 'do not touch' ]; then
+  ok
+else
+  fail_case '#907: a symlinked changeset path is refused, not followed' "$last_out"
+fi
+
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
