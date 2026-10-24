@@ -1,12 +1,20 @@
 import { readFileSync } from 'fs';
 import { tryCatch } from '@aiqadam/qadams-framework';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { runJsonataQuery } from '../src/lib/actions/run-jsonata-query';
 
 type RunContext = Parameters<typeof runJsonataQuery.run>[0];
 
-function contextWith({ json, query }: { json: unknown; query: string }): RunContext {
-  return { propsValue: { json, query } } as unknown as RunContext;
+function contextWith({
+  json,
+  query,
+  timeoutInSeconds,
+}: {
+  json: unknown;
+  query: string;
+  timeoutInSeconds?: number;
+}): RunContext {
+  return { propsValue: { json, query, timeoutInSeconds } } as unknown as RunContext;
 }
 
 function installedJsonataVersion(): string {
@@ -63,8 +71,90 @@ describe('run_jsonata_query', () => {
 
   it('wraps a syntax error', async () => {
     await expect(runJsonataQuery.run(contextWith({ json: ORDERS, query: 'orders[' }))).rejects.toThrow(
-      /JSONata Execution Failed/
+      /JSONata Execution Failed.*check your query syntax/
     );
+  });
+});
+
+/**
+ * jsonata's resource guardrails (`timeout`, `stack`, `sequence`) are opt-in (#646): with no options
+ * at all, a query the flow author got wrong, or one built from trigger data an outside sender
+ * controls, can hold a sandbox slot until the worker's 600s kill timer fires. These cases pin that
+ * the action always passes the guardrails, and that they stop a runaway expression within a second,
+ * not within ten minutes.
+ */
+describe('run_jsonata_query guardrails against a runaway expression', () => {
+  it('fails fast on a non-tail-recursive expression that never terminates', async () => {
+    const start = Date.now();
+    const { error } = await tryCatch(() =>
+      runJsonataQuery.run(contextWith({ json: {}, query: '($f := function($x){$f($x+1)+0}; $f(0))' }))
+    );
+    expect(Date.now() - start).toBeLessThan(1000);
+    expect(error?.message).toMatch(/JSONata Execution Failed.*safety limit/);
+  });
+
+  it('bounds a tail-recursive infinite loop by the configured timeout, not the sandbox kill timer', async () => {
+    const start = Date.now();
+    const { error } = await tryCatch(() =>
+      runJsonataQuery.run(
+        contextWith({ json: {}, query: '($f := function($x){$f($x+1)}; $f(0))', timeoutInSeconds: 1 })
+      )
+    );
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeGreaterThanOrEqual(900);
+    expect(elapsed).toBeLessThan(4000);
+    expect(error?.message).toMatch(/JSONata Execution Failed.*safety limit.*Evaluation timeout/);
+  });
+
+  it('caps a user-set timeout at the conservative maximum rather than trusting it outright', async () => {
+    let calls = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => {
+      calls += 1;
+      // The first call captures jsonata's own start timestamp; every call after that is a
+      // guardrail check. Jumping it forward lets the test assert on the capped value without
+      // waiting out an uncapped, flow-author-supplied duration in real time.
+      return calls === 1 ? 0 : Number.MAX_SAFE_INTEGER;
+    });
+    try {
+      const { error } = await tryCatch(() =>
+        runJsonataQuery.run(contextWith({ json: {}, query: '$sum([1,2,3])', timeoutInSeconds: 999_999 }))
+      );
+      expect(error?.message).toMatch(/Evaluation timeout after 10000 milliseconds/);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('falls back to the default timeout instead of disabling the guardrail when set to 0', async () => {
+    let calls = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => {
+      calls += 1;
+      return calls === 1 ? 0 : Number.MAX_SAFE_INTEGER;
+    });
+    try {
+      const { error } = await tryCatch(() =>
+        runJsonataQuery.run(contextWith({ json: {}, query: '$sum([1,2,3])', timeoutInSeconds: 0 }))
+      );
+      expect(error?.message).toMatch(/Evaluation timeout after 10000 milliseconds/);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('rejects a sequence that would grow past the conservative maximum instead of allocating it', async () => {
+    const start = Date.now();
+    const { error } = await tryCatch(() =>
+      runJsonataQuery.run(contextWith({ json: {}, query: '[1..2000000]' }))
+    );
+    expect(Date.now() - start).toBeLessThan(1000);
+    expect(error?.message).toMatch(/safety limit.*maximum sequence length/i);
+  });
+
+  it('does not leak jsonata internal file paths from its guardrail errors', async () => {
+    const { error } = await tryCatch(() =>
+      runJsonataQuery.run(contextWith({ json: {}, query: '[1..2000000]' }))
+    );
+    expect(error?.message).not.toMatch(/node_modules|\.js:\d+:\d+/);
   });
 });
 
