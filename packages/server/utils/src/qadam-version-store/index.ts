@@ -8,6 +8,8 @@ export { QADAM_VERSION_STORE_SEED_INDEX, qadamVersionStoreSeed, SeedStatus } fro
 export type { SeedReport } from './qadam-version-store-seed'
 export { qadamSignatureLedger, QadamSignatureUnverified } from './qadam-signature-ledger'
 export type { QadamSignatureCheck, QadamSignatureCheckResult, QadamSignatureLedger, QadamSignatureLedgerLogger, QadamSignatureProof, QadamSignatureRecordResult, QadamSignedPackage } from './qadam-signature-ledger'
+export { DEFAULT_QADAM_REGISTRY_URL, QadamVersionFetchOutcome, qadamVersionStoreFetch } from './qadam-version-store-fetch'
+export type { QadamVersionFetchResult } from './qadam-version-store-fetch'
 export { qadamVersionStoreGcLedger } from './qadam-version-store-gc-ledger'
 export type { QadamVersionGcLedger, QadamVersionGcLedgerEntry, QadamVersionGcLedgerLogger } from './qadam-version-store-gc-ledger'
 export { qadamVersionStoreGcDecision } from './qadam-version-store-gc-decision'

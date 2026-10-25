@@ -28,11 +28,17 @@ export const MALFORMED_TOOL_PIN = 'malformed pin'
 // `getQadamSteps` is the steps, `getAgentToolPins` the tools (#779).
 export const qadamPinUtil = {
     getQadamSteps({ trigger }: { trigger: Step }): QadamPinnedStep[] {
-        return flowStructureUtil.getAllSteps(trigger)
-            .filter((step): step is QadamPinnedStep =>
-                (step.type === FlowActionType.PIECE || step.type === FlowTriggerType.PIECE)
-                && !isNil(step.settings.qadamName)
-                && !isNil(step.settings.qadamVersion))
+        return qadamPinUtil.filterQadamSteps({ steps: flowStructureUtil.getAllSteps(trigger) })
+    },
+
+    // `getQadamSteps`'s own filter, split out for a caller that has already walked the trigger's
+    // step tree for its own purpose (`flowStructureUtil.getAllSteps`) and would otherwise walk it a
+    // second time just to find the pinned ones.
+    filterQadamSteps({ steps }: { steps: Step[] }): QadamPinnedStep[] {
+        return steps.filter((step): step is QadamPinnedStep =>
+            (step.type === FlowActionType.PIECE || step.type === FlowTriggerType.PIECE)
+            && !isNil(step.settings.qadamName)
+            && !isNil(step.settings.qadamVersion))
     },
 
     // The PIECE tools of every agent step, each with the step that holds it. Tools are not steps:

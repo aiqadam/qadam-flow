@@ -1,0 +1,5 @@
+---
+"@aiqadam/platform": minor
+---
+
+A missing official qadam version is now fetched into the version store from the registry (ADR-0003 "Fetching", #806): when a flow is published, when a flow is imported, and in a background pass at start-up for every pinned version an instance's flows name. Fetching makes outbound requests to `registry.npmjs.org` for an exact `@aiqadam/*` release pin that is not already available (an official pin always comes from npmjs with a mandatory signature check, regardless of `QADAM_REGISTRY_URL`); a range, snapshot or custom pin is left alone, as is a pin that is already satisfied by the bundled image, the store, or a database row. A version is refused unless npm's own publish signature verifies against the keys this image pins (ADR-0005) — nothing unsigned is ever stored. A pin that cannot be fetched is unaffected: it is left exactly as before for the existing unavailable-version fallback (#808). Each publish/import call bounds how many pins it will fetch and for how long, so a flow naming many missing pins degrades to "fetch what fits, leave the rest for the fallback" rather than holding the request open indefinitely.
