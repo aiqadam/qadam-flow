@@ -9,6 +9,8 @@ superseded-by: null         # set when a later ADR replaces this one
 
 # 0006. `qadams-framework` owns opaque `Tool`/`LanguageModel` placeholder types instead of re-exporting `ai`'s
 
+Builds on: ADR-0001 (the `0.x` breaking-slot-is-minor rule this ADR's changeset level relies on).
+
 ## Decision
 
 `@aiqadam/qadams-framework`'s public context API (`ConstructToolParams.model`,
