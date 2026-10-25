@@ -6,11 +6,21 @@ qadam**, each with the integrity of the artifact that was released and the versi
 `metadata.json` from #804. It gives an instance metadata for versions its image does not ship, which
 #806 (fetch), #807 (`:slim` carries a snapshot) and #808 (the unavailable-version fallback's props
 check) need. Published as static files on GitHub Pages under `https://flow.aiqadam.org/catalog/v1/`,
-appended to by releases, never rewritten; the URL is meant to be configurable for mirroring.
+appended to by releases, never rewritten. Where the API reads it is configurable, for mirroring
+(`AP_QADAM_VERSION_CATALOGUE_URL`) and for a local copy (`AP_QADAM_VERSION_CATALOGUE_DIRECTORY`, which
+wins over the URL — the knob a `:slim` snapshot in #807 will use).
 
-**Not wired yet.** The format, the release-time writer and the API reader exist, with tests.
-Nothing at run time calls the reader, no release workflow calls the writer, and nothing is published
-at the default URL. Runtime behaviour is unchanged. What is left is listed below.
+**Format and reader done; hosting not done.** The format, the release-time writer and the API
+reader exist, with tests (#830). Two consumers now call the reader at run time: flow export's
+`snapshotExportSources` (ADR-0004, #853/#880 — a release's `metadata.json` for a pin export may
+rewrite to) and #808's pin-fallback seam (`qadamPinFallbackSeams`, first slice in #882 — the
+props-compatibility check a caret-range pin move needs). Both read through the same configured
+source (the published URL by default) and treat an unreadable catalogue as *unknown*, never as a reason to act — the fail-closed
+design ADR-0003 asks for. What is still missing is the other half: **no release workflow calls the
+writer, and nothing is published at the default URL**, so on a real instance both consumers read a
+404 today and every release-era pin is "unknown" (stays put). See
+[`docs/research/778-qadam-version-catalogue-status.md`](../../docs/research/778-qadam-version-catalogue-status.md)
+for the full picture of what else is, and is not, safe to build before that lands.
 
 The ticket's original options (persist each bundled version on API boot; extract metadata from the
 registry artifact) are replaced by ADR-0003 (maintainer comment on #778, 2026-10-08): the catalogue
@@ -121,7 +131,10 @@ npm signature check is mandatory for them (ADR-0003 "Fetching").
   10 minutes, so a new version is visible within that.
 - **`:slim` snapshot (#807).** The image copies a `catalog/v1/` tree in and the API reads it with the
   `directory` source.
-- **Mirroring.** Copy the whole tree; any static server works.
+- **Mirroring.** Copy the whole tree; any static server works. The API reads the published URL by
+  default; `AP_QADAM_VERSION_CATALOGUE_URL` points it at a mirror and
+  `AP_QADAM_VERSION_CATALOGUE_DIRECTORY` at a local copy (which takes precedence and makes no
+  request). Both are read once when an export or a pin move builds its sources.
 
 ## Open questions
 - **Credentials to publish.** The release workflow of `aiqadam/qadam-flow` needs write access to
@@ -139,7 +152,12 @@ npm signature check is mandatory for them (ADR-0003 "Fetching").
   produces).
 - **Index signing.** Not required by ADR-0003. Worth deciding before a mirror is trusted for
   anything the npm signature does not cover.
-- **The ticket's three questions** (proposals, not implemented):
+- **The ticket's three questions.**
+  - *`findBundledFallback`.* Its run-time net role is unchanged (`qadam-metadata-service.ts`'s
+    `findExactVersionFor`), but the audited, checked replacement for a published flow now exists:
+    #808's first slice (#882) moves a step at publish time, and its props check already reads the
+    catalogue (`qadamPinFallbackSeams`, `.agents/features/qadam-pin-moves.md`). This question is
+    answered, pending the catalogue actually being published.
   - *API reads the catalogue and the store for builder, MCP and validation of an old version
     (#411, #422).* The store part is implemented (#779): an exact official pin is answered from the
     stored version's `metadata.json` before the registry or the bundled build, and `registry` lists
@@ -148,8 +166,6 @@ npm signature check is mandatory for them (ADR-0003 "Fetching").
     offers a version the worker cannot run.
   - *`list()` "latest".* The highest version this instance can run (image or store), not the
     catalogue's highest; catalogue-only versions appear in `listVersions` once #806 can fetch them.
-  - *`findBundledFallback`.* Replaced by #808, whose props check reads two catalogue entries'
-    metadata.
 
 ## Domain Terms
 - **Qadam version catalogue** — this feature. Say "qadam version catalogue" (code:
