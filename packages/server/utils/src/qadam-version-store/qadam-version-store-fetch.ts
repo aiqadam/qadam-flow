@@ -3,7 +3,7 @@ import { writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { isNil, tryCatch } from '@aiqadam/shared'
-import { npmPackageSignature, NpmPackageSignature, NpmPackageSignatureVerifier } from '../npm-package-signature'
+import { npmPackageSignature, NpmPackageSignature } from '../npm-package-signature'
 import { safeHttp } from '../safe-http'
 import { QadamSignatureLedger } from './qadam-signature-ledger'
 import { QadamVersionOrigin, QadamVersionPutStatus, QadamVersionStore } from './qadam-version-store'
@@ -66,6 +66,10 @@ export const qadamVersionStoreFetch = {
         if (isNil(dist)) {
             return { outcome: QadamVersionFetchOutcome.MALFORMED_METADATA, reason: 'the version document carries no usable dist.integrity/dist.tarball' }
         }
+        // Always the pinned-key production verifier singleton — never a parameter this function
+        // takes (see `npm-package-signature.ts`'s header on why pinning is the whole point). This
+        // package's own tests mock the module instead of being handed a seam a production caller
+        // could just as easily misuse.
         const signatures = npmPackageSignature.readSignatures({ versionDocument: metadata.data })
         const pinned = npmPackageSignature.pinned({ signatures })
         const verifying = npmPackageSignature.verifying({ name, version, integrity: dist.integrity, signatures: pinned })
