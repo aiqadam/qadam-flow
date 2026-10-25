@@ -141,9 +141,11 @@ npm signature check is mandatory for them (ADR-0003 "Fetching").
   anything the npm signature does not cover.
 - **The ticket's three questions** (proposals, not implemented):
   - *API reads the catalogue and the store for builder, MCP and validation of an old version
-    (#411, #422).* Resolution order for `get()`: bundled → `qadam_metadata` → stored version's
-    `metadata.json` (#805) → catalogue → #808's fallback. Serve catalogue-only metadata only once
-    #806 can fetch that version, so the builder never offers a version the worker cannot run.
+    (#411, #422).* The store part is implemented (#779): an exact official pin is answered from the
+    stored version's `metadata.json` before the registry or the bundled build, and `registry` lists
+    stored release versions. The rest of the proposed order — catalogue → #808's fallback — is not
+    wired. Serve catalogue-only metadata only once #806 can fetch that version, so the builder never
+    offers a version the worker cannot run.
   - *`list()` "latest".* The highest version this instance can run (image or store), not the
     catalogue's highest; catalogue-only versions appear in `listVersions` once #806 can fetch them.
   - *`findBundledFallback`.* Replaced by #808, whose props check reads two catalogue entries'

@@ -25,6 +25,21 @@ export enum SeedStatus {
 }
 
 export const qadamVersionStoreSeed = {
+    // What the image currently ships, read straight from its own seed index: GC's "never collect a
+    // version the current image ships" (ADR-0003) needs *this* image's set, not a stored version's
+    // `origin.kind === IMAGE_SEED`, which only says some past image seeded it and is never updated
+    // when a later image drops that version (the image would otherwise re-seed what GC just removed,
+    // which `origin` alone cannot tell apart from a version no image ships any more). An image with
+    // no seed (`NO_SEED`) or one this release cannot read (`INVALID_SEED`) ships nothing, so GC treats
+    // every stored version as not image-shipped rather than refusing to run.
+    listImageVersions: async ({ seedDir }: { seedDir: string }): Promise<Set<string>> => {
+        const index = await readSeedIndex({ seedDir })
+        if (!index.ok) {
+            return new Set()
+        }
+        return new Set(index.artifacts.map((artifact) => `${artifact.name}@${artifact.version}`))
+    },
+
     // Idempotent and safe to run from several processes at once on one volume. A version already
     // stored is left as it is, and so is one this release cannot use but that is not damaged (a later
     // release's format, another host's native build, an I/O error): only a DAMAGED version is
