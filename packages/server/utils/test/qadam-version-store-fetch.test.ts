@@ -2,6 +2,10 @@ import { mkdtemp, readdir, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { qadamSignatureLedger } from '../src/qadam-version-store/qadam-signature-ledger'
+import { QadamVersionOrigin, QadamVersionReadStatus, qadamVersionStore } from '../src/qadam-version-store/qadam-version-store'
+import { QadamVersionFetchOutcome, qadamVersionStoreFetch } from '../src/qadam-version-store/qadam-version-store-fetch'
+import { tarFixtures } from './qadam-version-store-fixtures'
 
 const mockGet = vi.fn()
 const mockReadSignatures = vi.fn()
@@ -13,6 +17,11 @@ const mockDelay = vi.fn<(ms: number) => Promise<void>>()
 // (controlled per test) so these tests do not need a real npmjs-signed tarball — that binding is
 // exercised for real against npmjs's actual output in the worker's `qadam-integrity.test.ts`. The
 // store, the tarball extraction and the ledger are all real: this is the module that writes to disk.
+//
+// `vi.mock` factories are hoisted above these imports, and vitest hoists the `mock`-prefixed consts
+// above with them (docs: "Variables starting with `mock` are allowed") — so this works without a
+// dynamic `await import(...)` the way other modules' `vi.mock`-plus-static-import tests do (e.g.
+// `test/integration/ce/ldap/ldap-reconcile.test.ts`).
 vi.mock('../src/safe-http', () => ({
     safeHttp: {
         retryingAxios: { get: (...args: unknown[]) => mockGet(...args) },
@@ -30,11 +39,6 @@ vi.mock('../src/npm-package-signature', () => ({
 vi.mock('node:timers/promises', () => ({
     setTimeout: (ms: number) => mockDelay(ms),
 }))
-
-const { qadamVersionStore, QadamVersionOrigin, QadamVersionReadStatus } = await import('../src/qadam-version-store/qadam-version-store')
-const { qadamSignatureLedger } = await import('../src/qadam-version-store/qadam-signature-ledger')
-const { qadamVersionStoreFetch, QadamVersionFetchOutcome } = await import('../src/qadam-version-store/qadam-version-store-fetch')
-const { tarFixtures } = await import('./qadam-version-store-fixtures')
 
 const QADAM = { platformId: null, name: '@aiqadam/qadam-csv', version: '0.6.0' }
 const TARBALL_URL = 'https://registry.npmjs.org/@aiqadam/qadam-csv/-/qadam-csv-0.6.0.tgz'
@@ -86,7 +90,10 @@ describe('qadamVersionStoreFetch.fetchFromRegistry', () => {
         expect(await readdir(join(root, '.staging'))).toEqual([])
 
         // Persisted so a restart does not ask the registry again (#780).
-        const checked = await ledger.checkStoredVersions({ versions: [read.status === QadamVersionReadStatus.PRESENT ? read.version : (() => { throw new Error('not stored') })()] })
+        if (read.status !== QadamVersionReadStatus.PRESENT) {
+            throw new Error('not stored')
+        }
+        const checked = await ledger.checkStoredVersions({ versions: [read.version] })
         expect(checked).toEqual([{ verified: true }])
     })
 
