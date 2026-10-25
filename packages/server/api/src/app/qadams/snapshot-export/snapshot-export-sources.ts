@@ -81,12 +81,12 @@ async function openStore({ log }: { log: FastifyBaseLogger }): Promise<StoreRead
 // A mirror on disk wins over the URL: it is what a `:slim` image's snapshot (#807) and an air-gapped
 // mirror use, where no request may leave the host at all.
 function defaultCatalogueSource(): QadamVersionCatalogueSource {
-    const directory = system.get(AppSystemProp.QADAM_VERSION_CATALOGUE_DIRECTORY)
-    if (!isNil(directory) && directory.trim() !== '') {
+    const directory = system.get(AppSystemProp.QADAM_VERSION_CATALOGUE_DIRECTORY)?.trim()
+    if (!isNil(directory) && directory !== '') {
         return qadamVersionCatalogueSource.directory({ root: directory })
     }
-    const url = system.get(AppSystemProp.QADAM_VERSION_CATALOGUE_URL)
-    return qadamVersionCatalogueSource.http({ baseUrl: isNil(url) || url.trim() === '' ? QADAM_VERSION_CATALOGUE_DEFAULT_URL : url })
+    const url = system.get(AppSystemProp.QADAM_VERSION_CATALOGUE_URL)?.trim()
+    return qadamVersionCatalogueSource.http({ baseUrl: isNil(url) || url === '' ? QADAM_VERSION_CATALOGUE_DEFAULT_URL : url })
 }
 
 type LoadedCatalogue = {

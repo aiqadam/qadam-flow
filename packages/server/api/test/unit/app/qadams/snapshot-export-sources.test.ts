@@ -146,6 +146,13 @@ describe('the catalogue address is configurable', () => {
         expect(await sources.releases({ name: TABLES })).toHaveLength(3)
     })
 
+    it('trims a trailing newline off the directory before using it as the filesystem root', async () => {
+        process.env[DIRECTORY_ENV] = `${catalogueDir}\n`
+        const sources = snapshotExportSources.forInstance({ log: logger })
+
+        expect((await sources.releases({ name: TABLES }))?.sort()).toEqual(['1.3.0', '1.3.1', '1.4.0'])
+    })
+
     it('reads the default address when neither is configured', () => {
         delete process.env[DIRECTORY_ENV]
         delete process.env[URL_ENV]
