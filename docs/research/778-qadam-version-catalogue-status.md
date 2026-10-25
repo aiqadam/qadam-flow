@@ -75,19 +75,31 @@ plus metadata by loading the installed package) is the other option ADR-0003 and
 name, and it depends on #806's "legacy install path," which does not exist yet: no code anywhere
 in `api`/`worker`/`engine` installs an *official* npm package and extracts its metadata outside the
 platform-install-time flow (`qadamInstallService`), and that flow explicitly refuses official names
-(`qadam-metadata-service.ts:225`, `qadam-install-service.ts:37`, both citing #503). Building a
+(`qadam-metadata-service.ts:243`, `qadam-install-service.ts:37`, both citing #503). Building a
 second, parallel metadata-extraction path for this one script risks exactly the "two sources that
 can drift" failure ADR-0003 rejected npm-per-version install for in the first place (Option B).
 
 ### `get()` / `list()` wiring (questions 1 and 2) — not reachable, so not safely buildable
 
+**Update (2026-10-25, this branch's merge of main):** #779 merged into `main` after this section
+was written and implements the store half of question 1 — `get()` for an exact official pin now
+resolves through `storedQadamMetadata.lookup` before the registry/bundled build
+(`qadam-metadata-service.ts:488-503`), and `registry()` lists stored release versions
+(`qadam-metadata-service.ts:59-74`). The first bullet below is accordingly stale for `get()`; see
+`.agents/features/qadam-version-catalogue.md`'s "ticket's three questions" section for the current
+answer. The conclusion of this section is unaffected: the *catalogue* half of question 1, and all
+of question 2, are still unwired, because the store still has exactly one writer (seeding from the
+current image) — nothing #779 did gives the store a second, catalogue-fed input.
+
 Checked directly against the current `qadam-metadata-service.ts` and the version store:
 
-- `get()` resolves only through the registry (bundled manifest + `qadam_metadata` DB rows,
-  `findExactVersionFor`) and, for an inexact pin with no match, `findBundledFallback`. It never
-  reads the version store or the catalogue.
+- `get()` for an exact official pin now checks the stored version first (#779, above); for every
+  other case — an inexact pin, a non-official name, or an exact pin the store does not have — it
+  falls through to the registry (bundled manifest + `qadam_metadata` DB rows, `findExactVersionFor`)
+  and, for an inexact pin with no match, `findBundledFallback`. It still never reads the catalogue.
 - `list()` → `fetchLatestQadams` merges DB rows and the bundled manifest, then takes the highest
-  semver per name (`lastVersionOfEachQadam`). Same two sources, same gap.
+  semver per name (`lastVersionOfEachQadam`). Still the same two sources; `registry()` separately
+  lists stored versions (#779) but `list()` itself is unchanged.
 - The version store (#805, `packages/server/utils/src/qadam-version-store/`) has exactly one
   writer: `qadamVersionStoreSeed.seedFromImage`, called only from
   `packages/server/api/src/app/qadams/version-store/qadam-version-store-seeding.ts` at API boot.
