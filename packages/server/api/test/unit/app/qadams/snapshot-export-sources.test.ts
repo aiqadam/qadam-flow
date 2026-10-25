@@ -126,16 +126,20 @@ describe('the catalogue address is configurable', () => {
     afterEach(() => {
         restoreEnv({ key: DIRECTORY_ENV, value: originalDirectory })
         restoreEnv({ key: URL_ENV, value: originalUrl })
-        vi.restoreAllMocks()
     })
 
     it('reads a mirror on disk from AP_QADAM_VERSION_CATALOGUE_DIRECTORY without an injected source', async () => {
         process.env[DIRECTORY_ENV] = catalogueDir
         const http = vi.spyOn(qadamVersionCatalogueSource, 'http')
-        const sources = snapshotExportSources.forInstance({ log: logger })
+        try {
+            const sources = snapshotExportSources.forInstance({ log: logger })
 
-        expect((await sources.releases({ name: TABLES }))?.sort()).toEqual(['1.3.0', '1.3.1', '1.4.0'])
-        expect(http).not.toHaveBeenCalled()
+            expect((await sources.releases({ name: TABLES }))?.sort()).toEqual(['1.3.0', '1.3.1', '1.4.0'])
+            expect(http).not.toHaveBeenCalled()
+        }
+        finally {
+            http.mockRestore()
+        }
     })
 
     it('prefers the directory over the URL', async () => {
@@ -157,30 +161,42 @@ describe('the catalogue address is configurable', () => {
         delete process.env[DIRECTORY_ENV]
         process.env[URL_ENV] = 'https://mirror.invalid/catalog/v1/'
         const http = vi.spyOn(qadamVersionCatalogueSource, 'http')
+        try {
+            snapshotExportSources.forInstance({ log: logger })
 
-        snapshotExportSources.forInstance({ log: logger })
-
-        expect(http).toHaveBeenCalledWith({ baseUrl: 'https://mirror.invalid/catalog/v1/' })
+            expect(http).toHaveBeenCalledWith({ baseUrl: 'https://mirror.invalid/catalog/v1/' })
+        }
+        finally {
+            http.mockRestore()
+        }
     })
 
     it('trims whitespace off the configured URL', () => {
         delete process.env[DIRECTORY_ENV]
         process.env[URL_ENV] = '\n  https://mirror.invalid/catalog/v1/  \n'
         const http = vi.spyOn(qadamVersionCatalogueSource, 'http')
+        try {
+            snapshotExportSources.forInstance({ log: logger })
 
-        snapshotExportSources.forInstance({ log: logger })
-
-        expect(http).toHaveBeenCalledWith({ baseUrl: 'https://mirror.invalid/catalog/v1/' })
+            expect(http).toHaveBeenCalledWith({ baseUrl: 'https://mirror.invalid/catalog/v1/' })
+        }
+        finally {
+            http.mockRestore()
+        }
     })
 
     it('reads the default address when neither is configured', () => {
         delete process.env[DIRECTORY_ENV]
         delete process.env[URL_ENV]
         const http = vi.spyOn(qadamVersionCatalogueSource, 'http')
+        try {
+            snapshotExportSources.forInstance({ log: logger })
 
-        snapshotExportSources.forInstance({ log: logger })
-
-        expect(http).toHaveBeenCalledWith({ baseUrl: 'https://flow.aiqadam.org/catalog/v1/' })
+            expect(http).toHaveBeenCalledWith({ baseUrl: 'https://flow.aiqadam.org/catalog/v1/' })
+        }
+        finally {
+            http.mockRestore()
+        }
     })
 })
 

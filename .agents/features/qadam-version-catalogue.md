@@ -14,8 +14,8 @@ wins over the URL — the knob a `:slim` snapshot in #807 will use).
 reader exist, with tests (#830). Two consumers now call the reader at run time: flow export's
 `snapshotExportSources` (ADR-0004, #853/#880 — a release's `metadata.json` for a pin export may
 rewrite to) and #808's pin-fallback seam (`qadamPinFallbackSeams`, first slice in #882 — the
-props-compatibility check a caret-range pin move needs). Both read through the same default HTTP
-source and treat an unreadable catalogue as *unknown*, never as a reason to act — the fail-closed
+props-compatibility check a caret-range pin move needs). Both read through the same configured
+source (the published URL by default) and treat an unreadable catalogue as *unknown*, never as a reason to act — the fail-closed
 design ADR-0003 asks for. What is still missing is the other half: **no release workflow calls the
 writer, and nothing is published at the default URL**, so on a real instance both consumers read a
 404 today and every release-era pin is "unknown" (stays put). See

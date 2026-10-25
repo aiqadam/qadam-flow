@@ -75,7 +75,7 @@ plus metadata by loading the installed package) is the other option ADR-0003 and
 name, and it depends on #806's "legacy install path," which does not exist yet: no code anywhere
 in `api`/`worker`/`engine` installs an *official* npm package and extracts its metadata outside the
 platform-install-time flow (`qadamInstallService`), and that flow explicitly refuses official names
-(`qadam-metadata-service.ts:225`, `qadam-install-service.ts:36`, both citing #503). Building a
+(`qadam-metadata-service.ts:225`, `qadam-install-service.ts:37`, both citing #503). Building a
 second, parallel metadata-extraction path for this one script risks exactly the "two sources that
 can drift" failure ADR-0003 rejected npm-per-version install for in the first place (Option B).
 

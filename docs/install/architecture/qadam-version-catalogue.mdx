@@ -74,6 +74,10 @@ The server reads the published address by default. To use a mirror instead, set 
 The server reads the catalogue through the same outbound-request filter as every other configured URL. A mirror on a private or loopback address needs that address in `AP_SSRF_ALLOW_LIST`. See [Network security](/install/architecture/network-security).
 </Note>
 
+<Note>
+When `AP_QADAM_VERSION_CATALOGUE_DIRECTORY` is set but missing or unreadable, the catalogue is treated as unavailable — the server does not fall back to `AP_QADAM_VERSION_CATALOGUE_URL`.
+</Note>
+
 ## Related
 
 - [Qadam syncing & versioning](/install/architecture/qadam-syncing): how the server resolves qadam versions today.

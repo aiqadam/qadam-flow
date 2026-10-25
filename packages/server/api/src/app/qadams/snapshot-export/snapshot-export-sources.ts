@@ -10,9 +10,9 @@ import { QadamVersionCatalogueSource, qadamVersionCatalogueSource } from '../cat
 // Everything an export needs to know that is not in the flow: which releases of a qadam exist and
 // what they describe, and what a snapshot this instance runs describes. The seam ADR-0004 names:
 // "the released versions and metadata come from the catalogue (#778, wired at run time)". The
-// catalogue's reader exists but nothing at run time uses it yet, so the instance binding below is
-// the one place that fetches it; #806-#808 replace it with the store-and-catalogue resolution, and
-// the export rule is unchanged.
+// instance binding below is the one place that resolves the configured catalogue address and reads
+// it; flow export and #808's pin-fallback seam both read through it. #806-#808 replace it with the
+// store-and-catalogue resolution, and the export rule is unchanged.
 //
 // Every method answers "unknown" (`null`) rather than throwing, and an export treats unknown as
 // "no release passes": a pin is never moved on information the instance does not have.
