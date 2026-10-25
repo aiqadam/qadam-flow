@@ -23,9 +23,10 @@ import {
  *
  * **The key is never in the repo.** It is read from `E2E_REAL_AI_API_KEY` and the spec skips with a
  * stated reason when that is unset, so the suite still runs for anyone without one. Nothing here
- * screenshots the AI settings page: the `#apiKey` field in the Add AI Provider dialog is a plain
- * text `Input` with no masking (`upsert-provider-config-form.tsx`), so a frame of that dialog would
- * carry the key in the clear. The only frame is of the chat.
+ * screenshots the AI settings page: the `#apiKey` field in the Add AI Provider dialog is masked
+ * (`type="password"`) by default, but it carries a reveal toggle (`upsert-provider-config-form.tsx`)
+ * that a screenshot taken after it is clicked would still carry in the clear. The only frame is of
+ * the chat.
  *
  * Defaults describe DeepSeek because that is what this was run against, but nothing is vendor
  * specific — any OpenAI-compatible endpoint works by overriding the two env vars.
