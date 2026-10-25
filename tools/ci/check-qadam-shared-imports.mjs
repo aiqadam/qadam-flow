@@ -24,6 +24,14 @@
 // `packages/qadams/{framework,common}` ARE the SDK and may use `shared` (the framework bundles it
 // into its published tarball).
 //
+// EXEMPT_QADAMS mirrors packages/qadams/eslint.config.mjs's SHARED_BAN_IGNORES: `core/tables` and
+// `community/ai` each own a handful of single-qadam, type-only DTOs narrowed out of the
+// framework's re-export list (#959) — `import type` only, erased by `tsc`, `@aiqadam/shared` kept
+// as a devDependency there rather than bundled into their own published tarball. The single-qadam
+// symbols that compile to a real runtime value stayed framework exports instead, because `shared`
+// is private/unpublished (#799) and both qadams publish standalone to npm; see
+// packages/qadams/framework/src/lib/shared-reexports.ts's header for the full reasoning.
+//
 // A full-tree scan, not a diff: once #786 has moved the imports, the tree is clean and must stay
 // clean. Zero qadam files scanned is UNKNOWN (exit 2), never a pass — the scan target moved.
 //
@@ -38,6 +46,7 @@ const QADAM_ROOTS = ['packages/qadams/core', 'packages/qadams/community', 'packa
 const SKIPPED_DIRS = new Set(['node_modules', 'dist', 'coverage', '.turbo'])
 const FORBIDDEN = '@aiqadam/shared'
 const SOURCE_FILE = /\.(ts|tsx|mts|cts|js|mjs|cjs)$/
+const EXEMPT_QADAMS = new Set(['packages/qadams/core/tables', 'packages/qadams/community/ai'])
 
 const main = () => {
   const rootArg = process.argv.indexOf('--root')
