@@ -17,8 +17,9 @@ import { qadamVersionStoreAccess } from '../version-store/qadam-version-store-ac
 // takes that version from the catalogue or the store, never by asking a registry"): a range pin
 // (`^`/`~`, left at the pin's own version string so `qadamVersionParser.parse` — which accepts no
 // prefix — reads it as unparseable rather than as its floor), a `-main.` snapshot pin (moved only by
-// the checked fallback, #808/ADR-0004), and a custom (non-`@aiqadam/`) pin (#478's registry is not
-// built yet).
+// the checked fallback, #808/ADR-0004), and a custom (non-`@aiqadam/`) pin (the configurable
+// registry from #478 exists, but only records where a custom version would come from; custom
+// fetching is not implemented here, so it is left alone).
 //
 // Short-circuits in the TESTING environment the same way `flowTriggerSideEffect` does for its own
 // external call: there is no registry to fetch from in an integration test, and the module-level

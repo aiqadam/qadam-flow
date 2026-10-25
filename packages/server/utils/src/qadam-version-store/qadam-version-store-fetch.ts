@@ -24,10 +24,12 @@ import { StoredQadamVersion } from './qadam-version-store-read'
 // small per-version budget is enough.
 //
 // The default registry URL duplicates `OFFICIAL_QADAM_REGISTRY_URL` in
-// `packages/server/worker/src/lib/cache/qadams/{qadam-integrity,qadam-installer}.ts`, which already
-// flags that duplication for #478 (the configurable registry) to resolve; this is a third copy for
-// the same reason those two could not import each other (worker vs. a store fetch that belongs in
-// `server-utils`, so the engine's reader stays free of network code). #478 updates all three.
+// `packages/server/worker/src/lib/cache/qadams/{qadam-integrity,qadam-installer}.ts`; this is a
+// third copy for the same reason those two could not import each other (worker vs. a store fetch
+// that belongs in `server-utils`, so the engine's reader stays free of network code). #478's
+// configurable registry (`QADAM_REGISTRY_URL` / `QADAM_REGISTRY_TOKEN`) is for custom qadams only:
+// an official pin always comes from npmjs with the signature checked below, whatever a platform
+// configures, so that setting must not reach this constant.
 export const DEFAULT_QADAM_REGISTRY_URL = 'https://registry.npmjs.org'
 
 export enum QadamVersionFetchOutcome {
