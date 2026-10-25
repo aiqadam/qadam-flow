@@ -159,16 +159,13 @@ npm signature check is mandatory for them (ADR-0003 "Fetching").
     catalogue (`qadamPinFallbackSeams`, `.agents/features/qadam-pin-moves.md`). This question is
     answered, pending the catalogue actually being published.
   - *API reads the catalogue and the store for builder, MCP and validation of an old version
-    (#411, #422).* Still open, and **not safely buildable yet**: the version store only ever holds
-    what the current image bundles (seeding has no other writer until #806), so `get()`/`list()`
-    have no reachable case today where the catalogue or the store would answer anything the
-    bundled list does not already. Wiring it now would be dead code with no exercisable path. See
-    the research doc linked above.
-  - *`list()` "latest".* Same reasoning: the highest version this instance can run is, today,
-    always the bundled one. `OFFICIAL_QADAMS_INSTALL_ENABLED` is the only other way a second
-    OFFICIAL version could coexist with it, and that flag switches on the npm-install-per-version
-    mechanism ADR-0003 rejected (Option B) — not a mechanism on a path to being enabled. Revisit
-    once #806 lets a pin resolve to a fetched, non-bundled version.
+    (#411, #422).* The store part is implemented (#779): an exact official pin is answered from the
+    stored version's `metadata.json` before the registry or the bundled build, and `registry` lists
+    stored release versions. The rest of the proposed order — catalogue → #808's fallback — is not
+    wired. Serve catalogue-only metadata only once #806 can fetch that version, so the builder never
+    offers a version the worker cannot run.
+  - *`list()` "latest".* The highest version this instance can run (image or store), not the
+    catalogue's highest; catalogue-only versions appear in `listVersions` once #806 can fetch them.
 
 ## Domain Terms
 - **Qadam version catalogue** — this feature. Say "qadam version catalogue" (code:
