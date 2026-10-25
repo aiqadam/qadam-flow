@@ -319,8 +319,11 @@ export type ActionContext<
 // `@ai-sdk/provider-utils` patches are not mutually assignable — re-exporting the real types here
 // made that a `TS2322` at this API boundary (#815, #896). Each consumer converts back to the
 // concrete `ai` type at its own call site, where it already owns a real `ai` dependency (ADR-0006).
-export type LanguageModel = unknown
-export type Tool = unknown
+// Not exported: nothing outside `ConstructToolParams`/`AgentContext` below needs the name, and
+// exporting it would let `import { Tool } from '@aiqadam/qadams-framework'` silently resolve to
+// `unknown` instead of failing the way it always has.
+type LanguageModel = unknown
+type Tool = unknown
 
 export type ConstructToolParams = {
   tools: AgentQadamTool[]

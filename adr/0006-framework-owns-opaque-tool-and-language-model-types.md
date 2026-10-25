@@ -13,8 +13,9 @@ superseded-by: null         # set when a later ADR replaces this one
 
 `@aiqadam/qadams-framework`'s public context API (`ConstructToolParams.model`,
 `AgentContext.tools()`'s return type) stops using `ai`'s own `LanguageModel` / `Tool` types and
-instead uses framework-owned placeholder types (`unknown`, under the same names, so the exported
-API surface keeps its shape). The framework no longer depends on `ai` at all. Every consumer that
+instead uses framework-owned placeholder types (`unknown`, under the same names as before — but,
+as before, not themselves exported; only `ConstructToolParams`/`AgentContext` are). The framework
+no longer depends on `ai` at all. Every consumer that
 needs the concrete `ai` SDK shape — today `@aiqadam/engine` (builds the `model` value and reads the
 `Tool` records it hands back) and `@aiqadam/qadam-ai` (the only qadam calling
 `context.agent.tools()`) — asserts the concrete type at its own call site, once, where it already
@@ -22,23 +23,26 @@ depends on `ai` directly.
 
 ## Context
 
-- `ConstructToolParams.model: LanguageModel` and `AgentContext.tools(): Promise<Record<string,
-  Tool>>` (`packages/qadams/framework/src/lib/context/index.ts`, pre-change lines 16, 317-323)
-  imported `LanguageModel` / `Tool` straight from `ai`, which re-exports `Tool` /
-  `FlexibleSchema` from `@ai-sdk/provider-utils`.
+- At `97a61649` (the commit this ADR branches from): `ConstructToolParams.model: LanguageModel` and
+  `AgentContext.tools(): Promise<Record<string, Tool>>`
+  (`packages/qadams/framework/src/lib/context/index.ts:16,317-323`) imported `LanguageModel` /
+  `Tool` straight from `ai`, which re-exports `Tool` / `FlexibleSchema` from
+  `@ai-sdk/provider-utils`; the two call sites that consume them were
+  `packages/server/engine/src/lib/handler/qadam-executor.ts:145,149` and
+  `packages/qadams/community/ai/src/lib/actions/agents/tools.ts:296,313-314`.
 - `ai` is a regular (not peer) dependency, exactly pinned, in `qadams-framework`, in
   `@aiqadam/engine`, and in every qadam that touches it (e.g. `@aiqadam/qadam-ai`). Each can resolve
   a different patch of `@ai-sdk/provider-utils` under `bun`'s nested install, and two different
   patches of that package are not structurally assignable to each other — a hard `TS2322`, not a
   warning, and invisible to the repo-wide `typecheck` because qadams have no `typecheck` script
   (their `build` is the only check).
-- This has broken a real build twice: PR #896 (`ai` bump) hit `TS2322` at
-  `packages/server/engine/src/lib/handler/qadam-executor.ts:142` (`ToolSet` vs. `Record<string,
-  Tool>`) because Renovate updates `server/*`/`web` but `renovate.json` excludes
-  `packages/qadams/**`; re-aligning only the framework then moved the same break to
-  `@aiqadam/qadam-ai`'s `src/lib/actions/agents/tools.ts:378`. #815 hit the identical shape earlier.
-  Both were fixed by hand-aligning the three `ai` pins — a fix that does not scale to external qadam
-  authors, who pin whatever `ai` version they choose.
+- This has broken a real build twice, by the line numbers true at each PR's own head: PR #896 (`ai`
+  bump) hit `TS2322` at `qadam-executor.ts:142` (`ToolSet` vs. `Record<string, Tool>`) because
+  Renovate updates `server/*`/`web` but `renovate.json` excludes `packages/qadams/**`; re-aligning
+  only the framework then moved the same break to `@aiqadam/qadam-ai`'s
+  `src/lib/actions/agents/tools.ts:378`. #815 hit the identical shape earlier. Both were fixed by
+  hand-aligning the three `ai` pins — a fix that does not scale to external qadam authors, who pin
+  whatever `ai` version they choose.
 - Decided in `#908` (comment
   https://github.com/aiqadam/qadam-flow/issues/908#issuecomment-6396150457, 2026-10-25): "Variant
   2" — stop exposing `ai` types in the framework's public surface, convert at the engine boundary.
@@ -99,9 +103,37 @@ by choosing Option A, but it does not by itself solve the problem.
   patch is installed where.
 - A qadam or the engine bumping its own `ai` dependency can no longer break another package's build
   through this API — the whole point of #908.
+- Both conversion points (`qadam-executor.ts`, `tools.ts`) use an explicit `as` cast from the
+  opaque `unknown` placeholder back to the concrete `ai` type. AGENTS.md's "No type casting" rule
+  carries no exception list for this (unlike the HTTP-methods rule, which names its one sanctioned
+  exception inline) — see Follow-ups.
+
+## Evidence
+
+Reproduced the exact `TS2322` class this ADR closes, and confirmed the fix survives it, on a
+clean `bun install` (arm64 Linux, bun 1.4.3), machine-local, 2026-10-25:
+
+1. At `97a61649` (pre-change): temporarily pinned `packages/qadams/community/ai/package.json`'s
+   own `ai` to `7.0.133` (→ `@ai-sdk/provider-utils@5.0.57`) while its *direct*
+   `@ai-sdk/provider-utils` dependency stayed `5.0.62` (the version the engine's `ai@7.0.143` also
+   resolves) — the same shape of split #896 hit, reproduced inside one package's own dependency
+   graph. `bun install && npx turbo run build --filter=@aiqadam/qadam-ai --force` failed:
+   `src/lib/actions/agents/tools.ts(378,9): error TS2322: Type '{ [x: string]: Tool | Tool; }' is
+   not assignable to type 'Record<string, Tool>' ... Property '[schemaSymbol]' is missing in type
+   '...@ai-sdk+provider-utils@5.0.62.../Schema<any>' but required in type
+   '...@ai-sdk+provider-utils@5.0.57.../Schema<any>'` — line and shape match #896's report exactly.
+2. Checked out this ADR's implementation (this commit) on top of the same divergent install (no
+   reinstall): `npx turbo run typecheck --filter=@aiqadam/engine --force` and
+   `npx turbo run build --filter=@aiqadam/qadam-ai --force` both passed clean, no `TS2322`.
+3. Reverted the temporary `ai` pin and lockfile change; confirmed `bun install` returns to the
+   committed lockfile with no diff.
 
 ## Follow-ups
 
 - The CI build-every-`ai`-qadam safety net from Option C remains open as a separate, independent
   hardening step; not required by this ADR.
 - `#786` (`qadams-framework@1.0.0`) can proceed without this class of break blocking it.
+- Once this ADR is accepted: name the two `as` casts above (`qadam-executor.ts`, `tools.ts`) as a
+  sanctioned exception in AGENTS.md's "No type casting" bullet (the way `PUT /v1/files/:fileId` is
+  named under "HTTP"), and mirror the wording into `.opencodereview/rules/` so neither a human
+  reviewer nor `npm run review` keeps re-flagging the one place this ADR requires a cast.
