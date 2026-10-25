@@ -19,10 +19,12 @@ import { IsNull, QueryFailedError } from 'typeorm'
 import { flowRepo } from '../../flows/flow/flow.repo'
 import { flowVersionRepo } from '../../flows/flow-version/flow-version.service'
 import { platformRepo } from '../../platform/platform.service'
+import { qadamContextVersion } from '../metadata/qadam-context-version'
 import { QadamMetadataSchema } from '../metadata/qadam-metadata-entity'
 import { qadamMetadataService, qadamRepos } from '../metadata/qadam-metadata-service'
 import { qadamPinUtil } from '../metadata/qadam-pin-util'
 import { loadBundledQadams } from '../metadata/utils'
+import { storedQadamMetadata } from '../metadata/utils/stored-qadam-metadata'
 import { frameworkBuildMajor } from './framework-build-major'
 import { frameworkCensusPolicy, FrameworkCensusStatus } from './framework-census-policy'
 
@@ -230,14 +232,23 @@ async function resolvePinContext({ pin, platformId, bundled, log }: ResolvePinCo
         : resolveCustomPin({ name, version, platformId, log })
 }
 
-// The version that runs is what `qadamMetadataService.get` resolves the pin to (exact, else the
-// bundled build inside the pin's caret range). A bundled build's framework major comes from its
-// own `package.json`; a persisted official row (the registry install path) carries its context
-// version itself.
+// The version that runs is what `qadamMetadataService.get` resolves the pin to (the store, else
+// an exact registry row, else the bundled build inside the pin's caret range). A stored version
+// carries its own context version, and the framework it was built against, in the store; a bundled
+// build's framework major comes from its own `package.json`; a persisted official row (the registry
+// install path) carries its context version itself.
 async function resolveOfficialPin({ name, version, platformId, bundled, log }: ResolveOfficialPinParams): Promise<PinContext> {
     const resolvedVersion = await resolvePinVersion({ name, version, platformId, log })
     if (isNil(resolvedVersion)) {
         return UNRESOLVED
+    }
+    const stored = await storedQadamMetadata.read({ name, version: resolvedVersion })
+    if (!isNil(stored)) {
+        return {
+            source: 'official',
+            frameworkMajor: stored.frameworkMajor,
+            contextVersion: frameworkCensusPolicy.fromStoredContextVersion({ value: qadamContextVersion.fromContextInfo(stored.metadata.contextInfo) }),
+        }
     }
     const build = bundled.find((qadam) => qadam.name === name && qadam.version === resolvedVersion)
     if (!isNil(build)) {
@@ -249,10 +260,10 @@ async function resolveOfficialPin({ name, version, platformId, bundled, log }: R
         }
     }
     // A version answered the pin, so it is not `unresolved` even when no official row records its
-    // context version (a registry entry this path does not read, or — until #779 extends this —
-    // the local store): its context version is unknown, which counts as still needing the old
-    // contract, and the MCP marking still marks it. `unresolved` is reserved for a pin nothing
-    // answers, which the `qadam_version` signal already reports.
+    // context version (a registry entry this path does not read): its context version is unknown,
+    // which counts as still needing the old contract, and the MCP marking still marks it.
+    // `unresolved` is reserved for a pin nothing answers, which the `qadam_version` signal already
+    // reports.
     const contextVersion = await readStoredContextVersion({ name, version: resolvedVersion, platformId: null, qadamType: QadamType.OFFICIAL })
     return { source: 'official', frameworkMajor: null, contextVersion }
 }

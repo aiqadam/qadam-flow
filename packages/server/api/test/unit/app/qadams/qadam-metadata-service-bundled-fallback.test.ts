@@ -3,6 +3,7 @@ import { qadamVersionStoreReader } from '@aiqadam/server-utils'
 import { PackageType, QadamType } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { qadamMetadataService } from '../../../../src/app/qadams/metadata/qadam-metadata-service'
+import { storedQadamMetadata } from '../../../../src/app/qadams/metadata/utils/stored-qadam-metadata'
 
 type BundledQadamOverrides = { name: string, version: string }
 
@@ -26,6 +27,10 @@ vi.mock('../../../../src/app/qadams/metadata/qadam-cache', () => ({
 }))
 
 const logger = { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() } as unknown as FastifyBaseLogger
+
+beforeEach(() => {
+    storedQadamMetadata.reset()
+})
 
 function bundledQadam({ name, version }: BundledQadamOverrides): QadamMetadataModel {
     return {
