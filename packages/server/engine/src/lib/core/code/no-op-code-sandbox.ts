@@ -56,11 +56,14 @@ import { CodeSandbox } from '../../core/code/code-sandbox-common'
 // otherwise leave this process orphaned and still executing the tenant's code.
 const LEFTOVER_SETTLE_TURNS = 3
 
-// Matches the `ERROR_OFFSET` budget `helper/logging-utils.ts` already reserves for an
-// error message — capping here bounds the buffer, the IPC frame, and the error string in
-// one place, so a step that logs hundreds of MB before failing can no longer multiply that
-// across the child buffer, the JSON IPC payload and the host's own copy (app-sec, #609).
-const MAX_CAPTURED_OUTPUT_BYTES = 256 * 1024
+// Half of the 256 KiB `ERROR_OFFSET` budget `helper/logging-utils.ts` reserves for an
+// error message, applied per stream, so stdout and stderr together cannot push one
+// failing step past that reserve the way an uncapped buffer — multiplied across the
+// child buffer, the JSON IPC payload and the host's own copy — would (app-sec, #609).
+// Measured in UTF-16 code units (`String#length`, `String#slice`): the cap exists to
+// bound the multiplication, not to be byte-exact, and a non-ASCII stream can encode to a
+// few times this many bytes.
+const MAX_CAPTURED_OUTPUT_CODE_UNITS = 128 * 1024
 
 const CODE_RUNNER_SCRIPT = `
 const asyncHooks = require('async_hooks')
@@ -76,21 +79,27 @@ let inFlightId = null
 // the resulting error message can't grow unbounded, which also keeps \`stdoutBuf += ...\`
 // under V8's string-length ceiling — a direct \`process.stdout.write\` of enough data
 // would otherwise hit that ceiling before \`realStdoutWrite\` ever ran.
-const MAX_CAPTURED_OUTPUT_BYTES = ${MAX_CAPTURED_OUTPUT_BYTES}
+const MAX_CAPTURED_OUTPUT_CODE_UNITS = ${MAX_CAPTURED_OUTPUT_CODE_UNITS}
 function appendCapped(buf, chunk) {
-    if (buf.length >= MAX_CAPTURED_OUTPUT_BYTES) return buf
-    return buf + chunk.slice(0, MAX_CAPTURED_OUTPUT_BYTES - buf.length)
+    const remaining = MAX_CAPTURED_OUTPUT_CODE_UNITS - buf.length
+    if (remaining <= 0) return buf
+    if (typeof chunk === 'string') return buf + chunk.slice(0, remaining)
+    // Slice the bytes before decoding: \`buf + chunk.toString()\` on a non-Buffer
+    // Uint8Array yields its numbers ("104,101,..."), not its text, and decoding a huge
+    // buffer first would defeat the cap's memory bound.
+    const bytes = chunk.subarray(0, remaining)
+    return buf + Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString()
 }
 let stdoutBuf = ''
 let stderrBuf = ''
 const realStdoutWrite = process.stdout.write.bind(process.stdout)
 const realStderrWrite = process.stderr.write.bind(process.stderr)
 process.stdout.write = (chunk, ...args) => {
-    stdoutBuf = appendCapped(stdoutBuf, typeof chunk === 'string' ? chunk : chunk.toString())
+    stdoutBuf = appendCapped(stdoutBuf, chunk)
     return realStdoutWrite(chunk, ...args)
 }
 process.stderr.write = (chunk, ...args) => {
-    stderrBuf = appendCapped(stderrBuf, typeof chunk === 'string' ? chunk : chunk.toString())
+    stderrBuf = appendCapped(stderrBuf, chunk)
     return realStderrWrite(chunk, ...args)
 }
 
@@ -186,13 +195,13 @@ let lastExecutionId = 0
 let executionQueue: Promise<unknown> = Promise.resolve()
 
 // Mirrors the cap the runner applies to its own `stdoutBuf`/`stderrBuf`. Without this,
-// `pickMoreComplete` picking "whichever came back longer" would defeat that cap the
-// moment the uncapped pipe-accumulated side happened to be the longer of the two.
+// a pipe-accumulated copy would defeat that cap the moment it happened to be the longer
+// of the two, or the longer copy selected by `pickMoreComplete`.
 function appendCapped({ buffer, chunk }: { buffer: string, chunk: string }): string {
-    if (buffer.length >= MAX_CAPTURED_OUTPUT_BYTES) {
+    if (buffer.length >= MAX_CAPTURED_OUTPUT_CODE_UNITS) {
         return buffer
     }
-    return buffer + chunk.slice(0, MAX_CAPTURED_OUTPUT_BYTES - buffer.length)
+    return buffer + chunk.slice(0, MAX_CAPTURED_OUTPUT_CODE_UNITS - buffer.length)
 }
 
 function startRunner(): Runner {
@@ -237,8 +246,8 @@ function startRunner(): Runner {
         else {
             execution.reject(buildError({
                 message: message.error,
-                stdout: pickMoreComplete(message.stdout, execution.stdout),
-                stderr: pickMoreComplete(message.stderr, execution.stderr),
+                stdout: pickMoreComplete({ messageValue: message.stdout, pipeValue: execution.stdout }),
+                stderr: pickMoreComplete({ messageValue: message.stderr, pipeValue: execution.stderr }),
             }))
         }
     })
@@ -297,12 +306,16 @@ function isRunnerMessage(message: unknown): message is RunnerMessage {
     // `stdout`/`stderr` are read with `.trim()` below, and the message a runner sends is
     // tenant-authored-code-reachable (`process.send` is as forgeable as the existing
     // `forgeTerminal` test already proves) — a non-string value here must not reach
-    // `buildError` and crash the host with an uncaught `TypeError`.
-    const isStringOrAbsent = (value: unknown): boolean => value === undefined || typeof value === 'string'
+    // `buildError` and crash the host with an uncaught `TypeError`. The cap matches the
+    // runner's own, so an honest message always passes and a forged one cannot smuggle an
+    // unbounded string through the IPC frame.
+    const isCapturedOutput = (value: unknown): boolean => value === undefined
+        || (typeof value === 'string' && value.length <= MAX_CAPTURED_OUTPUT_CODE_UNITS)
     return typeof candidate.id === 'number'
         && typeof candidate.success === 'boolean'
-        && isStringOrAbsent(candidate.stdout)
-        && isStringOrAbsent(candidate.stderr)
+        && (candidate.error === undefined || typeof candidate.error === 'string')
+        && isCapturedOutput(candidate.stdout)
+        && isCapturedOutput(candidate.stderr)
 }
 
 function dispatchToRunner({ codeFilePath, inputs }: { codeFilePath: string, inputs: Record<string, unknown> }): Promise<unknown> {
@@ -338,13 +351,18 @@ function enqueue<T>(task: () => Promise<T>): Promise<T> {
 // The runner's own capture (`messageValue`) only sees output written through
 // `process.stdout`/`stderr.write`, so it misses `fs.writeSync(1, ...)` and a grandchild
 // spawned with `stdio: 'inherit'` — both still land on the real fd and so still reach the
-// host's pipe-accumulated `pipeValue`. Neither source is reliably a superset of the other
-// (the pipe copy is the one exposed to #609's delivery-order race), so prefer whichever
-// came back longer rather than always trusting the race-free one and silently dropping
-// output that only the pipe saw.
-function pickMoreComplete(messageValue: string | undefined, pipeValue: string): string {
+// host's pipe-accumulated `pipeValue`. Take the pipe copy only when it is the IPC capture
+// plus such extra bytes: a pipe copy that does not start with it may carry a previous
+// execution's late-delivered tail (the very race #609 is about), which must not be
+// attributed to this execution. fd-only output written before the step's first
+// `process.stdout` write is therefore still recovered only if the pipe delivered it in
+// time; the IPC capture, which has no such race, is preferred in every other case.
+function pickMoreComplete({ messageValue, pipeValue }: { messageValue: string | undefined, pipeValue: string }): string {
     const fromMessage = messageValue ?? ''
-    return fromMessage.length >= pipeValue.length ? fromMessage : pipeValue
+    if (!fromMessage) {
+        return pipeValue
+    }
+    return pipeValue.startsWith(fromMessage) ? pipeValue : fromMessage
 }
 
 function buildError({ message, stdout, stderr }: { message: string | undefined, stdout: string, stderr: string }): Error {

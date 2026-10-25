@@ -106,6 +106,26 @@ const logsThenFails = writeFixture({
     } }`,
 })
 
+// `process.stdout.write` accepts a Uint8Array; it must be captured as text, not as its
+// comma-separated byte values (which is what `Uint8Array#toString()` returns).
+const writesBytesThenFails = writeFixture({
+    name: 'writes_bytes_then_fails',
+    source: `module.exports = { code: async () => {
+        process.stdout.write(new TextEncoder().encode('BYTES-STDOUT'))
+        process.stderr.write(new TextEncoder().encode('BYTES-STDERR'))
+        throw new Error('bytes boom')
+    } }`,
+})
+
+const writesOverCapThenFails = writeFixture({
+    name: 'writes_over_cap_then_fails',
+    source: `module.exports = { code: async () => {
+        for (let i = 0; i < 4000; i++) process.stdout.write('A'.repeat(100))
+        for (let i = 0; i < 4000; i++) process.stderr.write('B'.repeat(100))
+        throw new Error('cap boom')
+    } }`,
+})
+
 function readPid(value: unknown): number {
     if (typeof value === 'object' && value !== null && 'pid' in value && typeof value.pid === 'number') {
         return value.pid
@@ -264,8 +284,10 @@ describe('noOpCodeSandbox', () => {
     // written on; the fix captures output inside the runner, synchronously at the `write`
     // call, so it travels in the same IPC message as the verdict and the host no longer
     // depends on pipe delivery order at all. The loop count scales with the core count so
-    // the same oversubscription margin — and the same regression guard — holds on a
-    // bigger CI runner, where a fixed small count would stop contending at all.
+    // the same oversubscription margin holds on a CI runner with more cores, where a fixed
+    // small count would stop contending at all; it is capped at 64 to bound the number of
+    // busy processes, so on a machine with more than 32 cores the margin drops below 2x
+    // (CI's runner is 4 cores → 12 loops, the configuration the repro was measured in).
     it('should keep the full stdout and stderr in a failure message under CPU contention (#609)', async () => {
         const busyLoopCount = Math.min(64, Math.max(12, availableParallelism() * 2))
         const busyLoops: ChildProcess[] = Array.from(
@@ -286,6 +308,26 @@ describe('noOpCodeSandbox', () => {
             expect(error?.message).toContain('ERR-LINE-399')
         }
     }, 30000)
+
+    it('should capture a Uint8Array write as text, not as its byte values', async () => {
+        const error = await noOpCodeSandbox.runCodeModule({ codeFilePath: writesBytesThenFails, inputs: {} })
+            .then(() => null, (reason: Error) => reason)
+
+        expect(error?.message).toContain('BYTES-STDOUT')
+        expect(error?.message).toContain('BYTES-STDERR')
+        expect(error?.message).not.toContain('66,89,84,69,83')
+    })
+
+    it('should bound a failure message that logs far more than the capture cap', async () => {
+        const error = await noOpCodeSandbox.runCodeModule({ codeFilePath: writesOverCapThenFails, inputs: {} })
+            .then(() => null, (reason: Error) => reason)
+
+        expect(error?.message).toContain('cap boom')
+        expect(error?.message).toContain('A'.repeat(100))
+        expect(error?.message).toContain('B'.repeat(100))
+        // Two streams capped at 128 K code units each, plus the error and headers.
+        expect(error?.message.length).toBeLessThan(300 * 1024)
+    })
 
     it('should tolerate shutdown when no execution has ever run', async () => {
         await expect(noOpCodeSandbox.shutdown()).resolves.toBeUndefined()
