@@ -126,6 +126,7 @@ describe('the catalogue address is configurable', () => {
     afterEach(() => {
         restoreEnv({ key: DIRECTORY_ENV, value: originalDirectory })
         restoreEnv({ key: URL_ENV, value: originalUrl })
+        vi.restoreAllMocks()
     })
 
     it('reads a mirror on disk from AP_QADAM_VERSION_CATALOGUE_DIRECTORY without an injected source', async () => {
@@ -135,7 +136,6 @@ describe('the catalogue address is configurable', () => {
 
         expect((await sources.releases({ name: TABLES }))?.sort()).toEqual(['1.3.0', '1.3.1', '1.4.0'])
         expect(http).not.toHaveBeenCalled()
-        http.mockRestore()
     })
 
     it('prefers the directory over the URL', async () => {
@@ -161,7 +161,6 @@ describe('the catalogue address is configurable', () => {
         snapshotExportSources.forInstance({ log: logger })
 
         expect(http).toHaveBeenCalledWith({ baseUrl: 'https://mirror.invalid/catalog/v1/' })
-        http.mockRestore()
     })
 
     it('trims whitespace off the configured URL', () => {
@@ -172,7 +171,6 @@ describe('the catalogue address is configurable', () => {
         snapshotExportSources.forInstance({ log: logger })
 
         expect(http).toHaveBeenCalledWith({ baseUrl: 'https://mirror.invalid/catalog/v1/' })
-        http.mockRestore()
     })
 
     it('reads the default address when neither is configured', () => {
@@ -183,7 +181,6 @@ describe('the catalogue address is configurable', () => {
         snapshotExportSources.forInstance({ log: logger })
 
         expect(http).toHaveBeenCalledWith({ baseUrl: 'https://flow.aiqadam.org/catalog/v1/' })
-        http.mockRestore()
     })
 })
 
