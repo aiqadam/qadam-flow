@@ -57,12 +57,13 @@ import { CodeSandbox } from '../../core/code/code-sandbox-common'
 const LEFTOVER_SETTLE_TURNS = 3
 
 // Half of the 256 KiB `ERROR_OFFSET` budget `helper/logging-utils.ts` reserves for an
-// error message, applied per stream, so stdout and stderr together cannot push one
-// failing step past that reserve the way an uncapped buffer — multiplied across the
-// child buffer, the JSON IPC payload and the host's own copy — would (app-sec, #609).
-// Measured in UTF-16 code units (`String#length`, `String#slice`): the cap exists to
-// bound the multiplication, not to be byte-exact, and a non-ASCII stream can encode to a
-// few times this many bytes.
+// error message, applied per stream, so stdout and stderr together stay the same order
+// as that reserve instead of growing without bound — multiplied across the child buffer,
+// the JSON IPC payload and the host's own copy (app-sec, #609). Measured in UTF-16 code
+// units (`String#length`, `String#slice`), so a non-ASCII stream can encode to a few
+// times this many bytes; the cap exists to bound the multiplication, not to be
+// byte-exact. The tail is kept rather than the head: the lines immediately before the
+// failure are the diagnostics worth paying for.
 const MAX_CAPTURED_OUTPUT_CODE_UNITS = 128 * 1024
 
 const CODE_RUNNER_SCRIPT = `
@@ -81,14 +82,18 @@ let inFlightId = null
 // would otherwise hit that ceiling before \`realStdoutWrite\` ever ran.
 const MAX_CAPTURED_OUTPUT_CODE_UNITS = ${MAX_CAPTURED_OUTPUT_CODE_UNITS}
 function appendCapped(buf, chunk) {
-    const remaining = MAX_CAPTURED_OUTPUT_CODE_UNITS - buf.length
-    if (remaining <= 0) return buf
-    if (typeof chunk === 'string') return buf + chunk.slice(0, remaining)
+    if (typeof chunk === 'string') {
+        const tail = chunk.length > MAX_CAPTURED_OUTPUT_CODE_UNITS ? chunk.slice(-MAX_CAPTURED_OUTPUT_CODE_UNITS) : chunk
+        return (buf + tail).slice(-MAX_CAPTURED_OUTPUT_CODE_UNITS)
+    }
     // Slice the bytes before decoding: \`buf + chunk.toString()\` on a non-Buffer
     // Uint8Array yields its numbers ("104,101,..."), not its text, and decoding a huge
-    // buffer first would defeat the cap's memory bound.
-    const bytes = chunk.subarray(0, remaining)
-    return buf + Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString()
+    // buffer first would defeat the cap's memory bound. UTF-8 needs at most four bytes
+    // per code unit, so a bounded byte tail is enough to fill the code-unit budget.
+    const byteBudget = MAX_CAPTURED_OUTPUT_CODE_UNITS * 4
+    const bytes = chunk.byteLength > byteBudget ? chunk.subarray(chunk.byteLength - byteBudget) : chunk
+    const text = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString()
+    return (buf + text).slice(-MAX_CAPTURED_OUTPUT_CODE_UNITS)
 }
 let stdoutBuf = ''
 let stderrBuf = ''
@@ -194,14 +199,10 @@ let lastExecutionId = 0
 // lets the crash handlers name the execution they are failing.
 let executionQueue: Promise<unknown> = Promise.resolve()
 
-// Mirrors the cap the runner applies to its own `stdoutBuf`/`stderrBuf`. Without this,
-// a pipe-accumulated copy would defeat that cap the moment it happened to be the longer
-// of the two, or the longer copy selected by `pickMoreComplete`.
+// Mirrors the runner's cap, including its tail-preserving direction, so the pipe copy
+// stays comparable to the IPC capture instead of being cut at a different point.
 function appendCapped({ buffer, chunk }: { buffer: string, chunk: string }): string {
-    if (buffer.length >= MAX_CAPTURED_OUTPUT_CODE_UNITS) {
-        return buffer
-    }
-    return buffer + chunk.slice(0, MAX_CAPTURED_OUTPUT_CODE_UNITS - buffer.length)
+    return (buffer + chunk).slice(-MAX_CAPTURED_OUTPUT_CODE_UNITS)
 }
 
 function startRunner(): Runner {
@@ -352,11 +353,12 @@ function enqueue<T>(task: () => Promise<T>): Promise<T> {
 // `process.stdout`/`stderr.write`, so it misses `fs.writeSync(1, ...)` and a grandchild
 // spawned with `stdio: 'inherit'` — both still land on the real fd and so still reach the
 // host's pipe-accumulated `pipeValue`. Take the pipe copy only when it is the IPC capture
-// plus such extra bytes: a pipe copy that does not start with it may carry a previous
-// execution's late-delivered tail (the very race #609 is about), which must not be
-// attributed to this execution. fd-only output written before the step's first
-// `process.stdout` write is therefore still recovered only if the pipe delivered it in
-// time; the IPC capture, which has no such race, is preferred in every other case.
+// plus extra bytes, or when the capture is empty (fd-only output): a pipe copy that does
+// not start with the capture may carry a previous execution's late-delivered tail — the
+// very race #609 is about — which must not be attributed to this execution. Content
+// alone cannot tell such a stale prefix from fd-only output written before the step's
+// first `process.stdout` write, so that prefix is dropped; the alternative is leaking
+// another step's output into this one's error.
 function pickMoreComplete({ messageValue, pipeValue }: { messageValue: string | undefined, pipeValue: string }): string {
     const fromMessage = messageValue ?? ''
     if (!fromMessage) {
@@ -366,7 +368,10 @@ function pickMoreComplete({ messageValue, pipeValue }: { messageValue: string | 
 }
 
 function buildError({ message, stdout, stderr }: { message: string | undefined, stdout: string, stderr: string }): Error {
-    const parts: string[] = [message ?? 'Code execution failed']
+    // `message` reaches here from tenant code (`inspect(e)`) or a forged IPC frame and had
+    // no size bound before the captures did; bound it on the same budget, keeping the head
+    // because that is where the error type and the first stack frames live (app-sec, #609).
+    const parts: string[] = [(message ?? 'Code execution failed').slice(0, MAX_CAPTURED_OUTPUT_CODE_UNITS)]
     if (stdout.trim()) {
         parts.push(`\n--- stdout ---\n${stdout.trim()}`)
     }

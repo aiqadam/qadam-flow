@@ -120,8 +120,12 @@ const writesBytesThenFails = writeFixture({
 const writesOverCapThenFails = writeFixture({
     name: 'writes_over_cap_then_fails',
     source: `module.exports = { code: async () => {
+        process.stdout.write('STDOUT-HEAD-MARKER\\n')
+        process.stderr.write('STDERR-HEAD-MARKER\\n')
         for (let i = 0; i < 4000; i++) process.stdout.write('A'.repeat(100))
         for (let i = 0; i < 4000; i++) process.stderr.write('B'.repeat(100))
+        process.stdout.write('\\nSTDOUT-TAIL-MARKER')
+        process.stderr.write('\\nSTDERR-TAIL-MARKER')
         throw new Error('cap boom')
     } }`,
 })
@@ -318,13 +322,16 @@ describe('noOpCodeSandbox', () => {
         expect(error?.message).not.toContain('66,89,84,69,83')
     })
 
-    it('should bound a failure message that logs far more than the capture cap', async () => {
+    it('should bound a failure message that logs far more than the capture cap, keeping the tail', async () => {
         const error = await noOpCodeSandbox.runCodeModule({ codeFilePath: writesOverCapThenFails, inputs: {} })
             .then(() => null, (reason: Error) => reason)
 
         expect(error?.message).toContain('cap boom')
-        expect(error?.message).toContain('A'.repeat(100))
-        expect(error?.message).toContain('B'.repeat(100))
+        // The lines nearest the failure are the diagnostics worth keeping.
+        expect(error?.message).toContain('STDOUT-TAIL-MARKER')
+        expect(error?.message).toContain('STDERR-TAIL-MARKER')
+        expect(error?.message).not.toContain('STDOUT-HEAD-MARKER')
+        expect(error?.message).not.toContain('STDERR-HEAD-MARKER')
         // Two streams capped at 128 K code units each, plus the error and headers.
         expect(error?.message.length).toBeLessThan(300 * 1024)
     })
