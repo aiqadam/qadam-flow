@@ -93,6 +93,23 @@ A stored version carries its own code and its third-party dependencies. `@aiqada
 
 This keeps a version on the libraries it is meant to run with. It is not a security boundary: a qadam runs with the worker's rights, and isolating flow code is the job of the [execution mode](/install/architecture/sandboxing).
 
+## Garbage collection
+
+The store keeps growing as flows pin new qadam versions and `follow` or the unavailable-version fallback move steps off old ones ([ADR-0003](https://github.com/aiqadam/qadam-flow/blob/main/adr/0003-official-qadams-run-from-a-versioned-local-store.md) "GC", [ADR-0004](https://github.com/aiqadam/qadam-flow/blob/main/adr/0004-main-builds-give-changed-packages-their-own-prerelease-versions.md) "Store (#478)"). A daily job (`AP_QADAM_VERSION_STORE_GC_CRON`) removes a stored version only when every one of these holds:
+
+- it is not pinned by any flow version on the instance, drafts included;
+- it is not among the versions the currently running image ships (so an upgrade can never re-seed what GC just removed);
+- it is not one of the last `AP_QADAM_VERSION_STORE_GC_KEEP_LAST_N_VERSIONS` versions a pin move (`/v1/qadam-pin-moves`) left a step pinned to — what a revert reaches back into;
+- it has stayed unreferenced, by the first three rules together, for at least `AP_QADAM_VERSION_STORE_GC_RETENTION_DAYS` — tracked from when GC first saw it unreferenced, not from when it was stored, so a version pinned for a year and dropped an hour ago still gets the full grace window.
+
+A version this release cannot read as present (damaged, built for another host, or unreadable because of a transient error) is left alone either way: GC decides what is still needed, not what is intact.
+
+The store's total size is reported as the `qadam_flow.qadam_version_store.bytes` metric after every run, and GC logs a warning once it is above `AP_QADAM_VERSION_STORE_SIZE_WARN_BYTES` (5 GiB by default).
+
+## Registry
+
+A non-`@aiqadam/*` (custom) qadam version missing from the store is meant to be fetched from a registry you configure with `AP_QADAM_REGISTRY_URL` (defaults to npmjs) and, for a private registry, `AP_QADAM_REGISTRY_TOKEN`. `@aiqadam/*` qadams are always fetched from npmjs with a mandatory signature check regardless of this setting. The fetch path itself ([#806](https://github.com/aiqadam/qadam-flow/issues/806)) and `run.sh`'s install-time reachability check ([#807](https://github.com/aiqadam/qadam-flow/issues/807)) do not exist yet — today this only records where the platform would fetch from.
+
 ## Layout
 
 ```text
@@ -101,6 +118,7 @@ qadam-versions/
     @aiqadam/qadam-tables/0.5.1/          an official qadam version
     _platform/<platformId>/<name>/1.0.0/  a custom qadam of one platform
   qadam-signatures.json                   npm signatures verified for fetched versions (#806)
+  qadam-gc-ledger.json                    when GC first saw each version unreferenced
 ```
 
 Each version directory holds the qadam's code (`package.json`, its entry point, and `node_modules` when the version needs it), `metadata.json`, and `integrity.json`. The store writes a version in a staging directory and renames it into place, so a version is either complete or absent. It never overwrites a version: a version is never republished (see [Qadam versioning](/build-qadams/qadam-reference/qadam-versioning)). `integrity.json` records a sha512 digest of every file. Only a damaged version — its record missing or not readable as JSON, or naming another version — is replaced the next time the server stores that version. A version written by a later release, built for another host, or that the server cannot read because of a filesystem error is never replaced.
@@ -111,11 +129,11 @@ Custom qadams get a directory per platform, so one platform's qadams are never f
 
 ## Back up and move
 
-Keep the volume with your database when you back up or move an install. Today every version in it can be seeded again, so losing it costs nothing. Once the server fetches versions on demand ([#806](https://github.com/aiqadam/qadam-flow/issues/806)), a restored store saves fetching them again, and an install with no access to a registry depends on it.
+Keep the volume with your database when you back up or move an install. Today every version in it can be seeded again, so losing it costs nothing — losing `qadam-gc-ledger.json` along with it just restarts every stored version's grace period, which delays GC, never causes it to collect something early. Once the server fetches versions on demand ([#806](https://github.com/aiqadam/qadam-flow/issues/806)), a restored store saves fetching them again, and an install with no access to a registry depends on it.
 
 `docker compose down -v` deletes the volume together with the database.
 
 ## Related
 
 - [Qadam syncing & versioning](/install/architecture/qadam-syncing) — how a step is pinned to a version and what runs today.
-- [Environment variables](/install/configuration/environment-variables) — `AP_QADAM_VERSION_STORE_PATH` and `AP_QADAM_VERSION_STORE_SEED_PATH`.
+- [Environment variables](/install/configuration/environment-variables) — `AP_QADAM_VERSION_STORE_PATH`, `AP_QADAM_VERSION_STORE_SEED_PATH`, the GC settings, and `AP_QADAM_REGISTRY_URL` / `AP_QADAM_REGISTRY_TOKEN`.
