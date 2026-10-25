@@ -60,6 +60,7 @@ import { qadamPinMoveModule } from './qadams/pin-moves/qadam-pin-move.module'
 import { qadamSnapshotFollow } from './qadams/pin-moves/qadam-snapshot-follow'
 import { qadamContextVersionBackfill } from './qadams/qadam-context-version-backfill'
 import { tagsModule } from './qadams/tags/tags-module'
+import { qadamVersionStoreGc } from './qadams/version-store/qadam-version-store-gc'
 import { qadamVersionStoreSeeding } from './qadams/version-store/qadam-version-store-seeding'
 import { storeEntryModule } from './store-entry/store-entry.module'
 import { tablesModule } from './tables/tables.module'
@@ -232,6 +233,7 @@ export const setupApp = async (app: FastifyInstance): Promise<FastifyInstance> =
 
     await app.register(communityQadamsModule)
     await qadamContextVersionBackfill(app.log).schedule()
+    await qadamVersionStoreGc(app.log).schedule()
 
     const isCanaryApp = system.getBoolean(AppSystemProp.IS_CANARY_APP) ?? false
     if (isCanaryApp) {
