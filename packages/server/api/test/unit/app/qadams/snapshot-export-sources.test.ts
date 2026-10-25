@@ -153,6 +153,28 @@ describe('the catalogue address is configurable', () => {
         expect((await sources.releases({ name: TABLES }))?.sort()).toEqual(['1.3.0', '1.3.1', '1.4.0'])
     })
 
+    it('reads a mirror over HTTP from AP_QADAM_VERSION_CATALOGUE_URL when no directory is configured', () => {
+        delete process.env[DIRECTORY_ENV]
+        process.env[URL_ENV] = 'https://mirror.invalid/catalog/v1/'
+        const http = vi.spyOn(qadamVersionCatalogueSource, 'http')
+
+        snapshotExportSources.forInstance({ log: logger })
+
+        expect(http).toHaveBeenCalledWith({ baseUrl: 'https://mirror.invalid/catalog/v1/' })
+        http.mockRestore()
+    })
+
+    it('trims whitespace off the configured URL', () => {
+        delete process.env[DIRECTORY_ENV]
+        process.env[URL_ENV] = '\n  https://mirror.invalid/catalog/v1/  \n'
+        const http = vi.spyOn(qadamVersionCatalogueSource, 'http')
+
+        snapshotExportSources.forInstance({ log: logger })
+
+        expect(http).toHaveBeenCalledWith({ baseUrl: 'https://mirror.invalid/catalog/v1/' })
+        http.mockRestore()
+    })
+
     it('reads the default address when neither is configured', () => {
         delete process.env[DIRECTORY_ENV]
         delete process.env[URL_ENV]
