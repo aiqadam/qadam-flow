@@ -3,6 +3,7 @@ import type { FastifyBaseLogger } from 'fastify'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockGetOnePopulated = vi.fn()
+const mockListHeld = vi.fn()
 const mockGetPlatformId = vi.fn()
 const mockGet = vi.fn()
 const mockGetMany = vi.fn()
@@ -40,6 +41,14 @@ mockResolveVersions.mockImplementation(async ({ pins }: { pins: { name: string, 
         const metadata = await mockGet({ name: pin.name, version: pin.version })
         return [`${pin.name}@${pin.version}`, metadata ? { status: 'resolved', version: metadata.version } : { status: 'missing' }] as const
     }))))
+
+vi.mock('../../../../src/app/qadams/pin-moves/qadam-pin-move.service', () => ({
+    qadamPinMoveService: vi.fn(() => ({
+        listHeld: mockListHeld,
+    })),
+}))
+
+mockListHeld.mockResolvedValue({ data: [], next: null, previous: null })
 
 import { apValidateFlowTool } from '../../../../src/app/mcp/tools/ap-validate-flow'
 import { MALFORMED_TOOL_PIN } from '../../../../src/app/qadams/metadata/qadam-pin-util'

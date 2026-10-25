@@ -617,6 +617,17 @@ function preReleaseBuildIssue({ pin }: { pin: string }): PreReleaseBuildIssue {
     }
 }
 
+// ADR-0004 "Following `main`": a person reverted a move of this step, so the snapshot follow pass
+// holds it at the version the revert restored. Like the pre-release label this is a fact, not a
+// fault — the step runs the version it names — so both pin-reporting tools state it at their lowest
+// severity and never block publishing. "Update available" and the runs surface remain later slices.
+function followHoldIssue({ fromVersion, toVersion }: { fromVersion: string, toVersion: string }): FollowHoldIssue {
+    return {
+        label: 'FOLLOW HELD',
+        message: `is held at ${wrapUntrustedValue(fromVersion)} after a person reverted its automatic move to ${wrapUntrustedValue(toVersion)}. The snapshot follow pass will not move it again until its version changes.`,
+    }
+}
+
 function extractOptionsArray(options: unknown): Array<{ label: string, value: unknown }> | null {
     if (Array.isArray(options)) return options
 
@@ -657,6 +668,7 @@ export const mcpUtils = {
     extractOptionsArray,
     qadamPinIssue,
     preReleaseBuildIssue,
+    followHoldIssue,
     RESOLVE_TIMEOUT_MS,
     STEP_REFERENCE_HINT,
     LOOP_COLLECT_INPUT_SCHEMA,
@@ -670,7 +682,7 @@ export const mcpUtils = {
     BRANCH_CONDITIONS_INPUT_SCHEMA,
 }
 
-export type { PropSummary, QadamPinIssue, PreReleaseBuildIssue }
+export type { PropSummary, QadamPinIssue, PreReleaseBuildIssue, FollowHoldIssue }
 
 type ExtractQadamFlowErrorDetailParams = {
     err: unknown
@@ -740,6 +752,11 @@ type QadamPinIssue = {
 }
 
 type PreReleaseBuildIssue = {
+    label: string
+    message: string
+}
+
+type FollowHoldIssue = {
     label: string
     message: string
 }
