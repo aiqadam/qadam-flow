@@ -302,8 +302,9 @@ The application started on ${await domainHelper.getPublicApiUrl({ path: '' })}, 
     // Cheap — it logs the retirement, not a walk of every flow; the doctor command lists the steps.
     frameworkCensusMarking(app.log).logRetirement()
     void startDevQadamWatcher(app)
-    // ADR-0003 (#805): fills the versioned qadam store from the image, in the background. Nothing
-    // resolves a qadam through the store until #779, so this changes no behaviour yet.
+    // ADR-0003 (#805): fills the versioned qadam store from the image, in the background. The API
+    // and forked engines resolve an official pin from it when it holds that version (#779); no
+    // image ships a seed before #807, so a default install still runs the bundled builds.
     void qadamVersionStoreSeeding(app.log).run()
     // ADR-0004 "Following `main`": moves every draft's available qadam pins onto the build the image
     // ships, in the background. It is scoped by the instance kind: a `-main` snapshot moves release
