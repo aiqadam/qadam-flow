@@ -1,5 +1,6 @@
 import { httpClient } from '@aiqadam/qadams-common'
-import { ActionContext, AgentFlowTool, AgentToolType, McpPropertyType, mcpToolNameUtils, PopulatedFlow, SeekPage } from '@aiqadam/qadams-framework'
+import { ActionContext, AgentToolType, McpPropertyType, mcpToolNameUtils, PopulatedFlow, SeekPage } from '@aiqadam/qadams-framework';
+import type { AgentFlowTool } from '@aiqadam/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { agentOutputBuilder } from '../../src/lib/actions/agents/agent-output-builder'
 import { constructAgentTools } from '../../src/lib/actions/agents/tools'

@@ -1,4 +1,5 @@
-import { Field, FieldType } from '@aiqadam/qadams-framework';
+import { FieldType } from '@aiqadam/qadams-framework';
+import type { Field } from '@aiqadam/shared';
 import { describe, expect, it } from 'vitest';
 import { columnUtils } from '../src/lib/common/columns';
 

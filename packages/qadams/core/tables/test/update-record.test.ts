@@ -1,4 +1,5 @@
-import { Field, FieldType } from '@aiqadam/qadams-framework';
+import { FieldType } from '@aiqadam/qadams-framework';
+import type { Field } from '@aiqadam/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const sendRequest = vi.fn();

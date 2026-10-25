@@ -155,6 +155,7 @@
         "zod": "4.3.6",
       },
       "devDependencies": {
+        "@aiqadam/shared": "workspace:*",
         "@types/mime-types": "2.1.1",
         "vitest": "4.1.11",
       },
@@ -2695,6 +2696,7 @@
         "zod": "4.3.6",
       },
       "devDependencies": {
+        "@aiqadam/shared": "workspace:*",
         "@types/qs": "6.14.0",
         "vitest": "4.1.11",
       },
@@ -2914,7 +2916,7 @@
     },
     "packages/server/engine": {
       "name": "@aiqadam/engine",
-      "version": "0.8.2",
+      "version": "0.8.3",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",

@@ -1,4 +1,5 @@
-import { QadamAuth, Property, isNil, AIProviderModel, AIProviderWithoutSensitiveData, OpenAICompatibleProviderConfig } from '@aiqadam/qadams-framework';
+import { QadamAuth, Property, isNil, OpenAICompatibleProviderConfig } from '@aiqadam/qadams-framework';
+import type { AIProviderModel, AIProviderWithoutSensitiveData } from '@aiqadam/shared';
 import { httpClient, HttpMethod } from '@aiqadam/qadams-common';
 import { resolveProviderRef } from './ai-sdk';
 

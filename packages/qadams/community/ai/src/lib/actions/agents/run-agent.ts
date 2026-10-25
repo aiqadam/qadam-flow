@@ -3,22 +3,24 @@ import {
   Property,
   QadamAuth,
   ArraySubProps,
-  AgentOutputField,
   AgentQadamProps,
   AgentTaskStatus,
   isNil,
-  AgentTool,
   TASK_COMPLETION_TOOL_NAME,
   AIProviderName,
-  AgentProviderModel,
   ExecutionToolStatus,
   AgentToolType,
-  AgentKnowledgeBaseTool,
   KnowledgeBaseSourceType,
   normalizeToolOutputToExecuteResponse,
   spreadIfDefined,
   getEffectiveProviderAndModel,
 } from '@aiqadam/qadams-framework';
+import type {
+  AgentOutputField,
+  AgentTool,
+  AgentProviderModel,
+  AgentKnowledgeBaseTool,
+} from '@aiqadam/shared';
 import { hasToolCall, isStepCount, streamText } from 'ai';
 import { agentOutputBuilder } from './agent-output-builder';
 import { createAIModel, createEmbeddingModel } from '../../common/ai-sdk';

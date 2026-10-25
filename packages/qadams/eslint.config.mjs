@@ -131,10 +131,18 @@ const BASE_ONLY_FILES = BASE_ONLY.map((dir) => `${dir}/**`)
 // Qadams import only @aiqadam/qadams-framework and @aiqadam/qadams-common (ADR-0001, gate 6 of
 // #797). `framework` is exempt because it is the one package that re-exports the qadam-facing
 // `shared` symbols; `common/test` because it checks common's errors against the engine's own
-// formatter, which is platform code and not part of the SDK.
+// formatter, which is platform code and not part of the SDK. `core/tables` and `community/ai` are
+// exempt for a narrow set of single-qadam, TYPE-ONLY DTOs narrowed out of shared-reexports.ts
+// (#959: tables request/record types, agent/MCP/AI-provider types) — each only ever imports them
+// as `import type`, which `tsc` erases, so `@aiqadam/shared` is a devDependency there, never a
+// runtime one. The single-qadam symbols that compile to a real runtime value (an enum used as a
+// value, a function, a constant) are NOT narrowed and stay framework exports instead, because
+// `shared` is private/unpublished (#799) and both qadams publish standalone to npm — see
+// shared-reexports.ts's header for why. `core/subflows` needed no exemption: every subflow header
+// it imported turned out to be a genuine runtime value, so none of it moved.
 const SHARED_IMPORT_MESSAGE = 'Qadams must not import @aiqadam/shared (ADR-0001). Import the symbol from @aiqadam/qadams-framework, which re-exports every qadam-facing one; if it is missing, add it to packages/qadams/framework/src/lib/shared-reexports.ts.'
 const SHARED_SPECIFIER = '/^@aiqadam\\u002Fshared(\\u002F|$)/'
-const SHARED_BAN_IGNORES = ['framework/**', 'common/test/**']
+const SHARED_BAN_IGNORES = ['framework/**', 'common/test/**', 'core/tables/**', 'community/ai/**']
 
 export default defineConfig(
     {

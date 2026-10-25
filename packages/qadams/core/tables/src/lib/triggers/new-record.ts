@@ -1,4 +1,5 @@
-import { createTrigger, QadamAuth, TriggerStrategy, PopulatedRecord, TableWebhookEventType } from '@aiqadam/qadams-framework';
+import { createTrigger, QadamAuth, TriggerStrategy, TableWebhookEventType } from '@aiqadam/qadams-framework';
+import type { PopulatedRecord } from '@aiqadam/shared';
 import { tablesCommon } from '../common';
 
 export const newRecordTrigger = createTrigger({

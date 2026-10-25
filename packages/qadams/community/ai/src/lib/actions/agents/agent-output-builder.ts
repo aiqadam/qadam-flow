@@ -1,19 +1,21 @@
 import {
-  AgentResult,
-  AgentStepBlock,
   AgentTaskStatus,
-  AgentTool,
   AgentToolType,
   assertNotNullOrUndefined,
   ContentBlockType,
   ExecutionToolStatus,
   isNil,
-  MarkdownContentBlock,
-  ToolCallBase,
-  ToolCallContentBlock,
   ToolCallStatus,
   ToolCallType,
 } from '@aiqadam/qadams-framework';
+import type {
+  AgentResult,
+  AgentStepBlock,
+  AgentTool,
+  MarkdownContentBlock,
+  ToolCallBase,
+  ToolCallContentBlock,
+} from '@aiqadam/shared';
 
 export const agentOutputBuilder = (prompt: string) => {
   let status: AgentTaskStatus = AgentTaskStatus.IN_PROGRESS;
