@@ -8,9 +8,17 @@ qadam**, each with the integrity of the artifact that was released and the versi
 check) need. Published as static files on GitHub Pages under `https://flow.aiqadam.org/catalog/v1/`,
 appended to by releases, never rewritten; the URL is meant to be configurable for mirroring.
 
-**Not wired yet.** The format, the release-time writer and the API reader exist, with tests.
-Nothing at run time calls the reader, no release workflow calls the writer, and nothing is published
-at the default URL. Runtime behaviour is unchanged. What is left is listed below.
+**Format and reader done; hosting not done.** The format, the release-time writer and the API
+reader exist, with tests (#830). Two consumers now call the reader at run time: flow export's
+`snapshotExportSources` (ADR-0004, #853/#880 — a release's `metadata.json` for a pin export may
+rewrite to) and #808's pin-fallback seam (`qadamPinFallbackSeams`, first slice in #882 — the
+props-compatibility check a caret-range pin move needs). Both read through the same default HTTP
+source and treat an unreadable catalogue as *unknown*, never as a reason to act — the fail-closed
+design ADR-0003 asks for. What is still missing is the other half: **no release workflow calls the
+writer, and nothing is published at the default URL**, so on a real instance both consumers read a
+404 today and every release-era pin is "unknown" (stays put). See
+[`docs/research/778-qadam-version-catalogue-status.md`](../../docs/research/778-qadam-version-catalogue-status.md)
+for the full picture of what else is, and is not, safe to build before that lands.
 
 The ticket's original options (persist each bundled version on API boot; extract metadata from the
 registry artifact) are replaced by ADR-0003 (maintainer comment on #778, 2026-10-08): the catalogue
@@ -139,15 +147,23 @@ npm signature check is mandatory for them (ADR-0003 "Fetching").
   produces).
 - **Index signing.** Not required by ADR-0003. Worth deciding before a mirror is trusted for
   anything the npm signature does not cover.
-- **The ticket's three questions** (proposals, not implemented):
+- **The ticket's three questions.**
+  - *`findBundledFallback`.* Its run-time net role is unchanged (`qadam-metadata-service.ts`'s
+    `findExactVersionFor`), but the audited, checked replacement for a published flow now exists:
+    #808's first slice (#882) moves a step at publish time, and its props check already reads the
+    catalogue (`qadamPinFallbackSeams`, `.agents/features/qadam-pin-moves.md`). This question is
+    answered, pending the catalogue actually being published.
   - *API reads the catalogue and the store for builder, MCP and validation of an old version
-    (#411, #422).* Resolution order for `get()`: bundled → `qadam_metadata` → stored version's
-    `metadata.json` (#805) → catalogue → #808's fallback. Serve catalogue-only metadata only once
-    #806 can fetch that version, so the builder never offers a version the worker cannot run.
-  - *`list()` "latest".* The highest version this instance can run (image or store), not the
-    catalogue's highest; catalogue-only versions appear in `listVersions` once #806 can fetch them.
-  - *`findBundledFallback`.* Replaced by #808, whose props check reads two catalogue entries'
-    metadata.
+    (#411, #422).* Still open, and **not safely buildable yet**: the version store only ever holds
+    what the current image bundles (seeding has no other writer until #806), so `get()`/`list()`
+    have no reachable case today where the catalogue or the store would answer anything the
+    bundled list does not already. Wiring it now would be dead code with no exercisable path. See
+    the research doc linked above.
+  - *`list()` "latest".* Same reasoning: the highest version this instance can run is, today,
+    always the bundled one. `OFFICIAL_QADAMS_INSTALL_ENABLED` is the only other way a second
+    OFFICIAL version could coexist with it, and that flag switches on the npm-install-per-version
+    mechanism ADR-0003 rejected (Option B) — not a mechanism on a path to being enabled. Revisit
+    once #806 lets a pin resolve to a fetched, non-bundled version.
 
 ## Domain Terms
 - **Qadam version catalogue** — this feature. Say "qadam version catalogue" (code:
