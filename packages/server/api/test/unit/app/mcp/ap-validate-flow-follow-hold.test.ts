@@ -124,6 +124,7 @@ describe('ap_validate_flow — snapshot follow hold (ADR-0004, #854)', () => {
         expect(informational).toContainEqual(expect.objectContaining({ category: 'follow_hold', stepName: 'step_1' }))
         expect((structuredContent.issues as { category: string }[]).map(i => i.category)).not.toContain('follow_hold')
         expect((structuredContent.warnings as { category: string }[]).map(i => i.category)).not.toContain('follow_hold')
+        expect(mockListHeld).toHaveBeenCalledWith({ flowId: 'flow-1', projectId: 'project-1', platformId: 'platform-1' })
     })
 
     it('does not change whether the flow is valid — the note is never a defect', async () => {

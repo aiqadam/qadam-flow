@@ -545,6 +545,7 @@ describe('ap_flow_structure — snapshot follow hold (ADR-0004, #854)', () => {
                 revertedAt: '2026-10-10T12:00:00.000Z',
             },
         })
+        expect(mockListHeld).toHaveBeenCalledWith({ flowId: 'flow-1', projectId: 'project-1', platformId: 'platform-1' })
     })
 
     it('matches a caret-prefixed pin by its exact version', async () => {

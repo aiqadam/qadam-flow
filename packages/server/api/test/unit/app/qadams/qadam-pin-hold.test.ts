@@ -49,4 +49,12 @@ describe('qadamPinHold.findForStep (ADR-0004, #854)', () => {
 
         expect(qadamPinHold.findForStep({ step: step({ qadamVersion: '1.3.0-main.412' }), moves: [older, newer] })).toMatchObject({ toVersion: '1.3.0-main.500' })
     })
+
+    it('carries a null revertedAt and sorts such a record behind a dated one', () => {
+        const undated = move({ overrides: { toVersion: '1.3.0-main.500', revertedAt: null } })
+        const dated = move({ overrides: { toVersion: '1.3.0-main.450', revertedAt: '2026-10-09T12:00:00.000Z' } })
+
+        expect(qadamPinHold.findForStep({ step: step({ qadamVersion: '1.3.0-main.412' }), moves: [undated, dated] })).toMatchObject({ toVersion: '1.3.0-main.450' })
+        expect(qadamPinHold.findForStep({ step: step({ qadamVersion: '1.3.0-main.412' }), moves: [undated] })).toMatchObject({ toVersion: '1.3.0-main.500', revertedAt: null })
+    })
 })

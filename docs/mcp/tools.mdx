@@ -20,7 +20,7 @@ List flows in the current project with status, trigger type, and published state
 
 ### ap_flow_structure
 
-Get the full structure of a flow: step tree, configuration status, step input values, router branch conditions, valid insert locations, the flow's `localeSource`, and whether each step's pinned qadam version is still available on this installation. Snapshot-pinned steps are labelled as pre-release builds, and a step whose automatic snapshot-follow move was reverted is labelled as held (`followHeld`) until its version changes. Shows the actual configured inputs for each step (URL, body, headers, etc.) so the AI can read and edit existing configurations.
+Get the full structure of a flow: step tree, configuration status, step input values, router branch conditions, valid insert locations, the flow's `localeSource`, and whether each step's pinned qadam version is still available on this installation. Snapshot-pinned steps are labelled as pre-release builds, and a step whose automatic pin move was reverted is labelled as held (`followHeld`) until its version changes. Shows the actual configured inputs for each step (URL, body, headers, etc.) so the AI can read and edit existing configurations.
 
 | Input | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -42,7 +42,7 @@ Use this tool when you need to read or edit a CODE step's full source. `ap_flow_
 
 ### ap_validate_flow
 
-Validate a flow for structural issues without publishing. Checks step validity, template references, empty branches, and qadam pins — including pre-release builds and held snapshot-follow steps, both reported as informational notes.
+Validate a flow for structural issues without publishing. Checks step validity, template references, empty branches, and qadam pins — including pre-release builds and held automatic pin moves, both reported as informational notes.
 
 | Input | Type | Required | Description |
 |-------|------|----------|-------------|

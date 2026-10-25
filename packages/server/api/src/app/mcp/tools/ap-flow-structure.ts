@@ -185,8 +185,9 @@ function agentToolPinWarning(tool: AgentToolPinInfo): string {
 }
 
 // A pin signal is a decoration on top of the structure this tool exists to return — before this
-// feature, `ap_flow_structure` needed only the flow row. Both signals share one platform lookup,
-// and neither runs for a flow with no qadam steps: a flow with none must not cost a platform read.
+// feature, `ap_flow_structure` needed only the flow row. All three signals share one platform
+// lookup, and none runs for a flow with no qadam steps: a flow with none must not cost a platform
+// read.
 // `getPlatformId` throws when the project row carries no platform; this is a navigation read, so
 // that degrades to "no pin info" rather than failing the response, the way `ap_validate_flow`'s
 // equivalent unwrapped call is allowed to for a one-shot pre-publish gate. A failed census lookup
@@ -559,7 +560,7 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
     return {
         title: 'ap_flow_structure',
         permission: Permission.READ_FLOW,
-        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), valid insert locations for ap_add_step, the flow\'s localeSource, whether each step\'s pinned qadam version, and the pinned qadam of each agent tool, is still available on this installation, whether a step runs a pre-release build from main, and whether a step\'s pinned qadam needs a framework version this release no longer supports. Pass includeInput=true to also get each step\'s full untruncated input in structuredContent; text input: lines are returned untruncated too.',
+        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), valid insert locations for ap_add_step, the flow\'s localeSource, whether each step\'s pinned qadam version, and the pinned qadam of each agent tool, is still available on this installation, whether a step runs a pre-release build from main, whether a step is held at its version because a person reverted an automatic pin move, and whether a step\'s pinned qadam needs a framework version this release no longer supports. Pass includeInput=true to also get each step\'s full untruncated input in structuredContent; text input: lines are returned untruncated too.',
         inputSchema: {
             flowId: z.string().describe('The id of the flow'),
             includeInput: z.boolean().optional().describe('When true, include the full step input (untruncated) in structuredContent.steps[].input and render text input: lines untruncated'),

@@ -38,7 +38,7 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
     return {
         title: 'ap_validate_flow',
         permission: Permission.READ_FLOW,
-        description: 'Validate a flow for structural issues without publishing. Checks step validity, template references, empty branches, qadam pins (including pre-release builds and snapshot-follow holds), and other pre-publish defects. Returns a detailed report with all issues found. Use this before ap_lock_and_publish to catch problems early.',
+        description: 'Validate a flow for structural issues without publishing. Checks step validity, template references, empty branches, qadam pins (including pre-release builds and held automatic pin moves), and other pre-publish defects. Returns a detailed report with all issues found. Use this before ap_lock_and_publish to catch problems early.',
         inputSchema: validateFlowInput.shape,
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         execute: async (args) => {
@@ -52,6 +52,9 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
 
                 const structural = validateFlow({ trigger: flow.version.trigger })
                 const platformId = await projectService(log).getPlatformId(mcp.projectId)
+                // A flow with no qadam step can hold none, so it costs no hold read (and no
+                // platform/ownership read inside it), the same rule `ap_flow_structure` follows.
+                const hasQadamSteps = qadamPinUtil.getQadamSteps({ trigger: flow.version.trigger }).length > 0
                 const [callFlowIssues, qadamVersionIssues, frameworkVersionIssues, concurrentLoopIssues, translationIssues, heldMoves] = await Promise.all([
                     validateCallFlowSteps({
                         trigger: flow.version.trigger,
@@ -82,7 +85,7 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                         platformId,
                         log,
                     }),
-                    findHeldPinMoves({ flowId: flow.id, projectId: mcp.projectId, platformId, log }),
+                    hasQadamSteps ? findHeldPinMoves({ flowId: flow.id, projectId: mcp.projectId, platformId, log }) : [],
                 ])
                 const allIssues = [...structural.issues, ...qadamVersionIssues, ...frameworkVersionIssues, ...validatePreReleaseBuilds({ trigger: flow.version.trigger }), ...validateFollowHeld({ trigger: flow.version.trigger, heldMoves }), ...validateAgentToolCounts({ trigger: flow.version.trigger }), ...callFlowIssues, ...concurrentLoopIssues, ...translationIssues]
                 const result = { ...structural, issues: allIssues }
@@ -90,8 +93,9 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                 // "invalid" in the summary — today that is exactly (and only) the translation
                 // categories that describe something the run can recover from at run time (a
                 // fallback locale, a self-referential localeSource), never the ones that will
-                // actually throw. An informational issue (`info`, currently only the ADR-0004
-                // pre-release build note) is weaker still: a fact about the step, never a defect.
+                // actually throw. An informational issue (`info`, currently the ADR-0004
+                // pre-release build and follow-hold notes) is weaker still: a fact about the step,
+                // never a defect.
                 const errorIssues = allIssues.filter((issue) => issueSeverity(issue) === 'error')
                 const warningIssues = allIssues.filter((issue) => issueSeverity(issue) === 'warning')
                 const informationalIssues = allIssues.filter((issue) => issueSeverity(issue) === 'info')
@@ -283,8 +287,8 @@ function validateAgentToolCounts({ trigger }: { trigger: Step }): ValidationIssu
 // ADR-0004: a step pinned to a snapshot (`x.y.z-main.<n>`) runs a build from `main`, not a release.
 // That is a fact about where the step comes from, not a defect — the version resolves and the step
 // runs it — so it is reported at `severity: 'info'`, the lowest this tool has: visible to a flow
-// owner, never blocking publishing, and never counted as a warning. "Update available" and the
-// `follow` hold state are later slices.
+// owner, never blocking publishing, and never counted as a warning. "Update available" is a later
+// slice.
 function validatePreReleaseBuilds({ trigger }: { trigger: Step }): ValidationIssue[] {
     return qadamPinUtil.getQadamSteps({ trigger }).flatMap((step): ValidationIssue[] => {
         // The stored pin may carry a `^` or `~` range; the parser wants the exact version.
@@ -1149,8 +1153,9 @@ type ValidationIssue = {
     // Callable Flow, where it is a warning — that trigger can inherit a real locale from its caller
     // at run time, which this static check cannot rule out, so it is not a guaranteed failure there
     // the way it is for every other trigger type. 'info' is even weaker than a warning: a fact about
-    // the flow (currently only the ADR-0004 pre-release build note) that is neither a defect nor a
-    // risk, reported under its own "Notes" section and never counted as a warning or an issue.
+    // the flow (currently the ADR-0004 pre-release build and follow-hold notes) that is neither a
+    // defect nor a risk, reported under its own "Notes" section and never counted as a warning or
+    // an issue.
     severity?: 'error' | 'warning' | 'info'
 }
 
