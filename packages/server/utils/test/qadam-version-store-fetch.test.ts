@@ -9,7 +9,6 @@ import { tarFixtures } from './qadam-version-store-fixtures'
 
 const mockGet = vi.fn()
 const mockReadSignatures = vi.fn()
-const mockPinned = vi.fn()
 const mockVerifying = vi.fn()
 const mockDelay = vi.fn<(ms: number) => Promise<void>>()
 
@@ -28,10 +27,11 @@ vi.mock('../src/safe-http', () => ({
     },
 }))
 
+// `pinned` is not mocked: `qadamVersionStoreFetch` no longer calls it directly (only `verifying`
+// does, internally, on the real module), so a mock for it here would be dead scaffolding.
 vi.mock('../src/npm-package-signature', () => ({
     npmPackageSignature: {
         readSignatures: (...args: unknown[]) => mockReadSignatures(...args),
-        pinned: (...args: unknown[]) => mockPinned(...args),
         verifying: (...args: unknown[]) => mockVerifying(...args),
     },
 }))
@@ -55,7 +55,6 @@ beforeEach(async () => {
     bundle = { data, integrity: tarFixtures.integrity({ data }) }
     mockGet.mockReset()
     mockReadSignatures.mockReset().mockReturnValue([{ keyid: 'k', sig: 's' }])
-    mockPinned.mockReset().mockReturnValue([{ keyid: 'k', sig: 's' }])
     mockVerifying.mockReset().mockReturnValue([{ keyid: 'k', sig: 's' }])
     mockDelay.mockReset().mockResolvedValue(undefined)
     log.info.mockClear()
@@ -103,7 +102,6 @@ describe('qadamVersionStoreFetch.fetchFromRegistry', () => {
 
     it('refuses a version the registry served with no signature', async () => {
         mockReadSignatures.mockReturnValue([])
-        mockPinned.mockReturnValue([])
         mockVerifying.mockReturnValue([])
         mockGet.mockResolvedValue({ data: registryDoc({ integrity: bundle.integrity, tarball: TARBALL_URL }) })
 

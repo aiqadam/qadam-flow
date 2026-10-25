@@ -1,5 +1,5 @@
 import { qadamSignatureLedger, QadamVersionFetchOutcome, qadamVersionStoreFetch } from '@aiqadam/server-utils'
-import { ApEnvironment, chunk, isNil, isOfficialQadamName, PlatformId, qadamVersionParser, tryCatch } from '@aiqadam/shared'
+import { ApEnvironment, chunk, isNil, isOfficialQadamName, NPM_PACKAGE_NAME_MAX_LENGTH, NPM_PACKAGE_NAME_REGEX, PlatformId, qadamVersionParser, tryCatch } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { system } from '../../helper/system/system'
 import { AppSystemProp } from '../../helper/system/system-props'
@@ -64,9 +64,16 @@ async function fetchMissing({ pins, platformId, log }: FetchMissingPinsParams & 
     if (environment === ApEnvironment.TESTING) {
         return EMPTY_SUMMARY
     }
-    const candidates = collectCandidates({ pins })
-    if (candidates.length === 0) {
+    const allCandidates = collectCandidates({ pins })
+    if (allCandidates.length === 0) {
         return EMPTY_SUMMARY
+    }
+    // Capped here, before `filterMissing`'s own `Promise.all` of DB lookups and store-reader opens —
+    // one per candidate — not after it: a pathological pin count must not turn into an unbounded fan
+    // of those either, only an unbounded fan of registry fetches.
+    const candidates = allCandidates.slice(0, MAX_FETCHES_PER_CALL)
+    if (candidates.length < allCandidates.length) {
+        log.warn({ candidates: candidates.length, total: allCandidates.length }, '[qadamVersionFetch] more qadam pins are missing than one call checks; the rest are left for the existing fallback')
     }
     const opened = await qadamVersionStoreAccess.open({ log })
     if (!opened.ok) {
@@ -77,14 +84,10 @@ async function fetchMissing({ pins, platformId, log }: FetchMissingPinsParams & 
     if (missing.length === 0) {
         return EMPTY_SUMMARY
     }
-    const attempted = missing.slice(0, MAX_FETCHES_PER_CALL)
-    if (attempted.length < missing.length) {
-        log.warn({ attempted: attempted.length, missing: missing.length }, '[qadamVersionFetch] more pins are missing than one call fetches; the rest are left for the existing fallback')
-    }
     const ledger = qadamSignatureLedger.open({ dir: opened.store.root, log })
     const deadline = Date.now() + FETCH_CALL_BUDGET_MS
     const outcomes: FetchOutcome[] = []
-    for (const batch of chunk(attempted, FETCH_CONCURRENCY)) {
+    for (const batch of chunk(missing, FETCH_CONCURRENCY)) {
         const batchResults = await Promise.all(batch.map(async (candidate): Promise<FetchOutcome> => ({
             candidate,
             result: await qadamVersionStoreFetch.fetchFromRegistry({ store: opened.store, ledger, name: candidate.name, version: candidate.version, log, deadline }),
@@ -98,7 +101,11 @@ function collectCandidates({ pins }: { pins: string[] }): QadamFetchCandidate[] 
     const byKey = new Map<string, QadamFetchCandidate>()
     for (const pin of pins) {
         const { name, version } = qadamPinUtil.splitPin({ pin })
-        if (!isOfficialQadamName(name)) {
+        // A step's `qadamName` is stored as a bare string with no length or pattern check of its own
+        // (`isOfficialQadamName` is only a scope-prefix test), so without this an arbitrary-length
+        // `@aiqadam/<junk>` would still reach `readVersionDocument` and spend a registry round trip —
+        // wasted, since `putTarball` would refuse the name anyway, but spent before that refusal.
+        if (!isOfficialQadamName(name) || name.length > NPM_PACKAGE_NAME_MAX_LENGTH || !NPM_PACKAGE_NAME_REGEX.test(name)) {
             continue
         }
         // `parse` accepts no `^`/`~` prefix, so a range pin fails it here rather than being resolved

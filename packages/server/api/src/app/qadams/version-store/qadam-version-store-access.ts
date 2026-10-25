@@ -18,7 +18,15 @@ export const qadamVersionStoreAccess = {
         if (cachedStore !== null) {
             return Promise.resolve({ ok: true, store: cachedStore })
         }
-        opening ??= openAndCache({ log })
+        // `.finally` chained onto the call, not a `try`/`finally` inside `openAndCache` itself: a
+        // rejection synchronous enough to land before `openAndCache`'s own first `await` (reading its
+        // config throws) would otherwise run an inner `finally`'s reset BEFORE this `??=` assignment
+        // even executes, so the assignment would immediately overwrite `opening` with the rejected
+        // promise anyway. `.finally` always defers to a microtask, even on an already-settled promise,
+        // so the reset here is guaranteed to run after the assignment below, for every failure shape.
+        opening ??= openAndCache({ log }).finally(() => {
+            opening = null
+        })
         return opening
     },
 }
@@ -27,19 +35,11 @@ let cachedStore: QadamVersionStore | null = null
 let opening: Promise<OpenResult> | null = null
 
 async function openAndCache({ log }: { log: FastifyBaseLogger }): Promise<OpenResult> {
-    // `finally`, not a line after the `await`: a rejection (`qadamVersionStore.open` itself never
-    // throws, but reading its own config does) would otherwise leave `opening` holding a settled,
-    // permanently-rejected promise that every later call reuses instead of retrying.
-    try {
-        const result = await qadamVersionStore.open({ root: system.getOrThrow(AppSystemProp.QADAM_VERSION_STORE_PATH), log })
-        if (result.ok) {
-            cachedStore = result.store
-        }
-        return result
+    const result = await qadamVersionStore.open({ root: system.getOrThrow(AppSystemProp.QADAM_VERSION_STORE_PATH), log })
+    if (result.ok) {
+        cachedStore = result.store
     }
-    finally {
-        opening = null
-    }
+    return result
 }
 
 type OpenResult = Awaited<ReturnType<typeof qadamVersionStore.open>>

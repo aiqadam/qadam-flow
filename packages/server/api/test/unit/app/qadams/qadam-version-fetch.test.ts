@@ -57,6 +57,16 @@ describe('qadamVersionFetch.fetchMissingPins', () => {
         expect(mockFetchFromRegistry).not.toHaveBeenCalled()
     })
 
+    it('ignores an official-scoped name that is not itself a well-formed npm package name', async () => {
+        const tooLong = `@aiqadam/${'a'.repeat(300)}`
+
+        const summary = await qadamVersionFetch(log).fetchMissingPins({ pins: [`${tooLong}@1.0.0`], platformId: undefined })
+
+        expect(summary).toEqual({ attempted: 0, fetched: 0, failed: 0 })
+        expect(mockIsPinAvailable).not.toHaveBeenCalled()
+        expect(mockFetchFromRegistry).not.toHaveBeenCalled()
+    })
+
     it('ignores a `-main.` snapshot pin: only the checked fallback moves it', async () => {
         const summary = await qadamVersionFetch(log).fetchMissingPins({ pins: ['@aiqadam/qadam-csv@1.0.0-main.5'], platformId: undefined })
 
@@ -121,14 +131,15 @@ describe('qadamVersionFetch.fetchMissingPins', () => {
         expect(log.warn).toHaveBeenCalled()
     })
 
-    it('caps how many missing pins one call fetches, leaving the rest for the existing fallback', async () => {
+    it('caps how many candidates one call even checks, before the expensive per-candidate availability lookup', async () => {
         const pins = Array.from({ length: 51 }, (_, i) => `@aiqadam/qadam-csv@0.${i}.0`)
 
         const summary = await qadamVersionFetch(log).fetchMissingPins({ pins, platformId: undefined })
 
         expect(summary).toEqual({ attempted: 50, fetched: 50, failed: 0 })
+        expect(mockIsPinAvailable).toHaveBeenCalledTimes(50)
         expect(mockFetchFromRegistry).toHaveBeenCalledTimes(50)
-        expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ attempted: 50, missing: 51 }), expect.any(String))
+        expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ candidates: 50, total: 51 }), expect.any(String))
     })
 
     it('shares one deadline across every candidate in the call, not a fresh one per candidate', async () => {
