@@ -609,11 +609,24 @@ function qadamPinIssue({ pin, resolvable, subject = 'step' }: { pin: string, res
 // like any other and the step runs exactly what it names — so it is not one of them. It is a fact
 // the two pin-reporting tools state the same way: `ap_flow_structure` labels the step line with
 // `label`, and `ap_validate_flow` reports `message` at its lowest severity, informational, which
-// never blocks publishing. "Update available" and the `follow` hold state are later slices.
+// never blocks publishing. "Update available" remains a later slice.
 function preReleaseBuildIssue({ pin }: { pin: string }): PreReleaseBuildIssue {
     return {
         label: 'PRE-RELEASE BUILD',
         message: `is pinned to ${wrapUntrustedValue(pin)}, a pre-release build from main that no released version names yet. It runs exactly that build.`,
+    }
+}
+
+// ADR-0004 "Following `main`": a person reverted an automatic move of this step, so neither the
+// snapshot follow pass nor a publish moves it again until its version changes. The wording stays
+// cause-neutral because a reverted publish-time move holds the step the same way. Like the
+// pre-release label this is a fact, not a fault — the step runs the version it names — so both
+// pin-reporting tools state it at their lowest severity and never block publishing. "Update
+// available" and the runs surface remain later slices.
+function followHoldIssue({ fromVersion, toVersion }: { fromVersion: string, toVersion: string }): FollowHoldIssue {
+    return {
+        label: 'FOLLOW HELD',
+        message: `is held at ${wrapUntrustedValue(fromVersion)} after a person reverted its automatic move to ${wrapUntrustedValue(toVersion)}. It will not be moved automatically again until its version changes.`,
     }
 }
 
@@ -657,6 +670,7 @@ export const mcpUtils = {
     extractOptionsArray,
     qadamPinIssue,
     preReleaseBuildIssue,
+    followHoldIssue,
     RESOLVE_TIMEOUT_MS,
     STEP_REFERENCE_HINT,
     LOOP_COLLECT_INPUT_SCHEMA,
@@ -670,7 +684,7 @@ export const mcpUtils = {
     BRANCH_CONDITIONS_INPUT_SCHEMA,
 }
 
-export type { PropSummary, QadamPinIssue, PreReleaseBuildIssue }
+export type { PropSummary, QadamPinIssue, PreReleaseBuildIssue, FollowHoldIssue }
 
 type ExtractQadamFlowErrorDetailParams = {
     err: unknown
@@ -740,6 +754,11 @@ type QadamPinIssue = {
 }
 
 type PreReleaseBuildIssue = {
+    label: string
+    message: string
+}
+
+type FollowHoldIssue = {
     label: string
     message: string
 }
