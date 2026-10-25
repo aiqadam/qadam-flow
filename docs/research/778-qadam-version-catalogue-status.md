@@ -1,7 +1,10 @@
 # #778 — qadam version catalogue: what's done, what's left, and why the rest isn't buildable yet
 
-**Status:** no code change in this pass — every remaining piece of #778 is either a maintainer
-decision or genuinely unreachable until a sibling issue lands first.
+**Status:** publishing and the `get()`/`list()` wiring remain blocked (see below). A follow-up
+commit on this branch implemented the one piece ADR-0003 requires that was still missing and was not
+blocked on anything: the catalogue address is now configurable (`AP_QADAM_VERSION_CATALOGUE_URL`,
+`AP_QADAM_VERSION_CATALOGUE_DIRECTORY`), so a mirror or a local snapshot can be read without a code
+change. That is the extent of the code in this pass.
 **Investigated:** 2026-10-25, on `origin/main` (`97a61649`).
 
 ## What the ticket asks for, today
@@ -112,12 +115,22 @@ requirements" failure mode the house conventions warn against, not a head start:
 re-verifying against #806's actual shape once that lands anyway (what "fetched but not yet
 installed" looks like from `get()`'s point of view isn't decided, and shouldn't be guessed at here).
 
-## What this pass did
+## What this work did
 
+- Implemented the configurable catalogue address ADR-0003 requires ("the URL is configurable for
+  mirroring"): `AP_QADAM_VERSION_CATALOGUE_URL` selects a mirror, and
+  `AP_QADAM_VERSION_CATALOGUE_DIRECTORY` selects a local copy and takes precedence. The resolver in
+  `snapshot-export-sources.ts` is the single binding both run-time consumers use, so flow export and
+  the pin-fallback seam pick it up together. Tests cover the directory override, its precedence over
+  the URL, and the default address.
 - Corrected [`.agents/features/qadam-version-catalogue.md`](../../.agents/features/qadam-version-catalogue.md):
   it previously said "nothing at run time calls the reader," which stopped being true once #853/#880
   and #808's first slice (#882) landed. Updated the open-questions section to match: question 3 is
   answered, questions 1 and 2 are open but not actionable yet, for the reasons above.
+- Corrected the operator-facing page,
+  [`docs/install/architecture/qadam-version-catalogue.mdx`](../../docs/install/architecture/qadam-version-catalogue.mdx),
+  which still said nothing reads the catalogue, and documented both variables in
+  [environment-variables](../../docs/install/configuration/environment-variables.mdx).
 - This doc, as the record of why no catalogue/store wiring or publish-workflow code went into this
   pass.
 - A comment on #778 itself, pointing at this doc, so the next person to pick up the issue (likely

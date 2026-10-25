@@ -1,5 +1,5 @@
 import { qadamVersionStoreReader } from '@aiqadam/server-utils'
-import { tryCatchSync } from '@aiqadam/shared'
+import { isNil, tryCatchSync } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { system } from '../../helper/system/system'
 import { AppSystemProp } from '../../helper/system/system-props'
@@ -78,8 +78,15 @@ async function openStore({ log }: { log: FastifyBaseLogger }): Promise<StoreRead
     return opened.reader
 }
 
+// A mirror on disk wins over the URL: it is what a `:slim` image's snapshot (#807) and an air-gapped
+// mirror use, where no request may leave the host at all.
 function defaultCatalogueSource(): QadamVersionCatalogueSource {
-    return qadamVersionCatalogueSource.http({ baseUrl: QADAM_VERSION_CATALOGUE_DEFAULT_URL })
+    const directory = system.get(AppSystemProp.QADAM_VERSION_CATALOGUE_DIRECTORY)
+    if (!isNil(directory) && directory.trim() !== '') {
+        return qadamVersionCatalogueSource.directory({ root: directory })
+    }
+    const url = system.get(AppSystemProp.QADAM_VERSION_CATALOGUE_URL)
+    return qadamVersionCatalogueSource.http({ baseUrl: isNil(url) || url.trim() === '' ? QADAM_VERSION_CATALOGUE_DEFAULT_URL : url })
 }
 
 type LoadedCatalogue = {

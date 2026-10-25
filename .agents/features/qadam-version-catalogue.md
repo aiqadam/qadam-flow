@@ -6,7 +6,9 @@ qadam**, each with the integrity of the artifact that was released and the versi
 `metadata.json` from #804. It gives an instance metadata for versions its image does not ship, which
 #806 (fetch), #807 (`:slim` carries a snapshot) and #808 (the unavailable-version fallback's props
 check) need. Published as static files on GitHub Pages under `https://flow.aiqadam.org/catalog/v1/`,
-appended to by releases, never rewritten; the URL is meant to be configurable for mirroring.
+appended to by releases, never rewritten. Where the API reads it is configurable, for mirroring
+(`AP_QADAM_VERSION_CATALOGUE_URL`) and for a local copy (`AP_QADAM_VERSION_CATALOGUE_DIRECTORY`, which
+wins over the URL — the knob a `:slim` snapshot in #807 will use).
 
 **Format and reader done; hosting not done.** The format, the release-time writer and the API
 reader exist, with tests (#830). Two consumers now call the reader at run time: flow export's
@@ -129,7 +131,10 @@ npm signature check is mandatory for them (ADR-0003 "Fetching").
   10 minutes, so a new version is visible within that.
 - **`:slim` snapshot (#807).** The image copies a `catalog/v1/` tree in and the API reads it with the
   `directory` source.
-- **Mirroring.** Copy the whole tree; any static server works.
+- **Mirroring.** Copy the whole tree; any static server works. The API reads the published URL by
+  default; `AP_QADAM_VERSION_CATALOGUE_URL` points it at a mirror and
+  `AP_QADAM_VERSION_CATALOGUE_DIRECTORY` at a local copy (which takes precedence and makes no
+  request). Both are read once when an export or a pin move builds its sources.
 
 ## Open questions
 - **Credentials to publish.** The release workflow of `aiqadam/qadam-flow` needs write access to

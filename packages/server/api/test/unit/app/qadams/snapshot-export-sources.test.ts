@@ -117,8 +117,58 @@ describe('an export through the real catalogue reader and the real store', () =>
     })
 })
 
+describe('the catalogue address is configurable', () => {
+    const DIRECTORY_ENV = `AP_${AppSystemProp.QADAM_VERSION_CATALOGUE_DIRECTORY}`
+    const URL_ENV = `AP_${AppSystemProp.QADAM_VERSION_CATALOGUE_URL}`
+    const originalDirectory = process.env[DIRECTORY_ENV]
+    const originalUrl = process.env[URL_ENV]
+
+    afterEach(() => {
+        restoreEnv({ key: DIRECTORY_ENV, value: originalDirectory })
+        restoreEnv({ key: URL_ENV, value: originalUrl })
+    })
+
+    it('reads a mirror on disk from AP_QADAM_VERSION_CATALOGUE_DIRECTORY without an injected source', async () => {
+        process.env[DIRECTORY_ENV] = catalogueDir
+        const http = vi.spyOn(qadamVersionCatalogueSource, 'http')
+        const sources = snapshotExportSources.forInstance({ log: logger })
+
+        expect((await sources.releases({ name: TABLES }))?.sort()).toEqual(['1.3.0', '1.3.1', '1.4.0'])
+        expect(http).not.toHaveBeenCalled()
+        http.mockRestore()
+    })
+
+    it('prefers the directory over the URL', async () => {
+        process.env[DIRECTORY_ENV] = catalogueDir
+        process.env[URL_ENV] = 'https://mirror.invalid/catalog/v1/'
+        const sources = snapshotExportSources.forInstance({ log: logger })
+
+        expect(await sources.releases({ name: TABLES })).toHaveLength(3)
+    })
+
+    it('reads the default address when neither is configured', () => {
+        delete process.env[DIRECTORY_ENV]
+        delete process.env[URL_ENV]
+        const http = vi.spyOn(qadamVersionCatalogueSource, 'http')
+
+        snapshotExportSources.forInstance({ log: logger })
+
+        expect(http).toHaveBeenCalledWith({ baseUrl: 'https://flow.aiqadam.org/catalog/v1/' })
+        http.mockRestore()
+    })
+})
+
 function forInstance(): ReturnType<typeof snapshotExportSources.forInstance> {
     return snapshotExportSources.forInstance({ log: logger, catalogueSource: qadamVersionCatalogueSource.directory({ root: catalogueDir }) })
+}
+
+function restoreEnv({ key, value }: { key: string, value: string | undefined }): void {
+    if (value === undefined) {
+        delete process.env[key]
+    }
+    else {
+        process.env[key] = value
+    }
 }
 
 function tablesMetadata({ version, incompatible = false }: { version: string, incompatible?: boolean }): Record<string, unknown> {
