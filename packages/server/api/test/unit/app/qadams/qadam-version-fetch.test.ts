@@ -71,11 +71,17 @@ describe('qadamVersionFetch.fetchMissingPins', () => {
         expect(mockFetchFromRegistry).not.toHaveBeenCalled()
     })
 
-    it('strips a caret/tilde range prefix down to the exact version it fetches', async () => {
-        await qadamVersionFetch(log).fetchMissingPins({ pins: ['@aiqadam/qadam-csv@^0.6.0'], platformId: undefined })
+    it('ignores a caret/tilde range pin: ADR-0005 resolves a range from the catalogue or the store, never the registry', async () => {
+        for (const pin of ['@aiqadam/qadam-csv@^0.6.0', '@aiqadam/qadam-csv@~0.6.0']) {
+            mockIsPinAvailable.mockClear()
+            mockFetchFromRegistry.mockClear()
 
-        expect(mockIsPinAvailable).toHaveBeenCalledWith({ name: '@aiqadam/qadam-csv', version: '0.6.0', platformId: undefined })
-        expect(mockFetchFromRegistry).toHaveBeenCalledWith(expect.objectContaining({ name: '@aiqadam/qadam-csv', version: '0.6.0' }))
+            const summary = await qadamVersionFetch(log).fetchMissingPins({ pins: [pin], platformId: undefined })
+
+            expect(summary).toEqual({ attempted: 0, fetched: 0, failed: 0 })
+            expect(mockIsPinAvailable).not.toHaveBeenCalled()
+            expect(mockFetchFromRegistry).not.toHaveBeenCalled()
+        }
     })
 
     it('deduplicates the same name@version pin before checking availability', async () => {
@@ -113,6 +119,27 @@ describe('qadamVersionFetch.fetchMissingPins', () => {
         expect(summary).toEqual({ attempted: 0, fetched: 0, failed: 0 })
         expect(mockIsPinAvailable).not.toHaveBeenCalled()
         expect(log.warn).toHaveBeenCalled()
+    })
+
+    it('caps how many missing pins one call fetches, leaving the rest for the existing fallback', async () => {
+        const pins = Array.from({ length: 51 }, (_, i) => `@aiqadam/qadam-csv@0.${i}.0`)
+
+        const summary = await qadamVersionFetch(log).fetchMissingPins({ pins, platformId: undefined })
+
+        expect(summary).toEqual({ attempted: 50, fetched: 50, failed: 0 })
+        expect(mockFetchFromRegistry).toHaveBeenCalledTimes(50)
+        expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ attempted: 50, missing: 51 }), expect.any(String))
+    })
+
+    it('shares one deadline across every candidate in the call, not a fresh one per candidate', async () => {
+        await qadamVersionFetch(log).fetchMissingPins({
+            pins: ['@aiqadam/qadam-csv@0.6.0', '@aiqadam/qadam-csv@0.5.0'],
+            platformId: undefined,
+        })
+
+        const deadlines = mockFetchFromRegistry.mock.calls.map((call) => call[0].deadline)
+        expect(deadlines).toHaveLength(2)
+        expect(deadlines[0]).toBe(deadlines[1])
     })
 
     it('summarizes a mix of fetched and failed outcomes across distinct missing pins', async () => {

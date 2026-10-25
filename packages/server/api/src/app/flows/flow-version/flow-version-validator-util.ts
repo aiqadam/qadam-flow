@@ -221,17 +221,17 @@ async function normalizeAndValidateImportedPieceSteps({ trigger, platformId, log
     platformId: PlatformId | undefined
     log: FastifyBaseLogger
 }): Promise<void> {
+    const steps = flowStructureUtil.getAllSteps(trigger)
     // ADR-0003 "Fetching": tried before validity is recomputed below, so a pin this lands in the
     // store resolves on the very same import rather than waiting for the next publish or boot. A
     // failure here is as advisory as everything else in this function — logged, never thrown.
-    const qadamSteps = qadamPinUtil.getQadamSteps({ trigger })
+    const qadamSteps = qadamPinUtil.filterQadamSteps({ steps })
     if (qadamSteps.length > 0) {
         const { error } = await tryCatch(() => qadamVersionFetch(log).fetchMissingStepPins({ steps: qadamSteps, platformId }))
         if (error !== null) {
             log.warn({ err: error }, '[flowVersionValidatorUtil] could not fetch the imported flow\'s missing qadam pins into the store; leaving them for the existing fallback')
         }
     }
-    const steps = flowStructureUtil.getAllSteps(trigger)
     await Promise.all(steps.map(async (step) => {
         if (step.type === FlowTriggerType.PIECE) {
             step.settings.qadamVersion = flowQadamUtil.getExactVersion(step.settings.qadamVersion)

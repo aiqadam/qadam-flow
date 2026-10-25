@@ -80,6 +80,10 @@ describe('qadamVersionStoreFetch.fetchFromRegistry', () => {
         const result = await qadamVersionStoreFetch.fetchFromRegistry({ store, ledger, name: QADAM.name, version: QADAM.version, log })
 
         expect(result.outcome).toBe(QadamVersionFetchOutcome.FETCHED)
+        // The entire security property of this file is this binding: a regression that fed the
+        // verifier the registry document's own (possibly spoofed) name/version, or a stale
+        // integrity, would still make every other assertion here pass.
+        expect(mockVerifying).toHaveBeenCalledWith(expect.objectContaining({ name: QADAM.name, version: QADAM.version, integrity: bundle.integrity }))
         const read = await store.read({ coordinates: QADAM })
         expect(read.status).toBe(QadamVersionReadStatus.PRESENT)
         if (read.status === QadamVersionReadStatus.PRESENT) {
@@ -162,6 +166,27 @@ describe('qadamVersionStoreFetch.fetchFromRegistry', () => {
         expect(result.outcome).toBe(QadamVersionFetchOutcome.MALFORMED_METADATA)
     })
 
+    it('refuses a tarball URL off the registry\'s own origin, even with a valid signature', async () => {
+        mockGet.mockResolvedValue({ data: registryDoc({ integrity: bundle.integrity, tarball: 'https://evil.example.com/qadam-csv-0.6.0.tgz' }) })
+
+        const { store, ledger } = await openStoreAndLedger()
+        const result = await qadamVersionStoreFetch.fetchFromRegistry({ store, ledger, name: QADAM.name, version: QADAM.version, log })
+
+        expect(result.outcome).toBe(QadamVersionFetchOutcome.MALFORMED_METADATA)
+        expect(mockGet).not.toHaveBeenCalledWith('https://evil.example.com/qadam-csv-0.6.0.tgz', expect.anything())
+        expect(await store.has({ coordinates: QADAM })).toBe(false)
+    })
+
+    it('refuses a non-https tarball URL, even on the registry\'s own host', async () => {
+        mockGet.mockResolvedValue({ data: registryDoc({ integrity: bundle.integrity, tarball: 'http://registry.npmjs.org/@aiqadam/qadam-csv/-/qadam-csv-0.6.0.tgz' }) })
+
+        const { store, ledger } = await openStoreAndLedger()
+        const result = await qadamVersionStoreFetch.fetchFromRegistry({ store, ledger, name: QADAM.name, version: QADAM.version, log })
+
+        expect(result.outcome).toBe(QadamVersionFetchOutcome.MALFORMED_METADATA)
+        expect(await store.has({ coordinates: QADAM })).toBe(false)
+    })
+
     it('reports a failed tarball download without storing anything', async () => {
         mockGet.mockImplementation(async (_url: string, config?: { responseType?: string }) => {
             if (config?.responseType === 'arraybuffer') {
@@ -193,6 +218,33 @@ describe('qadamVersionStoreFetch.fetchFromRegistry', () => {
 
         expect(result.outcome).toBe(QadamVersionFetchOutcome.STORE_REFUSED)
         expect(await store.has({ coordinates: QADAM })).toBe(false)
+    })
+
+    it('treats a store failure that throws (instead of returning REFUSED) as STORE_REFUSED, never as an uncaught rejection', async () => {
+        mockGet.mockImplementation(async (_url: string, config?: { responseType?: string }) => config?.responseType === 'arraybuffer'
+            ? { data: bundle.data }
+            : { data: registryDoc({ integrity: bundle.integrity, tarball: TARBALL_URL }) })
+
+        const { store, ledger } = await openStoreAndLedger()
+        store.putTarball = vi.fn().mockRejectedValue(new Error('the version directory stayed occupied'))
+
+        const result = await qadamVersionStoreFetch.fetchFromRegistry({ store, ledger, name: QADAM.name, version: QADAM.version, log })
+
+        expect(result.outcome).toBe(QadamVersionFetchOutcome.STORE_REFUSED)
+    })
+
+    it('does not let a failed staging cleanup replace an otherwise successful fetch\'s result', async () => {
+        mockGet.mockImplementation(async (_url: string, config?: { responseType?: string }) => config?.responseType === 'arraybuffer'
+            ? { data: bundle.data }
+            : { data: registryDoc({ integrity: bundle.integrity, tarball: TARBALL_URL }) })
+
+        const { store, ledger } = await openStoreAndLedger()
+        store.discardStaging = vi.fn().mockRejectedValue(new Error('not a staging directory of this store'))
+
+        const result = await qadamVersionStoreFetch.fetchFromRegistry({ store, ledger, name: QADAM.name, version: QADAM.version, log })
+
+        expect(result.outcome).toBe(QadamVersionFetchOutcome.FETCHED)
+        expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ qadam: `${QADAM.name}@${QADAM.version}` }), expect.stringContaining('could not discard'))
     })
 
     it('answers EXISTS as fetched when another writer stored the same version first, without re-downloading twice', async () => {

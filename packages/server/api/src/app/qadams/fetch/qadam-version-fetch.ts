@@ -1,5 +1,5 @@
 import { qadamSignatureLedger, QadamVersionFetchOutcome, qadamVersionStoreFetch } from '@aiqadam/server-utils'
-import { ApEnvironment, chunk, flowQadamUtil, isNil, isOfficialQadamName, PlatformId, qadamVersionParser, tryCatch } from '@aiqadam/shared'
+import { ApEnvironment, chunk, isNil, isOfficialQadamName, PlatformId, qadamVersionParser, tryCatch } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { system } from '../../helper/system/system'
 import { AppSystemProp } from '../../helper/system/system-props'
@@ -13,10 +13,12 @@ import { qadamVersionStoreAccess } from '../version-store/qadam-version-store-ac
 // or the store itself). A pin this leaves alone is not a failure — it is left for the existing
 // unavailable-version fallback (#808) to decide, the same as before this module existed.
 //
-// Never asked of the network, by design (ADR-0005, and the maintainer's own scoping comment on
-// #806): a range pin (`^`/`~` — it resolves against what the instance already holds, never the
-// newest the registry has), a `-main.` snapshot pin (moved only by the checked fallback, #808/
-// ADR-0004), and a custom (non-`@aiqadam/`) pin (#478's registry is not built yet).
+// Never asked of the network, by design (ADR-0005 §2: "any caller that turns a range into a version
+// takes that version from the catalogue or the store, never by asking a registry"): a range pin
+// (`^`/`~`, left at the pin's own version string so `qadamVersionParser.parse` — which accepts no
+// prefix — reads it as unparseable rather than as its floor), a `-main.` snapshot pin (moved only by
+// the checked fallback, #808/ADR-0004), and a custom (non-`@aiqadam/`) pin (#478's registry is not
+// built yet).
 //
 // Short-circuits in the TESTING environment the same way `flowTriggerSideEffect` does for its own
 // external call: there is no registry to fetch from in an integration test, and the module-level
@@ -43,6 +45,19 @@ export const qadamVersionFetch = (log: FastifyBaseLogger): QadamVersionFetch => 
 // registry at once.
 const FETCH_CONCURRENCY = 4
 
+// Caps registry round trips per publish/import/start-up call, independent of how many pins a flow or
+// a platform names: an `IMPORT_FLOW` trigger tree is also this codebase's internal "copy a published
+// flow" primitive, so an attacker (or an accidental thousand-step import) pinning thousands of
+// distinct missing versions must not turn into thousands of outbound requests from one call. A pin
+// past the cap is left exactly as before this module existed, for the existing fallback (#808).
+const MAX_FETCHES_PER_CALL = 50
+// One deadline for the WHOLE call, computed once and handed to every `fetchFromRegistry` — not a
+// fresh one per candidate, which would let the candidate count alone decide how long a synchronous
+// publish/import request stays open (`candidates.length / FETCH_CONCURRENCY` × that function's own
+// per-call budget). A pin still unattempted when this deadline passes fails fast (each remaining
+// call's own `remaining <= 0` check) and is left for the existing fallback, the same as a cap miss.
+const FETCH_CALL_BUDGET_MS = 60_000
+
 const EMPTY_SUMMARY: QadamVersionFetchSummary = { attempted: 0, fetched: 0, failed: 0 }
 
 async function fetchMissing({ pins, platformId, log }: FetchMissingPinsParams & { log: FastifyBaseLogger }): Promise<QadamVersionFetchSummary> {
@@ -62,12 +77,17 @@ async function fetchMissing({ pins, platformId, log }: FetchMissingPinsParams & 
     if (missing.length === 0) {
         return EMPTY_SUMMARY
     }
+    const attempted = missing.slice(0, MAX_FETCHES_PER_CALL)
+    if (attempted.length < missing.length) {
+        log.warn({ attempted: attempted.length, missing: missing.length }, '[qadamVersionFetch] more pins are missing than one call fetches; the rest are left for the existing fallback')
+    }
     const ledger = qadamSignatureLedger.open({ dir: opened.store.root, log })
+    const deadline = Date.now() + FETCH_CALL_BUDGET_MS
     const outcomes: FetchOutcome[] = []
-    for (const batch of chunk(missing, FETCH_CONCURRENCY)) {
+    for (const batch of chunk(attempted, FETCH_CONCURRENCY)) {
         const batchResults = await Promise.all(batch.map(async (candidate): Promise<FetchOutcome> => ({
             candidate,
-            result: await qadamVersionStoreFetch.fetchFromRegistry({ store: opened.store, ledger, name: candidate.name, version: candidate.version, log }),
+            result: await qadamVersionStoreFetch.fetchFromRegistry({ store: opened.store, ledger, name: candidate.name, version: candidate.version, log, deadline }),
         })))
         outcomes.push(...batchResults)
     }
@@ -77,11 +97,12 @@ async function fetchMissing({ pins, platformId, log }: FetchMissingPinsParams & 
 function collectCandidates({ pins }: { pins: string[] }): QadamFetchCandidate[] {
     const byKey = new Map<string, QadamFetchCandidate>()
     for (const pin of pins) {
-        const { name, version: rawVersion } = qadamPinUtil.splitPin({ pin })
+        const { name, version } = qadamPinUtil.splitPin({ pin })
         if (!isOfficialQadamName(name)) {
             continue
         }
-        const version = flowQadamUtil.getExactVersion(rawVersion)
+        // `parse` accepts no `^`/`~` prefix, so a range pin fails it here rather than being resolved
+        // to its floor and fetched — ADR-0005 §2 reserves resolving a range for the catalogue/store.
         const parsed = qadamVersionParser.parse({ version })
         if (isNil(parsed) || parsed.snapshot !== null) {
             continue

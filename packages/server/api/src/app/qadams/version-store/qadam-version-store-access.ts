@@ -27,12 +27,19 @@ let cachedStore: QadamVersionStore | null = null
 let opening: Promise<OpenResult> | null = null
 
 async function openAndCache({ log }: { log: FastifyBaseLogger }): Promise<OpenResult> {
-    const result = await qadamVersionStore.open({ root: system.getOrThrow(AppSystemProp.QADAM_VERSION_STORE_PATH), log })
-    opening = null
-    if (result.ok) {
-        cachedStore = result.store
+    // `finally`, not a line after the `await`: a rejection (`qadamVersionStore.open` itself never
+    // throws, but reading its own config does) would otherwise leave `opening` holding a settled,
+    // permanently-rejected promise that every later call reuses instead of retrying.
+    try {
+        const result = await qadamVersionStore.open({ root: system.getOrThrow(AppSystemProp.QADAM_VERSION_STORE_PATH), log })
+        if (result.ok) {
+            cachedStore = result.store
+        }
+        return result
     }
-    return result
+    finally {
+        opening = null
+    }
 }
 
 type OpenResult = Awaited<ReturnType<typeof qadamVersionStore.open>>

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { isNil, tryCatch } from '@aiqadam/shared'
+import { isNil, tryCatch, tryCatchSync } from '@aiqadam/shared'
 import { npmPackageSignature, NpmPackageSignature } from '../npm-package-signature'
 import { safeHttp } from '../safe-http'
 import { QadamSignatureLedger } from './qadam-signature-ledger'
@@ -66,13 +66,22 @@ export const qadamVersionStoreFetch = {
         if (isNil(dist)) {
             return { outcome: QadamVersionFetchOutcome.MALFORMED_METADATA, reason: 'the version document carries no usable dist.integrity/dist.tarball' }
         }
+        // The signature binds `<name>@<version>:<dist.integrity>`, not `dist.tarball` — a rewriting
+        // proxy or a poisoned mirror could replay a genuine signature while pointing the tarball at
+        // its own host. The integrity check after download still refuses mismatched bytes, but this
+        // keeps the download itself from ever leaving the registry it was asked to fetch from.
+        if (!isTrustedTarballUrl({ tarball: dist.tarball, registryUrl })) {
+            return { outcome: QadamVersionFetchOutcome.MALFORMED_METADATA, reason: 'dist.tarball is not an https URL on the configured registry\'s own origin' }
+        }
         // Always the pinned-key production verifier singleton — never a parameter this function
         // takes (see `npm-package-signature.ts`'s header on why pinning is the whole point). This
         // package's own tests mock the module instead of being handed a seam a production caller
         // could just as easily misuse.
+        // `verifying` applies `pinned` itself, so `signatures` is handed to it directly rather than
+        // pre-filtered here — filtering twice would cost nothing but a reader has no way to tell that
+        // apart from a second, narrower filter that actually does something.
         const signatures = npmPackageSignature.readSignatures({ versionDocument: metadata.data })
-        const pinned = npmPackageSignature.pinned({ signatures })
-        const verifying = npmPackageSignature.verifying({ name, version, integrity: dist.integrity, signatures: pinned })
+        const verifying = npmPackageSignature.verifying({ name, version, integrity: dist.integrity, signatures })
         if (verifying.length === 0) {
             return { outcome: QadamVersionFetchOutcome.UNSIGNED, reason: signatures.length === 0 ? 'the registry returned no publisher signature for it' : 'no signature from a key this image pins verifies the name, version and integrity together' }
         }
@@ -81,22 +90,40 @@ export const qadamVersionStoreFetch = {
             return { outcome: QadamVersionFetchOutcome.DOWNLOAD_FAILED, reason: downloaded.reason }
         }
         try {
-            const put = await store.putTarball({
+            // `putTarball` throws on a handful of store-internal failures (a damaged slot that
+            // will not yield after its retries, a rename across a cross-device boundary) rather
+            // than returning `REFUSED` for them — exactly the kind of failure this function's own
+            // "never throws" contract exists to absorb, so it is not left to escape uncaught.
+            const put = await tryCatch(() => store.putTarball({
                 coordinates: { platformId: null, name, version },
                 tarballPath: downloaded.tarballPath,
                 expectedIntegrity: dist.integrity,
                 origin: { kind: QadamVersionOrigin.REGISTRY },
-            })
-            if (put.status === QadamVersionPutStatus.REFUSED) {
-                return { outcome: QadamVersionFetchOutcome.STORE_REFUSED, reason: put.reason }
+            }))
+            if (put.error !== null) {
+                return { outcome: QadamVersionFetchOutcome.STORE_REFUSED, reason: `the store could not take the downloaded tarball (${describeError({ error: put.error })})` }
+            }
+            if (put.data.status === QadamVersionPutStatus.REFUSED) {
+                return { outcome: QadamVersionFetchOutcome.STORE_REFUSED, reason: put.data.reason }
             }
             await persistProof({ ledger, name, version, integrity: dist.integrity, signatures: verifying, log })
-            return { outcome: QadamVersionFetchOutcome.FETCHED, version: put.version }
+            return { outcome: QadamVersionFetchOutcome.FETCHED, version: put.data.version }
         }
         finally {
-            await store.discardStaging({ stagingDir: downloaded.stagingDir })
+            // Never let a cleanup failure replace the result the `try` block just computed — JS
+            // `finally` semantics mean a throw here would silently discard it.
+            await discardStagingQuietly({ store, stagingDir: downloaded.stagingDir, qadam: `${name}@${version}`, log })
         }
     },
+}
+
+// Wraps `store.discardStaging`, which can throw (a staging directory outside the store's own root,
+// a filesystem error), so cleanup never becomes the failure a caller sees instead of the real one.
+async function discardStagingQuietly({ store, stagingDir, qadam, log }: { store: QadamVersionStore, stagingDir: string, qadam: string, log: FetchLogger }): Promise<void> {
+    const discarded = await tryCatch(() => store.discardStaging({ stagingDir }))
+    if (discarded.error !== null) {
+        log.warn({ qadam, error: describeError({ error: discarded.error }) }, '[qadamVersionStoreFetch] could not discard the fetch\'s staging directory; it is left for the store\'s own stale-leftover sweep')
+    }
 }
 
 // One registry read and one tarball download, each with their own retry; a per-version pass is not
@@ -142,10 +169,15 @@ async function readVersionDocument({ name, version, registryUrl, deadline, log }
 // otherwise turn its atomic `rename` into a copy. The caller discards this directory once
 // `putTarball` has read the file out of it.
 async function downloadTarball({ store, url, deadline, log, qadam }: DownloadTarballParams): Promise<DownloadResult> {
-    const stagingDir = await store.createStaging()
+    const staging = await tryCatch(() => store.createStaging())
+    if (staging.error !== null) {
+        log.warn({ qadam, error: describeError({ error: staging.error }) }, '[qadamVersionStoreFetch] could not create a staging directory for the download')
+        return { ok: false, reason: 'could not create a staging directory for the download' }
+    }
+    const stagingDir = staging.data
     const remaining = deadline - Date.now()
     if (remaining <= 0) {
-        await store.discardStaging({ stagingDir })
+        await discardStagingQuietly({ store, stagingDir, qadam, log })
         return { ok: false, reason: 'no time budget left to download the tarball' }
     }
     const { data: response, error } = await tryCatch(async () => safeHttp.retryingAxios.get<ArrayBuffer>(url, {
@@ -156,16 +188,28 @@ async function downloadTarball({ store, url, deadline, log, qadam }: DownloadTar
     }))
     if (isNil(response) || !isNil(error)) {
         log.warn({ qadam, url, error: describeError({ error }) }, '[qadamVersionStoreFetch] could not download the tarball')
-        await store.discardStaging({ stagingDir })
+        await discardStagingQuietly({ store, stagingDir, qadam, log })
         return { ok: false, reason: 'could not download the tarball' }
     }
     const tarballPath = path.join(stagingDir, `${randomUUID()}.tgz`)
     const written = await tryCatch(() => writeFile(tarballPath, Buffer.from(response.data)))
     if (written.error !== null) {
-        await store.discardStaging({ stagingDir })
+        await discardStagingQuietly({ store, stagingDir, qadam, log })
         return { ok: false, reason: `the downloaded tarball could not be written to disk (${qadamVersionStoreFs.describeErrorCode({ error: written.error })})` }
     }
     return { ok: true, tarballPath, stagingDir }
+}
+
+// `https:` and the registry's own origin only — same-origin because `safeHttp` already keeps the
+// request off a private/loopback/metadata address regardless of host, so this is about not trusting
+// a tarball URL the signed version document did not actually need to name a different host.
+function isTrustedTarballUrl({ tarball, registryUrl }: { tarball: string, registryUrl: string }): boolean {
+    const parsedTarball = tryCatchSync(() => new URL(tarball))
+    const parsedRegistry = tryCatchSync(() => new URL(registryUrl))
+    if (parsedTarball.error !== null || parsedRegistry.error !== null) {
+        return false
+    }
+    return parsedTarball.data.protocol === 'https:' && parsedTarball.data.origin === parsedRegistry.data.origin
 }
 
 async function persistProof({ ledger, name, version, integrity, signatures, log }: PersistProofParams): Promise<void> {

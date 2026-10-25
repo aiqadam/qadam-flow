@@ -1,4 +1,4 @@
-import { FlowVersion, FlowVersionState, isNil, ProjectId, tryCatch } from '@aiqadam/shared'
+import { chunk, FlowVersionState, isNil, ProjectId, tryCatch } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { In } from 'typeorm'
 import { distributedLock } from '../../database/redis-connections'
@@ -6,7 +6,7 @@ import { flowRepo } from '../../flows/flow/flow.repo'
 import { flowVersionRepo } from '../../flows/flow-version/flow-version.service'
 import { platformService } from '../../platform/platform.service'
 import { projectService } from '../../project/project-service'
-import { qadamPinUtil } from '../metadata/qadam-pin-util'
+import { QadamPinnedStep, qadamPinUtil } from '../metadata/qadam-pin-util'
 import { qadamVersionFetch } from './qadam-version-fetch'
 
 // ADR-0003 "Fetching", the start-up half: every pinned qadam version this instance's flows name,
@@ -41,6 +41,13 @@ const FETCH_LOCK_KEY = 'qadam-version-fetch-startup'
 // Waiting replicas find the work done when they get the lock, so this only bounds a stuck holder.
 const FETCH_LOCK_TIMEOUT_SECONDS = 15 * 60
 
+// A platform's projects are read concurrently (each read is independent until the results are
+// aggregated below) but in bounded batches, not all at once: an unbounded `Promise.all` here would
+// open as many connections as a platform has projects, and hold every one of their flow versions'
+// full trigger JSON in memory at the same time, at boot, alongside `qadamVersionStoreSeeding` and
+// `qadamSnapshotFollow`'s own passes.
+const PROJECT_READ_CONCURRENCY = 10
+
 async function fetchAll({ log }: { log: FastifyBaseLogger }): Promise<void> {
     const startedAt = Date.now()
     const report = await distributedLock(log).runExclusive({
@@ -64,16 +71,18 @@ async function fetchEveryPlatform({ log }: { log: FastifyBaseLogger }): Promise<
             continue
         }
         const pins = new Set<string>()
-        for (const projectId of projectIds) {
-            const { data: versions, error: versionsError } = await tryCatch(() => findQadamFlowVersions({ projectId }))
-            if (versionsError !== null) {
-                log.warn({ err: versionsError, platformId: platform.id, projectId }, '[qadamVersionFetchStartup] could not read a project\'s flow versions; skipping it this boot')
-                failed += 1
-                continue
-            }
-            flows += versions.length
-            versions.forEach((flowVersion) => {
-                qadamPinUtil.collectDistinctPins({ steps: qadamPinUtil.getQadamSteps({ trigger: flowVersion.trigger }) }).forEach((pin) => pins.add(pin))
+        for (const projectIdBatch of chunk(projectIds, PROJECT_READ_CONCURRENCY)) {
+            const projectResults = await Promise.all(projectIdBatch.map((projectId) => tryCatch(() => findQadamFlowVersions({ projectId }))))
+            projectResults.forEach(({ data: stepsByVersion, error: versionsError }, index) => {
+                if (versionsError !== null) {
+                    log.warn({ err: versionsError, platformId: platform.id, projectId: projectIdBatch[index] }, '[qadamVersionFetchStartup] could not read a project\'s flow versions; skipping it this boot')
+                    failed += 1
+                    return
+                }
+                flows += stepsByVersion.length
+                stepsByVersion.forEach((steps) => {
+                    qadamPinUtil.collectDistinctPins({ steps }).forEach((pin) => pins.add(pin))
+                })
             })
         }
         if (pins.size === 0) {
@@ -86,11 +95,14 @@ async function fetchEveryPlatform({ log }: { log: FastifyBaseLogger }): Promise<
             continue
         }
         fetched += summary.fetched
+        failed += summary.failed
     }
     return { platforms: platforms.length, flows, fetched, failed }
 }
 
-async function findQadamFlowVersions({ projectId }: { projectId: ProjectId }): Promise<FlowVersion[]> {
+// One entry per flow version that pins a qadam, holding the steps already walked out of its
+// trigger tree — the caller collects pins off them without walking that tree a second time.
+async function findQadamFlowVersions({ projectId }: { projectId: ProjectId }): Promise<QadamPinnedStep[][]> {
     const flows = await flowRepo().find({ where: { projectId } })
     const flowIds = flows.map((flow) => flow.id)
     if (flowIds.length === 0) {
@@ -99,7 +111,9 @@ async function findQadamFlowVersions({ projectId }: { projectId: ProjectId }): P
     const publishedVersionIds = flows.flatMap((flow) => isNil(flow.publishedVersionId) ? [] : [flow.publishedVersionId])
     const drafts = await flowVersionRepo().find({ where: { flowId: In(flowIds), state: FlowVersionState.DRAFT } })
     const published = publishedVersionIds.length === 0 ? [] : await flowVersionRepo().find({ where: { id: In(publishedVersionIds) } })
-    return [...drafts, ...published].filter((version) => qadamPinUtil.getQadamSteps({ trigger: version.trigger }).length > 0)
+    return [...drafts, ...published]
+        .map((version) => qadamPinUtil.getQadamSteps({ trigger: version.trigger }))
+        .filter((steps) => steps.length > 0)
 }
 
 type FetchStartupReport = {
