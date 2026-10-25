@@ -7,7 +7,7 @@ import {
     PackageType,
     QadamType,
 } from '@aiqadam/shared'
-import type { FlowVersion } from '@aiqadam/shared'
+import type { FlowVersion, QadamPackage } from '@aiqadam/shared'
 import { extractQadamPackages, extractCodeArtifacts, provisionFlowPieces } from '../../../../src/lib/execute/utils/flow-helpers'
 import { PieceNotFoundError } from '../../../../src/lib/cache/qadams/qadam-cache'
 
@@ -265,6 +265,36 @@ describe('extractQadamPackages — agent tools', () => {
         expect(mockGetPiece).toHaveBeenCalledTimes(22)
         expect(maxInFlight).toBeLessThanOrEqual(8)
         expect(maxInFlight).toBeGreaterThan(1)
+    })
+
+    // The first failure used to reject at once and return while a sibling lookup was still
+    // writing the on-disk qadam cache; the caller's cleanup then raced that write (ENOTEMPTY).
+    // This pins the wait, not the failure count: the old code settled before the release below.
+    it('waits for an in-flight lookup before rethrowing the first failure', async () => {
+        let releaseSlowLookup: (qadamPackage: QadamPackage) => void = () => {}
+        const slowLookup = new Promise<QadamPackage>((resolve) => {
+            releaseSlowLookup = resolve
+        })
+        mockGetPiece.mockImplementation(({ qadamName, qadamVersion }: { qadamName: string, qadamVersion: string }) => {
+            if (qadamName === '@aiqadam/qadam-gmail') {
+                return Promise.reject(new PieceNotFoundError(qadamName, qadamVersion))
+            }
+            return slowLookup
+        })
+        const fv = makeFlowVersion({
+            ...qadamTrigger,
+            nextAction: { ...qadamAction },
+        })
+
+        const onSettled = vi.fn()
+        const provisioning = extractQadamPackages({ flowVersion: fv, platformId: mockPlatformId, log: mockLog, apiClient: mockApiClient })
+        provisioning.catch(onSettled)
+
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        expect(onSettled).not.toHaveBeenCalled()
+
+        releaseSlowLookup({ qadamName: '@aiqadam/qadam-slack', qadamVersion: '0.2.0', packageType: PackageType.REGISTRY, qadamType: QadamType.OFFICIAL })
+        await expect(provisioning).rejects.toBeInstanceOf(PieceNotFoundError)
     })
 
     it('ignores tools that name no qadam, malformed entries and a run-time value', async () => {

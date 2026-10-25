@@ -140,6 +140,7 @@ async function mapWithConcurrency<T, R>({ items, limit, fn }: {
     // The first failure is the provisioning result; there is nothing left worth fetching, so the
     // other workers stop pulling instead of hitting the API for the rest of the flow (#879).
     let stopped = false
+    let failed = false
     let firstError: unknown
     const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
         while (!stopped && nextIndex < items.length) {
@@ -149,7 +150,10 @@ async function mapWithConcurrency<T, R>({ items, limit, fn }: {
             }
             catch (error) {
                 stopped = true
-                firstError ??= error
+                if (!failed) {
+                    failed = true
+                    firstError = error
+                }
             }
         }
     })
@@ -158,7 +162,7 @@ async function mapWithConcurrency<T, R>({ items, limit, fn }: {
     // to keep running after this function returned, racing the caller's own cleanup of that same
     // cache entry (ENOTEMPTY in flow-helpers-malformed-tool-pin.test.ts, flaky under CI load).
     await Promise.all(workers)
-    if (firstError !== undefined) {
+    if (failed) {
         throw firstError
     }
     return results
