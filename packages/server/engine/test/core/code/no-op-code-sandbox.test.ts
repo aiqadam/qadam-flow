@@ -1,6 +1,8 @@
+import { ChildProcess, spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { availableParallelism, tmpdir } from 'node:os'
 import path from 'node:path'
+import { onTestFinished } from 'vitest'
 import { noOpCodeSandbox } from '../../../src/lib/core/code/no-op-code-sandbox'
 
 const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'no-op-code-sandbox-'))
@@ -93,6 +95,61 @@ const slowAndClean = writeFixture({
 const forgeTerminal = writeFixture({
     name: 'forge_terminal',
     source: 'module.exports = { code: async () => { console.log("PID=" + process.pid); process.send({ id: 0, success: true, terminal: true }); setInterval(() => {}, 50); return { pid: process.pid } } }',
+})
+
+const logsThenFails = writeFixture({
+    name: 'logs_then_fails',
+    source: `module.exports = { code: async () => {
+        for (let i = 0; i < 400; i++) { console.log('OUT-LINE-' + i) }
+        for (let i = 0; i < 400; i++) { console.error('ERR-LINE-' + i) }
+        throw new Error('boom')
+    } }`,
+})
+
+// `process.stdout.write` accepts a Uint8Array; it must be captured as text, not as its
+// comma-separated byte values (which is what `Uint8Array#toString()` returns).
+const writesBytesThenFails = writeFixture({
+    name: 'writes_bytes_then_fails',
+    source: `module.exports = { code: async () => {
+        process.stdout.write(new TextEncoder().encode('BYTES-STDOUT'))
+        process.stderr.write(new TextEncoder().encode('BYTES-STDERR'))
+        throw new Error('bytes boom')
+    } }`,
+})
+
+const writesOverCapThenFails = writeFixture({
+    name: 'writes_over_cap_then_fails',
+    source: `module.exports = { code: async () => {
+        process.stdout.write('STDOUT-HEAD-MARKER\\n')
+        process.stderr.write('STDERR-HEAD-MARKER\\n')
+        for (let i = 0; i < 4000; i++) process.stdout.write('A'.repeat(100))
+        for (let i = 0; i < 4000; i++) process.stderr.write('B'.repeat(100))
+        process.stdout.write('\\nSTDOUT-TAIL-MARKER')
+        process.stderr.write('\\nSTDERR-TAIL-MARKER')
+        throw new Error('cap boom')
+    } }`,
+})
+
+// Exercises the byte path's own bounded tail: a single write larger than the code-unit
+// budget must be sliced before decoding, and the marker after it must still survive.
+const writesManyBytesThenFails = writeFixture({
+    name: 'writes_many_bytes_then_fails',
+    source: `module.exports = { code: async () => {
+        process.stdout.write(new Uint8Array(600 * 1024).fill(88))
+        process.stdout.write(new TextEncoder().encode('\\nBYTES-TAIL-MARKER'))
+        throw new Error('many bytes boom')
+    } }`,
+})
+
+// Tenant code can forge `process.send`; a malformed frame must be ignored rather than
+// crashing the host (the pre-fix code threw on a non-string stdout), and the real verdict
+// must still be delivered afterwards.
+const forgesMalformedMessages = writeFixture({
+    name: 'forges_malformed_messages',
+    source: `module.exports = { code: async () => {
+        for (let id = 1; id <= 1000; id++) process.send({ id, success: false, error: 42, stdout: {}, stderr: [] })
+        throw new Error('real boom')
+    } }`,
 })
 
 function readPid(value: unknown): number {
@@ -242,6 +299,79 @@ describe('noOpCodeSandbox', () => {
 
         await noOpCodeSandbox.shutdown()
         expect(await waitUntilGone(forgedPid)).toBe(true)
+    })
+
+    // #609: the host used to recover a failing step's stdout/stderr from 'data' events on
+    // the runner's stdio pipes. A pipe write is asynchronous on Linux, so under enough CPU
+    // contention its 'data' event can reach the host after the IPC 'message' carrying the
+    // verdict already did — at which point the host had already stopped accumulating into
+    // `execution.stdout`/`stderr`, silently dropping the tail of the output. 12 busy loops
+    // reproduced this on 144 of 150 iterations before the fix on the machine this test was
+    // written on; the fix captures output inside the runner, synchronously at the `write`
+    // call, so it travels in the same IPC message as the verdict and the host no longer
+    // depends on pipe delivery order at all. The loop count scales with the core count so
+    // the same oversubscription margin holds on a CI runner with more cores, where a fixed
+    // small count would stop contending at all; it is capped at 64 to bound the number of
+    // busy processes, so on a machine with more than 32 cores the margin drops below 2x
+    // (CI's runner is 4 cores → 12 loops, the configuration the repro was measured in).
+    it('should keep the full stdout and stderr in a failure message under CPU contention (#609)', async () => {
+        const busyLoopCount = Math.min(64, Math.max(12, availableParallelism() * 2))
+        const busyLoops: ChildProcess[] = Array.from(
+            { length: busyLoopCount },
+            () => spawn(process.execPath, ['-e', 'while(true){}'], { stdio: 'ignore' }),
+        )
+        // `onTestFinished` (not a bare `finally`) so a timed-out test still reaps these —
+        // a `finally` inside the test body never runs once vitest has stopped awaiting it.
+        onTestFinished(() => {
+            busyLoops.forEach((loop) => loop.kill('SIGKILL'))
+        })
+
+        for (let i = 0; i < 30; i++) {
+            const error = await noOpCodeSandbox.runCodeModule({ codeFilePath: logsThenFails, inputs: {} })
+                .then(() => null, (reason: Error) => reason)
+
+            expect(error?.message).toContain('OUT-LINE-399')
+            expect(error?.message).toContain('ERR-LINE-399')
+        }
+    }, 30000)
+
+    it('should capture a Uint8Array write as text, not as its byte values', async () => {
+        const error = await noOpCodeSandbox.runCodeModule({ codeFilePath: writesBytesThenFails, inputs: {} })
+            .then(() => null, (reason: Error) => reason)
+
+        expect(error?.message).toContain('BYTES-STDOUT')
+        expect(error?.message).toContain('BYTES-STDERR')
+        expect(error?.message).not.toContain('66,89,84,69,83')
+    })
+
+    it('should bound a failure message that logs far more than the capture cap, keeping the tail', async () => {
+        const error = await noOpCodeSandbox.runCodeModule({ codeFilePath: writesOverCapThenFails, inputs: {} })
+            .then(() => null, (reason: Error) => reason)
+
+        expect(error?.message).toContain('cap boom')
+        // The lines nearest the failure are the diagnostics worth keeping.
+        expect(error?.message).toContain('STDOUT-TAIL-MARKER')
+        expect(error?.message).toContain('STDERR-TAIL-MARKER')
+        expect(error?.message).not.toContain('STDOUT-HEAD-MARKER')
+        expect(error?.message).not.toContain('STDERR-HEAD-MARKER')
+        // Two streams capped at 128 K code units each, plus the error and headers.
+        expect(error?.message.length).toBeLessThan(300 * 1024)
+    })
+
+    it('should keep the tail of a single oversized Uint8Array write', async () => {
+        const error = await noOpCodeSandbox.runCodeModule({ codeFilePath: writesManyBytesThenFails, inputs: {} })
+            .then(() => null, (reason: Error) => reason)
+
+        expect(error?.message).toContain('many bytes boom')
+        expect(error?.message).toContain('BYTES-TAIL-MARKER')
+        expect(error?.message.length).toBeLessThan(300 * 1024)
+    })
+
+    it('should ignore forged malformed runner messages and still deliver the real verdict', async () => {
+        const error = await noOpCodeSandbox.runCodeModule({ codeFilePath: forgesMalformedMessages, inputs: {} })
+            .then(() => null, (reason: Error) => reason)
+
+        expect(error?.message).toContain('real boom')
     })
 
     it('should tolerate shutdown when no execution has ever run', async () => {

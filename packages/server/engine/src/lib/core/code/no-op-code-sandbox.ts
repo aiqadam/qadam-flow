@@ -56,10 +56,69 @@ import { CodeSandbox } from '../../core/code/code-sandbox-common'
 // otherwise leave this process orphaned and still executing the tenant's code.
 const LEFTOVER_SETTLE_TURNS = 3
 
+// Half of the 256 KiB `ERROR_OFFSET` budget `helper/logging-utils.ts` reserves for an
+// error message, applied per stream, so stdout and stderr together stay the same order
+// as that reserve instead of growing without bound — multiplied across the child buffer,
+// the JSON IPC payload and the host's own copy (app-sec, #609). Measured in UTF-16 code
+// units (`String#length`, `String#slice`), so a non-ASCII stream can encode to a few
+// times this many bytes; the cap exists to bound the multiplication, not to be
+// byte-exact. The tail is kept rather than the head: the lines immediately before the
+// failure are the diagnostics worth paying for.
+const MAX_CAPTURED_OUTPUT_CODE_UNITS = 128 * 1024
+
 const CODE_RUNNER_SCRIPT = `
 const asyncHooks = require('async_hooks')
 const inspect = require('util').inspect
 let inFlightId = null
+
+// Captured here, synchronously at the write call, rather than left to the parent's
+// 'data' listener on the stdio pipes: a pipe write is async on Linux, so its 'data'
+// event can reach the parent after the IPC 'message' carrying the verdict already did,
+// which would silently drop the tail of a failing step's output (#609). Capturing at
+// the call site has no such race — by the time \`mod.code()\` returns, everything it
+// wrote is already in the buffer. Capped so the buffer, the IPC frame built from it, and
+// the resulting error message can't grow unbounded, which also keeps \`stdoutBuf += ...\`
+// under V8's string-length ceiling — a direct \`process.stdout.write\` of enough data
+// would otherwise hit that ceiling before \`realStdoutWrite\` ever ran.
+const MAX_CAPTURED_OUTPUT_CODE_UNITS = ${MAX_CAPTURED_OUTPUT_CODE_UNITS}
+// Appending is a rope concat in O(1); the copy to drop the head is paid only once the
+// rope passes twice the cap, which amortises it over a whole cap's worth of writes. A
+// chatty step logging 100-byte lines must not copy 128 K on every single line.
+function tailCapped(text) {
+    if (text.length <= MAX_CAPTURED_OUTPUT_CODE_UNITS) return text
+    const start = text.length - MAX_CAPTURED_OUTPUT_CODE_UNITS
+    // A tail cut through a surrogate pair would start with a lone low surrogate.
+    const lowSurrogate = text.charCodeAt(start)
+    return lowSurrogate >= 0xDC00 && lowSurrogate <= 0xDFFF ? text.slice(start + 1) : text.slice(start)
+}
+function decodeChunk(chunk) {
+    if (typeof chunk === 'string') {
+        return chunk.length > MAX_CAPTURED_OUTPUT_CODE_UNITS * 4 ? chunk.slice(-MAX_CAPTURED_OUTPUT_CODE_UNITS * 4) : chunk
+    }
+    // Slice the bytes before decoding: \`buf + chunk.toString()\` on a non-Buffer
+    // Uint8Array yields its numbers ("104,101,..."), not its text, and decoding a huge
+    // buffer first would defeat the cap's memory bound. UTF-8 needs at most four bytes
+    // per code unit, so a bounded byte tail is enough to fill the code-unit budget.
+    const byteBudget = MAX_CAPTURED_OUTPUT_CODE_UNITS * 4
+    const bytes = chunk.byteLength > byteBudget ? chunk.subarray(chunk.byteLength - byteBudget) : chunk
+    return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString()
+}
+function appendCapped(buf, chunk) {
+    const next = buf + decodeChunk(chunk)
+    return next.length > MAX_CAPTURED_OUTPUT_CODE_UNITS * 2 ? tailCapped(next) : next
+}
+let stdoutBuf = ''
+let stderrBuf = ''
+const realStdoutWrite = process.stdout.write.bind(process.stdout)
+const realStderrWrite = process.stderr.write.bind(process.stderr)
+process.stdout.write = (chunk, ...args) => {
+    stdoutBuf = appendCapped(stdoutBuf, chunk)
+    return realStdoutWrite(chunk, ...args)
+}
+process.stderr.write = (chunk, ...args) => {
+    stderrBuf = appendCapped(stderrBuf, chunk)
+    return realStderrWrite(chunk, ...args)
+}
 
 process.on('disconnect', () => process.exit(0))
 
@@ -76,7 +135,7 @@ asyncHooks.createHook({
 function failInFlight(error) {
     const id = inFlightId
     inFlightId = null
-    process.send({ id: id === null ? -1 : id, success: false, error, terminal: true }, () => process.exit(1))
+    process.send({ id: id === null ? -1 : id, success: false, error, stdout: tailCapped(stdoutBuf), stderr: tailCapped(stderrBuf), terminal: true }, () => process.exit(1))
 }
 
 process.on('unhandledRejection', (reason) => failInFlight(inspect(reason)))
@@ -91,6 +150,8 @@ function leftBehind({ baseline, ownYields }) {
 
 process.on('message', async function(msg) {
     inFlightId = msg.id
+    stdoutBuf = ''
+    stderrBuf = ''
     const baseline = new Set(liveResources)
     let outcome
 
@@ -124,6 +185,14 @@ process.on('message', async function(msg) {
     if (inFlightId !== msg.id) return
     inFlightId = null
 
+    // Read live, not snapshotted in the catch above: the yield and settle turns just spent
+    // can themselves run more of the failing step's own queued callbacks, and anything they
+    // write still belongs to this verdict.
+    if (!outcome.success) {
+        outcome.stdout = tailCapped(stdoutBuf)
+        outcome.stderr = tailCapped(stderrBuf)
+    }
+
     if (leftover) {
         process.send(Object.assign({ terminal: true }, outcome), () => process.exit(0))
         return
@@ -142,6 +211,23 @@ let lastExecutionId = 0
 // lets the crash handlers name the execution they are failing.
 let executionQueue: Promise<unknown> = Promise.resolve()
 
+// Mirrors the runner's cap, including its tail-preserving direction and amortised trim,
+// so the pipe copy stays comparable to the IPC capture instead of being cut at a
+// different point or copying the whole buffer on every `data` event.
+function tailCapped(text: string): string {
+    if (text.length <= MAX_CAPTURED_OUTPUT_CODE_UNITS) {
+        return text
+    }
+    const start = text.length - MAX_CAPTURED_OUTPUT_CODE_UNITS
+    const lowSurrogate = text.charCodeAt(start)
+    return lowSurrogate >= 0xDC00 && lowSurrogate <= 0xDFFF ? text.slice(start + 1) : text.slice(start)
+}
+
+function appendCapped({ buffer, chunk }: { buffer: string, chunk: string }): string {
+    const next = buffer + chunk
+    return next.length > MAX_CAPTURED_OUTPUT_CODE_UNITS * 2 ? tailCapped(next) : next
+}
+
 function startRunner(): Runner {
     const child = spawn(process.execPath, ['--eval', CODE_RUNNER_SCRIPT], {
         stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
@@ -151,7 +237,7 @@ function startRunner(): Runner {
     child.stdout?.on('data', (data: Buffer) => {
         const text = data.toString()
         if (started.inFlight) {
-            started.inFlight.stdout += text
+            started.inFlight.stdout = appendCapped({ buffer: started.inFlight.stdout, chunk: text })
         }
         console.log(text.trimEnd())
     })
@@ -159,7 +245,7 @@ function startRunner(): Runner {
     child.stderr?.on('data', (data: Buffer) => {
         const text = data.toString()
         if (started.inFlight) {
-            started.inFlight.stderr += text
+            started.inFlight.stderr = appendCapped({ buffer: started.inFlight.stderr, chunk: text })
         }
         console.error(text.trimEnd())
     })
@@ -182,7 +268,11 @@ function startRunner(): Runner {
             execution.resolve(message.result)
         }
         else {
-            execution.reject(buildError({ message: message.error, execution }))
+            execution.reject(buildError({
+                message: message.error,
+                stdout: pickMoreComplete({ messageValue: message.stdout, pipeValue: tailCapped(execution.stdout) }),
+                stderr: pickMoreComplete({ messageValue: message.stderr, pipeValue: tailCapped(execution.stderr) }),
+            }))
         }
     })
 
@@ -192,14 +282,18 @@ function startRunner(): Runner {
         retire(started)
         const execution = started.inFlight
         started.inFlight = null
-        execution?.reject(buildError({ message: `Code process exited with code ${code} and signal ${signal}`, execution }))
+        if (execution) {
+            execution.reject(buildError({ message: `Code process exited with code ${code} and signal ${signal}`, stdout: tailCapped(execution.stdout), stderr: tailCapped(execution.stderr) }))
+        }
     })
 
     child.on('error', (error) => {
         retire(started)
         const execution = started.inFlight
         started.inFlight = null
-        execution?.reject(buildError({ message: error.message, execution }))
+        if (execution) {
+            execution.reject(buildError({ message: error.message, stdout: tailCapped(execution.stdout), stderr: tailCapped(execution.stderr) }))
+        }
     })
 
     return started
@@ -233,7 +327,19 @@ function isRunnerMessage(message: unknown): message is RunnerMessage {
         return false
     }
     const candidate: Record<string, unknown> = { ...message }
-    return typeof candidate.id === 'number' && typeof candidate.success === 'boolean'
+    // `stdout`/`stderr` are read with `.trim()` below, and the message a runner sends is
+    // tenant-authored-code-reachable (`process.send` is as forgeable as the existing
+    // `forgeTerminal` test already proves) — a non-string value here must not reach
+    // `buildError` and crash the host with an uncaught `TypeError`. The cap matches the
+    // runner's own, so an honest message always passes and an oversized forged one is
+    // ignored rather than retained in the host's error.
+    const isCapturedOutput = (value: unknown): boolean => value === undefined
+        || (typeof value === 'string' && value.length <= MAX_CAPTURED_OUTPUT_CODE_UNITS)
+    return typeof candidate.id === 'number'
+        && typeof candidate.success === 'boolean'
+        && (candidate.error === undefined || typeof candidate.error === 'string')
+        && isCapturedOutput(candidate.stdout)
+        && isCapturedOutput(candidate.stderr)
 }
 
 function dispatchToRunner({ codeFilePath, inputs }: { codeFilePath: string, inputs: Record<string, unknown> }): Promise<unknown> {
@@ -251,7 +357,9 @@ function dispatchToRunner({ codeFilePath, inputs }: { codeFilePath: string, inpu
             }
             retire(target)
             const execution = takeInFlight({ runner: target, id })
-            execution?.reject(buildError({ message: error.message, execution }))
+            if (execution) {
+                execution.reject(buildError({ message: error.message, stdout: tailCapped(execution.stdout), stderr: tailCapped(execution.stderr) }))
+            }
         })
     })
 }
@@ -264,10 +372,29 @@ function enqueue<T>(task: () => Promise<T>): Promise<T> {
     return settled
 }
 
-function buildError({ message, execution }: { message: string | undefined, execution: InFlightExecution | null }): Error {
-    const parts: string[] = [message ?? 'Code execution failed']
-    const stdout = execution?.stdout ?? ''
-    const stderr = execution?.stderr ?? ''
+// The runner's own capture (`messageValue`) only sees output written through
+// `process.stdout`/`stderr.write`, so it misses `fs.writeSync(1, ...)` and a grandchild
+// spawned with `stdio: 'inherit'` — both still land on the real fd and so still reach the
+// host's pipe-accumulated `pipeValue`. Take the pipe copy only when it is the IPC capture
+// plus extra bytes, or when the capture is empty (fd-only output): a pipe copy that does
+// not start with the capture may carry a previous execution's late-delivered tail — the
+// very race #609 is about — which must not be attributed to this execution. Content
+// alone cannot tell such a stale prefix from fd-only output written before the step's
+// first `process.stdout` write, so that prefix is dropped; the alternative is leaking
+// another step's output into this one's error.
+function pickMoreComplete({ messageValue, pipeValue }: { messageValue: string | undefined, pipeValue: string }): string {
+    const fromMessage = messageValue ?? ''
+    if (!fromMessage) {
+        return pipeValue
+    }
+    return pipeValue.startsWith(fromMessage) ? pipeValue : fromMessage
+}
+
+function buildError({ message, stdout, stderr }: { message: string | undefined, stdout: string, stderr: string }): Error {
+    // `message` reaches here from tenant code (`inspect(e)`) or a forged IPC frame and had
+    // no size bound before the captures did; bound it on the same budget, keeping the head
+    // because that is where the error type and the first stack frames live (app-sec, #609).
+    const parts: string[] = [(message ?? 'Code execution failed').slice(0, MAX_CAPTURED_OUTPUT_CODE_UNITS)]
     if (stdout.trim()) {
         parts.push(`\n--- stdout ---\n${stdout.trim()}`)
     }
@@ -343,4 +470,6 @@ type RunnerMessage = {
     terminal?: boolean
     result?: unknown
     error?: string
+    stdout?: string
+    stderr?: string
 }
