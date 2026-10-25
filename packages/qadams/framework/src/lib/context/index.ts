@@ -13,7 +13,6 @@ import {
   TriggerPayload,
   TriggerStrategy,
 } from '@aiqadam/shared';
-import { LanguageModel, Tool } from 'ai'
 
 import {
   BasicAuthProperty,
@@ -313,6 +312,15 @@ export type ActionContext<
 
 
 
+
+// Opaque placeholders for `ai`'s `LanguageModel`/`Tool`: the framework only threads these values
+// through a step's context without ever reading them, and never depends on `ai` itself. Two
+// different consumers (a qadam, the engine) each resolve their own `ai` patch, and two different
+// `@ai-sdk/provider-utils` patches are not mutually assignable — re-exporting the real types here
+// made that a `TS2322` at this API boundary (#815, #896). Each consumer converts back to the
+// concrete `ai` type at its own call site, where it already owns a real `ai` dependency (ADR-0006).
+export type LanguageModel = unknown
+export type Tool = unknown
 
 export type ConstructToolParams = {
   tools: AgentQadamTool[]
