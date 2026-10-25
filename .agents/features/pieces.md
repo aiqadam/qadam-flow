@@ -165,13 +165,14 @@ fallback in `findBundledFallback`, `fetchQadamVersion`) could be that first call
   processes differ in exactly the same four leaves.
 
 ## Qadam Version Store (#805)
-ADR-0003's versioned store of qadam versions on a persistent volume. **Partly authoritative (#779,
-first slice):** a forked engine (`UNSANDBOXED`, `SANDBOX_CODE_ONLY`) loads an official step's exact
-pin from the store when the store holds it (see "Resolution" below). The API's metadata
-(`qadamMetadataService.get`, the census' `resolveOfficialPin`), the worker's provisioning and its
-resolution cache, isolate modes and custom qadams do not resolve through it yet, and no image seeds
-it before #807, so on a real install it is still empty. "Store" alone is ambiguous here (Store
-qadam, Store Entry): say "qadam version store".
+ADR-0003's versioned store of qadam versions on a persistent volume. **Authoritative for official
+versions (#779):** a forked engine (`UNSANDBOXED`, `SANDBOX_CODE_ONLY`) loads an official step's exact
+pin from the store first, and the API resolves the same pin from the store's own `metadata.json`
+(`qadamMetadataService.get` / `getMany` / `resolveVersion`, `storedQadamMetadata`) so the builder,
+the worker's provisioning and the framework census see the version the engine runs. `registry`
+lists stored release versions too. Isolate modes and custom qadams still do not resolve through it, and no
+image seeds it before #807, so on a real install it is still empty. "Store" alone is ambiguous here
+(Store qadam, Store Entry): say "qadam version store".
 - **Where.** `AP_QADAM_VERSION_STORE_PATH` (default `/var/lib/qadam-flow/qadam-versions`).
   `docker-compose.yml` mounts the named volume `qadam_versions` there on the app (read-write, it
   seeds) and read-only on every worker (#779 app-sec: a forked engine runs flow code as the worker
@@ -281,7 +282,17 @@ qadam, Store Entry): say "qadam version store".
   the same `qadamCache.getPiece` check as steps (a version that is no pin is `PieceNotFoundError`,
   carrying `usedBy` for the error text), and `needsInstalling` never installs a snapshot
   from a registry. The API resolves an exact pin by equality, and gives a snapshot pin no bundled
-  stand-in (`findExactVersion`). A flow's pins are resolved in one registry pass
+  stand-in (`findExactVersion`). The API reads a stored version before the registry or the image's
+  build of that version: `storedQadamMetadata.lookup` reads the version's `metadata.json` through
+  the store's reader and the catalogue's bounded directory source and distinguishes `absent` (not
+  `PRESENT`: damaged, unsupported here, unreadable, exactly what the engine skips) from `unusable`
+  (a `PRESENT` version whose metadata cannot be read). An exact official pin that is absent falls
+  through to the registry and the caret net; one that is unusable is reported as an unknown
+  resolution (so the heal never persists a rewrite on it) and is never substituted, and one stored
+  above this release's floors is a miss the fallback may move. `list` walks the official namespace
+  for `registry` (release versions only, honouring each version's release floors); its result is
+  cached with its in-flight promise for a few seconds, and a pin's parsed metadata is cached
+  separately with a short expiry and a bounded size. A flow's pins are resolved in one registry pass
   (`qadamMetadataService.resolveVersions`, registry-only): the registry is loaded and filtered once
   per flow and indexed by name, instead of once per pin. The pause-marker path uses `getMany`,
   which adds the metadata read per pin (#879). The worker's lookups are bounded to 8 in flight
@@ -304,7 +315,7 @@ qadam, Store Entry): say "qadam version store".
   global folders or the reserved `qadams/node_modules`). This is a correctness guard against
   accidental lookups, not a sandbox: a stored version runs with the engine's rights. Hooks do not
   reach worker threads or child processes a qadam starts (csv's worker, oracle-database's runner).
-- **Left to other tickets:** the rest of #779 (the API reading a stored version's `metadata.json` and the
-  framework census doing the same, isolate mounts, custom qadams, removing `qadamPinFallback` once #808's move covers every path), fetching
+- **Left to other tickets:** the rest of #779 (isolate mounts, custom qadams, removing
+  `qadamPinFallback` once #808's move covers every path), fetching
   and the legacy install path (#806, which also writes the signature ledger for what it fetches), GC
   and registry config (#478), image seed contents (#807), the rest of the unavailable-version fallback (#808: the marking, the start-up and import passes, the catalogue read).

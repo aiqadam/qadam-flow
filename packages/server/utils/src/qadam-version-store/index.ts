@@ -1,5 +1,5 @@
 export { DEFAULT_QADAM_VERSION_STORE_LIMITS, QadamVersionOrigin, QadamVersionPutStatus, QadamVersionReadStatus, qadamVersionStore } from './qadam-version-store'
-export type { QadamVersionIntegrity, QadamVersionPutResult, QadamVersionReadResult, QadamVersionStore, QadamVersionStoreLogger, QadamVersionStoreReader, StoredQadamVersion } from './qadam-version-store'
+export type { QadamVersionIntegrity, QadamVersionPutResult, QadamVersionReadResult, QadamVersionRemoveResult, QadamVersionStore, QadamVersionStoreLogger, QadamVersionStoreReader, StoredQadamVersion } from './qadam-version-store'
 export { qadamVersionStoreReader } from './qadam-version-store-read'
 export { PLATFORM_PROVIDED_PACKAGES, QadamArtifactFormat, QadamArtifactKind } from './qadam-version-store-format'
 export { QADAM_VERSION_STORE_LAYOUT, qadamVersionStoreLayout } from './qadam-version-store-layout'
@@ -10,3 +10,6 @@ export { qadamSignatureLedger, QadamSignatureUnverified } from './qadam-signatur
 export type { QadamSignatureCheck, QadamSignatureCheckResult, QadamSignatureLedger, QadamSignatureLedgerLogger, QadamSignatureProof, QadamSignatureRecordResult, QadamSignedPackage } from './qadam-signature-ledger'
 export { DEFAULT_QADAM_REGISTRY_URL, QadamVersionFetchOutcome, qadamVersionStoreFetch } from './qadam-version-store-fetch'
 export type { QadamVersionFetchResult } from './qadam-version-store-fetch'
+export { qadamVersionStoreGcLedger } from './qadam-version-store-gc-ledger'
+export type { QadamVersionGcLedger, QadamVersionGcLedgerEntry, QadamVersionGcLedgerLogger } from './qadam-version-store-gc-ledger'
+export { qadamVersionStoreGcDecision } from './qadam-version-store-gc-decision'
