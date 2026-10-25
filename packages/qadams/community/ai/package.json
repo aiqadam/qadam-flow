@@ -30,6 +30,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "@aiqadam/shared": "workspace:*",
     "@types/mime-types": "2.1.1",
     "vitest": "4.1.11"
   }

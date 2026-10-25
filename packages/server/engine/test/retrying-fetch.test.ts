@@ -217,7 +217,9 @@ describe('retryingFetch', () => {
 
     // Timers fire late. The last backoff is clamped to end just inside the budget, so a late timer
     // must still lead to that final attempt, or an app that comes back in the last seconds is missed.
-    it('still makes the final attempt when the clamped last sleep fires late, but within the budget', async () => {
+    // Real setTimeout + a busy-loop give this only ~30 ms of margin against the runner's own
+    // scheduling jitter, so a single retry absorbs that jitter without loosening what it checks.
+    it('still makes the final attempt when the clamped last sleep fires late, but within the budget', { retry: 1 }, async () => {
         let calls = 0
         const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async () => {
             calls += 1

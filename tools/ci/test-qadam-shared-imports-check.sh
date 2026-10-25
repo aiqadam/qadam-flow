@@ -69,6 +69,17 @@ expect 0 'a string mentioning the name' "$(tree string "$Q" "export const note =
 expect 0 'a similarly named package' "$(tree similar "$Q" "import { x } from '@aiqadam/shared-utils'")" 'OK'
 expect 0 'the framework re-export is the sanctioned path' "$(tree framework-import "$Q" "import { isNil } from '@aiqadam/qadams-framework'")" 'OK'
 
+echo "== the two type-import-exempt qadams (#959) =="
+expect 0 'core/tables may import its own narrowed DTOs as types' "$(tree tables-type packages/qadams/core/tables/src/lib/a.ts "import type { CreateRecordsRequest } from '@aiqadam/shared'")" 'OK'
+expect 0 'community/ai may import its own narrowed DTOs as types' "$(tree ai-type packages/qadams/community/ai/src/lib/a.ts "import type { AgentMcpTool } from '@aiqadam/shared'")" 'OK'
+expect 0 'an inline `type` specifier is still a type-only import' "$(tree tables-inline packages/qadams/core/tables/src/lib/a.ts "import { type Table } from '@aiqadam/shared'")" 'OK'
+expect 1 'core/tables may not make it a runtime dependency' "$(tree tables-value packages/qadams/core/tables/src/lib/a.ts "import { FieldType } from '@aiqadam/shared'")" 'packages/qadams/core/tables/src/lib/a.ts:1'
+expect 1 'community/ai may not make it a runtime dependency' "$(tree ai-value packages/qadams/community/ai/src/lib/a.ts "import { AgentTaskStatus } from '@aiqadam/shared'")" 'packages/qadams/community/ai/src/lib/a.ts:1'
+expect 1 'a mixed import keeps its value half' "$(tree tables-mixed packages/qadams/core/tables/src/lib/a.ts "import { type Table, FieldType } from '@aiqadam/shared'")" 'packages/qadams/core/tables/src/lib/a.ts:1'
+expect 1 're-exporting from shared is not type-only' "$(tree tables-reexport packages/qadams/core/tables/src/lib/a.ts "export type { Table } from '@aiqadam/shared'")" 'packages/qadams/core/tables/src/lib/a.ts:1'
+expect 1 'require() is still banned in an exempt qadam' "$(tree ai-require packages/qadams/community/ai/src/lib/a.ts "const shared = require('@aiqadam/shared')")" 'packages/qadams/community/ai/src/lib/a.ts:1'
+expect 1 'the exemption does not leak to another core qadam' "$(tree other-type packages/qadams/core/csv/src/lib/a.ts "import type { Table } from '@aiqadam/shared'")" 'packages/qadams/core/csv/src/lib/a.ts:1'
+
 echo "== UNKNOWN =="
 mkdir -p "$tmp/empty/packages"
 expect 2 'no qadam sources at all -> UNKNOWN, never a clean pass' "$tmp/empty" 'UNKNOWN'

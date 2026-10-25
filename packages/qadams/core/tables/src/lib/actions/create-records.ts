@@ -1,4 +1,5 @@
-import { createAction, QadamAuth, Property, CreateRecordsRequest } from '@aiqadam/qadams-framework';
+import { createAction, QadamAuth, Property } from '@aiqadam/qadams-framework';
+import type { CreateRecordsRequest } from '@aiqadam/shared';
 import { AuthenticationType, httpClient, HttpMethod, propsValidation } from '@aiqadam/qadams-common';
 import { tablesCommon } from '../common';
 

@@ -1,4 +1,5 @@
-import { createAction, QadamAuth, GetRecordRequest, PopulatedRecord } from '@aiqadam/qadams-framework';
+import { createAction, QadamAuth, PopulatedRecord } from '@aiqadam/qadams-framework';
+import type { GetRecordRequest } from '@aiqadam/shared';
 import { tablesCommon } from '../common';
 import { columnUtils } from '../common/columns';
 import { AuthenticationType, httpClient, HttpMethod } from '@aiqadam/qadams-common';

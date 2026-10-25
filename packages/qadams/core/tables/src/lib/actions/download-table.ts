@@ -2,8 +2,8 @@ import {
   createAction,
   QadamAuth,
   Property,
-  ExportTableResponse,
 } from '@aiqadam/qadams-framework';
+import type { ExportTableResponse } from '@aiqadam/shared';
 import { tablesCommon, csvUtils } from '../common';
 import {
   AuthenticationType,
