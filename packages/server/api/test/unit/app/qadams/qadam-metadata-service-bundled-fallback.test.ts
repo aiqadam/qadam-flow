@@ -1,7 +1,11 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { QadamMetadataModel } from '@aiqadam/qadams-framework'
 import { qadamVersionStoreReader } from '@aiqadam/server-utils'
 import { PackageType, QadamType } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
+import { AppSystemProp } from '../../../../src/app/helper/system/system-props'
 import { qadamMetadataService } from '../../../../src/app/qadams/metadata/qadam-metadata-service'
 import { storedQadamMetadata } from '../../../../src/app/qadams/metadata/utils/stored-qadam-metadata'
 
@@ -27,6 +31,24 @@ vi.mock('../../../../src/app/qadams/metadata/qadam-cache', () => ({
 }))
 
 const logger = { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() } as unknown as FastifyBaseLogger
+const STORE_ENV = `AP_${AppSystemProp.QADAM_VERSION_STORE_PATH}`
+const originalStore = process.env[STORE_ENV]
+let tempDir: string
+
+beforeAll(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'qadam-metadata-no-store-'))
+    process.env[STORE_ENV] = join(tempDir, 'missing')
+})
+
+afterAll(async () => {
+    if (originalStore === undefined) {
+        delete process.env[STORE_ENV]
+    }
+    else {
+        process.env[STORE_ENV] = originalStore
+    }
+    await rm(tempDir, { recursive: true, force: true })
+})
 
 beforeEach(() => {
     storedQadamMetadata.reset()
@@ -224,15 +246,17 @@ describe('qadamMetadataService.isPinAvailable() — the pin itself, never a stan
     })
 
     it('is true when the version store holds the version, which the engine reads first', async () => {
-        const read = vi.fn(async () => ({ status: 'present' as const }))
-        vi.spyOn(qadamVersionStoreReader, 'open').mockResolvedValue({ ok: true, reader: { read } } as never)
+        const lookup = vi.spyOn(storedQadamMetadata, 'lookup').mockResolvedValue({
+            status: 'present',
+            stored: { metadata: bundledQadam({ name: NAME, version: '0.4.2' }), frameworkMajor: null },
+        })
 
         expect(await qadamMetadataService(logger).isPinAvailable({ name: NAME, version: '0.4.2', platformId: undefined })).toBe(true)
-        expect(read).toHaveBeenCalledWith({ coordinates: { platformId: null, name: NAME, version: '0.4.2' } })
+        expect(lookup).toHaveBeenCalledWith({ name: NAME, version: '0.4.2' })
     })
 
     it('stays false when the store is absent there, or cannot be opened', async () => {
-        vi.spyOn(qadamVersionStoreReader, 'open').mockResolvedValue({ ok: true, reader: { read: async () => ({ status: 'absent' }) } } as never)
+        vi.spyOn(storedQadamMetadata, 'lookup').mockResolvedValue({ status: 'absent' })
         expect(await qadamMetadataService(logger).isPinAvailable({ name: NAME, version: '0.4.2', platformId: undefined })).toBe(false)
 
         vi.spyOn(qadamVersionStoreReader, 'open').mockRejectedValue(new Error('EACCES'))

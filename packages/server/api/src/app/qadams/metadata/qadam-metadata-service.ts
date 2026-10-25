@@ -62,6 +62,7 @@ export const qadamMetadataService = (log: FastifyBaseLogger) => {
                 platformId: params.platformId,
             })
             const stored = (await storedQadamMetadata.list())
+                .filter((qadam) => qadamVersionParser.isRelease({ version: qadam.version }))
                 .filter((qadam) => isNil(params.release) || isSupportedRelease(params.release, qadam))
             const seen = new Set(registry.map((qadam) => `${qadam.name}@${qadam.version}`))
             return [
@@ -73,7 +74,7 @@ export const qadamMetadataService = (log: FastifyBaseLogger) => {
             }))
         },
         async get({ projectId: _projectId, platformId, version, name }: GetParams): Promise<QadamMetadataModel | undefined> {
-            const bestMatch = await findExactVersion(log, { name, version, platformId, withStoredMetadata: true })
+            const bestMatch = await findExactVersion(log, { name, version, platformId })
             if (isNil(bestMatch)) {
                 return undefined
             }
@@ -105,7 +106,6 @@ export const qadamMetadataService = (log: FastifyBaseLogger) => {
                     entries: entriesByName.get(pin.name) ?? [],
                     platformId,
                     allowBundledFallback: true,
-                    withStoredMetadata: true,
                 }))
                 if (!isNil(matchError) || isNil(bestMatch)) {
                     return [pinKey(pin), isNil(matchError) ? { status: 'missing' } : { status: 'error' }]
@@ -410,13 +410,12 @@ const distinctVersionRequests = ({ pins }: { pins: QadamVersionRequest[] }): Qad
 
 const findExactVersion = async (
     log: FastifyBaseLogger,
-    params: { name: string, version: string | undefined, platformId: string | undefined, allowBundledFallback?: boolean, withStoredMetadata?: boolean },
+    params: { name: string, version: string | undefined, platformId: string | undefined, allowBundledFallback?: boolean },
 ): Promise<QadamVersionMatch | undefined> => {
     const [match] = await findExactVersions(log, {
         requests: [{ name: params.name, version: params.version }],
         platformId: params.platformId,
         allowBundledFallback: params.allowBundledFallback,
-        withStoredMetadata: params.withStoredMetadata,
     })
     return match
 }
@@ -426,11 +425,10 @@ const findExactVersion = async (
 // filtering the registry again per pin is the measured cost this removes (#879).
 const findExactVersions = async (
     log: FastifyBaseLogger,
-    { requests, platformId, allowBundledFallback = true, withStoredMetadata = false }: {
+    { requests, platformId, allowBundledFallback = true }: {
         requests: QadamVersionRequest[]
         platformId: string | undefined
         allowBundledFallback?: boolean
-        withStoredMetadata?: boolean
     },
 ): Promise<(QadamVersionMatch | undefined)[]> => {
     if (requests.length === 0) {
@@ -443,7 +441,6 @@ const findExactVersions = async (
         entries: entriesByName.get(request.name) ?? [],
         platformId,
         allowBundledFallback,
-        withStoredMetadata,
     })))
 }
 
@@ -470,13 +467,12 @@ const indexRegistryByName = ({ registry }: { registry: QadamRegistryEntry[] }): 
     return entriesByName
 }
 
-const findExactVersionFor = async ({ log, request, entries, platformId, allowBundledFallback, withStoredMetadata = false }: {
+const findExactVersionFor = async ({ log, request, entries, platformId, allowBundledFallback }: {
     log: FastifyBaseLogger
     request: QadamVersionRequest
     entries: QadamRegistryEntry[]
     platformId: string | undefined
     allowBundledFallback: boolean
-    withStoredMetadata?: boolean
 }): Promise<QadamVersionMatch | undefined> => {
     const { name, version } = request
     const versionToSearch = findNextExcludedVersion(version)
@@ -484,14 +480,18 @@ const findExactVersionFor = async ({ log, request, entries, platformId, allowBun
     // The engine reads a stored version before the image's build of the same version, so the API
     // answers the same way: a version only the store holds is resolvable here too (#779).
     if (!isNil(version) && isExactPin && isOfficialQadamName(name)) {
-        if (withStoredMetadata) {
-            const stored = await storedQadamMetadata.read({ name, version })
-            if (!isNil(stored)) {
-                return { name, version, platformId: undefined, stored }
-            }
+        const stored = await storedQadamMetadata.lookup({ name, version })
+        // The engine runs the stored code for an exact pin whatever the registry says. A stored
+        // version this release cannot serve is therefore a failed pin, never a reason to substitute
+        // the image's build; the engine would still load the store.
+        if (stored.status === 'unusable') {
+            return undefined
         }
-        else if (await storedQadamMetadata.holds({ name, version })) {
-            return { name, version, platformId: undefined }
+        if (stored.status === 'present') {
+            const release = apVersionUtil.getCurrentRelease()
+            return isSupportedRelease(release, stored.stored.metadata)
+                ? { name, version, platformId: undefined, stored: stored.stored }
+                : undefined
         }
     }
     const matchingRegistryEntries = entries.filter((entry) => {

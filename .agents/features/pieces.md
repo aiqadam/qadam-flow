@@ -170,7 +170,7 @@ versions (#779):** a forked engine (`UNSANDBOXED`, `SANDBOX_CODE_ONLY`) loads an
 pin from the store first, and the API resolves the same pin from the store's own `metadata.json`
 (`qadamMetadataService.get` / `getMany` / `resolveVersion`, `storedQadamMetadata`) so the builder,
 the worker's provisioning and the framework census see the version the engine runs. `registry`
-lists stored versions too. Isolate modes and custom qadams still do not resolve through it, and no
+lists stored release versions too. Isolate modes and custom qadams still do not resolve through it, and no
 image seeds it before #807, so on a real install it is still empty. "Store" alone is ambiguous here
 (Store qadam, Store Entry): say "qadam version store".
 - **Where.** `AP_QADAM_VERSION_STORE_PATH` (default `/var/lib/qadam-flow/qadam-versions`).
@@ -283,12 +283,15 @@ image seeds it before #807, so on a real install it is still empty. "Store" alon
   carrying `usedBy` for the error text), and `needsInstalling` never installs a snapshot
   from a registry. The API resolves an exact pin by equality, and gives a snapshot pin no bundled
   stand-in (`findExactVersion`). The API reads a stored version before the registry or the image's
-  build of that version: `storedQadamMetadata.read` reads the version's `metadata.json` through the
-  store's reader and the catalogue's bounded directory source, and answers `undefined` for a
-  version that is not `PRESENT` (damaged, unsupported here, unreadable), so the engine skips the
-  same ones. `holds` is its metadata-free form for callers that only ask whether the pin resolves;
-  `list` walks the official namespace for `registry`, honouring each version's release floors.
-  A flow's pins are resolved in one registry pass
+  build of that version: `storedQadamMetadata.lookup` reads the version's `metadata.json` through
+  the store's reader and the catalogue's bounded directory source and distinguishes `absent` (not
+  `PRESENT`: damaged, unsupported here, unreadable, exactly what the engine skips) from `unusable`
+  (a `PRESENT` version whose metadata cannot be read). An exact official pin that is absent falls
+  through to the registry and the caret net; one that is unusable, or stored above this release's
+  floors, fails with the pin named rather than substituting another build the engine would not load.
+  `list` walks the official namespace for `registry` (release versions only, honouring each
+  version's release floors), with its result and each version's metadata cached in-process for a few
+  seconds. A flow's pins are resolved in one registry pass
   (`qadamMetadataService.resolveVersions`, registry-only): the registry is loaded and filtered once
   per flow and indexed by name, instead of once per pin. The pause-marker path uses `getMany`,
   which adds the metadata read per pin (#879). The worker's lookups are bounded to 8 in flight

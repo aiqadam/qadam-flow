@@ -10,6 +10,7 @@ import {
     isObject,
     isOfficialQadamName,
     QadamType,
+    qadamVersionParser,
     tryCatch,
     tryCatchSync,
 } from '@aiqadam/shared'
@@ -242,7 +243,12 @@ async function resolveOfficialPin({ name, version, platformId, bundled, log }: R
     if (isNil(resolvedVersion)) {
         return UNRESOLVED
     }
-    const stored = await storedQadamMetadata.read({ name, version: resolvedVersion })
+    // Only an exact pin that resolves to itself is answered by the store; a range pin or a bundled
+    // stand-in is not, and preferring a store version there could report a context version the pin
+    // does not run (#779).
+    const stored = qadamVersionParser.isExact({ version }) && version === resolvedVersion
+        ? await storedQadamMetadata.read({ name, version })
+        : undefined
     if (!isNil(stored)) {
         return {
             source: 'official',
@@ -359,7 +365,8 @@ const UNRESOLVED: PinContext = { source: 'unresolved', frameworkMajor: null, con
 // unknown and it counts as still needing the old contract (ADR-0002).
 export type PinContext = {
     source: 'official' | 'custom' | 'unresolved'
-    // Known only for a bundled official build; `null` elsewhere.
+    // Known for a bundled official build (its `package.json`) and a stored one (its `builtAgainst`
+    // record); `null` elsewhere or when the artifact does not say.
     frameworkMajor: number | null
     // `null` is unknown.
     contextVersion: FrameworkContextVersion | null

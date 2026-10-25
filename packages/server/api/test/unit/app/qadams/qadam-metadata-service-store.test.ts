@@ -86,11 +86,27 @@ describe('qadamMetadataService — a stored version (unit)', () => {
         expect(result?.version).toBe('1.3.0-main.412')
     })
 
-    it('ignores a stored version whose metadata cannot be read, without throwing', async () => {
+    it('fails an exact pin whose stored metadata cannot be read instead of substituting the image build', async () => {
         await seed({ versions: ['1.3.0'] })
         await rm(join(process.env[STORE_ENV]!, 'qadams', '@aiqadam', 'qadam-fixture', '1.3.0', 'metadata.json'))
+        loadBundledQadams.mockResolvedValue([bundledQadam({ version: '1.4.0', displayName: 'Image build' })])
 
         expect(await qadamMetadataService(logger).get({ name: NAME, version: '1.3.0' })).toBeUndefined()
+    })
+
+    it('does not serve a stored version outside this release\'s floors, and does not substitute another build', async () => {
+        await seed({ versions: ['1.3.0'], minimumSupportedRelease: '99.0.0' })
+        loadBundledQadams.mockResolvedValue([bundledQadam({ version: '1.4.0', displayName: 'Image build' })])
+
+        const service = qadamMetadataService(logger)
+        expect(await service.get({ name: NAME, version: '1.3.0' })).toBeUndefined()
+        expect((await service.resolveVersions({ pins: [{ name: NAME, version: '1.3.0' }] })).get(`${NAME}@1.3.0`)).toEqual({ status: 'missing' })
+    })
+
+    it('leaves a pin the store does not hold on the image build', async () => {
+        loadBundledQadams.mockResolvedValue([bundledQadam({ version: '1.3.0', displayName: 'Image build' })])
+
+        expect((await qadamMetadataService(logger).get({ name: NAME, version: '1.3.0' }))?.displayName).toBe('Image build')
     })
 
     it('resolves a stored pin for the batch and availability paths', async () => {
@@ -109,6 +125,14 @@ describe('qadamMetadataService — a stored version (unit)', () => {
         expect(await qadamMetadataService(logger).registry({ release: '0.82.0' })).toEqual([{ name: NAME, version: '1.3.0' }])
     })
 
+    it('does not offer a stored snapshot in the registry, though the pin still resolves', async () => {
+        await seed({ versions: ['1.3.0-main.412'] })
+        const service = qadamMetadataService(logger)
+
+        expect(await service.registry({ release: '1.3.0-main.500' })).toEqual([])
+        expect((await service.get({ name: NAME, version: '1.3.0-main.412' }))?.version).toBe('1.3.0-main.412')
+    })
+
     it('honours a stored version\'s release floors in the registry', async () => {
         await seed({ versions: ['1.3.0'] })
         const service = qadamMetadataService(logger)
@@ -118,11 +142,15 @@ describe('qadamMetadataService — a stored version (unit)', () => {
     })
 })
 
-async function seed({ versions, displayName }: SeedOptions): Promise<void> {
+async function seed({ versions, displayName, minimumSupportedRelease }: SeedOptions): Promise<void> {
+    const overrides = {
+        ...(displayName === undefined ? {} : { displayName }),
+        ...(minimumSupportedRelease === undefined ? {} : { minimumSupportedRelease }),
+    }
     await qadamVersionStoreFixtures.seed({
         root: process.env[STORE_ENV]!,
         seedDir: join(tempDir, 'seed'),
-        artifacts: versions.map((version) => qadamVersionStoreFixtures.artifact({ name: NAME, version, overrides: displayName === undefined ? {} : { displayName } })),
+        artifacts: versions.map((version) => qadamVersionStoreFixtures.artifact({ name: NAME, version, overrides })),
     })
 }
 
@@ -146,4 +174,5 @@ function bundledQadam({ version, displayName }: { version: string, displayName: 
 type SeedOptions = {
     versions: string[]
     displayName?: string
+    minimumSupportedRelease?: string
 }

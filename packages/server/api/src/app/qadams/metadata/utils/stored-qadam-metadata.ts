@@ -26,74 +26,92 @@ import { qadamVersionCatalogueSource } from '../../catalogue/qadam-version-catal
 
 // The API's read side of the qadam version store (#779): the metadata of a version the store holds,
 // so a pin is answered the same way whether it lives in the image, `qadam_metadata` or the store. It
-// is read-only and bounded by the same reader the engine uses; a version that is not PRESENT (damaged,
-// unsupported here, unreadable) answers `undefined`, exactly as the engine skips it.
+// is read-only and bounded by the same reader the engine uses. A version that is not PRESENT
+// (damaged, unsupported here, unreadable) is `absent`, exactly as the engine skips it; a PRESENT one
+// whose `metadata.json` cannot be read is `unusable`, which a caller must fail rather than replace.
 export const storedQadamMetadata = {
-    // Whether the store holds a usable version at these coordinates, without reading its metadata.
-    // A caller that only needs "does the pin resolve" (the census, a batch resolution) stops here.
-    holds: async ({ name, version }: { name: string, version: string }): Promise<boolean> => {
-        if (!isOfficialQadamName(name)) {
-            return false
+    // What the store holds at these coordinates. `unusable` is a version the store calls PRESENT but
+    // whose `metadata.json` cannot be read as this qadam's metadata; a caller must fail the pin rather
+    // than substitute another build, because the engine would still run the stored code (#779).
+    lookup: async ({ name, version }: { name: string, version: string }): Promise<StoredQadamLookup> => {
+        const located = await locateStoredVersion({ name, version })
+        if (isNil(located)) {
+            return { status: 'absent' }
         }
-        const reader = await openReader()
-        if (isNil(reader)) {
-            return false
+        const key = `${located.root}\0${name}@${version}`
+        const cached = metadataByVersion.get(key)
+        if (!isNil(cached)) {
+            return { status: 'present', stored: cached }
         }
-        const { data: stored } = await tryCatch(() => reader.read({ coordinates: { platformId: null, name, version } }))
-        return stored?.status === 'present'
+        const metadata = await readMetadataFile({ directory: located.version.dir, name, version })
+        if (isNil(metadata)) {
+            return { status: 'unusable' }
+        }
+        const stored: StoredQadamMetadata = {
+            metadata: toMetadataModel({ metadata }),
+            frameworkMajor: frameworkMajorOf({ builtAgainst: located.version.integrity.builtAgainst }),
+        }
+        metadataByVersion.set(key, stored)
+        return { status: 'present', stored }
     },
 
-    // `undefined` is "the store does not hold a usable version at these coordinates" — including an
-    // unreadable store, which must never make the registry answer disappear.
+    // For callers that only need a usable version's metadata: `undefined` for both absent and unusable.
     read: async ({ name, version }: { name: string, version: string }): Promise<StoredQadamMetadata | undefined> => {
-        const stored = await locateStoredVersion({ name, version })
-        if (isNil(stored)) {
-            return undefined
-        }
-        const metadata = await readMetadataFile({ directory: stored.dir, name, version })
-        if (isNil(metadata)) {
-            return undefined
-        }
-        return {
-            metadata: toMetadataModel({ metadata }),
-            frameworkMajor: frameworkMajorOf({ builtAgainst: stored.integrity.builtAgainst }),
-        }
+        const found = await storedQadamMetadata.lookup({ name, version })
+        return found.status === 'present' ? found.stored : undefined
     },
 
     // Every official version the store holds, for the registry the builder and the heal path read.
-    // Each version is read through `read`, so a damaged one is left out rather than offered.
+    // Each version is read through `lookup`, so a damaged or unusable one is left out rather than
+    // offered. The list is cached for a few seconds: the store versions are immutable, but a fetch
+    // (#806) can add one while the process lives, and this endpoint is public.
     list: async (): Promise<StoredQadamSummary[]> => {
         const reader = await openReader()
         if (isNil(reader)) {
             return []
+        }
+        const cached = listByRoot.get(reader.root)
+        if (!isNil(cached) && cached.expiresAt > Date.now()) {
+            return cached.value
         }
         const qadamsDir = path.join(reader.root, QADAM_VERSION_STORE_LAYOUT.qadamsDir)
         const names = await listOfficialNames({ qadamsDir })
         const versions: StoredQadamSummary[] = []
         for (const name of names) {
             for (const version of await listVersionNames({ qadamsDir, name })) {
-                const stored = await storedQadamMetadata.read({ name, version })
-                if (isNil(stored)) {
+                const found = await storedQadamMetadata.lookup({ name, version })
+                if (found.status !== 'present') {
                     continue
                 }
                 versions.push({
                     name,
                     version,
-                    minimumSupportedRelease: stored.metadata.minimumSupportedRelease,
-                    maximumSupportedRelease: stored.metadata.maximumSupportedRelease,
+                    minimumSupportedRelease: found.stored.metadata.minimumSupportedRelease,
+                    maximumSupportedRelease: found.stored.metadata.maximumSupportedRelease,
                 })
             }
         }
+        listByRoot.set(reader.root, { expiresAt: Date.now() + LIST_TTL_MS, value: versions })
         return versions
     },
 
     // Tests replace the store between cases; the reader is otherwise opened once per process.
     reset: (): void => {
         opened = null
+        metadataByVersion.clear()
+        listByRoot.clear()
     },
 }
 
-async function locateStoredVersion({ name, version }: { name: string, version: string }): Promise<StoredQadamVersion | undefined> {
+// A short window keeps a version fetched mid-life visible without walking every version's metadata
+// on every public `GET /v1/qadams/registry`.
+const LIST_TTL_MS = 5_000
+
+const metadataByVersion = new Map<string, StoredQadamMetadata>()
+
+const listByRoot = new Map<string, { expiresAt: number, value: StoredQadamSummary[] }>()
+
+async function locateStoredVersion({ name, version }: { name: string, version: string }): Promise<LocatedStoredVersion | undefined> {
     // A platform's custom qadams live in their own namespace and are not resolved here yet.
     if (!isOfficialQadamName(name)) {
         return undefined
@@ -103,7 +121,7 @@ async function locateStoredVersion({ name, version }: { name: string, version: s
         return undefined
     }
     const { data: stored } = await tryCatch(() => reader.read({ coordinates: { platformId: null, name, version } }))
-    return stored?.status === 'present' ? stored.version : undefined
+    return stored?.status === 'present' ? { root: reader.root, version: stored.version } : undefined
 }
 
 // One open per process and store root: `open` resolves the real path and walks up from it, which is
@@ -201,6 +219,11 @@ async function readDirectory({ directory }: { directory: string }): Promise<Dire
 
 type StoreReader = Extract<Awaited<ReturnType<typeof qadamVersionStoreReader.open>>, { ok: true }>['reader']
 
+export type StoredQadamLookup =
+    | { status: 'absent' }
+    | { status: 'unusable' }
+    | { status: 'present', stored: StoredQadamMetadata }
+
 export type StoredQadamMetadata = {
     metadata: QadamMetadataModel
     // Known from the artifact's own record; `null` when it does not say (a legacy npm version).
@@ -212,4 +235,9 @@ export type StoredQadamSummary = {
     version: string
     minimumSupportedRelease?: string
     maximumSupportedRelease?: string
+}
+
+type LocatedStoredVersion = {
+    root: string
+    version: StoredQadamVersion
 }

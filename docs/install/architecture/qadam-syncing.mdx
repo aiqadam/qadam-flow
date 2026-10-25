@@ -44,7 +44,7 @@ Adding a step records the exact qadam version at that moment (for example `0.5.3
 
 ## When a pinned version is not available
 
-A server upgrade can replace the bundled version of an official qadam, so a step may name a version the server no longer has. The server first checks the [qadam version store](/install/architecture/qadam-version-store): a version it holds is served to the builder and the worker, and the engine runs it, so the pin resolves normally. Otherwise the server resolves the step as follows:
+A server upgrade can replace the bundled version of an official qadam, so a step may name a version the server no longer has. The server first checks the [qadam version store](/install/architecture/qadam-version-store): a version it holds is served to the builder and the worker, and the engine runs it in the `UNSANDBOXED` and `SANDBOX_CODE_ONLY` execution modes, so the pin resolves normally. Otherwise the server resolves the step as follows:
 
 1. **Inside the caret range** — the bundled version runs in its place when it is compatible with the pin: the same minor version for a `0.x` qadam (`^0.5.3` accepts `0.5.9`, not `0.6.0`), the same major version from `1.0.0` on. The server logs a warning naming both versions.
 2. **Outside it** — the step does not run. The builder shows "Qadam version unavailable" on the step, `ap_validate_flow` and `ap_flow_structure` report the pin, and the step needs an explicit upgrade. A published flow is not disabled because of it.
