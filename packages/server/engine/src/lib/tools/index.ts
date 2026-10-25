@@ -11,7 +11,7 @@ import { qadamLoader } from '../helper/qadam-loader'
 import { tsort } from './tsort'
 
 export const agentTools = {
-    async tools({ engineConstants, insideConcurrentIteration, tools, model }: ConstructToolParams): Promise<Record<string, Tool>> {
+    async tools({ engineConstants, insideConcurrentIteration, tools, model }: AgentToolsParams): Promise<Record<string, Tool>> {
         const qadamTools = await Promise.all(tools.map(async (tool) => {
             const { qadamAction } = await qadamLoader.getQadamAndActionOrThrow({
                 qadamName: tool.qadamMetadata.qadamName,
@@ -500,7 +500,10 @@ type ExecuteParams = {
     constants: EngineConstants
 }
 
-type ConstructToolParams = {
+// Named distinctly from the framework's own `ConstructToolParams` (which this one's `model` is
+// converted from, at the engine boundary in `qadam-executor.ts`) so the two don't read as the same
+// type across that boundary.
+type AgentToolsParams = {
     engineConstants: EngineConstants
     insideConcurrentIteration: boolean
     tools: AgentQadamTool[]

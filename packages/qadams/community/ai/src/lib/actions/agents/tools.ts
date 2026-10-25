@@ -293,10 +293,12 @@ export async function constructAgentTools(
 ): Promise<{ tools: Record<string, Tool>, mcpClients: MCPClient[], toolKeyToAgentTool: Record<string, AgentTool> }> {
 
     const { outputBuilder, structuredOutput, agentTools, context, model, embeddingConfig } = params;
+    // `context.agent.tools()` returns the framework's opaque placeholder type (ADR-0006); this
+    // qadam owns a concrete `ai` dependency, so this is its own boundary back to the real type.
     const agentPieceTools = await context.agent.tools({
       tools: agentTools.filter(tool => tool.type === AgentToolType.PIECE),
       model: model,
-    });
+    }) as Record<string, Tool>;
     const flowsTools = await agentUtils.constructFlowsTools({
       tools: agentTools.filter(tool => tool.type === AgentToolType.FLOW),
       fetchFlows: context.flows.list,
