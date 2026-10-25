@@ -81,10 +81,19 @@ let inFlightId = null
 // under V8's string-length ceiling — a direct \`process.stdout.write\` of enough data
 // would otherwise hit that ceiling before \`realStdoutWrite\` ever ran.
 const MAX_CAPTURED_OUTPUT_CODE_UNITS = ${MAX_CAPTURED_OUTPUT_CODE_UNITS}
-function appendCapped(buf, chunk) {
+// Appending is a rope concat in O(1); the copy to drop the head is paid only once the
+// rope passes twice the cap, which amortises it over a whole cap's worth of writes. A
+// chatty step logging 100-byte lines must not copy 128 K on every single line.
+function tailCapped(text) {
+    if (text.length <= MAX_CAPTURED_OUTPUT_CODE_UNITS) return text
+    const start = text.length - MAX_CAPTURED_OUTPUT_CODE_UNITS
+    // A tail cut through a surrogate pair would start with a lone low surrogate.
+    const lowSurrogate = text.charCodeAt(start)
+    return lowSurrogate >= 0xDC00 && lowSurrogate <= 0xDFFF ? text.slice(start + 1) : text.slice(start)
+}
+function decodeChunk(chunk) {
     if (typeof chunk === 'string') {
-        const tail = chunk.length > MAX_CAPTURED_OUTPUT_CODE_UNITS ? chunk.slice(-MAX_CAPTURED_OUTPUT_CODE_UNITS) : chunk
-        return (buf + tail).slice(-MAX_CAPTURED_OUTPUT_CODE_UNITS)
+        return chunk.length > MAX_CAPTURED_OUTPUT_CODE_UNITS * 4 ? chunk.slice(-MAX_CAPTURED_OUTPUT_CODE_UNITS * 4) : chunk
     }
     // Slice the bytes before decoding: \`buf + chunk.toString()\` on a non-Buffer
     // Uint8Array yields its numbers ("104,101,..."), not its text, and decoding a huge
@@ -92,8 +101,11 @@ function appendCapped(buf, chunk) {
     // per code unit, so a bounded byte tail is enough to fill the code-unit budget.
     const byteBudget = MAX_CAPTURED_OUTPUT_CODE_UNITS * 4
     const bytes = chunk.byteLength > byteBudget ? chunk.subarray(chunk.byteLength - byteBudget) : chunk
-    const text = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString()
-    return (buf + text).slice(-MAX_CAPTURED_OUTPUT_CODE_UNITS)
+    return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString()
+}
+function appendCapped(buf, chunk) {
+    const next = buf + decodeChunk(chunk)
+    return next.length > MAX_CAPTURED_OUTPUT_CODE_UNITS * 2 ? tailCapped(next) : next
 }
 let stdoutBuf = ''
 let stderrBuf = ''
@@ -123,7 +135,7 @@ asyncHooks.createHook({
 function failInFlight(error) {
     const id = inFlightId
     inFlightId = null
-    process.send({ id: id === null ? -1 : id, success: false, error, stdout: stdoutBuf, stderr: stderrBuf, terminal: true }, () => process.exit(1))
+    process.send({ id: id === null ? -1 : id, success: false, error, stdout: tailCapped(stdoutBuf), stderr: tailCapped(stderrBuf), terminal: true }, () => process.exit(1))
 }
 
 process.on('unhandledRejection', (reason) => failInFlight(inspect(reason)))
@@ -177,8 +189,8 @@ process.on('message', async function(msg) {
     // can themselves run more of the failing step's own queued callbacks, and anything they
     // write still belongs to this verdict.
     if (!outcome.success) {
-        outcome.stdout = stdoutBuf
-        outcome.stderr = stderrBuf
+        outcome.stdout = tailCapped(stdoutBuf)
+        outcome.stderr = tailCapped(stderrBuf)
     }
 
     if (leftover) {
@@ -199,10 +211,21 @@ let lastExecutionId = 0
 // lets the crash handlers name the execution they are failing.
 let executionQueue: Promise<unknown> = Promise.resolve()
 
-// Mirrors the runner's cap, including its tail-preserving direction, so the pipe copy
-// stays comparable to the IPC capture instead of being cut at a different point.
+// Mirrors the runner's cap, including its tail-preserving direction and amortised trim,
+// so the pipe copy stays comparable to the IPC capture instead of being cut at a
+// different point or copying the whole buffer on every `data` event.
+function tailCapped(text: string): string {
+    if (text.length <= MAX_CAPTURED_OUTPUT_CODE_UNITS) {
+        return text
+    }
+    const start = text.length - MAX_CAPTURED_OUTPUT_CODE_UNITS
+    const lowSurrogate = text.charCodeAt(start)
+    return lowSurrogate >= 0xDC00 && lowSurrogate <= 0xDFFF ? text.slice(start + 1) : text.slice(start)
+}
+
 function appendCapped({ buffer, chunk }: { buffer: string, chunk: string }): string {
-    return (buffer + chunk).slice(-MAX_CAPTURED_OUTPUT_CODE_UNITS)
+    const next = buffer + chunk
+    return next.length > MAX_CAPTURED_OUTPUT_CODE_UNITS * 2 ? tailCapped(next) : next
 }
 
 function startRunner(): Runner {
@@ -247,8 +270,8 @@ function startRunner(): Runner {
         else {
             execution.reject(buildError({
                 message: message.error,
-                stdout: pickMoreComplete({ messageValue: message.stdout, pipeValue: execution.stdout }),
-                stderr: pickMoreComplete({ messageValue: message.stderr, pipeValue: execution.stderr }),
+                stdout: pickMoreComplete({ messageValue: message.stdout, pipeValue: tailCapped(execution.stdout) }),
+                stderr: pickMoreComplete({ messageValue: message.stderr, pipeValue: tailCapped(execution.stderr) }),
             }))
         }
     })
@@ -260,7 +283,7 @@ function startRunner(): Runner {
         const execution = started.inFlight
         started.inFlight = null
         if (execution) {
-            execution.reject(buildError({ message: `Code process exited with code ${code} and signal ${signal}`, stdout: execution.stdout, stderr: execution.stderr }))
+            execution.reject(buildError({ message: `Code process exited with code ${code} and signal ${signal}`, stdout: tailCapped(execution.stdout), stderr: tailCapped(execution.stderr) }))
         }
     })
 
@@ -269,7 +292,7 @@ function startRunner(): Runner {
         const execution = started.inFlight
         started.inFlight = null
         if (execution) {
-            execution.reject(buildError({ message: error.message, stdout: execution.stdout, stderr: execution.stderr }))
+            execution.reject(buildError({ message: error.message, stdout: tailCapped(execution.stdout), stderr: tailCapped(execution.stderr) }))
         }
     })
 
@@ -335,7 +358,7 @@ function dispatchToRunner({ codeFilePath, inputs }: { codeFilePath: string, inpu
             retire(target)
             const execution = takeInFlight({ runner: target, id })
             if (execution) {
-                execution.reject(buildError({ message: error.message, stdout: execution.stdout, stderr: execution.stderr }))
+                execution.reject(buildError({ message: error.message, stdout: tailCapped(execution.stdout), stderr: tailCapped(execution.stderr) }))
             }
         })
     })

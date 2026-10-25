@@ -130,6 +130,28 @@ const writesOverCapThenFails = writeFixture({
     } }`,
 })
 
+// Exercises the byte path's own bounded tail: a single write larger than the code-unit
+// budget must be sliced before decoding, and the marker after it must still survive.
+const writesManyBytesThenFails = writeFixture({
+    name: 'writes_many_bytes_then_fails',
+    source: `module.exports = { code: async () => {
+        process.stdout.write(new Uint8Array(600 * 1024).fill(88))
+        process.stdout.write(new TextEncoder().encode('\\nBYTES-TAIL-MARKER'))
+        throw new Error('many bytes boom')
+    } }`,
+})
+
+// Tenant code can forge `process.send`; a malformed frame must be ignored rather than
+// crashing the host (the pre-fix code threw on a non-string stdout), and the real verdict
+// must still be delivered afterwards.
+const forgesMalformedMessages = writeFixture({
+    name: 'forges_malformed_messages',
+    source: `module.exports = { code: async () => {
+        for (let id = 1; id <= 1000; id++) process.send({ id, success: false, error: 42, stdout: {}, stderr: [] })
+        throw new Error('real boom')
+    } }`,
+})
+
 function readPid(value: unknown): number {
     if (typeof value === 'object' && value !== null && 'pid' in value && typeof value.pid === 'number') {
         return value.pid
@@ -334,6 +356,22 @@ describe('noOpCodeSandbox', () => {
         expect(error?.message).not.toContain('STDERR-HEAD-MARKER')
         // Two streams capped at 128 K code units each, plus the error and headers.
         expect(error?.message.length).toBeLessThan(300 * 1024)
+    })
+
+    it('should keep the tail of a single oversized Uint8Array write', async () => {
+        const error = await noOpCodeSandbox.runCodeModule({ codeFilePath: writesManyBytesThenFails, inputs: {} })
+            .then(() => null, (reason: Error) => reason)
+
+        expect(error?.message).toContain('many bytes boom')
+        expect(error?.message).toContain('BYTES-TAIL-MARKER')
+        expect(error?.message.length).toBeLessThan(300 * 1024)
+    })
+
+    it('should ignore forged malformed runner messages and still deliver the real verdict', async () => {
+        const error = await noOpCodeSandbox.runCodeModule({ codeFilePath: forgesMalformedMessages, inputs: {} })
+            .then(() => null, (reason: Error) => reason)
+
+        expect(error?.message).toContain('real boom')
     })
 
     it('should tolerate shutdown when no execution has ever run', async () => {
