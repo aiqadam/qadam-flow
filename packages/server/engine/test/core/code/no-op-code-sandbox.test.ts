@@ -1,3 +1,4 @@
+import { ChildProcess, spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -93,6 +94,15 @@ const slowAndClean = writeFixture({
 const forgeTerminal = writeFixture({
     name: 'forge_terminal',
     source: 'module.exports = { code: async () => { console.log("PID=" + process.pid); process.send({ id: 0, success: true, terminal: true }); setInterval(() => {}, 50); return { pid: process.pid } } }',
+})
+
+const logsThenFails = writeFixture({
+    name: 'logs_then_fails',
+    source: `module.exports = { code: async () => {
+        for (let i = 0; i < 400; i++) { console.log('OUT-LINE-' + i) }
+        for (let i = 0; i < 400; i++) { console.error('ERR-LINE-' + i) }
+        throw new Error('boom')
+    } }`,
 })
 
 function readPid(value: unknown): number {
@@ -243,6 +253,30 @@ describe('noOpCodeSandbox', () => {
         await noOpCodeSandbox.shutdown()
         expect(await waitUntilGone(forgedPid)).toBe(true)
     })
+
+    // #609: the host used to recover a failing step's stdout/stderr from 'data' events on
+    // the runner's stdio pipes. A pipe write is asynchronous on Linux, so under enough CPU
+    // contention its 'data' event can reach the host after the IPC 'message' carrying the
+    // verdict already did — at which point the host had already stopped accumulating into
+    // `execution.stdout`/`stderr`, silently dropping the tail of the output. Busy loops
+    // reproduced this on 144 of 150 iterations before the fix; the fix captures output
+    // inside the runner, synchronously at the `write` call, so it travels in the same IPC
+    // message as the verdict and the host no longer depends on pipe delivery order at all.
+    it('should keep the full stdout and stderr in a failure message under CPU contention (#609)', async () => {
+        const busyLoops: ChildProcess[] = Array.from({ length: 12 }, () => spawn(process.execPath, ['-e', 'while(true){}']))
+        try {
+            for (let i = 0; i < 30; i++) {
+                const error = await noOpCodeSandbox.runCodeModule({ codeFilePath: logsThenFails, inputs: {} })
+                    .then(() => null, (reason: Error) => reason)
+
+                expect(error?.message).toContain('OUT-LINE-399')
+                expect(error?.message).toContain('ERR-LINE-399')
+            }
+        }
+        finally {
+            busyLoops.forEach((loop) => loop.kill('SIGKILL'))
+        }
+    }, 30000)
 
     it('should tolerate shutdown when no execution has ever run', async () => {
         await expect(noOpCodeSandbox.shutdown()).resolves.toBeUndefined()

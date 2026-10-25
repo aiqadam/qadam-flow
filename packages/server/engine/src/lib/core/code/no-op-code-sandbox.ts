@@ -61,6 +61,25 @@ const asyncHooks = require('async_hooks')
 const inspect = require('util').inspect
 let inFlightId = null
 
+// Captured here, synchronously at the write call, rather than left to the parent's
+// 'data' listener on the stdio pipes: a pipe write is async on Linux, so its 'data'
+// event can reach the parent after the IPC 'message' carrying the verdict already did,
+// which would silently drop the tail of a failing step's output (#609). Capturing at
+// the call site has no such race — by the time \`mod.code()\` returns, everything it
+// wrote is already in the buffer.
+let stdoutBuf = ''
+let stderrBuf = ''
+const realStdoutWrite = process.stdout.write.bind(process.stdout)
+const realStderrWrite = process.stderr.write.bind(process.stderr)
+process.stdout.write = (chunk, ...args) => {
+    stdoutBuf += typeof chunk === 'string' ? chunk : chunk.toString()
+    return realStdoutWrite(chunk, ...args)
+}
+process.stderr.write = (chunk, ...args) => {
+    stderrBuf += typeof chunk === 'string' ? chunk : chunk.toString()
+    return realStderrWrite(chunk, ...args)
+}
+
 process.on('disconnect', () => process.exit(0))
 
 const liveResources = new Set()
@@ -76,7 +95,7 @@ asyncHooks.createHook({
 function failInFlight(error) {
     const id = inFlightId
     inFlightId = null
-    process.send({ id: id === null ? -1 : id, success: false, error, terminal: true }, () => process.exit(1))
+    process.send({ id: id === null ? -1 : id, success: false, error, stdout: stdoutBuf, stderr: stderrBuf, terminal: true }, () => process.exit(1))
 }
 
 process.on('unhandledRejection', (reason) => failInFlight(inspect(reason)))
@@ -91,6 +110,8 @@ function leftBehind({ baseline, ownYields }) {
 
 process.on('message', async function(msg) {
     inFlightId = msg.id
+    stdoutBuf = ''
+    stderrBuf = ''
     const baseline = new Set(liveResources)
     let outcome
 
@@ -103,7 +124,7 @@ process.on('message', async function(msg) {
         const result = await mod.code(msg.inputs)
         outcome = { id: msg.id, success: true, result: JSON.parse(JSON.stringify(result ?? null)) }
     } catch(e) {
-        outcome = { id: msg.id, success: false, error: inspect(e) }
+        outcome = { id: msg.id, success: false, error: inspect(e), stdout: stdoutBuf, stderr: stderrBuf }
     }
 
     // Yield so unhandledRejection fires before we report success.
@@ -182,7 +203,11 @@ function startRunner(): Runner {
             execution.resolve(message.result)
         }
         else {
-            execution.reject(buildError({ message: message.error, execution }))
+            execution.reject(buildError({
+                message: message.error,
+                stdout: message.stdout ?? execution.stdout,
+                stderr: message.stderr ?? execution.stderr,
+            }))
         }
     })
 
@@ -192,14 +217,18 @@ function startRunner(): Runner {
         retire(started)
         const execution = started.inFlight
         started.inFlight = null
-        execution?.reject(buildError({ message: `Code process exited with code ${code} and signal ${signal}`, execution }))
+        if (execution) {
+            execution.reject(buildError({ message: `Code process exited with code ${code} and signal ${signal}`, stdout: execution.stdout, stderr: execution.stderr }))
+        }
     })
 
     child.on('error', (error) => {
         retire(started)
         const execution = started.inFlight
         started.inFlight = null
-        execution?.reject(buildError({ message: error.message, execution }))
+        if (execution) {
+            execution.reject(buildError({ message: error.message, stdout: execution.stdout, stderr: execution.stderr }))
+        }
     })
 
     return started
@@ -251,7 +280,9 @@ function dispatchToRunner({ codeFilePath, inputs }: { codeFilePath: string, inpu
             }
             retire(target)
             const execution = takeInFlight({ runner: target, id })
-            execution?.reject(buildError({ message: error.message, execution }))
+            if (execution) {
+                execution.reject(buildError({ message: error.message, stdout: execution.stdout, stderr: execution.stderr }))
+            }
         })
     })
 }
@@ -264,10 +295,8 @@ function enqueue<T>(task: () => Promise<T>): Promise<T> {
     return settled
 }
 
-function buildError({ message, execution }: { message: string | undefined, execution: InFlightExecution | null }): Error {
+function buildError({ message, stdout, stderr }: { message: string | undefined, stdout: string, stderr: string }): Error {
     const parts: string[] = [message ?? 'Code execution failed']
-    const stdout = execution?.stdout ?? ''
-    const stderr = execution?.stderr ?? ''
     if (stdout.trim()) {
         parts.push(`\n--- stdout ---\n${stdout.trim()}`)
     }
@@ -343,4 +372,6 @@ type RunnerMessage = {
     terminal?: boolean
     result?: unknown
     error?: string
+    stdout?: string
+    stderr?: string
 }
