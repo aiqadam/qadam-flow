@@ -331,8 +331,8 @@ function isRunnerMessage(message: unknown): message is RunnerMessage {
     // tenant-authored-code-reachable (`process.send` is as forgeable as the existing
     // `forgeTerminal` test already proves) — a non-string value here must not reach
     // `buildError` and crash the host with an uncaught `TypeError`. The cap matches the
-    // runner's own, so an honest message always passes and a forged one cannot smuggle an
-    // unbounded string through the IPC frame.
+    // runner's own, so an honest message always passes and an oversized forged one is
+    // ignored rather than retained in the host's error.
     const isCapturedOutput = (value: unknown): boolean => value === undefined
         || (typeof value === 'string' && value.length <= MAX_CAPTURED_OUTPUT_CODE_UNITS)
     return typeof candidate.id === 'number'
