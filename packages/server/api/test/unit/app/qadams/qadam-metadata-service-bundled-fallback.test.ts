@@ -2,7 +2,6 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { QadamMetadataModel } from '@aiqadam/qadams-framework'
-import { qadamVersionStoreReader } from '@aiqadam/server-utils'
 import { PackageType, QadamType } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { AppSystemProp } from '../../../../src/app/helper/system/system-props'
@@ -256,11 +255,12 @@ describe('qadamMetadataService.isPinAvailable() — the pin itself, never a stan
     })
 
     it('stays false when the store is absent there, or cannot be opened', async () => {
-        vi.spyOn(storedQadamMetadata, 'lookup').mockResolvedValue({ status: 'absent' })
-        expect(await qadamMetadataService(logger).isPinAvailable({ name: NAME, version: '0.4.2', platformId: undefined })).toBe(false)
+        // The suite points AP_QADAM_VERSION_STORE_PATH at a directory that does not exist, so this
+        // exercises the real open failure rather than a stub.
+        const service = qadamMetadataService(logger)
+        storedQadamMetadata.reset()
 
-        vi.spyOn(qadamVersionStoreReader, 'open').mockRejectedValue(new Error('EACCES'))
-        expect(await qadamMetadataService(logger).isPinAvailable({ name: NAME, version: '0.4.2', platformId: undefined })).toBe(false)
+        expect(await service.isPinAvailable({ name: NAME, version: '0.4.2', platformId: undefined })).toBe(false)
     })
 
     it('is false, without asking the registry, for a range or anything that is not a version', async () => {

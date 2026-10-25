@@ -287,11 +287,12 @@ image seeds it before #807, so on a real install it is still empty. "Store" alon
   the store's reader and the catalogue's bounded directory source and distinguishes `absent` (not
   `PRESENT`: damaged, unsupported here, unreadable, exactly what the engine skips) from `unusable`
   (a `PRESENT` version whose metadata cannot be read). An exact official pin that is absent falls
-  through to the registry and the caret net; one that is unusable, or stored above this release's
-  floors, fails with the pin named rather than substituting another build the engine would not load.
-  `list` walks the official namespace for `registry` (release versions only, honouring each
-  version's release floors), with its result and each version's metadata cached in-process for a few
-  seconds. A flow's pins are resolved in one registry pass
+  through to the registry and the caret net; one that is unusable is reported as an unknown
+  resolution (so the heal never persists a rewrite on it) and is never substituted, and one stored
+  above this release's floors is a miss the fallback may move. `list` walks the official namespace
+  for `registry` (release versions only, honouring each version's release floors); its result is
+  cached with its in-flight promise for a few seconds, and a pin's parsed metadata is cached
+  separately with a short expiry and a bounded size. A flow's pins are resolved in one registry pass
   (`qadamMetadataService.resolveVersions`, registry-only): the registry is loaded and filtered once
   per flow and indexed by name, instead of once per pin. The pause-marker path uses `getMany`,
   which adds the metadata read per pin (#879). The worker's lookups are bounded to 8 in flight

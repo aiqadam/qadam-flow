@@ -75,7 +75,7 @@ export const qadamMetadataService = (log: FastifyBaseLogger) => {
         },
         async get({ projectId: _projectId, platformId, version, name }: GetParams): Promise<QadamMetadataModel | undefined> {
             const bestMatch = await findExactVersion(log, { name, version, platformId })
-            if (isNil(bestMatch)) {
+            if (isNil(bestMatch) || bestMatch.unusable) {
                 return undefined
             }
             const qadam = isNil(bestMatch.stored)
@@ -110,6 +110,9 @@ export const qadamMetadataService = (log: FastifyBaseLogger) => {
                 if (!isNil(matchError) || isNil(bestMatch)) {
                     return [pinKey(pin), isNil(matchError) ? { status: 'missing' } : { status: 'error' }]
                 }
+                if (bestMatch.unusable) {
+                    return [pinKey(pin), { status: 'error' }]
+                }
                 const { data: qadam, error } = await tryCatch(() => isNil(bestMatch.stored)
                     ? dedupe(`qadam:${bestMatch.name}:${bestMatch.version}:${bestMatch.platformId ?? ''}`, () => fetchQadamVersion({
                         qadamName: bestMatch.name,
@@ -125,9 +128,9 @@ export const qadamMetadataService = (log: FastifyBaseLogger) => {
             }))
             return new Map(entries)
         },
-        // Registry-only resolution for callers that need "does this pin resolve", not the qadam's
-        // metadata (`qadamPinUtil.resolvePins`). No row read per pin: the registry is the same
-        // source `get` resolves through, and this is the hot path a flow's many tool pins take
+        // Resolution for callers that need "does this pin resolve", not the qadam's metadata
+        // (`qadamPinUtil.resolvePins`). No row read per pin: the registry and the version store are
+        // the sources `get` resolves through, and this is the hot path a flow's many tool pins take
         // (#879).
         async resolveVersions({ pins, platformId }: GetManyParams): Promise<Map<string, QadamVersionLookup>> {
             const uniquePins = distinctVersionRequests({ pins })
@@ -143,7 +146,10 @@ export const qadamMetadataService = (log: FastifyBaseLogger) => {
                 if (!isNil(error)) {
                     return [pinKey(pin), { status: 'error' }]
                 }
-                return [pinKey(pin), isNil(match) ? { status: 'missing' } : { status: 'resolved', version: match.version }]
+                if (isNil(match)) {
+                    return [pinKey(pin), { status: 'missing' }]
+                }
+                return [pinKey(pin), match.unusable ? { status: 'error' } : { status: 'resolved', version: match.version }]
             }))
             return new Map(entries)
         },
@@ -158,7 +164,7 @@ export const qadamMetadataService = (log: FastifyBaseLogger) => {
                 return false
             }
             const match = await findExactVersion(log, { name, version, platformId, allowBundledFallback: false })
-            return !isNil(match)
+            return !isNil(match) && !match.unusable
         },
         // The version `get` resolves a pin to, without reading the qadam row itself: the registry
         // it resolves through selects named columns only, so it answers on a database whose
@@ -166,7 +172,7 @@ export const qadamMetadataService = (log: FastifyBaseLogger) => {
         // census `doctor` reads before an upgrade (ADR-0002).
         async resolveVersion({ platformId, version, name }: ResolveVersionParams): Promise<string | undefined> {
             const bestMatch = await findExactVersion(log, { name, version, platformId })
-            return bestMatch?.version
+            return isNil(bestMatch) || bestMatch.unusable ? undefined : bestMatch.version
         },
         async getOrThrow({ version, name, platformId, locale, fallbackToInstalledVersion }: GetOrThrowParams): Promise<QadamMetadataModel> {
             const qadam = await this.get({ version, name, platformId })
@@ -485,7 +491,7 @@ const findExactVersionFor = async ({ log, request, entries, platformId, allowBun
         // version this release cannot serve is therefore a failed pin, never a reason to substitute
         // the image's build; the engine would still load the store.
         if (stored.status === 'unusable') {
-            return undefined
+            return { name, version, platformId: undefined, unusable: true }
         }
         if (stored.status === 'present') {
             const release = apVersionUtil.getCurrentRelease()
@@ -757,6 +763,9 @@ type QadamVersionMatch = {
     version: string
     platformId: string | undefined
     stored?: StoredQadamMetadata
+    // The store calls this version PRESENT but its metadata cannot be read. Callers must not treat it
+    // as a miss that another build may stand in for; the engine would still run the stored code.
+    unusable?: boolean
 }
 
 export type QadamMetadataLookup =

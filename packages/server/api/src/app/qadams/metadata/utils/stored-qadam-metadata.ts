@@ -34,24 +34,31 @@ export const storedQadamMetadata = {
     // whose `metadata.json` cannot be read as this qadam's metadata; a caller must fail the pin rather
     // than substitute another build, because the engine would still run the stored code (#779).
     lookup: async ({ name, version }: { name: string, version: string }): Promise<StoredQadamLookup> => {
-        const located = await locateStoredVersion({ name, version })
+        if (!isOfficialQadamName(name)) {
+            return { status: 'absent' }
+        }
+        const reader = await openReader()
+        if (isNil(reader)) {
+            return { status: 'absent' }
+        }
+        const key = `${reader.root}\0${name}@${version}`
+        const cached = metadataByVersion.get(key)
+        if (!isNil(cached) && cached.expiresAt > Date.now()) {
+            return { status: 'present', stored: cached.stored }
+        }
+        const located = await locateStoredVersion({ reader, name, version })
         if (isNil(located)) {
             return { status: 'absent' }
         }
-        const key = `${located.root}\0${name}@${version}`
-        const cached = metadataByVersion.get(key)
-        if (!isNil(cached)) {
-            return { status: 'present', stored: cached }
-        }
-        const metadata = await readMetadataFile({ directory: located.version.dir, name, version })
+        const metadata = await readMetadataFile({ directory: located.dir, name, version })
         if (isNil(metadata)) {
             return { status: 'unusable' }
         }
         const stored: StoredQadamMetadata = {
             metadata: toMetadataModel({ metadata }),
-            frameworkMajor: frameworkMajorOf({ builtAgainst: located.version.integrity.builtAgainst }),
+            frameworkMajor: frameworkMajorOf({ builtAgainst: located.integrity.builtAgainst }),
         }
-        metadataByVersion.set(key, stored)
+        rememberMetadata({ key, stored })
         return { status: 'present', stored }
     },
 
@@ -62,9 +69,10 @@ export const storedQadamMetadata = {
     },
 
     // Every official version the store holds, for the registry the builder and the heal path read.
-    // Each version is read through `lookup`, so a damaged or unusable one is left out rather than
-    // offered. The list is cached for a few seconds: the store versions are immutable, but a fetch
-    // (#806) can add one while the process lives, and this endpoint is public.
+    // Each version is read through the store reader, so a damaged or unusable one is left out rather
+    // than offered. The result is cached with its in-flight promise for a few seconds: a fetch (#806)
+    // can add a version while the process lives, and this endpoint is public, so concurrent requests
+    // share one walk rather than each starting their own.
     list: async (): Promise<StoredQadamSummary[]> => {
         const reader = await openReader()
         if (isNil(reader)) {
@@ -74,25 +82,12 @@ export const storedQadamMetadata = {
         if (!isNil(cached) && cached.expiresAt > Date.now()) {
             return cached.value
         }
-        const qadamsDir = path.join(reader.root, QADAM_VERSION_STORE_LAYOUT.qadamsDir)
-        const names = await listOfficialNames({ qadamsDir })
-        const versions: StoredQadamSummary[] = []
-        for (const name of names) {
-            for (const version of await listVersionNames({ qadamsDir, name })) {
-                const found = await storedQadamMetadata.lookup({ name, version })
-                if (found.status !== 'present') {
-                    continue
-                }
-                versions.push({
-                    name,
-                    version,
-                    minimumSupportedRelease: found.stored.metadata.minimumSupportedRelease,
-                    maximumSupportedRelease: found.stored.metadata.maximumSupportedRelease,
-                })
-            }
-        }
-        listByRoot.set(reader.root, { expiresAt: Date.now() + LIST_TTL_MS, value: versions })
-        return versions
+        const value = scanStore({ reader }).catch((error: unknown) => {
+            listByRoot.delete(reader.root)
+            throw error
+        })
+        listByRoot.set(reader.root, { expiresAt: Date.now() + LIST_TTL_MS, value })
+        return value
     },
 
     // Tests replace the store between cases; the reader is otherwise opened once per process.
@@ -106,22 +101,59 @@ export const storedQadamMetadata = {
 // A short window keeps a version fetched mid-life visible without walking every version's metadata
 // on every public `GET /v1/qadams/registry`.
 const LIST_TTL_MS = 5_000
+// The same for a pin's metadata: a version is immutable, but a store GC (#478) can remove one and a
+// fetch (#806) can repair a damaged one, so a cached answer is not kept for the life of the process.
+const METADATA_TTL_MS = 30_000
+// Pins resolved from a large flow must not pin every version's actions, triggers and i18n in memory
+// for good; the cache is a hot-path aid, not a catalogue. The oldest entry is dropped first.
+const MAX_METADATA_CACHE_ENTRIES = 1_000
 
-const metadataByVersion = new Map<string, StoredQadamMetadata>()
+const metadataByVersion = new Map<string, { expiresAt: number, stored: StoredQadamMetadata }>()
 
-const listByRoot = new Map<string, { expiresAt: number, value: StoredQadamSummary[] }>()
+const listByRoot = new Map<string, { expiresAt: number, value: Promise<StoredQadamSummary[]> }>()
 
-async function locateStoredVersion({ name, version }: { name: string, version: string }): Promise<LocatedStoredVersion | undefined> {
+function rememberMetadata({ key, stored }: { key: string, stored: StoredQadamMetadata }): void {
+    if (metadataByVersion.size >= MAX_METADATA_CACHE_ENTRIES) {
+        const oldest = metadataByVersion.keys().next().value
+        if (!isNil(oldest)) {
+            metadataByVersion.delete(oldest)
+        }
+    }
+    metadataByVersion.set(key, { expiresAt: Date.now() + METADATA_TTL_MS, stored })
+}
+
+async function scanStore({ reader }: { reader: StoreReader }): Promise<StoredQadamSummary[]> {
+    const qadamsDir = path.join(reader.root, QADAM_VERSION_STORE_LAYOUT.qadamsDir)
+    const names = await listOfficialNames({ qadamsDir })
+    const versions: StoredQadamSummary[] = []
+    for (const name of names) {
+        for (const version of await listVersionNames({ qadamsDir, name })) {
+            const located = await locateStoredVersion({ reader, name, version })
+            if (isNil(located)) {
+                continue
+            }
+            const metadata = await readMetadataFile({ directory: located.dir, name, version })
+            if (isNil(metadata)) {
+                continue
+            }
+            versions.push({
+                name,
+                version,
+                minimumSupportedRelease: metadata.minimumSupportedRelease,
+                maximumSupportedRelease: metadata.maximumSupportedRelease,
+            })
+        }
+    }
+    return versions
+}
+
+async function locateStoredVersion({ reader, name, version }: { reader: StoreReader, name: string, version: string }): Promise<StoredQadamVersion | undefined> {
     // A platform's custom qadams live in their own namespace and are not resolved here yet.
     if (!isOfficialQadamName(name)) {
         return undefined
     }
-    const reader = await openReader()
-    if (isNil(reader)) {
-        return undefined
-    }
     const { data: stored } = await tryCatch(() => reader.read({ coordinates: { platformId: null, name, version } }))
-    return stored?.status === 'present' ? { root: reader.root, version: stored.version } : undefined
+    return stored?.status === 'present' ? stored.version : undefined
 }
 
 // One open per process and store root: `open` resolves the real path and walks up from it, which is
@@ -166,6 +198,9 @@ function toMetadataModel({ metadata }: { metadata: QadamMetadata }): QadamMetada
     return {
         ...metadata,
         id: apId(),
+        // A metadata file is untrusted input as far as its package fields go: never let it claim a
+        // platform, which would make an official row read as another tenant's custom qadam.
+        platformId: undefined,
         projectUsage: 0,
         qadamType: QadamType.OFFICIAL,
         packageType: PackageType.REGISTRY,
@@ -235,9 +270,4 @@ export type StoredQadamSummary = {
     version: string
     minimumSupportedRelease?: string
     maximumSupportedRelease?: string
-}
-
-type LocatedStoredVersion = {
-    root: string
-    version: StoredQadamVersion
 }
