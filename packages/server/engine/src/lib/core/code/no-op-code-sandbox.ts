@@ -56,6 +56,12 @@ import { CodeSandbox } from '../../core/code/code-sandbox-common'
 // otherwise leave this process orphaned and still executing the tenant's code.
 const LEFTOVER_SETTLE_TURNS = 3
 
+// Matches the `ERROR_OFFSET` budget `helper/logging-utils.ts` already reserves for an
+// error message — capping here bounds the buffer, the IPC frame, and the error string in
+// one place, so a step that logs hundreds of MB before failing can no longer multiply that
+// across the child buffer, the JSON IPC payload and the host's own copy (app-sec, #609).
+const MAX_CAPTURED_OUTPUT_BYTES = 256 * 1024
+
 const CODE_RUNNER_SCRIPT = `
 const asyncHooks = require('async_hooks')
 const inspect = require('util').inspect
@@ -66,17 +72,25 @@ let inFlightId = null
 // event can reach the parent after the IPC 'message' carrying the verdict already did,
 // which would silently drop the tail of a failing step's output (#609). Capturing at
 // the call site has no such race — by the time \`mod.code()\` returns, everything it
-// wrote is already in the buffer.
+// wrote is already in the buffer. Capped so the buffer, the IPC frame built from it, and
+// the resulting error message can't grow unbounded, which also keeps \`stdoutBuf += ...\`
+// under V8's string-length ceiling — a direct \`process.stdout.write\` of enough data
+// would otherwise hit that ceiling before \`realStdoutWrite\` ever ran.
+const MAX_CAPTURED_OUTPUT_BYTES = ${MAX_CAPTURED_OUTPUT_BYTES}
+function appendCapped(buf, chunk) {
+    if (buf.length >= MAX_CAPTURED_OUTPUT_BYTES) return buf
+    return buf + chunk.slice(0, MAX_CAPTURED_OUTPUT_BYTES - buf.length)
+}
 let stdoutBuf = ''
 let stderrBuf = ''
 const realStdoutWrite = process.stdout.write.bind(process.stdout)
 const realStderrWrite = process.stderr.write.bind(process.stderr)
 process.stdout.write = (chunk, ...args) => {
-    stdoutBuf += typeof chunk === 'string' ? chunk : chunk.toString()
+    stdoutBuf = appendCapped(stdoutBuf, typeof chunk === 'string' ? chunk : chunk.toString())
     return realStdoutWrite(chunk, ...args)
 }
 process.stderr.write = (chunk, ...args) => {
-    stderrBuf += typeof chunk === 'string' ? chunk : chunk.toString()
+    stderrBuf = appendCapped(stderrBuf, typeof chunk === 'string' ? chunk : chunk.toString())
     return realStderrWrite(chunk, ...args)
 }
 
@@ -124,7 +138,7 @@ process.on('message', async function(msg) {
         const result = await mod.code(msg.inputs)
         outcome = { id: msg.id, success: true, result: JSON.parse(JSON.stringify(result ?? null)) }
     } catch(e) {
-        outcome = { id: msg.id, success: false, error: inspect(e), stdout: stdoutBuf, stderr: stderrBuf }
+        outcome = { id: msg.id, success: false, error: inspect(e) }
     }
 
     // Yield so unhandledRejection fires before we report success.
@@ -145,6 +159,14 @@ process.on('message', async function(msg) {
     if (inFlightId !== msg.id) return
     inFlightId = null
 
+    // Read live, not snapshotted in the catch above: the yield and settle turns just spent
+    // can themselves run more of the failing step's own queued callbacks, and anything they
+    // write still belongs to this verdict.
+    if (!outcome.success) {
+        outcome.stdout = stdoutBuf
+        outcome.stderr = stderrBuf
+    }
+
     if (leftover) {
         process.send(Object.assign({ terminal: true }, outcome), () => process.exit(0))
         return
@@ -163,6 +185,16 @@ let lastExecutionId = 0
 // lets the crash handlers name the execution they are failing.
 let executionQueue: Promise<unknown> = Promise.resolve()
 
+// Mirrors the cap the runner applies to its own `stdoutBuf`/`stderrBuf`. Without this,
+// `pickMoreComplete` picking "whichever came back longer" would defeat that cap the
+// moment the uncapped pipe-accumulated side happened to be the longer of the two.
+function appendCapped({ buffer, chunk }: { buffer: string, chunk: string }): string {
+    if (buffer.length >= MAX_CAPTURED_OUTPUT_BYTES) {
+        return buffer
+    }
+    return buffer + chunk.slice(0, MAX_CAPTURED_OUTPUT_BYTES - buffer.length)
+}
+
 function startRunner(): Runner {
     const child = spawn(process.execPath, ['--eval', CODE_RUNNER_SCRIPT], {
         stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
@@ -172,7 +204,7 @@ function startRunner(): Runner {
     child.stdout?.on('data', (data: Buffer) => {
         const text = data.toString()
         if (started.inFlight) {
-            started.inFlight.stdout += text
+            started.inFlight.stdout = appendCapped({ buffer: started.inFlight.stdout, chunk: text })
         }
         console.log(text.trimEnd())
     })
@@ -180,7 +212,7 @@ function startRunner(): Runner {
     child.stderr?.on('data', (data: Buffer) => {
         const text = data.toString()
         if (started.inFlight) {
-            started.inFlight.stderr += text
+            started.inFlight.stderr = appendCapped({ buffer: started.inFlight.stderr, chunk: text })
         }
         console.error(text.trimEnd())
     })
@@ -205,8 +237,8 @@ function startRunner(): Runner {
         else {
             execution.reject(buildError({
                 message: message.error,
-                stdout: message.stdout ?? execution.stdout,
-                stderr: message.stderr ?? execution.stderr,
+                stdout: pickMoreComplete(message.stdout, execution.stdout),
+                stderr: pickMoreComplete(message.stderr, execution.stderr),
             }))
         }
     })
@@ -262,7 +294,15 @@ function isRunnerMessage(message: unknown): message is RunnerMessage {
         return false
     }
     const candidate: Record<string, unknown> = { ...message }
-    return typeof candidate.id === 'number' && typeof candidate.success === 'boolean'
+    // `stdout`/`stderr` are read with `.trim()` below, and the message a runner sends is
+    // tenant-authored-code-reachable (`process.send` is as forgeable as the existing
+    // `forgeTerminal` test already proves) — a non-string value here must not reach
+    // `buildError` and crash the host with an uncaught `TypeError`.
+    const isStringOrAbsent = (value: unknown): boolean => value === undefined || typeof value === 'string'
+    return typeof candidate.id === 'number'
+        && typeof candidate.success === 'boolean'
+        && isStringOrAbsent(candidate.stdout)
+        && isStringOrAbsent(candidate.stderr)
 }
 
 function dispatchToRunner({ codeFilePath, inputs }: { codeFilePath: string, inputs: Record<string, unknown> }): Promise<unknown> {
@@ -293,6 +333,18 @@ function enqueue<T>(task: () => Promise<T>): Promise<T> {
     const settled = executionQueue.then(task, task)
     executionQueue = settled.then(() => undefined, () => undefined)
     return settled
+}
+
+// The runner's own capture (`messageValue`) only sees output written through
+// `process.stdout`/`stderr.write`, so it misses `fs.writeSync(1, ...)` and a grandchild
+// spawned with `stdio: 'inherit'` — both still land on the real fd and so still reach the
+// host's pipe-accumulated `pipeValue`. Neither source is reliably a superset of the other
+// (the pipe copy is the one exposed to #609's delivery-order race), so prefer whichever
+// came back longer rather than always trusting the race-free one and silently dropping
+// output that only the pipe saw.
+function pickMoreComplete(messageValue: string | undefined, pipeValue: string): string {
+    const fromMessage = messageValue ?? ''
+    return fromMessage.length >= pipeValue.length ? fromMessage : pipeValue
 }
 
 function buildError({ message, stdout, stderr }: { message: string | undefined, stdout: string, stderr: string }): Error {

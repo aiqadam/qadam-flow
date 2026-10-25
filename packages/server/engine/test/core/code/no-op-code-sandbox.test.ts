@@ -1,7 +1,8 @@
 import { ChildProcess, spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { availableParallelism, tmpdir } from 'node:os'
 import path from 'node:path'
+import { onTestFinished } from 'vitest'
 import { noOpCodeSandbox } from '../../../src/lib/core/code/no-op-code-sandbox'
 
 const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'no-op-code-sandbox-'))
@@ -258,23 +259,31 @@ describe('noOpCodeSandbox', () => {
     // the runner's stdio pipes. A pipe write is asynchronous on Linux, so under enough CPU
     // contention its 'data' event can reach the host after the IPC 'message' carrying the
     // verdict already did — at which point the host had already stopped accumulating into
-    // `execution.stdout`/`stderr`, silently dropping the tail of the output. Busy loops
-    // reproduced this on 144 of 150 iterations before the fix; the fix captures output
-    // inside the runner, synchronously at the `write` call, so it travels in the same IPC
-    // message as the verdict and the host no longer depends on pipe delivery order at all.
+    // `execution.stdout`/`stderr`, silently dropping the tail of the output. 12 busy loops
+    // reproduced this on 144 of 150 iterations before the fix on the machine this test was
+    // written on; the fix captures output inside the runner, synchronously at the `write`
+    // call, so it travels in the same IPC message as the verdict and the host no longer
+    // depends on pipe delivery order at all. The loop count scales with the core count so
+    // the same oversubscription margin — and the same regression guard — holds on a
+    // bigger CI runner, where a fixed small count would stop contending at all.
     it('should keep the full stdout and stderr in a failure message under CPU contention (#609)', async () => {
-        const busyLoops: ChildProcess[] = Array.from({ length: 12 }, () => spawn(process.execPath, ['-e', 'while(true){}']))
-        try {
-            for (let i = 0; i < 30; i++) {
-                const error = await noOpCodeSandbox.runCodeModule({ codeFilePath: logsThenFails, inputs: {} })
-                    .then(() => null, (reason: Error) => reason)
-
-                expect(error?.message).toContain('OUT-LINE-399')
-                expect(error?.message).toContain('ERR-LINE-399')
-            }
-        }
-        finally {
+        const busyLoopCount = Math.min(64, Math.max(12, availableParallelism() * 2))
+        const busyLoops: ChildProcess[] = Array.from(
+            { length: busyLoopCount },
+            () => spawn(process.execPath, ['-e', 'while(true){}'], { stdio: 'ignore' }),
+        )
+        // `onTestFinished` (not a bare `finally`) so a timed-out test still reaps these —
+        // a `finally` inside the test body never runs once vitest has stopped awaiting it.
+        onTestFinished(() => {
             busyLoops.forEach((loop) => loop.kill('SIGKILL'))
+        })
+
+        for (let i = 0; i < 30; i++) {
+            const error = await noOpCodeSandbox.runCodeModule({ codeFilePath: logsThenFails, inputs: {} })
+                .then(() => null, (reason: Error) => reason)
+
+            expect(error?.message).toContain('OUT-LINE-399')
+            expect(error?.message).toContain('ERR-LINE-399')
         }
     }, 30000)
 
