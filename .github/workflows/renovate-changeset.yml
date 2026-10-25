@@ -64,6 +64,9 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GITHUB_HEAD_REF: ${{ github.head_ref }}
+          # Names the changeset when `${branch}.md` already exists on the base branch: the writer
+          # must not overwrite a pending entry from an earlier PR (#907).
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           # The TRUSTED copy from the base branch, never the branch's own: this step writes the tree

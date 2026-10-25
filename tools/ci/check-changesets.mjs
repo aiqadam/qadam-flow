@@ -137,7 +137,7 @@ const main = () => {
   }
   const report = result.data
   if (write) {
-    writeRenovateChangeset({ report })
+    writeRenovateChangeset({ report, range })
     return
   }
   printReport({ report, range })
@@ -260,18 +260,85 @@ const printReport = ({ report, range }) => {
   console.error('Levels: ADR-0001 "What each number means". Not a release-worthy change? An empty changeset (`npx changeset --empty`) does not satisfy a src change — name the package.')
 }
 
-const writeRenovateChangeset = ({ report }) => {
+// A Renovate branch keeps one changeset for the whole PR, and every run must write the union of what
+// it already says and what is still uncovered. Writing only the uncovered packages would drop the
+// others: on the next run they are missing again, the writer swaps which package it names, and each
+// bot push re-triggers CI — #907, twelve commits on #896. And never reuse `${slug}.md` when main
+// already has that file: it belongs to an earlier PR, and overwriting it silently deletes a pending
+// entry (#871's `renovate-ai-sdk.md`).
+const writeRenovateChangeset = ({ report, range }) => {
   const uncovered = report.missing.filter((entry) => entry.dependencyChange && !entry.srcChange)
-  if (uncovered.length === 0) {
+  const slug = (process.env.GITHUB_HEAD_REF ?? 'dependencies').replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'dependencies'
+  const file = resolveRenovateChangesetFile({ range, slug })
+  const existing = readRenovateChangeset({ file })
+  const releases = mergeRenovateReleases({ existing: existing.releases, uncovered, needs: report.needs })
+  if (uncovered.length === 0 && releases.length === existing.releases.length) {
     console.log('[check-changesets] nothing to write — every dependency change already has a changeset.')
     return
   }
-  const slug = (process.env.GITHUB_HEAD_REF ?? 'dependencies').replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'dependencies'
-  const file = path.join(CHANGESET_DIR, `${slug}.md`)
-  const lines = uncovered.map((entry) => `"${entry.pkg.name}": patch`)
-  const content = `---\n${lines.join('\n')}\n---\n\nUpdate third-party dependencies (Renovate).\n`
-  fs.writeFileSync(file, content)
-  console.log(`[check-changesets] wrote ${file} for ${uncovered.length} package(s): ${uncovered.map((entry) => entry.pkg.name).join(', ')}`)
+  const summary = existing.summary || 'Update third-party dependencies (Renovate).'
+  const lines = releases.map(({ name, level }) => `"${name}": ${level}`)
+  fs.writeFileSync(file, `---\n${lines.length > 0 ? `${lines.join('\n')}\n` : ''}---\n\n${summary}\n`)
+  console.log(`[check-changesets] wrote ${file} for ${releases.length} package(s): ${releases.length > 0 ? releases.map(({ name }) => name).join(', ') : 'none (all packages were reverted or rebased out)'}`)
+}
+
+// `${slug}.md` unless the base branch already owns that name; then a name carrying the PR number so
+// the file can be added and updated by this PR alone. Without a PR number the suffix is the stable
+// `-renovate`, never the head SHA: a SHA changes on every bot push, so each run would write a new
+// file instead of merging into the one it wrote last time. If the stable name is taken too there is
+// no name left to update, so fail loudly rather than start another oscillating file.
+const resolveRenovateChangesetFile = ({ range, slug }) => {
+  const plain = path.posix.join(CHANGESET_DIR, `${slug}.md`)
+  if (readFileAt({ sha: range.base, file: plain }) === null) {
+    return plain
+  }
+  const prNumber = process.env.PR_NUMBER
+  const file = path.posix.join(CHANGESET_DIR, /^\d+$/.test(prNumber ?? '') ? `${slug}-pr-${prNumber}.md` : `${slug}-renovate.md`)
+  if (readFileAt({ sha: range.base, file }) !== null) {
+    throw new Error(`both ${plain} and ${file} already exist on ${range.base} — rename one of them so the Renovate writer has a stable file to update`)
+  }
+  return file
+}
+
+const readRenovateChangeset = ({ file }) => {
+  // Only "does not exist" means an empty file. Any other read failure (or a symlink planted in the
+  // PR tree) must abort: treating it as empty would rewrite the file with the delta only, which is
+  // the overwrite #907 is about.
+  const stat = tryCatchSync(() => fs.lstatSync(file))
+  if (stat.error) {
+    if (stat.error.code !== 'ENOENT') {
+      throw stat.error
+    }
+    return { releases: [], summary: '' }
+  }
+  if (!stat.data.isFile()) {
+    throw new Error(`${file} is not a regular file — refusing to overwrite it`)
+  }
+  const read = tryCatchSync(() => fs.readFileSync(file, 'utf-8'))
+  if (read.error) {
+    throw read.error
+  }
+  const parsed = parseChangeset({ text: read.data })
+  if (parsed.problems.length > 0) {
+    throw new Error(`${file} is malformed (${parsed.problems.join('; ')}) — refusing to overwrite it`)
+  }
+  return { releases: parsed.releases, summary: parsed.summary }
+}
+
+// Existing lines keep their level; a level a reviewer raised must survive the next run. A line whose
+// package no longer needs a changeset (a bump was reverted, or the branch was rebased) is dropped —
+// keeping it would put a change in the changelog that the PR no longer contains.
+const mergeRenovateReleases = ({ existing, uncovered, needs }) => {
+  const stillNeeded = new Set(needs.map(({ pkg }) => pkg.name))
+  const merged = new Map(existing.filter(({ name }) => stillNeeded.has(name)).map(({ name, level }) => [name, level]))
+  for (const { pkg } of uncovered) {
+    if (!merged.has(pkg.name)) {
+      merged.set(pkg.name, 'patch')
+    }
+  }
+  return [...merged.entries()]
+    .map(([name, level]) => ({ name, level }))
+    .sort((a, b) => a.name.localeCompare(b.name))
 }
 
 const resolveRange = () => {
