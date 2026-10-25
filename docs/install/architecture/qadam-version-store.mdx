@@ -36,7 +36,7 @@ When the app starts, it creates the store's directories if they are missing, rem
 
 ## How a step finds its code
 
-The server resolves a step's pin through the store as well: when the store holds an official version, the builder, the framework census and the worker's provisioning read that version's own `metadata.json` instead of the image's build of the same version, and `GET /v1/qadams/registry` lists the stored release versions. A version only the store holds is therefore not reported as missing. It runs in the `UNSANDBOXED` and `SANDBOX_CODE_ONLY` execution modes; the isolate modes do not use the store yet, as above.
+The server resolves a step's pin through the store as well: when the store holds an official version, the builder, the framework census and the worker's provisioning read that version's own `metadata.json` instead of the image's build of the same version, and `GET /v1/qadams/registry` lists the stored release versions. A version only the store holds is therefore not reported as missing. It runs in the `UNSANDBOXED` and `SANDBOX_CODE_ONLY` execution modes; the isolate modes do not use the store yet, as above. An exact pin is answered even when it names a snapshot build, while the registry the version picker reads lists releases only.
 
 When a worker in the `UNSANDBOXED` or `SANDBOX_CODE_ONLY` execution mode starts, it opens the store at `AP_QADAM_VERSION_STORE_PATH` for reading only, and logs which way it went:
 

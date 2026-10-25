@@ -94,7 +94,7 @@ describe('qadamMetadataService — a stored version (unit)', () => {
 
         expect(await service.get({ name: NAME, version: '1.3.0' })).toBeUndefined()
         expect((await service.resolveVersions({ pins: [{ name: NAME, version: '1.3.0' }] })).get(`${NAME}@1.3.0`)).toEqual({ status: 'error' })
-        expect(await service.isPinAvailable({ name: NAME, version: '1.3.0', platformId: undefined })).toBe(false)
+        expect(await service.isPinAvailable({ name: NAME, version: '1.3.0', platformId: undefined })).toBe(true)
     })
 
     it('does not serve a stored version outside this release\'s floors, and does not substitute another build', async () => {

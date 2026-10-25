@@ -163,8 +163,10 @@ export const qadamMetadataService = (log: FastifyBaseLogger) => {
             if (!qadamVersionParser.isExact({ version })) {
                 return false
             }
+            // A version the store calls PRESENT is held even when its metadata cannot be read: the
+            // engine can still run its code, so it is not a pin the fallback should move.
             const match = await findExactVersion(log, { name, version, platformId, allowBundledFallback: false })
-            return !isNil(match) && !match.unusable
+            return !isNil(match)
         },
         // The version `get` resolves a pin to, without reading the qadam row itself: the registry
         // it resolves through selects named columns only, so it answers on a database whose

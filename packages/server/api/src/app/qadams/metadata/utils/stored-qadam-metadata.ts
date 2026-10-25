@@ -79,15 +79,24 @@ export const storedQadamMetadata = {
             return []
         }
         const cached = listByRoot.get(reader.root)
-        if (!isNil(cached) && cached.expiresAt > Date.now()) {
+        // While a scan is in flight its promise is shared whatever the clock says, so a slow walk
+        // never turns into one walk per request at the TTL boundary.
+        if (!isNil(cached) && (!cached.settled || cached.expiresAt > Date.now())) {
             return cached.value
         }
-        const value = scanStore({ reader }).catch((error: unknown) => {
-            listByRoot.delete(reader.root)
+        const entry: ListCacheEntry = { expiresAt: Date.now() + LIST_TTL_MS, value: scanStore({ reader }), settled: false }
+        listByRoot.set(reader.root, entry)
+        try {
+            const versions = await entry.value
+            entry.settled = true
+            return versions
+        }
+        catch (error) {
+            if (listByRoot.get(reader.root) === entry) {
+                listByRoot.delete(reader.root)
+            }
             throw error
-        })
-        listByRoot.set(reader.root, { expiresAt: Date.now() + LIST_TTL_MS, value })
-        return value
+        }
     },
 
     // Tests replace the store between cases; the reader is otherwise opened once per process.
@@ -110,7 +119,7 @@ const MAX_METADATA_CACHE_ENTRIES = 1_000
 
 const metadataByVersion = new Map<string, { expiresAt: number, stored: StoredQadamMetadata }>()
 
-const listByRoot = new Map<string, { expiresAt: number, value: Promise<StoredQadamSummary[]> }>()
+const listByRoot = new Map<string, ListCacheEntry>()
 
 function rememberMetadata({ key, stored }: { key: string, stored: StoredQadamMetadata }): void {
     if (metadataByVersion.size >= MAX_METADATA_CACHE_ENTRIES) {
@@ -253,6 +262,12 @@ async function readDirectory({ directory }: { directory: string }): Promise<Dire
 }
 
 type StoreReader = Extract<Awaited<ReturnType<typeof qadamVersionStoreReader.open>>, { ok: true }>['reader']
+
+type ListCacheEntry = {
+    expiresAt: number
+    value: Promise<StoredQadamSummary[]>
+    settled: boolean
+}
 
 export type StoredQadamLookup =
     | { status: 'absent' }
