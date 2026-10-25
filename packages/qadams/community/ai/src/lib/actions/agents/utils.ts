@@ -1,4 +1,6 @@
 import {
+  AgentFlowTool,
+  AgentOutputField,
   AgentOutputFieldType,
   isNil,
   TASK_COMPLETION_TOOL_NAME,
@@ -11,10 +13,8 @@ import {
   RAW_PAYLOAD_HEADER,
 } from '@aiqadam/qadams-framework';
 import type {
-  AgentOutputField,
   McpTrigger,
   ExecuteToolResponse,
-  AgentFlowTool,
 } from '@aiqadam/shared';
 import { z, ZodObject } from 'zod';
 import { AuthenticationType, httpClient, HttpMethod } from '@aiqadam/qadams-common';

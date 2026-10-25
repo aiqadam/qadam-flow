@@ -3,8 +3,10 @@ import {
   Property,
   QadamAuth,
   ArraySubProps,
+  AgentOutputField,
   AgentQadamProps,
   AgentTaskStatus,
+  AgentTool,
   isNil,
   TASK_COMPLETION_TOOL_NAME,
   AIProviderName,
@@ -16,8 +18,6 @@ import {
   getEffectiveProviderAndModel,
 } from '@aiqadam/qadams-framework';
 import type {
-  AgentOutputField,
-  AgentTool,
   AgentProviderModel,
   AgentKnowledgeBaseTool,
 } from '@aiqadam/shared';

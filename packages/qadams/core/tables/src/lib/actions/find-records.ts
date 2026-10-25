@@ -1,5 +1,5 @@
-import { createAction, QadamAuth, Property, FilterOperator, isNil, SeekPage } from '@aiqadam/qadams-framework';
-import type { ListRecordsRequest, PopulatedRecord } from '@aiqadam/shared';
+import { createAction, QadamAuth, Property, FilterOperator, isNil, PopulatedRecord, SeekPage } from '@aiqadam/qadams-framework';
+import type { ListRecordsRequest } from '@aiqadam/shared';
 import { tablesCommon } from '../common';
 import { columnUtils } from '../common/columns';
 import { filterUtils } from '../common/filters';

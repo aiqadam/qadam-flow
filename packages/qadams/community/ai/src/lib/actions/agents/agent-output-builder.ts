@@ -1,5 +1,6 @@
 import {
   AgentTaskStatus,
+  AgentTool,
   AgentToolType,
   assertNotNullOrUndefined,
   ContentBlockType,
@@ -8,10 +9,9 @@ import {
   ToolCallStatus,
   ToolCallType,
 } from '@aiqadam/qadams-framework';
+import type { AgentResult } from '@aiqadam/qadams-framework';
 import type {
-  AgentResult,
   AgentStepBlock,
-  AgentTool,
   MarkdownContentBlock,
   ToolCallBase,
   ToolCallContentBlock,

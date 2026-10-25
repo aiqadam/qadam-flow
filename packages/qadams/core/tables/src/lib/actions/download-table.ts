@@ -3,9 +3,7 @@ import {
   QadamAuth,
   Property,
 } from '@aiqadam/qadams-framework';
-import type {
-  ExportTableResponse,
-} from '@aiqadam/shared';
+import type { ExportTableResponse } from '@aiqadam/shared';
 import { tablesCommon, csvUtils } from '../common';
 import {
   AuthenticationType,

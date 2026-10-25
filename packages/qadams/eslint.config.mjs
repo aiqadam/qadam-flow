@@ -132,17 +132,21 @@ const BASE_ONLY_FILES = BASE_ONLY.map((dir) => `${dir}/**`)
 // #797). `framework` is exempt because it is the one package that re-exports the qadam-facing
 // `shared` symbols; `common/test` because it checks common's errors against the engine's own
 // formatter, which is platform code and not part of the SDK. `core/tables` and `community/ai` are
-// exempt for a narrow set of single-qadam, TYPE-ONLY DTOs narrowed out of shared-reexports.ts
-// (#959: tables request/record types, agent/MCP/AI-provider types) — each only ever imports them
-// as `import type`, which `tsc` erases, so `@aiqadam/shared` is a devDependency there, never a
-// runtime one. The single-qadam symbols that compile to a real runtime value (an enum used as a
-// value, a function, a constant) are NOT narrowed and stay framework exports instead, because
-// `shared` is private/unpublished (#799) and both qadams publish standalone to npm — see
-// shared-reexports.ts's header for why. `core/subflows` needed no exemption: every subflow header
-// it imported turned out to be a genuine runtime value, so none of it moved.
+// allowed TYPE-ONLY imports from `shared` for the single-qadam DTOs narrowed out of
+// shared-reexports.ts (#959: tables request/record types, agent/MCP/AI-provider types). The
+// exemption is narrower than the ban: `allowTypeImports` rejects a value import, so `@aiqadam/shared`
+// stays a devDependency there and nothing of it survives into the emitted JavaScript. A type that
+// appears in a published `.d.ts` cannot be re-pointed this way, so those symbols stay framework
+// exports instead (see shared-reexports.ts's header). The single-qadam symbols that compile to a
+// real runtime value (an enum used as a value, a function, a constant) stay framework exports for
+// the same reason: `shared` is private/unpublished (#799) and both qadams publish standalone to
+// npm. `core/subflows` needed no exemption: every subflow header it imported turned out to be a
+// genuine runtime value, so none of it moved.
 const SHARED_IMPORT_MESSAGE = 'Qadams must not import @aiqadam/shared (ADR-0001). Import the symbol from @aiqadam/qadams-framework, which re-exports every qadam-facing one; if it is missing, add it to packages/qadams/framework/src/lib/shared-reexports.ts.'
 const SHARED_SPECIFIER = '/^@aiqadam\\u002Fshared(\\u002F|$)/'
-const SHARED_BAN_IGNORES = ['framework/**', 'common/test/**', 'core/tables/**', 'community/ai/**']
+const SHARED_BAN_IGNORES = ['framework/**', 'common/test/**']
+const SHARED_TYPE_IMPORT_QADAMS = ['core/tables/**', 'community/ai/**']
+const SHARED_TYPE_IMPORT_FILES = SHARED_TYPE_IMPORT_QADAMS.map((dir) => `${dir}/**/*.{ts,tsx,js,jsx}`)
 
 export default defineConfig(
     {
@@ -167,6 +171,19 @@ export default defineConfig(
         },
     },
     {
+        // `core/tables` and `community/ai` own the single-qadam DTOs narrowed out of the framework
+        // (#959), so they may name them directly — but only as types. `allowTypeImports` keeps a
+        // value import out, which is what makes `@aiqadam/shared` a devDependency rather than a
+        // dependency they would ship to npm.
+        files: SHARED_TYPE_IMPORT_FILES,
+        rules: {
+            '@typescript-eslint/no-restricted-imports': ['error', {
+                paths: [{ name: '@aiqadam/shared', message: SHARED_IMPORT_MESSAGE, allowTypeImports: true }],
+                patterns: [{ group: ['@aiqadam/shared/*'], message: SHARED_IMPORT_MESSAGE, allowTypeImports: true }],
+            }],
+        },
+    },
+    {
         // What no import rule sees: require() and other calls taking the specifier (vi.mock,
         // require.resolve), dynamic import(), and `typeof import(...)` types. The calls and import()
         // also accept a template literal with no substitutions, which carries no `value`.
@@ -179,6 +196,19 @@ export default defineConfig(
                 { selector: `ImportExpression[source.value=${SHARED_SPECIFIER}]`, message: SHARED_IMPORT_MESSAGE },
                 { selector: `ImportExpression[source.type='TemplateLiteral'][source.expressions.length=0][source.quasis.0.value.cooked=${SHARED_SPECIFIER}]`, message: SHARED_IMPORT_MESSAGE },
                 { selector: `TSImportType[argument.literal.value=${SHARED_SPECIFIER}]`, message: SHARED_IMPORT_MESSAGE },
+            ],
+        },
+    },
+    {
+        // The same runtime forms as above for the two type-import-exempt qadams. `typeof import(...)`
+        // is deliberately absent: it is a type-only construct and is erased like `import type`.
+        files: SHARED_TYPE_IMPORT_FILES,
+        rules: {
+            'no-restricted-syntax': ['error',
+                { selector: `CallExpression[arguments.0.value=${SHARED_SPECIFIER}]`, message: SHARED_IMPORT_MESSAGE },
+                { selector: `CallExpression[arguments.0.type='TemplateLiteral'][arguments.0.expressions.length=0][arguments.0.quasis.0.value.cooked=${SHARED_SPECIFIER}]`, message: SHARED_IMPORT_MESSAGE },
+                { selector: `ImportExpression[source.value=${SHARED_SPECIFIER}]`, message: SHARED_IMPORT_MESSAGE },
+                { selector: `ImportExpression[source.type='TemplateLiteral'][source.expressions.length=0][source.quasis.0.value.cooked=${SHARED_SPECIFIER}]`, message: SHARED_IMPORT_MESSAGE },
             ],
         },
     },

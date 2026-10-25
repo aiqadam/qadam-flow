@@ -1,5 +1,4 @@
-import { FieldType, SYNTHETIC_FLOW_RUN_IDS } from '@aiqadam/qadams-framework';
-import type { Field } from '@aiqadam/shared';
+import { Field, FieldType, SYNTHETIC_FLOW_RUN_IDS } from '@aiqadam/qadams-framework';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const sendRequest = vi.fn();

@@ -1,5 +1,4 @@
-import { createTrigger, QadamAuth, TriggerStrategy, TableWebhookEventType } from '@aiqadam/qadams-framework';
-import type { PopulatedRecord } from '@aiqadam/shared';
+import { createTrigger, QadamAuth, TriggerStrategy, PopulatedRecord, TableWebhookEventType } from '@aiqadam/qadams-framework';
 import { tablesCommon } from '../common';
 
 export const deletedRecordTrigger = createTrigger({

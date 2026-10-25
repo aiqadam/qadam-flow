@@ -1,5 +1,4 @@
-import { tryCatchSync } from '@aiqadam/qadams-framework';
-import type { Field } from '@aiqadam/shared';
+import { Field, tryCatchSync } from '@aiqadam/qadams-framework';
 
 export const columnUtils = {
   // Resolves one identifier — a column's display name, externalId or internal id —
