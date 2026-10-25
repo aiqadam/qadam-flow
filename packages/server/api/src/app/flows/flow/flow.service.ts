@@ -53,6 +53,8 @@ import { SystemJobName } from '../../helper/system-jobs/common'
 import { systemJobsSchedule } from '../../helper/system-jobs/system-job'
 import { telemetry } from '../../helper/telemetry.utils'
 import { projectService } from '../../project/project-service'
+import { qadamVersionFetch } from '../../qadams/fetch/qadam-version-fetch'
+import { qadamPinUtil } from '../../qadams/metadata/qadam-pin-util'
 import { QadamPinMoveCause } from '../../qadams/pin-moves/qadam-pin-move.dto'
 import { qadamPinMoveService } from '../../qadams/pin-moves/qadam-pin-move.service'
 import { SnapshotExportSources, snapshotExportSources } from '../../qadams/snapshot-export/snapshot-export-sources'
@@ -547,6 +549,9 @@ export const flowService = (log: FastifyBaseLogger) => ({
         })
 
         assertFlowVersionPublishable({ flowVersion: latestFlowVersion })
+        if (latestFlowVersion.state === FlowVersionState.DRAFT) {
+            await fetchMissingQadamPins({ flowVersion: latestFlowVersion, platformId, log })
+        }
         const flowVersionToPublish = latestFlowVersion.state === FlowVersionState.DRAFT
             ? await moveUnavailableQadamPins({ flowVersion: latestFlowVersion, projectId, platformId, userId, cause: 'PUBLISH', log })
             : latestFlowVersion
@@ -836,6 +841,21 @@ const assertFlowVersionPublishable = ({ flowVersion }: AssertFlowVersionPublisha
     }
 }
 
+
+// ADR-0003 "Fetching": tried before the unavailable-pin move below, so a pin this lands in the store
+// is simply available by the time `moveUnavailableQadamPins` asks — nothing to move, nothing to log
+// as stayed. A failure here is exactly as non-fatal as a failed move: logged, and the flow carries
+// on to the move/existing fallback as it would have before this existed.
+async function fetchMissingQadamPins({ flowVersion, platformId, log }: { flowVersion: FlowVersion, platformId: PlatformId, log: FastifyBaseLogger }): Promise<void> {
+    const steps = qadamPinUtil.getQadamSteps({ trigger: flowVersion.trigger })
+    if (steps.length === 0) {
+        return
+    }
+    const { error } = await tryCatch(() => qadamVersionFetch(log).fetchMissingStepPins({ steps, platformId }))
+    if (error !== null) {
+        log.warn({ err: error, flowId: flowVersion.flowId, flowVersionId: flowVersion.id }, '[flowService] could not fetch the flow\'s missing qadam pins into the store; leaving them for the existing fallback')
+    }
+}
 
 // Publishing a flow is where an unavailable qadam pin is moved (ADR-0003, #808), in the draft that is
 // about to become the published version, so workers and trigger sources see a new version id as for
