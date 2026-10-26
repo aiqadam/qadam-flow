@@ -24,7 +24,7 @@
     "@ai-sdk/openai-compatible": "3.0.77",
     "@ai-sdk/provider": "4.0.33",
     "@openrouter/ai-sdk-provider": "3.1.0",
-    "ai": "7.0.150",
+    "ai": "7.0.151",
     "async-mutex": "0.4.0",
     "dayjs": "1.11.23",
     "@opentelemetry/api": "1.9.1",
