@@ -1,0 +1,13 @@
+# dh_link: <target> <symlink-to-create>
+# 1. worker's code-step cache must survive under ProtectSystem=strict
+#    (systemd makes /var/cache writeable; npm's `cache` file at cwd is
+#    expected by the worker's cache code at ./cache).
+var/cache/qadam-flow usr/lib/qadam-flow/cache
+# 2. fastifyStatic in production registers dist/packages/web (cwd-relative):
+#    FHS-appropriate to install the 3 MB web build under /usr/share instead.
+usr/share/qadam-flow/web usr/lib/qadam-flow/dist/packages/web
+# 3. Sandbox (isolate) bridge: the isolate binary hardcodes `--dir=/
+#    /usr/src/node_modules/` when it spins a sandboxed engine (isolate.ts).
+#    Debian FHS says the program tree belongs to /usr/lib; this symlink
+#    keeps the sandboxAbsoluteResolve require('isolated-vm') etc. working.
+usr/lib/qadam-flow/node_modules usr/src/node_modules

@@ -1,0 +1,7 @@
+#!/bin/bash
+# qadam-flow-worker prerm — the dh_installsystemd target injected below
+# stops the unit on removal; upgrades restart it in postinst (compat >= 10).
+
+#DEBHELPER#
+
+exit 0

@@ -1,0 +1,32 @@
+#!/bin/bash
+# qadam-flow (master) postrm
+# ==============================================================================
+# remove  : nothing — data and the database survive until purge.
+# purge   : delete /var/lib/qadam-flow (qadam version store) and
+#           /var/cache/qadam-flow, drop the qadam system user only if no
+#           qadam-flow-worker package is left on this host (it needs the user
+#           too), and print how to remove the PostgreSQL role/database we
+#           created — those are never dropped silently.
+# ==============================================================================
+
+set -e
+
+if [ "$1" = "purge" ]; then
+    rm -rf /var/lib/qadam-flow /var/cache/qadam-flow
+
+    if getent passwd qadam >/dev/null 2>&1 \
+        && ! dpkg-query -f='${Status}' -W qadam-flow-worker 2>/dev/null | grep -q ' ok installed'; then
+        deluser --quiet --system qadam 2>/dev/null || true
+    fi
+
+    cat <<'DROP_DB'
+qadam-flow: purge finished, but the PostgreSQL role and database created by the
+master postinst were deliberately kept (they may still hold run history):
+    sudo -u postgres psql -c 'DROP DATABASE IF EXISTS qadam_flow;'
+    sudo -u postgres psql -c 'DROP ROLE IF EXISTS qadam_flow;'
+DROP_DB
+fi
+
+#DEBHELPER#
+
+exit 0

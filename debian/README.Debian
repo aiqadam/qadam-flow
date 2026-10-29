@@ -1,0 +1,90 @@
+Qadam Flow for Debian
+=====================
+
+This packaging mirrors the official Docker image (ghcr.io/aiqadam/qadam-flow)
+onto the Debian filesystem:
+
+  Docker container      Debian package         systemd unit
+  -----------------     --------------------   -------------------------
+  app x1                qadam-flow             qadam-flow-master.service
+  worker x5             qadam-flow-worker      qadam-flow-worker.service
+  postgres             postgresql-18-pgvector  (system service)
+  redis (valkey)        redis-server           (system service)
+
+NOTE on apt installability: `nodejs (>= 24.21)` and `postgresql-18-pgvector`
+are not in the plain Debian archive — the target hosts carry their Node.js
+and pgvector repositories (Debian forky in the build environment ships both).
+Without them apt refuses with an unsatisfied-dependency error naming one
+missing package, which is this prerequisite and not a package bug.
+
+  common payload shared by both:     qadam-flow-common
+  (vendored node_modules under /usr/lib/qadam-flow/node_modules, the built
+   packages under /usr/lib/qadam-flow/packages and /usr/lib/qadam-flow/dist,
+   the web build under /usr/share/qadam-flow/web, the isolate sandbox
+   configuration under /usr/local/etc/isolate)
+
+A co-hosted install is simply:
+
+  apt install qadam-flow qadam-flow-worker
+
+The master postinst provisions everything automatically: it creates the
+`qadam` system user, mints AP_ENCRYPTION_KEY / AP_JWT_SECRET / the database
+password into /etc/qadam-flow/master.conf (0600) on first install — pre-set
+values are never overwritten by upgrades — creates the qadam_flow PostgreSQL
+role, database and pgvector extension, and the worker postinst mints
+AP_WORKER_TOKEN the same way docker-entrypoint.sh does when the master's
+config lives on the same host. Qadam Flow then listens on AP_PORT (3000); put
+nginx in front for TLS and edit AP_FRONTEND_URL in /etc/qadam-flow/master.conf
+to the public https:// URL.
+
+Distributed workers (worker-only host)
+--------------------------------------
+The worker does NOT depend on PostgreSQL or Redis — it talks to the master
+over HTTP only. On a second host:
+
+  1. apt install qadam-flow-common qadam-flow-worker
+  2. point /etc/qadam-flow/worker.conf at the master:
+       AP_WORKER_API_URL=http://<master-host>:3000
+     (or an https:// URL behind the reverse proxy)
+  3. on the MASTER host run qadam-flow-mint-worker-token — it prints the
+     derived token and never the master's AP_JWT_SECRET — then set the
+     output as AP_WORKER_TOKEN in this host's /etc/qadam-flow/worker.conf;
+     when both packages share a host, the worker postinst mints by itself
+  4. systemctl enable --now qadam-flow-worker
+
+Secrets stay on each host: only the master host needs the database and
+AP_ENCRYPTION_KEY; workers are stateless and carry no run history.
+
+Sandboxed execution (optional)
+------------------------------
+AP_EXECUTION_MODE in /etc/qadam-flow/worker.conf defaults to UNSANDBOXED, like
+the default Docker compose file. The isolate-based modes need:
+
+  * the /usr/src/node_modules bridge — shipped by qadam-flow-common as a
+    symlink to /usr/lib/qadam-flow/node_modules, because the isolate
+    wrapper hardcodes that path for vendoring the sandboxed engine
+  * extra privileges on the worker unit, same trade-off as
+    docker-compose.sandboxed.yml:
+
+      systemctl edit qadam-flow-worker
+        [Service]
+        AmbientCapabilities=CAP_SYS_ADMIN
+        AppArmorProfile=
+        SystemCallFilter=
+
+  (and for AP_NETWORK_MODE=STRICT also: AmbientCapabilities=CAP_NET_ADMIN)
+
+See https://flow.aiqadam.org/docs (sandboxing) for why CAP_SYS_ADMIN is not
+granted by default.
+
+Conffiles, upgrades and purge
+-----------------------------
+/etc/qadam-flow/{master,worker}.conf are conffiles with 0600 permissions:
+edits survive upgrades, and dpkg asks before overwriting. Only
+CHANGE_ME-looking placeholders are ever rewritten. `apt purge qadam-flow`
+removes /var/lib/qadam-flow (qadam version store), /var/cache/qadam-flow and
+the `qadam` user (if no qadam-flow-worker package remains); the PostgreSQL
+role/database are deliberately kept and the postrm prints the DROP
+statements.
+
+ -- Kansu Köse <kansukse@gmail.com>  Tue, 27 Oct 2026

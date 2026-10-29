@@ -1,0 +1,73 @@
+Source: qadam-flow
+Section: web
+Priority: optional
+Maintainer: Kansu Köse <kansukse@gmail.com>
+Build-Depends:
+ debhelper-compat (= 13),
+ dpkg-dev,
+ systemd
+Standards-Version: 4.6.2
+Homepage: https://flow.aiqadam.org
+Vcs-Browser: https://github.com/aiqadam/qadam-flow
+Vcs-Git: https://github.com/aiqadam/qadam-flow.git
+Rules-Requires-Root: no
+
+Package: qadam-flow-common
+Architecture: amd64
+Depends:
+ ${misc:Depends},
+Breaks: qadam-flow (<< 1.1.0~stable.b1)
+Description: qadam-flow shared runtime tree (Node.js modules, builds)
+ Shared program tree for the qadam-flow master and worker binary packages:
+ the vendored node_modules, the built engine / API / web / qadam dists, the
+ bundled qadam catalogue manifests and the workspace manifests under
+ /usr/lib/qadam-flow. The web frontend lives under /usr/share/qadam-flow/web
+ and the isolate sandbox configuration under /usr/local/etc/isolate.
+ .
+ Running the daemon itself requires either qadam-flow (the master, with the
+ PostgreSQL 18 + pgvector database and Redis) or qadam-flow-worker (stateless
+ execution node that talks to a master over HTTP).
+
+Package: qadam-flow
+Architecture: all
+Depends:
+ qadam-flow-common (= ${source:Version}),
+ nodejs (>= 24.21),
+ postgresql-18-pgvector (>= 0.8.7) | postgresql-17-pgvector,
+ redis-server (>= 7.0) | valkey,
+ adduser,
+ openssl,
+ ${misc:Depends},
+Recommends: nginx
+Description: master service of the qadam-flow platform (API, frontend, scheduler)
+ Master service of Qadam Flow, the AI-first workflow automation platform.
+ Runs as the systemd unit qadam-flow-master.service on port 3000 (unified
+ behind a reverse proxy on 80/443 with the recommended nginx), owns the
+ PostgreSQL 18 + pgvector database and the Redis/Valkey queue, and serves
+ the web frontend from /usr/share/qadam-flow/web. Runtime user: qadam.
+ .
+ Package layout follows the Docker image: the program tree lives in
+ /usr/lib/qadam-flow, cache in /var/cache/qadam-flow (systemd
+ CacheDirectory), qadam version store in /var/lib/qadam-flow/qadam-versions
+ (systemd StateDirectory subdirectory).
+
+Package: qadam-flow-worker
+Architecture: all
+Depends:
+ qadam-flow-common (= ${source:Version}),
+ nodejs (>= 24.21),
+ adduser,
+ ${misc:Depends},
+Description: qadam-flow worker (flow execution node)
+ Stateless execution service of Qadam Flow. Runs as the systemd unit
+ qadam-flow-worker.service on port 3001 (health server only), polls the
+ master over HTTP (AP_WORKER_API_URL, default 127.0.0.1:3000) and runs flow
+ steps with its own engine processes. Deliberately does NOT depend on
+ PostgreSQL or Redis: only the master talks to the database and the queue,
+ which is what makes this package installable on separate hosts.
+ .
+ Security defaults run in UNSANDBOXED/SANDBOX_CODE_ONLY mode. The
+ SANDBOX_PROCESS and SANDBOX_CODE_AND_PROCESS modes additionally need the
+ isolate sandbox bridge (/usr/src/node_modules symlink, provided by
+ qadam-flow-common) plus unit hardening; see
+ /usr/share/doc/qadam-flow-common/README.Debian.
