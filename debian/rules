@@ -1,0 +1,95 @@
+#!/usr/bin/make -f
+# =============================================================================
+# qadam-flow — Debian rules
+# =============================================================================
+# Three binary packages (mirrors the Docker image, see debian/control):
+#   qadam-flow-common   -> usr/lib/qadam-flow (node_modules, packages/, dist/)
+#                          usr/share/qadam-flow/web (frontend build)
+#                          usr/local/etc/isolate (sandbox config)
+#   qadam-flow          -> master unit (qadam-flow-master) + /etc/qadam-flow
+#   qadam-flow-worker   -> worker unit (+ /etc/qadam-flow/worker.conf)
+#
+# The payload is PREBUILT by scripts/debian-prebuild.sh (build bot, called
+# before dpkg-buildpackage): npm ci + npx turbo build + manifests, staged
+# under debian/prebuild/usr. Hence --buildsystem=none: upstream is a
+# bun/npm/turbo monorepo, not a Makefile project. Requires no network.
+#
+# Wrappers are NOT prebuilt: they are hand-written in debian/scripts/
+# (qadam-flow-master, qadam-flow-worker) and installed to /usr/bin.
+# =============================================================================
+
+export DH_VERBOSE = 1
+
+%:
+	dh $@ --buildsystem=none
+
+override_dh_auto_build:
+	# Nothing: scripts/debian-prebuild.sh already ran and staged the tree
+	# into debian/prebuild/. If it did not, fail loudly rather than ship a
+	# gutted package:
+	@test -f debian/prebuild/usr/lib/qadam-flow/packages/server/api/dist/src/bootstrap.js \
+	    || { echo "ERROR: prebuilt tree missing — run scripts/debian-prebuild.sh first." >&2; exit 1; }
+
+override_dh_auto_test:
+	# Unit sanity is verified post-install in override_dh_builddeb: at
+	# dh_auto_test time no package tree exists yet, so verify would fail
+	# on the not-yet-installed /usr/bin launchers (exit 1 → build aborts).
+
+override_dh_installsystemd:
+	# Unit files for the "qadam-flow" master package carry the proc-name
+	# (qadam-flow-master.service), so tell debhelper the mapping:
+	dh_installsystemd -pqadam-flow --name=qadam-flow-master
+	dh_installsystemd -pqadam-flow-worker
+
+override_dh_usrlocal:
+	# Docker parity: the vendored isolate binary reads its compiled-in config
+	# path /usr/local/etc/isolate — a plain FILE holding default.cf, exactly
+	# as the Dockerfile COPYs it — and dh_usrlocal refuses any file it finds
+	# under /usr/local. The deb mirrors the container layout, so the
+	# usrlocal-migration helper is skipped rather than splitting the runtime
+	# contract (lintian's file-in-usr-local is overridden accordingly).
+
+override_dh_strip:
+	# The payload ships ELF binaries that must stay byte-identical with the
+	# Docker image: the vendored node_modules addons and, outside node_modules
+	# (which a -X exclude would miss), packages/server/api/src/assets/ holds
+	# the prebuilt isolate / isolate-arm sandbox binaries. The host binutils
+	# cannot even read the foreign-architecture ones ("Unable to recognise the
+	# architecture" kills both objcopy and strip), the files were already
+	# load-verified under node 24, and the automatic dbgsym for a multi-GB
+	# tree costs minutes and gigabytes. So dh_strip is not invoked at all.
+	:
+
+override_dh_shlibdeps:
+	# dpkg-shlibdeps resolves every ELF's NEEDED libraries against the single
+	# host architecture; the vendored tree ships prebuilds for many platforms
+	# and ABIs (x64/arm64/musl/android/ia32), so the foreign ones abort with
+	# "cannot find library libstdc++.so.6 / libm.so.6 / ..." — the host's
+	# symbols files are x64 only and a .deb cannot be generated for them. The
+	# real runtime contract lives in debian/control: nodejs (>= 24.21), which
+	# pulls libc6, libstdc++6 and libgcc-s1 transitively (postgres/redis on
+	# master). So the shlibdeps pass is skipped: $$shlibs:Depends stays
+	# empty and the declared Depends are what ships.
+
+override_dh_fixperms:
+	dh_fixperms
+	chmod 0600 debian/qadam-flow/etc/qadam-flow/master.conf
+	chmod 0600 debian/qadam-flow-worker/etc/qadam-flow/worker.conf
+	# Program tree is 0755 root:root; postinst chowns the /var trees live.
+
+# Runs once per binary package; --root makes verify resolve ExecStart relative
+# to the staged tree, where the /usr/bin launcher and the unit both exist
+# (idempotent no-op for the unit-less qadam-flow-common). Both lib/ and
+# usr/lib/ are probed because the install root moved across debhelper versions.
+override_dh_builddeb:
+	if [ -f debian/qadam-flow/lib/systemd/system/qadam-flow-master.service ]; then \
+	    systemd-analyze verify --root=debian/qadam-flow lib/systemd/system/qadam-flow-master.service; \
+	elif [ -f debian/qadam-flow/usr/lib/systemd/system/qadam-flow-master.service ]; then \
+	    systemd-analyze verify --root=debian/qadam-flow usr/lib/systemd/system/qadam-flow-master.service; \
+	fi
+	if [ -f debian/qadam-flow-worker/lib/systemd/system/qadam-flow-worker.service ]; then \
+	    systemd-analyze verify --root=debian/qadam-flow-worker lib/systemd/system/qadam-flow-worker.service; \
+	elif [ -f debian/qadam-flow-worker/usr/lib/systemd/system/qadam-flow-worker.service ]; then \
+	    systemd-analyze verify --root=debian/qadam-flow-worker usr/lib/systemd/system/qadam-flow-worker.service; \
+	fi
+	dh_builddeb

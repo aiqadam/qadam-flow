@@ -1,0 +1,16 @@
+qadam-flow (1.1.0) unstable; urgency=medium
+
+  * Initial Debian packaging, three binary packages following Docker image
+    layout — node 24 vendored runtime + PostgreSQL 18/pgvector dependency:
+
+    - qadam-flow-common    shared tree: node_modules, packages/, dist/,
+                           /usr/share/qadam-flow/web, /usr/local/etc/isolate
+    - qadam-flow           master: qadam-flow-master.service, /etc/qadam-flow
+    - qadam-flow-worker    worker: qadam-flow-worker.service, /etc/qadam-flow
+
+  * Built with npm (Debian nodejs 24.21, npm 12.2) — no bun. Config files
+    installed as conffiles at /etc/qadam-flow/{master,worker}.conf (0600).
+  * postinst mints AP_ENCRYPTION_KEY / AP_JWT_SECRET / the Postgres
+    password, creates the qadam_flow role + database + pgvector extension.
+
+ -- Kansu Köse <kansukse@gmail.com>  Tue, 27 Oct 2026 00:00:00 +0000

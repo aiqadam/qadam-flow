@@ -1,0 +1,11 @@
+debian/prebuild/usr/lib/qadam-flow/node_modules usr/lib/qadam-flow/
+debian/prebuild/usr/lib/qadam-flow/packages usr/lib/qadam-flow/
+debian/prebuild/usr/lib/qadam-flow/dist usr/lib/qadam-flow/
+debian/prebuild/usr/share/qadam-flow/web usr/share/qadam-flow/
+debian/prebuild/usr/local/etc/isolate usr/local/etc/
+debian/prebuild/usr/lib/qadam-flow/package.json usr/lib/qadam-flow/
+debian/prebuild/usr/lib/qadam-flow/bun.lock usr/lib/qadam-flow/
+debian/prebuild/usr/lib/qadam-flow/bunfig.toml usr/lib/qadam-flow/
+debian/prebuild/usr/lib/qadam-flow/.npmrc usr/lib/qadam-flow/
+debian/prebuild/usr/lib/qadam-flow/LICENSE usr/lib/qadam-flow/
+debian/prebuild/usr/lib/qadam-flow/NOTICE usr/lib/qadam-flow/

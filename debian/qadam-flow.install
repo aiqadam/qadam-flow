@@ -1,0 +1,3 @@
+debian/qadam-flow-master usr/bin/
+debian/qadam-flow-mint-worker-token usr/bin/
+debian/master.conf etc/qadam-flow/

@@ -1,0 +1,4 @@
+var/lib/qadam-flow/qadam-versions
+var/cache/qadam-flow
+usr/share/qadam-flow
+usr/local/etc

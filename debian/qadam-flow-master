@@ -1,0 +1,5 @@
+#!/bin/sh
+# Launcher for the Qadam Flow API. Configuration comes from systemd
+# (EnvironmentFile=/etc/qadam-flow/master.conf); start it with
+# `systemctl start qadam-flow-master`, not by hand.
+exec /usr/bin/node /usr/lib/qadam-flow/packages/server/api/dist/src/bootstrap.js "$@"

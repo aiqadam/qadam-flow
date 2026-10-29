@@ -1,0 +1,42 @@
+[Unit]
+Description=Qadam Flow API (master)
+Documentation=https://flow.aiqadam.org/docs
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=qadam
+Group=qadam
+WorkingDirectory=/usr/lib/qadam-flow
+EnvironmentFile=/etc/qadam-flow/master.conf
+ExecStart=/usr/bin/qadam-flow-master
+# Migrations run after systemd considers the unit started (Type=simple);
+# a crash during them is covered by Restart=always.
+Restart=always
+RestartSec=5
+KillMode=mixed
+KillSignal=SIGTERM
+# Long-polling trigger connections can be in flight for up to
+# AP_TRIGGER_TIMEOUT_SECONDS (default 60).
+TimeoutStopSec=90
+StateDirectory=qadam-flow
+StateDirectoryMode=0750
+CacheDirectory=qadam-flow
+CacheDirectoryMode=0750
+UMask=0027
+LimitCORE=0
+LimitNOFILE=65535
+# UNSANDBOXED and SANDBOX_CODE_ONLY only. SANDBOX_PROCESS needs
+# CAP_SYS_ADMIN: drop NoNewPrivileges and add AmbientCapabilities there.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

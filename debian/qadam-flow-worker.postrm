@@ -1,0 +1,12 @@
+#!/bin/bash
+# qadam-flow-worker postrm
+# ==============================================================================
+# remove : nothing.
+# purge  : the conffile /etc/qadam-flow/worker.conf is removed by dpkg itself;
+#          /var/cache/qadam-flow and the qadam user are shared with the master
+#          package, so they are only ever removed by qadam-flow.postrm.
+# ==============================================================================
+
+#DEBHELPER#
+
+exit 0
