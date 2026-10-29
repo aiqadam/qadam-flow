@@ -2797,8 +2797,8 @@
         "@aws-sdk/client-bedrock": "3.1143.0",
         "@aws-sdk/client-s3": "3.1143.0",
         "@aws-sdk/s3-request-presigner": "3.1143.0",
-        "@bull-board/api": "9.10.4",
-        "@bull-board/fastify": "9.10.4",
+        "@bull-board/api": "9.10.5",
+        "@bull-board/fastify": "9.10.5",
         "@fastify/basic-auth": "6.2.0",
         "@fastify/cors": "11.0.1",
         "@fastify/formbody": "8.0.2",
@@ -3951,11 +3951,11 @@
 
     "@babel/types": ["@babel/types@7.29.0", "", { "dependencies": { "@babel/helper-string-parser": "^7.27.1", "@babel/helper-validator-identifier": "^7.28.5" } }, "sha512-LwdZHpScM4Qz8Xw2iKSzS+cfglZzJGvofQICy7W7v4caru4EaAmyUuO6BGrbyQ2mYV11W0U8j5mBhd14dd3B0A=="],
 
-    "@bull-board/api": ["@bull-board/api@9.10.4", "", { "dependencies": { "redis-info": "^3.1.0", "valibot": "^1.5.0" }, "peerDependencies": { "@bull-board/ui": "9.10.4", "bull": "^4.16.5", "bullmq": "^5.56.0 || ^6.0.0" }, "optionalPeers": ["bull", "bullmq"] }, "sha512-DMI4FrNacQRmNsExF4kCXPE01sDiW2o0UgMxRsogFvcLphQIf3TgspiNFURag6CieMneJp2b/ba1TWPJu1Jnpw=="],
+    "@bull-board/api": ["@bull-board/api@9.10.5", "", { "dependencies": { "redis-info": "^3.1.0", "valibot": "^1.5.0" }, "peerDependencies": { "@bull-board/ui": "9.10.5", "bull": "^4.16.5", "bullmq": "^5.56.0 || ^6.0.0" }, "optionalPeers": ["bull", "bullmq"] }, "sha512-CMA5WCN5rkpQWG8+IQBFuwf54JVrWE+1mjHEiwyb9+rdHAqXTbZOpjJLZZB0QA+2DGQCK8z0WqqdprCFnhy8aA=="],
 
-    "@bull-board/fastify": ["@bull-board/fastify@9.10.4", "", { "dependencies": { "@bull-board/api": "9.10.4", "@bull-board/ui": "9.10.4", "@fastify/static": "^10.1.3", "@fastify/view": "^12.0.0", "ejs": "^6.0.1" } }, "sha512-OYmcgM1GtGV9yo5QSY3E+3ciVaTgNceqChCkkcNMd7lghuQna1uSEKIbMzsAjWwH+PG0520xsFUxNE9LYHGp7g=="],
+    "@bull-board/fastify": ["@bull-board/fastify@9.10.5", "", { "dependencies": { "@bull-board/api": "9.10.5", "@bull-board/ui": "9.10.5", "@fastify/static": "^10.1.3", "@fastify/view": "^12.0.0", "ejs": "^6.0.1" } }, "sha512-STCkO4ELj/bSGUuFQH41Xth0HZGkV2pABx9toeP21O8YXizQPRYhnLIiylxc79WrGFvxaMJ+AzXHcuzINa73NQ=="],
 
-    "@bull-board/ui": ["@bull-board/ui@9.10.4", "", { "dependencies": { "@bull-board/api": "9.10.4" } }, "sha512-eBg7LcIOR1WDZAZBs6l/eclvpnRD0H2PHTLmoMBBTTsbIHh45aCgfKeFMTIbUQ9mmNaHD6rR9vgcylWZ8TFOdg=="],
+    "@bull-board/ui": ["@bull-board/ui@9.10.5", "", { "dependencies": { "@bull-board/api": "9.10.5" } }, "sha512-CW97tdUiD0e7VMvezb0+cjDUdwfBU2Vo1ChLRvqNgn4qoUuqX/q9PnX+y9sF7bkXnc4Kor2u+rj/wRge9pqeVg=="],
 
     "@changesets/apply-release-plan": ["@changesets/apply-release-plan@8.1.1", "", { "dependencies": { "@changesets/config": "^4.0.1", "@changesets/format": "^0.1.2", "@changesets/git": "^4.0.1", "@changesets/should-skip-package": "^1.0.0", "@changesets/types": "^7.0.0", "import-meta-resolve": "^4.2.0", "jsonc-parser": "^3.3.1", "semver": "^7.8.1" } }, "sha512-nk2Hbq3M9NeHMdaIRBDvawKrQJzXB9sGyBUE5yWnIKtvdcNCPj75zBekJYr0gTT2ecJH3eFeTrc8eisPImcv0Q=="],
 
