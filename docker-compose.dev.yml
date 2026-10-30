@@ -24,7 +24,7 @@ services:
       retries: 20
 
   redis:
-    image: valkey/valkey:8.1.10
+    image: valkey/valkey:8.1.11
     container_name: qadam-flow-redis-dev
     restart: unless-stopped
     ports:
