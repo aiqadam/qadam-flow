@@ -3074,7 +3074,7 @@
         "@dnd-kit/sortable": "8.0.0",
         "@dnd-kit/utilities": "3.2.2",
         "@hookform/resolvers": "5.2.2",
-        "@microlink/react-json-view": "1.31.42",
+        "@microlink/react-json-view": "1.31.43",
         "@radix-ui/react-accordion": "1.2.21",
         "@radix-ui/react-use-controllable-state": "1.2.6",
         "@segment/analytics-next": "1.84.3",
@@ -4451,7 +4451,7 @@
 
     "@marijn/find-cluster-break": ["@marijn/find-cluster-break@1.0.2", "", {}, "sha512-l0h88YhZFyKdXIFNfSWpyjStDjGHwZ/U7iobcK1cQQD8sejsONdQtTVU+1wVN1PBw40PiiHB1vA5S7VTfQiP9g=="],
 
-    "@microlink/react-json-view": ["@microlink/react-json-view@1.31.42", "", { "dependencies": { "react-base16-styling": "~0.10.0", "react-lifecycles-compat": "~3.0.4", "react-textarea-autosize": "~8.5.9" }, "peerDependencies": { "react": ">= 15", "react-dom": ">= 15" } }, "sha512-0j23jlOfG1mGTPJAXvGAFMyH85LF0SmpiWh1GMrS/s/oo/wyZ2IEqbtZlns5e6JVoqFS2qUqGfERsNCeg5offA=="],
+    "@microlink/react-json-view": ["@microlink/react-json-view@1.31.43", "", { "dependencies": { "react-base16-styling": "~0.10.0", "react-lifecycles-compat": "~3.0.4", "react-textarea-autosize": "~8.5.9" }, "peerDependencies": { "react": ">= 15", "react-dom": ">= 15" } }, "sha512-zKmzMq1W1dr2ALRbqZkjZlar9Z/J3xsn/c8cQ/gnblSrrOaaYa7FaY9DNElr9LSEckVmY7vljEJ22V46ICZF5w=="],
 
     "@microsoft/microsoft-graph-client": ["@microsoft/microsoft-graph-client@3.0.7", "", { "dependencies": { "@babel/runtime": "^7.12.5", "tslib": "^2.2.0" } }, "sha512-/AazAV/F+HK4LIywF9C+NYHcJo038zEnWkteilcxC1FM/uK/4NVGDKGrxx7nNq1ybspAroRKT4I1FHfxQzxkUw=="],
 
