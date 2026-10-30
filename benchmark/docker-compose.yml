@@ -104,7 +104,7 @@ services:
       - bench
 
   redis:
-    image: valkey/valkey:8.1.10
+    image: valkey/valkey:8.1.11
     networks:
       - bench
 
