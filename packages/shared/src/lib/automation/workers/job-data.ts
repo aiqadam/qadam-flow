@@ -223,7 +223,8 @@ export type ExecutePropertyJobData = z.infer<typeof ExecutePropertyJobData>
 export const ExecuteExtractQadamMetadataJobData = z.object({
     schemaVersion: z.number(),
     jobType: z.literal(WorkerJobType.EXECUTE_EXTRACT_PIECE_INFORMATION),
-    projectId: z.undefined(),
+    // The job reaches the worker as JSON, so an undefined projectId arrives as no key at all.
+    projectId: z.undefined().optional(),
     platformId: z.string(),
     qadam: QadamPackage,
     requestId: z.string(),
