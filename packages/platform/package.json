@@ -1,6 +1,6 @@
 {
   "name": "@aiqadam/platform",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "private": true,
   "description": "The Qadam Flow platform version (ADR-0001). Changesets cannot version the monorepo root, so a changeset names this package to declare a platform release level; the release PR copies its version into the root package.json, which is what apVersionUtil reads and what version-tag-gate compares the tag against."
 }
