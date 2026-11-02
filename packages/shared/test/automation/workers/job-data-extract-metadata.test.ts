@@ -3,7 +3,7 @@ import { ExecuteExtractQadamMetadataJobData, JobData, WorkerJobType } from '../.
 
 describe('EXECUTE_EXTRACT_PIECE_INFORMATION job data', () => {
     // The API builds the job with `projectId: undefined`; JSON drops the key on the way to the
-    // worker, and zod 4.6 stopped treating a missing key as `z.undefined()`.
+    // worker, and zod 4.6 rejects a missing key for any schema not declared `.optional()`.
     it('parses the job as the worker receives it, with no projectId key', () => {
         const received = JSON.parse(JSON.stringify(createExtractJob()))
 
