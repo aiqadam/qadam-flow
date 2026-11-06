@@ -3131,7 +3131,7 @@
         "html-to-image": "1.11.13",
         "i18next": "26.4.5",
         "i18next-browser-languagedetector": "8.2.4",
-        "i18next-http-backend": "4.0.9",
+        "i18next-http-backend": "4.0.10",
         "i18next-icu": "2.4.4",
         "intl-messageformat": "11.2.15",
         "jszip": "3.10.2",
@@ -6607,7 +6607,7 @@
 
     "i18next-browser-languagedetector": ["i18next-browser-languagedetector@8.2.4", "", { "dependencies": { "@babel/runtime": "^7.29.2" } }, "sha512-n6zWTCD8plrPN6gotXNXf0qdM2cORZqZ6ypJA4aIXZkEa45Ds2BVlrZfFItD+XQWP3yAgWxV+euldyN+2utk0Q=="],
 
-    "i18next-http-backend": ["i18next-http-backend@4.0.9", "", {}, "sha512-OrdH7wL9zNcmUwH3PatOCIa/NdL6NOGtlwjGqSHSS6fsh9sqm5BtHj6FRt+6coWSxro1LbM61ay+Jc2bbppGkw=="],
+    "i18next-http-backend": ["i18next-http-backend@4.0.10", "", {}, "sha512-CfdQuwIVijbrS/fmiTAQYcYyje4nMbH9aIjKYhhm5bgVmWKWLOM1F7qrA1o63Jl1JxQcRjdtWhKlvDzyqV9aPg=="],
 
     "i18next-icu": ["i18next-icu@2.4.4", "", { "peerDependencies": { "intl-messageformat": ">=10.3.3 <12.0.0" } }, "sha512-yfYdGTftClNUnZAQG1cu0yHHLaMVsrqfcgQHHchGDufkunBLKHuw2wXTCDuE+8mWMMcdePl8UBR0EUUA/3+FDw=="],
 
