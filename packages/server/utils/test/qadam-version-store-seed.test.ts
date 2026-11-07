@@ -123,6 +123,35 @@ describe('qadamVersionStoreSeed.seedFromImage', () => {
     })
 })
 
+describe('qadamVersionStoreSeed.listImageVersions (#478)', () => {
+    it('answers the image\'s current set, as "name@version" strings', async () => {
+        await writeSeed({ artifacts: [await packArtifact(CSV), await packArtifact(CRYPTO)] })
+
+        const versions = await qadamVersionStoreSeed.listImageVersions({ seedDir })
+
+        expect(versions).toEqual(new Set([`${CSV.name}@${CSV.version}`, `${CRYPTO.name}@${CRYPTO.version}`]))
+    })
+
+    it('answers empty for an image with no seed, rather than refusing', async () => {
+        expect(await qadamVersionStoreSeed.listImageVersions({ seedDir: join(tempDir, 'no-such-seed') })).toEqual(new Set())
+    })
+
+    it('answers empty for a seed index this release cannot read, rather than refusing', async () => {
+        await writeFile(join(seedDir, 'archive-index.json'), '{ not json')
+
+        expect(await qadamVersionStoreSeed.listImageVersions({ seedDir })).toEqual(new Set())
+    })
+
+    it('does not change once a version is seeded into the store: it always reflects the seed index, not store contents', async () => {
+        await writeSeed({ artifacts: [await packArtifact(CSV)] })
+        const store = await openStore()
+        await qadamVersionStoreSeed.seedFromImage({ store, seedDir, log })
+        await writeSeed({ artifacts: [] })
+
+        expect(await qadamVersionStoreSeed.listImageVersions({ seedDir })).toEqual(new Set())
+    })
+})
+
 async function openStore(): Promise<QadamVersionStore> {
     const opened = await qadamVersionStore.open({ root, log })
     if (!opened.ok) {

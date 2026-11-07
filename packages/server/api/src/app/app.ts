@@ -54,12 +54,14 @@ import { frameworkCensusMarking } from './qadams/census/framework-census-marking
 import { frameworkCensusModule } from './qadams/census/framework-census-module'
 import { communityQadamsModule } from './qadams/community-qadam-module'
 import { startDevQadamWatcher } from './qadams/dev-qadam-watcher'
+import { qadamVersionFetchStartup } from './qadams/fetch/qadam-version-fetch-startup'
 import { qadamModule } from './qadams/metadata/qadam-metadata-controller'
 import { qadamMetadataService } from './qadams/metadata/qadam-metadata-service'
 import { qadamPinMoveModule } from './qadams/pin-moves/qadam-pin-move.module'
 import { qadamSnapshotFollow } from './qadams/pin-moves/qadam-snapshot-follow'
 import { qadamContextVersionBackfill } from './qadams/qadam-context-version-backfill'
 import { tagsModule } from './qadams/tags/tags-module'
+import { qadamVersionStoreGc } from './qadams/version-store/qadam-version-store-gc'
 import { qadamVersionStoreSeeding } from './qadams/version-store/qadam-version-store-seeding'
 import { storeEntryModule } from './store-entry/store-entry.module'
 import { tablesModule } from './tables/tables.module'
@@ -232,6 +234,7 @@ export const setupApp = async (app: FastifyInstance): Promise<FastifyInstance> =
 
     await app.register(communityQadamsModule)
     await qadamContextVersionBackfill(app.log).schedule()
+    await qadamVersionStoreGc(app.log).schedule()
 
     const isCanaryApp = system.getBoolean(AppSystemProp.IS_CANARY_APP) ?? false
     if (isCanaryApp) {
@@ -300,8 +303,9 @@ The application started on ${await domainHelper.getPublicApiUrl({ path: '' })}, 
     // Cheap — it logs the retirement, not a walk of every flow; the doctor command lists the steps.
     frameworkCensusMarking(app.log).logRetirement()
     void startDevQadamWatcher(app)
-    // ADR-0003 (#805): fills the versioned qadam store from the image, in the background. Nothing
-    // resolves a qadam through the store until #779, so this changes no behaviour yet.
+    // ADR-0003 (#805): fills the versioned qadam store from the image, in the background. The API
+    // and forked engines resolve an official pin from it when it holds that version (#779); no
+    // image ships a seed before #807, so a default install still runs the bundled builds.
     void qadamVersionStoreSeeding(app.log).run()
     // ADR-0004 "Following `main`": moves every draft's available qadam pins onto the build the image
     // ships, in the background. It is scoped by the instance kind: a `-main` snapshot moves release
@@ -310,6 +314,11 @@ The application started on ${await domainHelper.getPublicApiUrl({ path: '' })}, 
     // before that seeding finishes: a snapshot pin then stays until the next boot. Boot is not
     // blocked on either.
     void qadamSnapshotFollow({ log: app.log }).run()
+    // ADR-0003 "Fetching", the start-up half (#806): fetches every pinned qadam version this
+    // instance's flows name that is missing from the store, from the registry. Another floating
+    // `void`, for the same reason as the two above — boot is not blocked on it, and it tolerates
+    // reading the store or the registry before either of them has finished its own pass.
+    void qadamVersionFetchStartup({ log: app.log }).run()
 }
 
 function registerOpenApiSchemas() {

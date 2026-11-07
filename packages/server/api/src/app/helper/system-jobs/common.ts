@@ -38,6 +38,7 @@ export enum SystemJobName {
     APPLY_DELIVERY_MODE_CHANGE = 'apply-delivery-mode-change',
     LDAP_RECONCILE = 'ldap-reconcile',
     QADAM_CONTEXT_VERSION_BACKFILL = 'qadam-context-version-backfill',
+    QADAM_VERSION_STORE_GC = 'qadam-version-store-gc',
 }
 
 type DeleteFlowDurableSystemJobData =  {
@@ -104,6 +105,7 @@ type SystemJobDataMap = {
     [SystemJobName.APPLY_DELIVERY_MODE_CHANGE]: ApplyDeliveryModeChangeSystemJobData
     [SystemJobName.LDAP_RECONCILE]: Record<string, never>
     [SystemJobName.QADAM_CONTEXT_VERSION_BACKFILL]: Record<string, never>
+    [SystemJobName.QADAM_VERSION_STORE_GC]: Record<string, never>
 }
 
 export type SystemJobData<T extends SystemJobName = SystemJobName> = T extends SystemJobName ? SystemJobDataMap[T] : never

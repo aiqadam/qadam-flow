@@ -70,6 +70,11 @@
       "automerge": false
     },
     {
+      "description": "@types/node describes the Node API the code may call, so its major tracks the runtime major (.nvmrc, Dockerfile, CI node-version: 24). Types ahead of the runtime typecheck calls that fail in production (#906). Raise this cap in the same PR that moves the runtime.",
+      "matchPackageNames": ["@types/node"],
+      "allowedVersions": "<25"
+    },
+    {
       "description": "Families that must move together.",
       "matchPackageNames": ["@ai-sdk/*", "ai"],
       "matchUpdateTypes": ["minor", "patch"],

@@ -17,6 +17,8 @@ import {
   ImageIcon,
   TextIcon,
   AlertCircle,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { useState } from 'react';
 import { UseFormReturn, useFieldArray } from 'react-hook-form';
@@ -74,6 +76,7 @@ export const UpsertProviderConfigForm = ({
   const [showApiKeyInput, setShowApiKeyInput] = useState(!isEditMode);
   const [showBedrockAuthInputs, setShowBedrockAuthInputs] =
     useState(!isEditMode);
+  const [apiKeyVisible, setApiKeyVisible] = useState(false);
 
   return (
     <div className="grid space-y-4">
@@ -103,15 +106,38 @@ export const UpsertProviderConfigForm = ({
                 )}
               </div>
               {showApiKeyInput && (
-                <FormControl>
-                  <Input
-                    {...field}
-                    required={apiKeyRequired}
-                    id="apiKey"
-                    placeholder={'sk_************************'}
+                <div className="relative">
+                  <FormControl>
+                    <Input
+                      {...field}
+                      type={apiKeyVisible ? 'text' : 'password'}
+                      autoComplete="new-password"
+                      required={apiKeyRequired}
+                      id="apiKey"
+                      className="pr-10"
+                      placeholder={'sk_************************'}
+                      disabled={isLoading}
+                    />
+                  </FormControl>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    tabIndex={-1}
+                    className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
+                    onClick={() => setApiKeyVisible((visible) => !visible)}
                     disabled={isLoading}
-                  />
-                </FormControl>
+                    aria-label={
+                      apiKeyVisible ? t('Hide value') : t('Show value')
+                    }
+                  >
+                    {apiKeyVisible ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                  </Button>
+                </div>
               )}
               <FormMessage />
             </FormItem>

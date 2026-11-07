@@ -652,6 +652,78 @@ describe('qadamVersionStoreReader.open', () => {
     })
 })
 
+describe('qadamVersionStore.remove (#478)', () => {
+    it('makes a stored version read as absent', async () => {
+        await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version }) })
+
+        const outcome = await store.remove({ coordinates: CSV })
+
+        expect(outcome).toEqual({ status: 'removed' })
+        expect(await store.read({ coordinates: CSV })).toEqual({ status: QadamVersionReadStatus.ABSENT })
+    })
+
+    it('leaves every other stored version alone', async () => {
+        const other: QadamVersionCoordinates = { platformId: null, name: '@aiqadam/qadam-slack', version: '1.0.0' }
+        await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version }) })
+        await putFiles({ coordinates: other, files: tarFixtures.bundleFiles({ name: other.name, version: other.version }) })
+
+        await store.remove({ coordinates: CSV })
+
+        expect(await store.has({ coordinates: other })).toBe(true)
+    })
+
+    it('answers absent, not an error, for a version that was never stored', async () => {
+        const outcome = await store.remove({ coordinates: CSV })
+
+        expect(outcome).toEqual({ status: 'absent' })
+    })
+
+    it('refuses coordinates that can never name a version, without touching the store', async () => {
+        const outcome = await store.remove({ coordinates: { platformId: null, name: 'not-official', version: '1.0.0' } })
+
+        expect(outcome.status).toBe('refused')
+    })
+
+    it('does not resurrect a version a concurrent writer is replacing', async () => {
+        await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version }) })
+
+        const outcome = await store.remove({ coordinates: CSV })
+        const restored = await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version }) })
+
+        expect(outcome).toEqual({ status: 'removed' })
+        expect(restored.status).toBe(QadamVersionPutStatus.STORED)
+        expect(await store.has({ coordinates: CSV })).toBe(true)
+    })
+})
+
+describe('qadamVersionStore.listAllVersions / listPlatformNamespaces (#478)', () => {
+    it('lists nothing in an empty store', async () => {
+        expect(await store.listPlatformNamespaces()).toEqual([])
+        expect(await store.listAllVersions()).toEqual([])
+    })
+
+    it('lists official and every platform\'s custom versions together', async () => {
+        const custom: QadamVersionCoordinates = { platformId: PLATFORM_A, name: 'my-qadam', version: '1.0.0' }
+        const otherPlatform: QadamVersionCoordinates = { platformId: PLATFORM_B, name: 'other-qadam', version: '2.0.0' }
+        await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version }) })
+        await putFiles({ coordinates: custom, files: tarFixtures.bundleFiles({ name: custom.name, version: custom.version }) })
+        await putFiles({ coordinates: otherPlatform, files: tarFixtures.bundleFiles({ name: otherPlatform.name, version: otherPlatform.version }) })
+
+        expect((await store.listPlatformNamespaces()).sort()).toEqual([PLATFORM_A, PLATFORM_B])
+        const all = await store.listAllVersions()
+        expect(all).toHaveLength(3)
+        expect(all).toEqual(expect.arrayContaining([CSV, custom, otherPlatform]))
+    })
+
+    it('reflects a removal immediately', async () => {
+        await putFiles({ coordinates: CSV, files: tarFixtures.bundleFiles({ name: CSV.name, version: CSV.version }) })
+
+        await store.remove({ coordinates: CSV })
+
+        expect(await store.listAllVersions()).toEqual([])
+    })
+})
+
 async function openStore({ limits }: { limits?: typeof DEFAULT_QADAM_VERSION_STORE_LIMITS } = {}): Promise<QadamVersionStore> {
     const opened = await qadamVersionStore.open({ root, log, limits })
     if (!opened.ok) {

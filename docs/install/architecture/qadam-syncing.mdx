@@ -44,7 +44,7 @@ Adding a step records the exact qadam version at that moment (for example `0.5.3
 
 ## When a pinned version is not available
 
-A server upgrade can replace the bundled version of an official qadam, so a step may name a version the server no longer has. The server then resolves the step as follows:
+A server upgrade can replace the bundled version of an official qadam, so a step may name a version the server no longer has. The server first checks the [qadam version store](/install/architecture/qadam-version-store): a version it holds is served to the builder and the worker, and the engine runs it in the `UNSANDBOXED` and `SANDBOX_CODE_ONLY` execution modes, so the pin resolves normally. Otherwise the server resolves the step as follows:
 
 1. **Inside the caret range** — the bundled version runs in its place when it is compatible with the pin: the same minor version for a `0.x` qadam (`^0.5.3` accepts `0.5.9`, not `0.6.0`), the same major version from `1.0.0` on. The server logs a warning naming both versions.
 2. **Outside it** — the step does not run. The builder shows "Qadam version unavailable" on the step, `ap_validate_flow` and `ap_flow_structure` report the pin, and the step needs an explicit upgrade. A published flow is not disabled because of it.
@@ -53,7 +53,7 @@ A server upgrade can replace the bundled version of an official qadam, so a step
 One exception. When a flow version is first migrated to flow schema version 32, a one-off migration repoints each pin that cannot be resolved at that moment to a version the server can serve, even across a breaking boundary, after storing a backup of the flow version. It runs once per flow version, not on every upgrade, so it does not repair a pin that becomes unavailable later.
 </Note>
 
-The plan for removing this limitation — a versioned store on a persistent volume, so that a step runs the exact version it names — is [ADR-0003](https://github.com/aiqadam/qadam-flow/blob/main/adr/0003-official-qadams-run-from-a-versioned-local-store.md). The volume is already part of the install, see [Qadam version store](/install/architecture/qadam-version-store). Workers in the `UNSANDBOXED` and `SANDBOX_CODE_ONLY` execution modes already run an official qadam version from it when it holds that version, but no image puts versions in it yet, so on a real install the behavior above is still what your server does.
+The plan for removing this limitation — a versioned store on a persistent volume, so that a step runs the exact version it names — is [ADR-0003](https://github.com/aiqadam/qadam-flow/blob/main/adr/0003-official-qadams-run-from-a-versioned-local-store.md). The volume is already part of the install, see [Qadam version store](/install/architecture/qadam-version-store). Forked workers and the server's own resolution already use an official qadam version from it when it holds that version, but no image puts versions in it yet, so on a real install the behavior above is still what your server does.
 
 ## Server compatibility
 

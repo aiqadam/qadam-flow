@@ -3,6 +3,7 @@ import type { FastifyBaseLogger } from 'fastify'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockGetOnePopulated = vi.fn()
+const mockListHeld = vi.fn()
 const mockGetPlatformId = vi.fn()
 const mockGet = vi.fn()
 
@@ -31,6 +32,14 @@ vi.mock('../../../../src/app/qadams/metadata/qadam-metadata-service', () => ({
         }))),
     })),
 }))
+
+vi.mock('../../../../src/app/qadams/pin-moves/qadam-pin-move.service', () => ({
+    qadamPinMoveService: vi.fn(() => ({
+        listHeld: mockListHeld,
+    })),
+}))
+
+mockListHeld.mockResolvedValue({ data: [], next: null, previous: null })
 
 import { apValidateFlowTool } from '../../../../src/app/mcp/tools/ap-validate-flow'
 

@@ -41,6 +41,7 @@ The deciding constraint is the text `bun.lock` (Bun ≥ 1.2) in a bun-workspaces
 | Patch automerge once CI is green | `matchUpdateTypes: ["patch","pin","digest"]` → `automerge`, `platformAutomerge` |
 | Minor batched weekly | `matchUpdateTypes: ["minor"]` → `groupName: "minor-updates"`, Monday schedule |
 | Major individually, labelled `tech-debt` | `matchUpdateTypes: ["major"]` → `addLabels: ["tech-debt"]`, no group |
+| `@types/node` stays on the runtime major | `matchPackageNames: ["@types/node"]` → `allowedVersions: "<25"` (see below) |
 | Group the coupled families | one `packageRules` entry per family (below) |
 | `@ai-sdk/*` + `ai` | `groupName: "ai-sdk"` |
 | `@opentelemetry/*` | `groupName: "opentelemetry"` |
@@ -55,6 +56,14 @@ minor/patch but a major still opens on its own. The `minor-updates` rule is list
 the family rules; Renovate merges `packageRules` in order, so a family's `groupName`
 overrides the catch-all name while the Monday `schedule` remains — that is what keeps a
 family from being split across PRs.
+
+`@types/node` is capped at the Node runtime major — `.nvmrc`, the `Dockerfile` base image and
+every workflow's `node-version` (24 today). Types ahead of the runtime let the typecheck pass
+calls that throw in production, and newer majors also raise the TypeScript floor (#906:
+`@types/node@26` needs TS 5.6 against the repo's 5.5.4). Move the cap in the PR that moves the
+runtime, not on its own. Inside the cap, every release from 24.13.3 on also declares
+`typeScriptVersion` 5.6, so a 24.x bump past 24.13.2 has to land together with the TypeScript
+bump (#627) — `minor-updates` groups both today.
 
 ## The 238 qadams are excluded
 
