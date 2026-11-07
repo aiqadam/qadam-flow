@@ -1,8 +1,15 @@
 ---
 title: 'Project Releases'
-description: 'Learn how to manage and deploy releases across projects'
+description: 'Design reference for project releases and Git sync, which this repository does not implement.'
 icon: 'rocket'
+noindex: true
 ---
+
+<Warning>
+**Not implemented in Qadam Flow.** This page describes Project Releases and Git sync as they worked in the Activepieces version this repository was forked from. The server side was removed with the Enterprise Edition code (see [License](/about/license)), so there is no `/v1/project-releases` API, no **Releases** tab and no **Environment** project setting in this repository. Nothing below can be done today.
+
+To move a flow or a table between projects now, export it and import it into the other project (flow templates, and the table export). Declarative whole-project export and import is tracked in [#43](https://github.com/aiqadam/qadam-flow/issues/43), and the decision about what happens to this page is tracked in [#856](https://github.com/aiqadam/qadam-flow/issues/856).
+</Warning>
 
 Project Releases allow you to sync flows, connections, and tables between different projects—essential for teams that want to develop in one environment and deploy to another with confidence.
 

@@ -19,7 +19,7 @@ A Project is the workspace within a platform where flows, connections, tables, a
 - **ProjectType** — `PERSONAL` (auto-created on sign-up, one per user per platform) or `TEAM` (multi-member workspace)
 - **ProjectIcon** — `{ color: ColorName }` stored as JSONB; color chosen from a 12-color palette
 - **externalId** — optional opaque string for embedding integrations to map projects to their own IDs
-- **releasesEnabled** — feature flag per-project for the project-releases module
+- **releasesEnabled** — per-project column left over from the removed project-releases module. Not implemented in this repo (#856): nothing server-side reads it and the web UI neither shows a Releases tab nor lets a user set it, though the project update request still accepts it. Do not build on it.
 - **poolId** — optional FK to a `concurrency_pool` for worker concurrency limiting
 - **maxConcurrentJobs** — optional per-project override for concurrent execution limit
 
@@ -36,7 +36,7 @@ A Project is the workspace within a platform where flows, connections, tables, a
 | icon | jsonb | `{ color: ColorName }` |
 | externalId | string (nullable) | embedding integration ID |
 | maxConcurrentJobs | number (nullable) | concurrency cap |
-| releasesEnabled | boolean | default false |
+| releasesEnabled | boolean | default false; unused leftover (see Domain Terms) |
 | metadata | jsonb (nullable) | arbitrary key-value |
 | poolId | string (nullable) | FK to `concurrency_pool` |
 | deleted | timestamp (nullable) | soft-delete date |

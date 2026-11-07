@@ -1,4 +1,4 @@
-import { Permission, PlatformRole, ProjectType } from '@aiqadam/shared';
+import { PlatformRole, ProjectType } from '@aiqadam/shared';
 import { t } from 'i18next';
 import { Lock } from 'lucide-react';
 import { useState } from 'react';
@@ -15,7 +15,6 @@ import {
 } from '@/components/ui/tooltip';
 import { getProjectName, projectCollectionUtils } from '@/features/projects';
 import { ApProjectDisplay } from '@/features/projects/components/ap-project-display';
-import { useAuthorization } from '@/hooks/authorization-hooks';
 import { platformHooks } from '@/hooks/platform-hooks';
 import { userHooks } from '@/hooks/user-hooks';
 
@@ -32,10 +31,9 @@ export const ProjectDashboardPageHeader = ({
   const { platform } = platformHooks.useCurrentPlatform();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<
-    'general' | 'pieces' | 'environment'
+    'general' | 'pieces'
   >('general');
   const location = useLocation();
-  const { checkAccess } = useAuthorization();
   const { data: user } = userHooks.useCurrentUser();
 
   const isProjectPage = location.pathname.includes('/projects/');
@@ -45,9 +43,8 @@ export const ProjectDashboardPageHeader = ({
     (platform.plan.embeddingEnabled &&
       user?.platformRole === PlatformRole.ADMIN);
 
-  const getFirstAvailableTab = (): 'general' | 'pieces' | 'environment' => {
+  const getFirstAvailableTab = (): 'general' | 'pieces' => {
     if (hasGeneralSettings) return 'general';
-    if (checkAccess(Permission.READ_PROJECT_RELEASE)) return 'environment';
     return 'pieces';
   };
 

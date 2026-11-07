@@ -28,6 +28,14 @@
       {
          "source": "/getting-started/introduction",
          "destination": "/overview/welcome"
+      },
+      {
+         "source": "/endpoints/project-releases/schema",
+         "destination": "/admin-guide/guides/project-releases"
+      },
+      {
+         "source": "/endpoints/project-releases/create",
+         "destination": "/admin-guide/guides/project-releases"
       }
    ],
    "background": {
@@ -111,7 +119,6 @@
                     },
                     "admin-guide/guides/permissions",
                     "admin-guide/guides/event-streaming",
-                    "admin-guide/guides/project-releases",
                     "admin-guide/guides/manage-concurrency"
                   ]
                },
@@ -372,14 +379,6 @@
                         "pages": [
                            "endpoints/qadams/schema",
                            "endpoints/qadams/install"
-                        ]
-                     },
-                     {
-                        "group": "Project Releases",
-                        "icon": "cube",
-                        "pages": [
-                           "endpoints/project-releases/schema",
-                           "endpoints/project-releases/create"
                         ]
                      },
                      {

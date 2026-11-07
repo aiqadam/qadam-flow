@@ -1,7 +1,7 @@
 # File Storage Service
 
 ## Summary
-The File Storage Service is the central infrastructure for persisting binary files in Qadam Flow. It supports two storage backends: database (PostgreSQL `bytea`) and S3-compatible object storage (AWS S3, Cloudflare R2, or any S3-compatible endpoint). The backend used for a given file depends on its `FileType` — execution-related files that expire (run logs, step files, trigger payloads, webhook payloads) use the configured `FILE_STORAGE_LOCATION` system property; non-expiring files (platform assets, user profile pictures, knowledge base files, project releases, etc.) always use the database. Files are optionally compressed with Zstd. A scheduled system job runs every hour to delete stale execution files beyond the configurable retention window. The `step-file` sub-feature exposes engine-accessible endpoints for pieces to upload and download files produced during a flow run, using short-lived JWT tokens for download authorization.
+The File Storage Service is the central infrastructure for persisting binary files in Qadam Flow. It supports two storage backends: database (PostgreSQL `bytea`) and S3-compatible object storage (AWS S3, Cloudflare R2, or any S3-compatible endpoint). The backend used for a given file depends on its `FileType` — execution-related files that expire (run logs, step files, trigger payloads, webhook payloads) use the configured `FILE_STORAGE_LOCATION` system property; non-expiring files (platform assets, user profile pictures, knowledge base files, etc.) always use the database. Files are optionally compressed with Zstd. A scheduled system job runs every hour to delete stale execution files beyond the configurable retention window. The `step-file` sub-feature exposes engine-accessible endpoints for pieces to upload and download files produced during a flow run, using short-lived JWT tokens for download authorization.
 
 ## Key Files
 - `packages/server/api/src/app/file/file.service.ts` — core service: save, getFile, getDataOrThrow, delete, deleteStaleBulk, uploadPublicAsset
@@ -58,7 +58,7 @@ Relation: many-to-one with `project` (CASCADE on delete, FK `fk_file_project_id`
 | `PLATFORM_ASSET` | Always DB | No | Platform logo/branding images |
 | `USER_PROFILE_PICTURE` | Always DB | No | User avatar |
 | `PACKAGE_ARCHIVE` | Always DB | No | Piece package archive |
-| `PROJECT_RELEASE` | Always DB | No | Project release snapshot |
+| `PROJECT_RELEASE` | Always DB | No | Unused leftover: the project-releases feature it served is not implemented in this repo (#856) |
 | `FLOW_VERSION_BACKUP` | Always DB | No | Flow version backup |
 | `KNOWLEDGE_BASE` | Always DB | No | File uploaded for AI knowledge base |
 
