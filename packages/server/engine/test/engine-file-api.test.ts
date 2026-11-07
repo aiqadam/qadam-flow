@@ -53,6 +53,30 @@ describe('engineFileApi.download zstd auto-decompression', () => {
         expect(decodeURIComponent(captured.headers?.['x-ap-file-name'] ?? '')).toBe('ил_1100.doc')
     })
 
+    it('sends exactly the bytes it was given, whether the view sits on an ArrayBuffer or a SharedArrayBuffer', async () => {
+        const shared = new Uint8Array(new SharedArrayBuffer(6))
+        shared.set([1, 2, 3, 4, 5, 6])
+        const bodies: BodyInit[] = []
+        vi.spyOn(global, 'fetch').mockImplementation(async (_url, init) => {
+            if (init?.body) {
+                bodies.push(init.body)
+            }
+            return new Response(JSON.stringify({ readUrl: 'http://x/y' }), {
+                status: 200,
+                headers: { 'content-type': 'application/json' },
+            })
+        })
+
+        await engineFileApi.upload({ ...PARAMS, type: FileType.FLOW_STEP_FILE, data: Buffer.from('plain buffer') })
+        await engineFileApi.upload({ ...PARAMS, type: FileType.FLOW_STEP_FILE, data: shared })
+
+        const [fromBuffer, fromShared] = bodies
+        expect(Buffer.from(fromBuffer as Uint8Array).toString()).toBe('plain buffer')
+        expect(fromShared).toBeInstanceOf(Uint8Array)
+        expect(Array.from(fromShared as Uint8Array)).toEqual([1, 2, 3, 4, 5, 6])
+        expect((fromShared as Uint8Array).buffer).toBeInstanceOf(ArrayBuffer)
+    })
+
     it('#37: passes ASCII fileName through encodeURIComponent unchanged (safe chars)', async () => {
         const captured: { headers?: Record<string, string> } = {}
         vi.spyOn(global, 'fetch').mockImplementation(async (_url, init) => {

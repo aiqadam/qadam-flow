@@ -61,10 +61,11 @@ family from being split across PRs.
 `@types/node` is capped at the Node runtime major — `.nvmrc`, the `Dockerfile` base image and
 every workflow's `node-version` (24 today). Types ahead of the runtime let the typecheck pass
 calls that throw in production, and newer majors also raise the TypeScript floor (#906:
-`@types/node@26` needs TS 5.6 against the repo's 5.5.4). Move the cap in the PR that moves the
-runtime, not on its own. Inside the cap, every release from 24.13.3 on also declares
-`typeScriptVersion` 5.6, so a 24.x bump past 24.13.2 has to land together with the TypeScript
-bump (#627) — `minor-updates` groups both today.
+`@types/node@26` needs TS 5.6). Move the cap in the PR that moves the runtime, not on its own.
+Inside the cap, every release from 24.13.3 on also declares `typeScriptVersion` 5.6, which the
+TypeScript 5.9 bump (#627) satisfies. `@aiqadam/shared` and `qadam-assemblyai` still declare
+24.11.0: they are versioned packages, and a `devDependencies` change there forces a changeset
+(CI gate 1), so they catch up at their next release or with the Renovate PR that touches them.
 
 The `isolated-vm` entry must stay **last** in `packageRules`. Renovate applies every matching rule
 in order and the later one wins, so a rule appended after it that sets `automerge: true` (or
