@@ -64,12 +64,6 @@
       "platformAutomerge": true
     },
     {
-      "description": "isolated-vm is the sandbox isolation boundary. Its Dockerfile pins must move in one PR with the manifests (see customManagers above), and it must never merge unattended — #771 merged while Docker Image and Sandbox e2e were red (#810).",
-      "matchPackageNames": ["isolated-vm"],
-      "groupName": "isolated-vm",
-      "automerge": false
-    },
-    {
       "description": "@types/node describes the Node API the code may call, so its major tracks the runtime major (.nvmrc, Dockerfile, CI node-version: 24). Types ahead of the runtime typecheck calls that fail in production (#906). Raise this cap in the same PR that moves the runtime.",
       "matchPackageNames": ["@types/node"],
       "allowedVersions": "<25"
@@ -115,6 +109,13 @@
       "matchUpdateTypes": ["major"],
       "addLabels": ["tech-debt"],
       "automerge": false
+    },
+    {
+      "description": "isolated-vm is the sandbox isolation boundary. Its Dockerfile pins must move in one PR with the manifests (see customManagers above), and it must never merge unattended — #771 merged while Docker Image and Sandbox e2e were red (#810). Keep this rule LAST: Renovate applies matching packageRules in order and a later rule wins, so any rule appended after it could switch automerge back on for isolated-vm (#832). platformAutomerge is set to false explicitly as defence in depth, so GitHub auto-merge cannot be switched on for this PR even if automerge is ever re-enabled above.",
+      "matchPackageNames": ["isolated-vm"],
+      "groupName": "isolated-vm",
+      "automerge": false,
+      "platformAutomerge": false
     }
   ]
 }
