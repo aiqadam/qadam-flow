@@ -3,7 +3,8 @@ import z from "zod";
 import { agentUtils } from "./utils";
 import { agentOutputBuilder } from "./agent-output-builder";
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { ActionContext, AgentKnowledgeBaseTool, AgentMcpTool, AgentOutputField, AgentTaskStatus, AgentTool, AgentToolType, buildAuthHeaders, isNil, isString, KnowledgeBaseSourceType, McpProtocol, mcpToolNameUtils, TASK_COMPLETION_TOOL_NAME } from "@aiqadam/qadams-framework";
+import { ActionContext, AgentOutputField, AgentTaskStatus, AgentTool, AgentToolType, buildAuthHeaders, isNil, isString, KnowledgeBaseSourceType, McpProtocol, mcpToolNameUtils, TASK_COMPLETION_TOOL_NAME } from "@aiqadam/qadams-framework";
+import type { AgentKnowledgeBaseTool, AgentMcpTool } from "@aiqadam/shared";
 import { ProviderOptions } from "@ai-sdk/provider-utils";
 import { createMCPClient, MCPClient, MCPTransport } from '@ai-sdk/mcp';
 import { AuthenticationType, httpClient, HttpMethod } from "@aiqadam/qadams-common";
@@ -293,10 +294,12 @@ export async function constructAgentTools(
 ): Promise<{ tools: Record<string, Tool>, mcpClients: MCPClient[], toolKeyToAgentTool: Record<string, AgentTool> }> {
 
     const { outputBuilder, structuredOutput, agentTools, context, model, embeddingConfig } = params;
+    // `context.agent.tools()` returns the framework's opaque placeholder type (ADR-0006); this
+    // qadam owns a concrete `ai` dependency, so this is its own boundary back to the real type.
     const agentPieceTools = await context.agent.tools({
       tools: agentTools.filter(tool => tool.type === AgentToolType.PIECE),
       model: model,
-    });
+    }) as Record<string, Tool>;
     const flowsTools = await agentUtils.constructFlowsTools({
       tools: agentTools.filter(tool => tool.type === AgentToolType.FLOW),
       fetchFlows: context.flows.list,

@@ -1,4 +1,5 @@
-import { createAction, QadamAuth, Property, UpsertAction, UpsertRecordsRequest } from '@aiqadam/qadams-framework';
+import { createAction, QadamAuth, Property } from '@aiqadam/qadams-framework';
+import type { UpsertAction, UpsertRecordsRequest } from '@aiqadam/shared';
 import { tablesCommon } from '../common';
 import { columnUtils } from '../common/columns';
 import { AuthenticationType, httpClient, HttpMethod, propsValidation } from '@aiqadam/qadams-common';

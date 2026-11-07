@@ -1,5 +1,5 @@
 import { qadamVersionStoreReader } from '@aiqadam/server-utils'
-import { tryCatchSync } from '@aiqadam/shared'
+import { isNil, tryCatchSync } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { system } from '../../helper/system/system'
 import { AppSystemProp } from '../../helper/system/system-props'
@@ -10,9 +10,9 @@ import { QadamVersionCatalogueSource, qadamVersionCatalogueSource } from '../cat
 // Everything an export needs to know that is not in the flow: which releases of a qadam exist and
 // what they describe, and what a snapshot this instance runs describes. The seam ADR-0004 names:
 // "the released versions and metadata come from the catalogue (#778, wired at run time)". The
-// catalogue's reader exists but nothing at run time uses it yet, so the instance binding below is
-// the one place that fetches it; #806-#808 replace it with the store-and-catalogue resolution, and
-// the export rule is unchanged.
+// instance binding below is the one place that resolves the configured catalogue address and reads
+// it; flow export and #808's pin-fallback seam both read through it. #806-#808 replace it with the
+// store-and-catalogue resolution, and the export rule is unchanged.
 //
 // Every method answers "unknown" (`null`) rather than throwing, and an export treats unknown as
 // "no release passes": a pin is never moved on information the instance does not have.
@@ -78,8 +78,15 @@ async function openStore({ log }: { log: FastifyBaseLogger }): Promise<StoreRead
     return opened.reader
 }
 
+// A mirror on disk wins over the URL: it is what a `:slim` image's snapshot (#807) and an air-gapped
+// mirror use, where no request may leave the host at all.
 function defaultCatalogueSource(): QadamVersionCatalogueSource {
-    return qadamVersionCatalogueSource.http({ baseUrl: QADAM_VERSION_CATALOGUE_DEFAULT_URL })
+    const directory = system.get(AppSystemProp.QADAM_VERSION_CATALOGUE_DIRECTORY)?.trim()
+    if (!isNil(directory) && directory !== '') {
+        return qadamVersionCatalogueSource.directory({ root: directory })
+    }
+    const url = system.get(AppSystemProp.QADAM_VERSION_CATALOGUE_URL)?.trim()
+    return qadamVersionCatalogueSource.http({ baseUrl: isNil(url) || url === '' ? QADAM_VERSION_CATALOGUE_DEFAULT_URL : url })
 }
 
 type LoadedCatalogue = {

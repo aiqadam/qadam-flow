@@ -24,6 +24,17 @@
 // `packages/qadams/{framework,common}` ARE the SDK and may use `shared` (the framework bundles it
 // into its published tarball).
 //
+// EXEMPT_QADAMS mirrors packages/qadams/eslint.config.mjs's SHARED_TYPE_IMPORT_QADAMS: `core/tables`
+// and `community/ai` each own single-qadam DTOs narrowed out of the framework's re-export list
+// (#959). The exemption is NARROWER than the ban it relaxes: only an `import type` declaration is
+// allowed, because `tsc` erases it from the emitted JavaScript and `@aiqadam/shared` is a
+// devDependency there, never a runtime one. A value import, `require()`, a dynamic `import()` or a
+// re-export from `shared` is still a finding in these two qadams. A type still reaches the shipped
+// `.d.ts` when it appears in a public signature, so symbols that do are kept as framework exports
+// rather than re-pointed (see shared-reexports.ts's header). The other single-qadam symbols stay
+// framework exports because they compile to real runtime values and `shared` is
+// private/unpublished (#799) while both qadams publish standalone.
+//
 // A full-tree scan, not a diff: once #786 has moved the imports, the tree is clean and must stay
 // clean. Zero qadam files scanned is UNKNOWN (exit 2), never a pass — the scan target moved.
 //
@@ -38,6 +49,7 @@ const QADAM_ROOTS = ['packages/qadams/core', 'packages/qadams/community', 'packa
 const SKIPPED_DIRS = new Set(['node_modules', 'dist', 'coverage', '.turbo'])
 const FORBIDDEN = '@aiqadam/shared'
 const SOURCE_FILE = /\.(ts|tsx|mts|cts|js|mjs|cjs)$/
+const EXEMPT_QADAMS = new Set(['packages/qadams/core/tables', 'packages/qadams/community/ai'])
 
 const main = () => {
   const rootArg = process.argv.indexOf('--root')
@@ -54,9 +66,13 @@ const main = () => {
     process.exitCode = 2
     return
   }
-  const findings = files.flatMap((file) => findImports({ file }).map((hit) => ({ file: path.relative(root, file), ...hit })))
+  const findings = files.flatMap((file) => {
+    const relative = path.relative(root, file).split(path.sep).join('/')
+    const allowTypeOnly = EXEMPT_QADAMS.has(qadamOf({ relative }))
+    return findImports({ file, allowTypeOnly }).map((hit) => ({ file: relative, ...hit }))
+  })
   if (findings.length === 0) {
-    console.log(`[check-qadam-shared-imports] OK — ${files.length} qadam source files, none imports ${FORBIDDEN}.`)
+    console.log(`[check-qadam-shared-imports] OK — ${files.length} qadam source files, no runtime import of ${FORBIDDEN} (type-only imports are allowed in the two exempt qadams).`)
     return
   }
   const qadams = new Set(findings.map((finding) => finding.file.split('/').slice(0, 4).join('/')))
@@ -94,19 +110,37 @@ const walk = ({ dir }) => {
   })
 }
 
-const findImports = ({ file }) => {
+const qadamOf = ({ relative }) => relative.split('/').slice(0, 4).join('/')
+
+const findImports = ({ file, allowTypeOnly }) => {
   const text = fs.readFileSync(file, 'utf8')
   const sourceFile = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true)
   const hits = []
   const visit = (node) => {
     const specifier = moduleSpecifierOf({ node })
-    if (specifier !== null && (specifier === FORBIDDEN || specifier.startsWith(`${FORBIDDEN}/`))) {
+    if (specifier !== null && (specifier === FORBIDDEN || specifier.startsWith(`${FORBIDDEN}/`)) && !(allowTypeOnly && isTypeOnlyImport(node))) {
       hits.push({ specifier, line: sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1 })
     }
     ts.forEachChild(node, visit)
   }
   visit(sourceFile)
   return hits
+}
+
+// `import type { X }` and `import { type X }` (when every named specifier is type-only). A mixed
+// import keeps its value specifiers and is therefore still a runtime dependency.
+const isTypeOnlyImport = (node) => {
+  if (ts.isImportEqualsDeclaration(node)) {
+    return node.isTypeOnly
+  }
+  if (!ts.isImportDeclaration(node)) {
+    return false
+  }
+  if (node.importClause?.isTypeOnly === true) {
+    return true
+  }
+  const bindings = node.importClause?.namedBindings
+  return bindings !== undefined && ts.isNamedImports(bindings) && bindings.elements.length > 0 && bindings.elements.every((element) => element.isTypeOnly)
 }
 
 const moduleSpecifierOf = ({ node }) => {

@@ -1,0 +1,27 @@
+# What steers the fleet's workers and CI needs the principal's review (virtual-employee ADR-0074).
+# package.json and lockfiles are deliberately NOT owned, so Renovate keeps auto-merging.
+
+# CI, its scripts and this file
+/.github/                @binalirustamov
+/scripts/                @binalirustamov
+
+# Git hooks: they run on every commit, in every worker's slot
+/.husky/                 @binalirustamov
+
+# Images and how they are run
+Dockerfile*              @binalirustamov
+docker-compose*          @binalirustamov
+/docker-entrypoint.sh    @binalirustamov
+/run.sh                  @binalirustamov
+/.devcontainer/          @binalirustamov
+
+# Package registry and dependency automation settings
+/.npmrc                  @binalirustamov
+/renovate.json           @binalirustamov
+
+# Agent instructions, at any depth
+CLAUDE.md                @binalirustamov
+AGENTS.md                @binalirustamov
+.claude/                 @binalirustamov
+.agents/                 @binalirustamov
+.cursor/                 @binalirustamov

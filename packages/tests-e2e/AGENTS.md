@@ -138,9 +138,9 @@ anyone remembering to update this note.
   ```
 
   **Never screenshot the AI settings page while a real key is in it.** `#apiKey` in the Add AI
-  Provider dialog is a plain text `Input` with no masking
-  (`packages/web/src/app/routes/platform/setup/ai/universal-pieces/upsert-provider-config-form.tsx`),
-  so a frame of that dialog carries the key in the clear.
+  Provider dialog is masked (`type="password"`) by default, but it carries a reveal toggle
+  (`packages/web/src/app/routes/platform/setup/ai/universal-pieces/upsert-provider-config-form.tsx`)
+  — a frame taken after that toggle is clicked still carries the key in the clear.
 
 Screenshots land in `screenshots/chat-with-ai/` (git-ignored), named `NN-what-it-proves.png`.
 

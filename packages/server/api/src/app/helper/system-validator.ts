@@ -102,6 +102,8 @@ const systemPropValidators: {
     [AppSystemProp.CONFIG_PATH]: stringValidator,
     [AppSystemProp.QADAM_VERSION_STORE_PATH]: stringValidator,
     [AppSystemProp.QADAM_VERSION_STORE_SEED_PATH]: stringValidator,
+    [AppSystemProp.QADAM_VERSION_CATALOGUE_DIRECTORY]: stringValidator,
+    [AppSystemProp.QADAM_VERSION_CATALOGUE_URL]: urlValidator,
     [AppSystemProp.QADAM_SNAPSHOT_POLICY]: enumValidator([...qadamSnapshotPolicy.values]),
     [AppSystemProp.QADAM_REGISTRY_URL]: urlValidator,
     [AppSystemProp.QADAM_REGISTRY_TOKEN]: stringValidator,
