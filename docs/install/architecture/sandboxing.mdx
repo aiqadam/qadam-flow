@@ -46,6 +46,21 @@ The engine runs inside [ioi/isolate](https://github.com/ioi/isolate), which crea
 
 The Code step differs between the two isolate modes. `SANDBOX_PROCESS` runs Code steps in the same namespace-isolated box as the engine, so arbitrary `npm` packages are safe there because filesystem and process state are scoped to the box. `SANDBOX_CODE_AND_PROCESS` adds the V8 layer on top: Code steps get no `require`, filesystem or npm — the box protects the host from the engine, V8 protects the engine from the Code step.
 
+### Background work left behind by a Code step
+
+In `UNSANDBOXED` and `SANDBOX_PROCESS`, the Code steps of one run share a single runner process, so a step is not isolated from the next one by a process boundary. The runner watches for what a step leaves behind — a timer, an open server or socket, a child process. If it notices anything left, the runner is **retired after that step**, and the next Code step starts in a new process. A step that leaves nothing behind keeps the faster shared runner. This detection is best-effort: an open unix-domain client socket, and a pending `process.stdout.write(data, callback)` whose callback throws, are not noticed, and an error from either can surface during a later Code step of the same run.
+
+A timer left behind is never judged by when it comes due: once the step has returned, the step's own result no longer depends on how busy the worker is.
+
+- **Fails the step:** an error the step causes before the runner's first event-loop turn after the step returns. This covers a promise rejection nobody handles and a throw from a `process.nextTick` or `setImmediate` callback the step queued. It also covers any error while the step is still running, including one from a timer it is waiting on.
+- **Does not fail the step:** an error from a timer, socket or other callback that fires after that point. The step keeps the result it returned (or the error it threw), the error is dropped, and the runner is retired, so the error does not reach a later step.
+
+In short, return only when your work is finished. A timer left running after a Code step returns may or may not get to run before the runner is retired, so do not rely on it and do not expect its errors to show up in the run.
+
+<Note>
+`SANDBOX_CODE_ONLY` and `SANDBOX_CODE_AND_PROCESS` run each Code step in a fresh V8 isolate instead, so none of this applies there.
+</Note>
+
 ### Running an isolate mode with Docker Compose
 
 The bundled `docker-compose.yml` grants the worker no extra capabilities, because `UNSANDBOXED` and `SANDBOX_CODE_ONLY` do not need them. To run an isolate mode, set it in `.env` and select the opt-in override that adds `CAP_SYS_ADMIN` (and `CAP_NET_ADMIN` when `AP_NETWORK_MODE=STRICT`, which the egress lockdown needs) and lifts the seccomp/AppArmor confinement:
