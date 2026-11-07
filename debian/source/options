@@ -1,0 +1,13 @@
+# The prebuilt tree (scripts/debian-prebuild.sh: npm ci + npx turbo build inside
+# build/source, staged under build/source/debian/prebuild) is only part of the
+# binary payload, not part of the source tarball. The build runs INSIDE the copy,
+# so the tarball would otherwise also pick up its fresh caches and build outputs:
+tar-ignore = debian/prebuild
+tar-ignore = node_modules
+tar-ignore = .turbo
+tar-ignore = dist
+# binary-only (-b) builds never produce these, but a future source build
+# would otherwise bundle the fresh build products into the native tarball:
+tar-ignore = package-lock.json
+tar-ignore = packages/qadams/dist-index.json
+tar-ignore = packages/qadams/bundled-qadams-metadata.json

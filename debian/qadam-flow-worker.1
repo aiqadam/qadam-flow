@@ -1,0 +1,48 @@
+.TH QADAM-FLOW-WORKER 1 "October 2026" "Qadam Flow" "User Commands"
+.SH NAME
+qadam-flow-worker \- launcher for the Qadam Flow flow-execution worker process
+.SH SYNOPSIS
+.B qadam-flow-worker
+[\fB\-\-\fR \fInode-arguments\fR]
+.SH DESCRIPTION
+.B qadam-flow-worker
+starts a Qadam Flow execution worker (the \fBworker\fR containers of the
+Docker image). It is meant to be run by
+.BR systemd (1)
+as \fBqadam-flow-worker.service\fR, not by hand.
+.PP
+Configuration is read from
+.B /etc/qadam-flow/worker.conf
+(systemd \fIEnvironmentFile\fR). A worker is stateless: it polls the master
+over HTTP (\fBAP_WORKER_API_URL\fR) and authenticates with the minted
+\fBAP_WORKER_TOKEN\fR; it deliberately does \fBnot\fR talk to PostgreSQL or
+Redis, which is what makes it installable on separate hosts. A small health
+server listens on
+.B AP_PORT
+(default 3001) on localhost, a
+.B qadam-flow-worker@N.service
+style second instance needs an overridden port (systemctl edit).
+.PP
+Worker concurrency is \fBAP_WORKER_CONCURRENCY\fR (default 5, the Docker
+compose replica count). Execution modes: \fBUNSANDBOXED\fR /
+\fBSANDBOX_CODE_ONLY\fR by default; \fBSANDBOX_PROCESS\fR additionally uses
+the isolate sandbox (see README.Debian for its runtime privileges).
+.PP
+Any extra arguments are passed to
+.B node bootstrap.js
+after the
+.B \-\-
+separator.
+.SH FILES
+.TP
+.B /etc/qadam-flow/worker.conf
+Conffile (0600). \fBAP_WORKER_TOKEN\fR is minted automatically when the
+master is co-installed, otherwise see README.Debian.
+.SH SEE ALSO
+.BR qadam-flow-master (1),
+.BR qadam-flow-mint-worker-token (1),
+.BR systemctl (1)
+.PP
+Install, distributed-worker and sandboxing notes:
+.B /usr/share/doc/qadam-flow-common/README.Debian
+and https://flow.aiqadam.org/docs

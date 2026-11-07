@@ -1,0 +1,5 @@
+#!/bin/sh
+# Launcher for the Qadam Flow worker. Configuration comes from systemd
+# (EnvironmentFile=/etc/qadam-flow/worker.conf); start it with
+# `systemctl start qadam-flow-worker`, not by hand.
+exec /usr/bin/node /usr/lib/qadam-flow/packages/server/worker/dist/src/bootstrap.js "$@"

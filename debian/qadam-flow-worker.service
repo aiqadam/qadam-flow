@@ -1,0 +1,40 @@
+[Unit]
+Description=Qadam Flow worker
+Documentation=https://flow.aiqadam.org/docs
+After=network-online.target qadam-flow-master.service
+Wants=network-online.target
+# No Requires=: the worker reconnects on its own while the API restarts.
+
+[Service]
+Type=simple
+User=qadam
+Group=qadam
+WorkingDirectory=/usr/lib/qadam-flow
+EnvironmentFile=/etc/qadam-flow/worker.conf
+ExecStart=/usr/bin/qadam-flow-worker
+Restart=always
+RestartSec=5
+KillMode=mixed
+KillSignal=SIGTERM
+# Must stay above AP_WORKER_SHUTDOWN_GRACE_SECONDS + 15s.
+TimeoutStopSec=90
+CacheDirectory=qadam-flow
+CacheDirectoryMode=0750
+UMask=0027
+LimitCORE=0
+LimitNOFILE=65535
+TasksMax=4096
+OOMPolicy=continue
+# UNSANDBOXED and SANDBOX_CODE_ONLY only. SANDBOX_PROCESS needs
+# CAP_SYS_ADMIN: drop NoNewPrivileges and add AmbientCapabilities there.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

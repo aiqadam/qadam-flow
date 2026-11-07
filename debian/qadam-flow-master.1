@@ -1,0 +1,46 @@
+.TH QADAM-FLOW-MASTER 1 "October 2026" "Qadam Flow" "User Commands"
+.SH NAME
+qadam-flow-master \- launcher for the Qadam Flow API master process
+.SH SYNOPSIS
+.B qadam-flow-master
+[\fB\-\-\fR \fInode-arguments\fR]
+.SH DESCRIPTION
+.B qadam-flow-master
+starts the Qadam Flow master (API + frontend + scheduler, the \fBapp\fR
+container of the Docker image). It is meant to be run by
+.BR systemd (1)
+as \fBqadam-flow-master.service\fR, not by hand.
+.PP
+Configuration is read from
+.B /etc/qadam-flow/master.conf
+(systemd \fIEnvironmentFile\fR). The dashboard is served on
+.B AP_PORT
+(default 3000) and is normally fronted by a local reverse proxy on 80/443
+(recommended \fBnginx\fR), so \fBAP_FRONTEND_URL\fR stays an external
+\fBhttps://\fR URL. The master owns the PostgreSQL 18 + pgvector database and
+the Redis/Valkey queue; workers connect to it over HTTP
+(\fBAP_WORKER_API_URL\fR) and authenticate with a worker token.
+.PP
+Any extra arguments are passed to
+.B node bootstrap.js
+after the
+.B \-\-
+separator.
+.SH FILES
+.TP
+.B /etc/qadam-flow/master.conf
+Conffile (0600). Secrets are minted automatically on first install and are
+never overwritten by upgrades.
+.TP
+.B /var/lib/qadam-flow/qadam-versions
+Qadam version store (run-state data, preserved across upgrades).
+.TP
+.B /var/cache/qadam-flow
+Code-step cache.
+.SH SEE ALSO
+.BR qadam-flow-worker (1),
+.BR systemctl (1)
+.PP
+Install, distributed-worker and sandboxing notes:
+.B /usr/share/doc/qadam-flow-common/README.Debian
+and https://flow.aiqadam.org/docs

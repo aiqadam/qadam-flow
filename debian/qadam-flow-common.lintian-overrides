@@ -1,0 +1,52 @@
+# The binary packages ship the vendored Node.js application tree, built
+# the same way as the Docker image (npm ci + turbo builds) and kept
+# byte-identical with it: node_modules with native prebuilt addons for
+# several ABIs, the built engine/api/web/qadam dists and the web
+# frontend. The Debian checks below were written for Debian-compiled C
+# code and single-purpose trees, which is not what a self-contained
+# runtime looks like. Overrides are tag-level (no path context) on
+# purpose: they do not depend on how this lintian renders the tag
+# context, and they keep matching as files move around inside the tree.
+
+# --- prebuilt ELF tree (multi-ABI node_modules + sandbox binaries) ------
+qadam-flow-common: binary-from-other-architecture
+qadam-flow-common: unstripped-binary-or-object
+qadam-flow-common: statically-linked-binary
+qadam-flow-common: undeclared-elf-prerequisites
+qadam-flow-common: custom-library-search-path
+qadam-flow-common: embedded-library
+
+# --- vendored build/dev tooling of the npm ecosystem --------------------
+# shebang interpreters of vendored scripts (node, make), the /usr/bin/bash
+# interpreter in a vendored test script and the python code inside
+# node-gyp's gyp; no Debian package declares their dependencies for a
+# vendored runtime tree
+qadam-flow-common: missing-dep-for-interpreter
+qadam-flow-common: wrong-path-for-interpreter
+qadam-flow-common: python3-script-but-no-python3-dep
+qadam-flow-common: script-not-executable
+
+# --- npm-published tree artifacts ----------------------------------------
+qadam-flow-common: package-contains-eslint-config-file
+qadam-flow-common: package-contains-npm-ignore-file
+qadam-flow-common: package-contains-vcs-control-file
+qadam-flow-common: package-contains-hardlink
+
+# --- web frontend, bundled for fully-local serving ------------------------
+qadam-flow-common: embedded-javascript-library
+qadam-flow-common: privacy-breach-generic
+qadam-flow-common: privacy-breach-uses-embedded-file
+qadam-flow-common: privacy-breach-logo
+qadam-flow-common: font-in-non-font-package
+qadam-flow-common: woff-font-in-wrong-dir
+qadam-flow-common: duplicate-font-file
+
+# --- non-standard payload shapes -----------------------------------------
+# executable bits inside node_modules and web assets are data files for
+# the runtime loader, not system binaries:
+qadam-flow-common: executable-not-elf-or-script
+# /usr/local/etc/isolate is the isolate sandbox's compiled-in config
+# path, a plain FILE the Docker image COPYs to exactly that path:
+qadam-flow-common: dir-in-usr-local
+qadam-flow-common: file-in-usr-local
+qadam-flow-common: file-in-unusual-dir

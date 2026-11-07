@@ -1,0 +1,144 @@
+#!/bin/bash
+# qadam-flow master postinst
+# =============================================================================
+# - creates the qadam system user,
+# - prepares /etc/qadam-flow, /var/lib/qadam-flow, /var/cache/qadam-flow,
+# - replaces the CHANGE_ME placeholders one by one with fresh random secrets
+#   (each key only while its own value still reads CHANGE_ME: an operator's
+#   pre-set values are never overwritten, and rewinding a single key re-mints
+#   only that key),
+# - creates the qadam_flow Postgres role + database + pgvector extension,
+# - chmod's both conffiles to 0600,
+# then hands over to debhelper for the systemd enable/start snippets.
+# A reminder to set AP_FRONTEND_URL is printed when it is still the default.
+# =============================================================================
+
+set -e
+
+MASTER_CONF=/etc/qadam-flow/master.conf
+WORKER_CONF=/etc/qadam-flow/worker.conf
+STATE_DIR=/var/lib/qadam-flow
+CACHE_DIR=/var/cache/qadam-flow
+DB_MINTED=
+
+if [ "$1" != "configure" ]; then
+    exit 0
+fi
+
+# --- system user ------------------------------------------------------------
+if ! id -u qadam >/dev/null 2>&1; then
+    adduser --system --group --quiet \
+        --home /var/lib/qadam-flow --no-create-home \
+        --shell /usr/sbin/nologin qadam
+fi
+
+# --- state / cache directories (systemd also creates+owns these at boot) ----
+install -d -o qadam -g qadam -m 0750 "$STATE_DIR" "$CACHE_DIR" \
+    "$STATE_DIR/qadam-versions"
+
+# --- conffile permissions ----------------------------------------------------
+chmod 0600 "$MASTER_CONF"
+[ -f "$WORKER_CONF" ] && chmod 0600 "$WORKER_CONF" || true
+
+# --- mint secrets per key -------------------------------------------------------
+# systemd-format conf = shell KEY=VALUE, so sourcing it is safe here. Each
+# placeholder is replaced only while its own line still reads
+# KEY=CHANGE_ME (value-level exact match): operator-set values survive the
+# rewrite untouched, and rewinding one key re-mints only that key. The
+# database password is tracked separately — the ALTER ROLE resync below
+# must fire only when the DB password itself was minted, never because an
+# unrelated key happened to be.
+if grep -qE '^AP_(ENCRYPTION_KEY|AP_JWT_SECRET|AP_POSTGRES_PASSWORD)=CHANGE_ME$' "$MASTER_CONF"; then
+    ENC_VAL=$(openssl rand -hex 16)
+    JWT_VAL=$(openssl rand -hex 32)
+    PASS_VAL=$(openssl rand -hex 16)
+    grep -q '^AP_POSTGRES_PASSWORD=CHANGE_ME$' "$MASTER_CONF" && DB_MINTED=1
+    # Secrets must stay out of argv (world-readable /proc/*/cmdline during
+    # apt install — the same threat docker-entrypoint.sh:37-43 designs out):
+    # they travel through the environment to awk, which rewrites only the
+    # placeholder lines into a mktemp file — 0600 from creation, no
+    # world-readable window — carrying the target's owner, then rename.
+    TMP_FILE=$(mktemp "$MASTER_CONF.tmp.XXXXXX")
+    if ENC_VAL="$ENC_VAL" JWT_VAL="$JWT_VAL" PASS_VAL="$PASS_VAL" \
+        awk '{
+            if ($0 == "AP_ENCRYPTION_KEY=CHANGE_ME")    { print "AP_ENCRYPTION_KEY="    ENVIRON["ENC_VAL"]; next }
+            if ($0 == "AP_JWT_SECRET=CHANGE_ME")        { print "AP_JWT_SECRET="        ENVIRON["JWT_VAL"]; next }
+            if ($0 == "AP_POSTGRES_PASSWORD=CHANGE_ME") { print "AP_POSTGRES_PASSWORD=" ENVIRON["PASS_VAL"]; next }
+            print
+        }' "$MASTER_CONF" > "$TMP_FILE" \
+        && chmod 0600 "$TMP_FILE" \
+        && chown --reference "$MASTER_CONF" "$TMP_FILE"; then
+        mv -f "$TMP_FILE" "$MASTER_CONF"
+    else
+        rm -f "$TMP_FILE"
+        echo "ERROR: could not mint secrets into $MASTER_CONF" >&2
+        exit 1
+    fi
+    chmod 0600 "$MASTER_CONF"
+fi
+
+# --- database setup -----------------------------------------------------------
+# Dedicated role + database + pgvector, set up from a sourced fresh master
+# conf. Existing qadam_flow role/database/extension stay put (idempotent).
+if grep -q '^AP_DB_TYPE=POSTGRES' "$MASTER_CONF" && test -x /usr/bin/psql; then
+    . "$MASTER_CONF"
+    # Identifiers must stay simple so the interpolated SQL cannot break; a
+    # quoted password needs PG's own '' doubling — log_min_error_statement
+    # would echo a failing statement, so quote-robustness is log hygiene too.
+    case "$AP_POSTGRES_USERNAME" in
+        [A-Za-z_][A-Za-z0-9_]*) ;;
+        *) echo "ERROR: AP_POSTGRES_USERNAME must be a simple identifier (got '$AP_POSTGRES_USERNAME')" >&2; exit 1;;
+    esac
+    case "$AP_POSTGRES_DATABASE" in
+        [A-Za-z_][A-Za-z0-9_]*) ;;
+        *) echo "ERROR: AP_POSTGRES_DATABASE must be a simple identifier (got '$AP_POSTGRES_DATABASE')" >&2; exit 1;;
+    esac
+    PW_SQL=$(printf '%s' "$AP_POSTGRES_PASSWORD" | sed "s/'/''/g")
+    PGBIN="/usr/bin"
+    for d in /usr/bin /usr/lib/postgresql/*/bin; do
+        if test -d "$d" && test -x "$d/psql"; then
+            PGBIN="$d"
+            break
+        fi
+    done
+    echo "Creating Postgres role/database qadam_flow with pgvector extension..."
+    su -s /bin/sh postgres -c "$PGBIN/psql -v ON_ERROR_STOP=1 -X -q" <<PSQL >/dev/null
+DO \$\$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '$AP_POSTGRES_USERNAME') THEN
+        CREATE ROLE "$AP_POSTGRES_USERNAME" LOGIN PASSWORD '$PW_SQL';
+    END IF;
+END
+\$\$;
+SELECT 'CREATE DATABASE $AP_POSTGRES_DATABASE OWNER "$AP_POSTGRES_USERNAME"'
+WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_database WHERE datname = '$AP_POSTGRES_DATABASE')\gexec
+PSQL
+    su -s /bin/sh postgres -c "$PGBIN/psql -X -q -d $AP_POSTGRES_DATABASE -c 'CREATE EXTENSION IF NOT EXISTS vector;'" >/dev/null
+
+    if [ -n "$DB_MINTED" ]; then
+        # A purge keeps the role/database (the postrm prints the drop
+        # statements instead of destroying data), so a REINSTALL mints a new
+        # password into the conffile — resync it into the pre-existing role
+        # or every restart fails at authentication. This fires only when the
+        # DB password itself was freshly minted (DB_MINTED above): an
+        # upgrade with operator-set values, or a mint that only touched the
+        # JWT/encryption keys, never reaches this, so operator passwords
+        # stay untouched.
+        su -s /bin/sh postgres -c "$PGBIN/psql -X -q -v ON_ERROR_STOP=1" <<PSQL >/dev/null
+ALTER ROLE "$AP_POSTGRES_USERNAME" WITH PASSWORD '$PW_SQL';
+PSQL
+    fi
+fi
+
+# --- front-end URL reminder ----------------------------------------------------
+if grep -q '^AP_FRONTEND_URL=https://flow.example.com' "$MASTER_CONF"; then
+    cat <<'FRONTURL'
+qadam-flow: AP_FRONTEND_URL in /etc/qadam-flow/master.conf still points at
+the default value https://flow.example.com. Edit the file and set the public
+HTTPS front-end URL, then: systemctl restart qadam-flow-master.
+FRONTURL
+fi
+
+#DEBHELPER#
+
+exit 0

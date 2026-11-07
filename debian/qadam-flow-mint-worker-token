@@ -1,0 +1,20 @@
+#!/bin/sh
+# Prints the AP_WORKER_TOKEN a remote qadam-flow-worker host should use,
+# minted from THIS master's AP_JWT_SECRET (the master keeps the secret; a
+# worker should never receive it). Copy the printed token as AP_WORKER_TOKEN
+# into the worker's /etc/qadam-flow/worker.conf (0600) and:
+#     systemctl restart qadam-flow-worker
+#
+# Mint mirrors docker-entrypoint.sh: HS256, 100y, issuer qadam-flow.
+set -e
+
+CONF=/etc/qadam-flow/master.conf
+[ -r "$CONF" ] || { echo "ERROR: cannot read $CONF — run me on the MASTER host, as root." >&2; exit 1; }
+
+SECRET=$(sed -n 's/^AP_JWT_SECRET=//p' "$CONF" | tail -n 1)
+[ -n "$SECRET" ] || { echo "ERROR: AP_JWT_SECRET not found in $CONF" >&2; exit 1; }
+[ -d /usr/lib/qadam-flow/node_modules ] || { echo "ERROR: qadam-flow-common not installed on this host." >&2; exit 1; }
+
+cd /usr/lib/qadam-flow
+AP_JWT_SECRET="$SECRET" \
+    node -e 'const jwt=require("jsonwebtoken"),crypto=require("crypto");process.stdout.write(jwt.sign({id:crypto.randomUUID(),type:"WORKER"},process.env.AP_JWT_SECRET,{expiresIn:"100y",keyid:"1",algorithm:"HS256",issuer:"qadam-flow"}))'

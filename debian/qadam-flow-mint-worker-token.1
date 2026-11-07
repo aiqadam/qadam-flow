@@ -1,0 +1,57 @@
+.TH QADAM-FLOW-MINT-WORKER-TOKEN 1 "October 2026" "Qadam Flow" "User Commands"
+.SH NAME
+qadam-flow-mint-worker-token \- derive a worker token from the master's JWT secret
+.SH SYNOPSIS
+.B qadam-flow-mint-worker-token
+.SH DESCRIPTION
+.B qadam-flow-mint-worker-token
+runs on the host that holds the
+.B qadam-flow
+master — the host carrying
+.BR /etc/qadam-flow/master.conf —
+and prints the
+.B AP_WORKER_TOKEN
+that a distributed worker uses to authenticate against it. The token is an
+HS256 JWT signed with the master's
+.B AP_JWT_SECRET
+(read locally, passed to the signer through the environment and never
+printed); the signing parameters are the same as the Docker image's
+\fIdocker-entrypoint.sh\fR mints: 100-year expiry, keyid 1, issuer
+.BR qadam-flow ,
+token type WORKER.
+.PP
+Paste the printed token as
+.B AP_WORKER_TOKEN
+in the worker host's
+.B /etc/qadam-flow/worker.conf
+(permissions stay 0600) and restart the worker. The master's serializer
+secrets never leave their host: only the derived token travels.
+.PP
+The command takes no arguments and provides no overrides; both the config
+paths and the signing parameters are fixed, so every host using the same
+master mints compatible tokens.
+.SH FILES
+.TP
+.B /etc/qadam-flow/master.conf
+Read locally to obtain the signing secret; never printed.
+.TP
+.B /etc/qadam-flow/worker.conf
+On the WORKER host only: receives the printed token as
+.BR AP_WORKER_TOKEN .
+.SH EXIT STATUS
+.TP
+.B 0
+The token was printed to stdout.
+.TP
+.B 1
+Fatal: the master config is unreadable, has no
+.B AP_JWT_SECRET\fR, or
+.B /usr/lib/qadam-flow
+(the signing node_modules) is not installed. The reason is printed to stderr.
+.SH SEE ALSO
+.BR qadam-flow-worker (1),
+.BR qadam-flow-master (1),
+.BR systemctl (1)
+.PP
+Full distributed-install walkthrough (REDIS+Postgres layout, two hosts):
+.B /usr/share/doc/qadam-flow-common/README.Debian

@@ -1,0 +1,92 @@
+#!/bin/bash
+# qadam-flow-worker postinst
+# ==============================================================================
+# The worker is installable on hosts WITHOUT the master (distributed
+# deployment), so it cannot assume the master postinst ran here:
+# - creates the qadam system user (idempotent, same as master),
+# - prepares /var/cache/qadam-flow and the read-only qadam-versions dir,
+# - chmod 0600 the conffile,
+# - mints AP_WORKER_TOKEN when the master's config lives on this same host
+#   (same mechanism as docker-entrypoint.sh: jsonwebtoken HS256, 100y,
+#    issuer qadam-flow). On a remote-only worker, leaves CHANGE_ME and
+#   prints the two-step recipe instead.
+# ==============================================================================
+
+set -e
+
+WORKER_CONF=/etc/qadam-flow/worker.conf
+MASTER_CONF=/etc/qadam-flow/master.conf
+
+if [ "$1" != "configure" ]; then
+    exit 0
+fi
+
+# --- system user --------------------------------------------------------------
+if ! id -u qadam >/dev/null 2>&1; then
+    adduser --system --group --quiet \
+        --home /var/lib/qadam-flow --no-create-home \
+        --shell /usr/sbin/nologin qadam
+fi
+
+install -d -o qadam -g qadam -m 0750 /var/cache/qadam-flow
+install -d -o qadam -g qadam -m 0750 /var/lib/qadam-flow/qadam-versions
+chmod 0600 "$WORKER_CONF"
+
+# --- worker token --------------------------------------------------------------
+if grep -q '^AP_WORKER_TOKEN=CHANGE_ME$' "$WORKER_CONF"; then
+    MAS_JWT=
+    if [ -r "$MASTER_CONF" ]; then
+        MAS_JWT=$(sed -n 's/^AP_JWT_SECRET=//p' "$MASTER_CONF" | tail -n 1)
+        # an un-minted master conf would sign a public-constant token —
+        # treat the placeholder as "no secret yet" (the master postinst
+        # mints its own secret before it ever starts serving)
+        [ "$MAS_JWT" = "CHANGE_ME" ] && MAS_JWT=
+    fi
+
+    NEW_TOKEN=
+    if [ -n "$MAS_JWT" ] && [ -d /usr/lib/qadam-flow/node_modules ]; then
+        NEW_TOKEN=$(cd /usr/lib/qadam-flow \
+            && AP_JWT_SECRET="$MAS_JWT" \
+            node -e 'const jwt=require("jsonwebtoken"),crypto=require("crypto");process.stdout.write(jwt.sign({id:crypto.randomUUID(),type:"WORKER"},process.env.AP_JWT_SECRET,{expiresIn:"100y",keyid:"1",algorithm:"HS256",issuer:"qadam-flow"}))' \
+        ) || NEW_TOKEN=
+    fi
+
+    if [ -n "$NEW_TOKEN" ]; then
+        # Same per-key, no-argv rule as the master postinst mint: the token
+        # travels through the environment into an awk that rewrites only the
+        # placeholder line into a mktemp file — 0600 from creation, no
+        # world-readable window — carrying the target's owner, then rename.
+        TMP_FILE=$(mktemp "$WORKER_CONF.tmp.XXXXXX")
+        if TOKEN_VAL="$NEW_TOKEN" \
+            awk '{
+                if ($0 == "AP_WORKER_TOKEN=CHANGE_ME") { print "AP_WORKER_TOKEN=" ENVIRON["TOKEN_VAL"]; next }
+                print
+            }' "$WORKER_CONF" > "$TMP_FILE" \
+            && chmod 0600 "$TMP_FILE" \
+            && chown --reference "$WORKER_CONF" "$TMP_FILE"; then
+            mv -f "$TMP_FILE" "$WORKER_CONF"
+        else
+            rm -f "$TMP_FILE"
+            echo "ERROR: could not write AP_WORKER_TOKEN into $WORKER_CONF" >&2
+            exit 1
+        fi
+        chmod 0600 "$WORKER_CONF"
+        echo "qadam-flow-worker: minted AP_WORKER_TOKEN from the co-installed master's AP_JWT_SECRET."
+    else
+        cat <<'NO_MINT'
+qadam-flow-worker: AP_WORKER_TOKEN is still CHANGE_ME in /etc/qadam-flow/worker.conf.
+No readable master config on this host, so the token was not minted
+automatically. On a distributed install:
+  1. on the MASTER host run qadam-flow-mint-worker-token — it prints the
+     derived token and never the master's AP_JWT_SECRET;
+  2. paste that token as AP_WORKER_TOKEN in /etc/qadam-flow/worker.conf
+     (permissions stay 0600), then:
+        systemctl restart qadam-flow-worker
+See /usr/share/doc/qadam-flow-common/README.Debian for details.
+NO_MINT
+    fi
+fi
+
+#DEBHELPER#
+
+exit 0

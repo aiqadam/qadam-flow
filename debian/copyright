@@ -1,0 +1,41 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Qadam Flow
+Upstream-Contact: https://github.com/aiqadam/qadam-flow/issues
+Source: https://github.com/aiqadam/qadam-flow
+Comment: Qadam Flow is a derivative work of Activepieces
+ (https://github.com/activepieces/activepieces); see the NOTICE file.
+ The enterprise-licensed components of the upstream project have been
+ removed; everything that remains is under the MIT license.
+ .
+ The Debian packaging in debian/ is a separate work by the Debian
+ Maintainer, Copyright (c) 2026 Kansu Köse, and is not part of the
+ upstream project.
+
+Files: *
+Copyright: 2020-2024 Activepieces Inc.
+           2026 The Qadam Flow Authors
+License: MIT
+
+Files: debian/*
+Copyright: 2026 Kansu Köse <kansukse@gmail.com>
+License: MIT
+Comment: Debian packaging only.
+
+License: MIT
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files (the "Software"), to deal
+ in the Software without restriction, including without limitation the rights
+ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ copies of the Software, and to permit persons to whom the Software is
+ furnished to do so, subject to the following conditions:
+ .
+ The above copyright notice and this permission notice shall be included in all
+ copies or substantial portions of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ SOFTWARE.
