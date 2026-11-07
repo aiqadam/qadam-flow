@@ -1,11 +1,83 @@
 # #778 — qadam version catalogue: what's done, what's left, and why the rest isn't buildable yet
 
-**Status:** publishing and the `get()`/`list()` wiring remain blocked (see below). A follow-up
-commit on this branch implemented the one piece ADR-0003 requires that was still missing and was not
-blocked on anything: the catalogue address is now configurable (`AP_QADAM_VERSION_CATALOGUE_URL`,
-`AP_QADAM_VERSION_CATALOGUE_DIRECTORY`), so a mirror or a local snapshot can be read without a code
-change. That is the extent of the code in this pass.
-**Investigated:** 2026-10-25, on `origin/main` (`97a61649`).
+**Status:** publishing remains blocked on a maintainer decision (#804); the `get()`/`list()`
+catalogue wiring moved from "not reachable" to "reachable but needs its own design pass" once #806
+merged — see the 2026-11-07 update below. A follow-up commit on this branch implemented the one
+piece ADR-0003 requires that was still missing and was not blocked on anything: the catalogue
+address is now configurable (`AP_QADAM_VERSION_CATALOGUE_URL`, `AP_QADAM_VERSION_CATALOGUE_DIRECTORY`),
+so a mirror or a local snapshot can be read without a code change.
+**Investigated:** 2026-10-25, on `origin/main` (`97a61649`); re-checked 2026-11-07, on `origin/main`
+(`d46bc8c7`).
+
+## Update (2026-11-07): #806 landed, re-checked against current `main`
+
+This branch had fallen behind `main` by ~90 commits since the last pass (merged cleanly, no manual
+conflict resolution needed — the earlier "PR #967 conflicts with main" note was about an interim
+state that a squash-merge of this same branch's content, `cc0ba42f`, had already resolved by the time
+this pass started). Re-checked every premise below against the merged result:
+
+- **#804 (artifact/publish pipeline): unchanged.** Still exactly where the 2026-10-25 pass found it
+  — CI wiring done (#890), the publish-pipeline and release-archive items explicitly withheld for "a
+  maintainer decision on the 1.0.0 cut" (#804, latest comment). #778's own literal remaining
+  deliverable — the release-workflow job that appends to the catalogue — is still blocked on that
+  decision, not on code. `qadamVersionCatalogueWriter`'s `prepareArtifact` still only builds
+  `BUNDLE`-format entries from `qadamArtifact.formatVersion`-stamped `package.json`s; it has no
+  `LEGACY_NPM` producer, confirming the doc's prior reading of the writer's actual contract (the
+  format schema already models `legacy-npm` as a valid entry shape — see
+  `qadam-version-catalogue-format.ts` — but nothing builds one).
+- **#806 (fetch at publish/import/start-up): merged** (PR #969, `fix(qadams): fetch missing qadam
+  versions at publish, import and boot`). This resolves the specific premise the 2026-10-25 section
+  below rests its conclusion on — "the store has exactly one writer" is no longer true;
+  `qadamVersionFetch`/`qadamVersionStoreFetch` is a second one, triggered from `LOCK_AND_PUBLISH`,
+  `IMPORT_FLOW` and a start-up pass.
+- **What that changes for `get()`/`list()`, concretely:** `get()` already resolves an exact official
+  pin through `storedQadamMetadata.lookup` before the registry (#779, confirmed still current on
+  `main`), so it was already positioned to pick up anything #806 fetches — no further wiring needed
+  there; the two land together without either naming the other. `registry()` already merges stored
+  release versions (#779) separately from `list()`'s own "highest version this instance can run"
+  semantics — re-reading `list()` and `registry()` side by side against the current
+  `qadam-metadata-service.ts`, that split is itself the already-shipped answer to "`list()`'s latest
+  semantics when several official versions are known" (question 2 of the three the 2026-10-08
+  re-scope comment left open): `list()` intentionally never offers a version a flow merely happened
+  to fetch as the default for a *new* step, `registry()` intentionally does, for pinning an existing
+  step to a specific old one. No code change answers this; it's a documentation gap, now closed in
+  the feature doc.
+- **What's still genuinely open, and why it's not a one-line wiring job even now:** the catalogue
+  itself (as opposed to the local store) is still unread by `get`/`list`/`registry`. Making it read
+  catalogue entries that are in neither the store nor the registry — so an old or not-yet-fetched
+  version at least *describes* itself correctly in the builder and MCP (#411/#422's actual symptom)
+  — surfaces two design questions this pass did not have grounds to decide alone:
+  1. `get`/`resolveVersions` is the hot path #879 built dedupe and caching for specifically because a
+     flow's tool pins hit it many times per request; `snapshotExportSources` and
+     `qadamPinFallbackSeams`, the two existing catalogue consumers, are both one-shot calls (export, a
+     publish-time pin move) with no such volume and no cache of their own. Adding a third consumer
+     to the hot path without first giving the catalogue reader a TTL cache (`storedQadamMetadata`'s
+     pattern, or shared with it) risks a remote round trip to GitHub Pages, or a configured mirror, on
+     every cache miss for every unresolved pin in a flow.
+  2. A catalogue-only hit must render as "known, not yet available" — not as "available" — because
+     nothing in this read path fetches it. ADR-0003's "Fetching" is explicit that fetching only
+     happens at publish, import and start-up, never from a read like `get()`; conflating "the
+     catalogue describes it" with "the worker can run it" would let the builder promise a version
+     #806 never fetched. What that third state renders as to `ap_flow_structure`, `ap_validate_flow`
+     and the builder is a response-shape decision touching three surfaces, not a leftover plumbing
+     step.
+
+  Both are legitimate scoping questions, not blockers invented to avoid writing code, and deciding
+  them inside this one session — alone, without the surfaces' own owners weighing in on the response
+  shape — is the "no half-finished implementations" / "don't design for hypothetical future
+  requirements" failure mode in the other direction: shipping a guess at the cache and the tri-state
+  shape that the next pass has to re-litigate anyway. Recommend scoping this explicitly (an issue
+  comment or a short design note) before the next implementation pass, now that #806 has removed the
+  one hard blocker.
+
+**Current recommendation:** #778 should stay open. Its own literal deliverable (the release-workflow
+job, plus a `legacy-npm` producer) stays blocked on #804's maintainer decision, unchanged by this
+pass. Of the three re-scope questions, only the catalogue-reading half of question 1 is still
+unanswered, and it is now unblocked but needs the cache/response-shape scoping above before another
+pass writes code for it — not more investigation of whether it is reachable, which this pass
+settles.
+
+## Original pass (2026-10-25)
 
 ## What the ticket asks for, today
 
