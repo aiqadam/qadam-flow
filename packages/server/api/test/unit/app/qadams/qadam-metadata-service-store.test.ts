@@ -88,7 +88,7 @@ describe('qadamMetadataService — a stored version (unit)', () => {
 
     it('fails an exact pin whose stored metadata cannot be read instead of substituting the image build', async () => {
         await seed({ versions: ['1.3.0'] })
-        await rm(join(process.env[STORE_ENV]!, 'qadams', '@aiqadam', 'qadam-fixture', '1.3.0', 'metadata.json'))
+        await rm(join(process.env[STORE_ENV]!, 'qadams', ...NAME.split('/'), '1.3.0', 'metadata.json'))
         loadBundledQadams.mockResolvedValue([bundledQadam({ version: '1.4.0', displayName: 'Image build' })])
         const service = qadamMetadataService(logger)
 
@@ -102,8 +102,13 @@ describe('qadamMetadataService — a stored version (unit)', () => {
         loadBundledQadams.mockResolvedValue([bundledQadam({ version: '1.4.0', displayName: 'Image build' })])
 
         const service = qadamMetadataService(logger)
+        // The floor gates what the API offers, never what the engine runs: the pin is still held
+        // (`isPinAvailable` true, so the fallback never moves it), just unservable right now — the
+        // same `error`, not `missing`, bucket as unreadable metadata, never a reason to fall through
+        // to the image build.
         expect(await service.get({ name: NAME, version: '1.3.0' })).toBeUndefined()
-        expect((await service.resolveVersions({ pins: [{ name: NAME, version: '1.3.0' }] })).get(`${NAME}@1.3.0`)).toEqual({ status: 'missing' })
+        expect((await service.resolveVersions({ pins: [{ name: NAME, version: '1.3.0' }] })).get(`${NAME}@1.3.0`)).toEqual({ status: 'error' })
+        expect(await service.isPinAvailable({ name: NAME, version: '1.3.0', platformId: undefined })).toBe(true)
     })
 
     it('leaves a pin the store does not hold on the image build', async () => {

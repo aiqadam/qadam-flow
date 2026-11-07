@@ -497,9 +497,13 @@ const findExactVersionFor = async ({ log, request, entries, platformId, allowBun
         }
         if (stored.status === 'present') {
             const release = apVersionUtil.getCurrentRelease()
+            // Outside this release's floors is a failure to serve the metadata, not a miss: the
+            // floors gate what the API offers, never what the engine runs (the ADR-0002 framework
+            // major does), so falling through to the registry/bundled match below would let a held
+            // pin be silently substituted — exactly what the comment above rules out.
             return isSupportedRelease(release, stored.stored.metadata)
                 ? { name, version, platformId: undefined, stored: stored.stored }
-                : undefined
+                : { name, version, platformId: undefined, unusable: true }
         }
     }
     const matchingRegistryEntries = entries.filter((entry) => {

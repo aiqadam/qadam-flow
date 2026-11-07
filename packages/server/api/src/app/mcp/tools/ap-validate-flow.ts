@@ -298,6 +298,31 @@ function validatePreReleaseBuilds({ trigger }: { trigger: Step }): ValidationIss
     })
 }
 
+function frameworkVersionContextOf(support: PinFrameworkSupport): string {
+    return isNil(support.contextVersion)
+        ? 'an unknown context version'
+        : `framework context version ${support.contextVersion}`
+}
+
+// Shared by a step's own pin and an agent tool's: both are "a pin needing a retired context
+// version", differing only in the sentence naming what carries the pin.
+function frameworkVersionIssue({ pin, stepName, prefix, unsupportedPins }: {
+    pin: string
+    stepName: string
+    prefix: string
+    unsupportedPins: Map<string, PinFrameworkSupport>
+}): ValidationIssue[] {
+    const support = unsupportedPins.get(pin)
+    if (isNil(support)) {
+        return []
+    }
+    return [{
+        category: 'framework_version' as const,
+        stepName,
+        message: `${prefix} Its pinned qadam ${mcpUtils.wrapUntrustedValue(pin)} needs ${frameworkVersionContextOf(support)}, which this release no longer runs.`,
+    }]
+}
+
 // ADR-0002 (#803): once a release retires a framework context version, a step pinned to a qadam
 // built against it stops running. The flow stays enabled and nothing disables it (#435) — this
 // category is the read-time signal, alongside `ap_flow_structure`'s per-step mark and the platform
@@ -314,34 +339,18 @@ async function validateFrameworkVersions({ trigger, platformId, log }: {
     const agentTools = qadamPinUtil.getAgentToolPins({ trigger })
     const unsupportedPins = await frameworkCensusMarking(log).unsupportedPins({ qadamSteps, agentTools, platformId })
 
-    const contextOf = (support: PinFrameworkSupport): string => isNil(support.contextVersion)
-        ? 'an unknown context version'
-        : `framework context version ${support.contextVersion}`
-
-    const stepIssues = qadamSteps.flatMap((step): ValidationIssue[] => {
-        const pin = qadamPinUtil.pinOf({ step })
-        const support = unsupportedPins.get(pin)
-        if (isNil(support)) {
-            return []
-        }
-        return [{
-            category: 'framework_version' as const,
-            stepName: step.name,
-            message: `${mcpUtils.wrapUntrustedValue(step.displayName)} uses a framework version no longer supported — update this step. Its pinned qadam ${mcpUtils.wrapUntrustedValue(pin)} needs ${contextOf(support)}, which this release no longer runs.`,
-        }]
-    })
-    const toolIssues = agentTools.flatMap((tool): ValidationIssue[] => {
-        const pin = qadamPinUtil.pinOfTool({ tool })
-        const support = unsupportedPins.get(pin)
-        if (isNil(support)) {
-            return []
-        }
-        return [{
-            category: 'framework_version' as const,
-            stepName: tool.stepName,
-            message: `${mcpUtils.wrapUntrustedValue(tool.stepDisplayName)} has an agent tool (${mcpUtils.wrapUntrustedValue(tool.toolName)}) that uses a framework version no longer supported — update this step. Its pinned qadam ${mcpUtils.wrapUntrustedValue(pin)} needs ${contextOf(support)}, which this release no longer runs.`,
-        }]
-    })
+    const stepIssues = qadamSteps.flatMap((step) => frameworkVersionIssue({
+        pin: qadamPinUtil.pinOf({ step }),
+        stepName: step.name,
+        prefix: `${mcpUtils.wrapUntrustedValue(step.displayName)} uses a framework version no longer supported — update this step.`,
+        unsupportedPins,
+    }))
+    const toolIssues = agentTools.flatMap((tool) => frameworkVersionIssue({
+        pin: qadamPinUtil.pinOfTool({ tool }),
+        stepName: tool.stepName,
+        prefix: `${mcpUtils.wrapUntrustedValue(tool.stepDisplayName)} has an agent tool (${mcpUtils.wrapUntrustedValue(tool.toolName)}) that uses a framework version no longer supported — update this step.`,
+        unsupportedPins,
+    }))
     return [...stepIssues, ...toolIssues]
 }
 
