@@ -14,6 +14,7 @@ const mockGet = vi.fn()
 const mockGetMany = vi.fn()
 const mockResolveVersions = vi.fn()
 const mockUnsupportedPins = vi.fn()
+const mockListHeld = vi.fn()
 
 vi.mock('../../../../src/app/flows/flow/flow.service', () => ({
     flowService: vi.fn(() => ({
@@ -53,6 +54,18 @@ vi.mock('../../../../src/app/qadams/census/framework-census-marking', () => ({
         unsupportedPins: mockUnsupportedPins,
     })),
 }))
+
+vi.mock('../../../../src/app/qadams/pin-moves/qadam-pin-move.service', () => ({
+    qadamPinMoveService: vi.fn(() => ({
+        listHeld: mockListHeld,
+    })),
+}))
+
+mockListHeld.mockResolvedValue({ data: [], next: null, previous: null })
+
+beforeEach(() => {
+    mockListHeld.mockResolvedValue({ data: [], next: null, previous: null })
+})
 
 import { apFlowStructureTool } from '../../../../src/app/mcp/tools/ap-flow-structure'
 import { MALFORMED_TOOL_PIN } from '../../../../src/app/qadams/metadata/qadam-pin-util'
@@ -482,5 +495,86 @@ describe('ap_flow_structure — pre-release build label (ADR-0004, #855)', () =>
         const text = (result.content?.[0] as { text: string }).text
         expect(text).not.toContain('PRE-RELEASE BUILD')
         expect(JSON.stringify(result.structuredContent?.steps)).not.toContain('preReleaseBuild')
+    })
+})
+
+// ADR-0004 "Following `main`" (#854): a reverted move holds a step, and `follow` will not move it
+// again until its version changes. Both pin-reporting MCP tools read that hold from the same
+// `qadam_pin_move` records, matched by step, qadam and the exact version the step sits on.
+describe('ap_flow_structure — snapshot follow hold (ADR-0004, #854)', () => {
+    const SNAPSHOT_VERSION = '1.3.0-main.412'
+    const RELEASE_VERSION = '1.3.0'
+
+    function heldMove({ overrides }: { overrides?: Record<string, unknown> } = {}): Record<string, unknown> {
+        return {
+            id: 'move-1',
+            flowId: 'flow-1',
+            flowVersionId: 'version-1',
+            stepName: 'step_1',
+            qadamName: '@aiqadam/qadam-test-email',
+            fromVersion: SNAPSHOT_VERSION,
+            toVersion: '1.3.0-main.500',
+            cause: 'SNAPSHOT_FOLLOW',
+            status: 'REVERTED',
+            revertedAt: '2026-10-10T12:00:00.000Z',
+            ...overrides,
+        }
+    }
+
+    beforeEach(() => {
+        vi.clearAllMocks()
+        mockUnsupportedPins.mockResolvedValue(new Map())
+        mockGetPlatformId.mockResolvedValue('platform-1')
+        mockGet.mockResolvedValue({ name: '@aiqadam/qadam-test-email', version: SNAPSHOT_VERSION })
+        mockListHeld.mockResolvedValue({ data: [heldMove()], next: null, previous: null })
+    })
+
+    it('labels a held step and carries the hold in structuredContent', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: SNAPSHOT_VERSION }) }))
+
+        const result = await callTool()
+
+        const text = (result.content?.[0] as { text: string }).text
+        expect(text).toContain('[FOLLOW HELD]')
+        expect(text).not.toContain('PINNED VERSION UNAVAILABLE')
+        const steps = result.structuredContent?.steps as Record<string, unknown>[]
+        expect(steps.find(s => s.name === 'step_1')).toMatchObject({
+            followHeld: {
+                fromVersion: SNAPSHOT_VERSION,
+                toVersion: '1.3.0-main.500',
+                revertedAt: '2026-10-10T12:00:00.000Z',
+            },
+        })
+        expect(mockListHeld).toHaveBeenCalledWith({ flowId: 'flow-1', projectId: 'project-1', platformId: 'platform-1' })
+    })
+
+    it('matches a caret-prefixed pin by its exact version', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: `~${SNAPSHOT_VERSION}` }) }))
+
+        const result = await callTool()
+
+        expect((result.content?.[0] as { text: string }).text).toContain('[FOLLOW HELD]')
+    })
+
+    it('does not hold a step whose version changed after the revert', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: RELEASE_VERSION }) }))
+
+        const result = await callTool()
+
+        const text = (result.content?.[0] as { text: string }).text
+        expect(text).not.toContain('[FOLLOW HELD]')
+        expect(JSON.stringify(result.structuredContent?.steps)).not.toContain('followHeld')
+    })
+
+    it('still returns the structure, without the mark, when the hold read fails', async () => {
+        mockListHeld.mockRejectedValue(new Error('connection terminated unexpectedly'))
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: SNAPSHOT_VERSION }) }))
+
+        const result = await callTool()
+
+        const text = (result.content?.[0] as { text: string }).text
+        expect(text).toContain('step_1')
+        expect(text).not.toContain('[FOLLOW HELD]')
+        expect(log.warn).toHaveBeenCalled()
     })
 })

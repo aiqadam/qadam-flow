@@ -1,6 +1,6 @@
 import { ActionContext, backwardCompatabilityContextUtils, ConstructToolParams, CreateWaitpointHook, CreateWaitpointParams, CreateWaitpointResult, InputPropertyMap, QadamAuthProperty, QadamPropertyMap, RespondHook, RespondHookParams, StaticPropsValue, StopHook, StopHookParams, TagsManager, WaitForWaitpointHook } from '@aiqadam/qadams-framework'
 import { AUTHENTICATION_PROPERTY_NAME, EngineGenericError, ExecutionType, FlowActionType, FlowRunStatus, GenericStepOutput, isNil, QadamAction, RespondResponse, StepOutputStatus } from '@aiqadam/shared'
-import type { ToolSet } from 'ai'
+import type { LanguageModel, ToolSet } from 'ai'
 import { continueIfFailureHandler, runWithExponentialBackoff } from '../helper/error-handling'
 import { flowRunProgressReporter } from '../helper/flow-run-progress-reporter'
 import { pausedFlowLimits } from '../helper/paused-flow-limits'
@@ -146,7 +146,10 @@ const executeAction: ActionHandler<QadamAction> = async ({ action, executionStat
                     engineConstants: constants,
                     insideConcurrentIteration: executionState.isConcurrentFork,
                     tools: params.tools,
-                    model: params.model,
+                    // `params.model` is the framework's opaque placeholder (ADR-0006) — the qadam
+                    // built it with its own `ai` dependency; this is the engine's own boundary back
+                    // to the concrete type it needs to call `generateText`.
+                    model: params.model as LanguageModel,
                 }),
             },
             propsValue: processedInput,

@@ -54,6 +54,7 @@ import { frameworkCensusMarking } from './qadams/census/framework-census-marking
 import { frameworkCensusModule } from './qadams/census/framework-census-module'
 import { communityQadamsModule } from './qadams/community-qadam-module'
 import { startDevQadamWatcher } from './qadams/dev-qadam-watcher'
+import { qadamVersionFetchStartup } from './qadams/fetch/qadam-version-fetch-startup'
 import { qadamModule } from './qadams/metadata/qadam-metadata-controller'
 import { qadamMetadataService } from './qadams/metadata/qadam-metadata-service'
 import { qadamPinMoveModule } from './qadams/pin-moves/qadam-pin-move.module'
@@ -313,6 +314,11 @@ The application started on ${await domainHelper.getPublicApiUrl({ path: '' })}, 
     // before that seeding finishes: a snapshot pin then stays until the next boot. Boot is not
     // blocked on either.
     void qadamSnapshotFollow({ log: app.log }).run()
+    // ADR-0003 "Fetching", the start-up half (#806): fetches every pinned qadam version this
+    // instance's flows name that is missing from the store, from the registry. Another floating
+    // `void`, for the same reason as the two above — boot is not blocked on it, and it tolerates
+    // reading the store or the registry before either of them has finished its own pass.
+    void qadamVersionFetchStartup({ log: app.log }).run()
 }
 
 function registerOpenApiSchemas() {
