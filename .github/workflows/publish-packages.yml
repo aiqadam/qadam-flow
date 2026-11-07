@@ -16,8 +16,10 @@ name: Publish packages
 # WHAT THIS IS NOT. Not a second copy of the pipeline: both entry points call the same
 # _pack-framework-packages.yml, for the same reason _verify.yml exists (#64). The publishing
 # job is NOT shared — see its own comment below for why that is a requirement rather than an
-# oversight. Not a way around the human gate either: it sits behind the `npm-publish`
-# environment and its required reviewers, same as on the tag path.
+# oversight. Not a way around a human gate either: it sits behind the `npm-publish`
+# environment, whose DEPLOYMENT BRANCH POLICY is the real control (see below). The environment has
+# NO required reviewers — only the branch policy — so no approval click is needed; the earlier
+# comments here that said "required reviewers" were stale and are corrected in place.
 #
 # WHY NO breaking-change-gate AND NO version-tag-gate, the two release.yml gates missing
 # here. Both are statements about a tag. version-tag-gate compares `github.ref_name` to the
@@ -53,18 +55,34 @@ name: Publish packages
 # in-repo check is the real control. The real control is a DEPLOYMENT BRANCH POLICY on the
 # `npm-publish` environment (Settings -> Environments -> npm-publish -> "Selected branches and
 # tags" -> the default branch, plus `v*` for the tag path). That is enforced outside the ref,
-# so a modified workflow on a branch cannot reach the credential at all — the job is blocked
-# before a reviewer is even asked. Everything below is defence in depth underneath it.
+# so a modified workflow on a branch cannot reach the credential at all. Everything below is
+# defence in depth underneath it. The environment has no required reviewers, so the branch
+# policy is also what keeps the zero-touch loop below to `main`.
+#
+# THE ZERO-TOUCH PUBLISH LOOP, PART 2 (#852). A daily `schedule:` is added below so the loop needs
+# no one to press the button: the release PR merges itself (changesets.yml, guarded by
+# tools/ci/release-guard.mjs), which bumps versions on `main`, and this run then publishes exactly
+# those versions. `packagePrePublishChecks` skips every version already on npm, so a run publishes
+# only what the day's release PR merged — nothing else, and nothing twice. The publish script walks
+# the manifest serially and fails the run at once on a 429 (the scope's ~26-38-per-rolling-24 h
+# cap), which is the pacing back-pressure: the `report-failed-publish` job comments on the tracking
+# issue and the next cron tick is > 24 h later, exactly the spacing a 429 asks for. Nothing retries
+# inside a run. When gate 9's list is empty there are no batches left, so no release PR and no
+# bumped version: the run is a clean green no-op.
 on:
   workflow_dispatch:
+  # Daily. A fixed time is enough — the npm cap is a rolling 24 h window and the publish job's own
+  # serial walk is what paces the publishes, not the hour. 04:00 UTC avoids the 00:00 UTC cleanup
+  # job and sits well clear of the weekday Renovate noise.
+  schedule:
+    - cron: '0 4 * * *'
 
 # The whole run is the unit, not a single job. A `v*` tag is rare, visible and expensive to
 # create, so release.yml queues nothing; a dispatch is none of those — anyone who can fire it
-# can fire it in a loop, and every run that clears the gates parks on the `npm-publish`
-# approval and pages the reviewers. Approval fatigue is the precondition for every other
-# attack on this pipeline. At workflow level rather than per job so a second run cannot slip
-# its packing job between this one's packing and publishing; `cancel-in-progress: false`
-# because a run that is mid-publish must never be killed.
+# can fire it in a loop. The daily schedule makes that queue real: a `cancel-in-progress: false`
+# group is what stops a second run slipping its packing job between this one's packing and
+# publishing. At workflow level rather than per job for that reason, and because a run that is
+# mid-publish must never be killed.
 concurrency:
   group: publish-packages
   cancel-in-progress: false
@@ -148,8 +166,11 @@ jobs:
     # copy in the other caller identical — tools/ci/test-publish-packed-tarballs.sh compares the
     # two jobs line for line with comments stripped, and a timeout that differs is drift.
     timeout-minutes: 90
-    # Requires a GitHub Environment named `npm-publish` (Settings → Environments) with
-    # required reviewers configured and `NPM_TOKEN` stored as an ENVIRONMENT secret on it.
+    # Requires a GitHub Environment named `npm-publish` (Settings -> Environments) with
+    # `NPM_TOKEN` stored as an ENVIRONMENT secret on it. It has NO required reviewers — only a
+    # deployment branch policy restricted to the default branch (plus `v*` for the tag path) — so
+    # the publish needs no approval click; the branch policy is what keeps the credential reachable
+    # only from `main`. The comments here used to say "required reviewers"; they were stale.
     #
     # Whatever this workflow gates on constrains the tree's QUALITY, not its PROVENANCE. On
     # the tag path none of verify/breaking-change-gate/version-tag-gate assert the tagged
@@ -160,12 +181,13 @@ jobs:
     # commit that never touched `main` and publish `@aiqadam/qadams-framework`, the root of
     # every qadam's dependency graph, to public npm at `latest` with no human in the loop. The dispatch path
     # replaces "can push a tag" with "can start a workflow_dispatch run", the same set of
-    # credentials, and clears two of the three gates, which makes the human load-bearing
-    # rather than a formality.
+    # credentials, and clears two of the three gates — which is exactly why the ref, not a person,
+    # has to be the thing that is trusted here.
     #
-    # A required-reviewers environment is the one control in Actions that interposes a human
-    # between "a run started" and "the publish secret is readable". The ancestry check in the
-    # packing workflow is a second, automatic layer underneath it, not a replacement.
+    # The environment's DEPLOYMENT BRANCH POLICY is the control that stands between "a run started"
+    # and "the publish secret is readable": it is enforced outside the ref, so a modified workflow
+    # on a branch cannot reach the credential at all. The ancestry check in the packing workflow is
+    # a second, automatic layer underneath it, not a replacement.
     environment: npm-publish
     permissions:
       contents: read
@@ -234,3 +256,49 @@ jobs:
           # scope's publish cap — #582 paced at 60 s and stopped at the same count.
           NPM_PUBLISH_INTERVAL_SECONDS: '3'
         run: tools/ci/publish-packed-tarballs.sh "${{ runner.temp }}/npm-packages"
+
+  # THE ZERO-TOUCH LOOP'S ALARM (#852). The loop has no person to notice a red run, so a failed
+  # publish — the 429 cap, an exhausted lost-response retry, a broken credential, a red `verify` —
+  # has to leave a durable, visible mark. This job does that and nothing else: it comments on the
+  # tracking issue and stops.
+  #
+  # WHY A SEPARATE JOB AND NOT A STEP. It must run when an EARLIER job failed, and a job whose
+  # `needs:` include a failed job is skipped unless it carries an `if:` that overrides the implicit
+  # success requirement — `failure()` is that override. A step in the publish job cannot run once
+  # that job has already died.
+  #
+  # WHY IT DOES NOT RETRY OR RE-DISPATCH. `tools/ci/publish-packed-tarballs.sh` fails at once on a
+  # 429 by design (the scope's ~26-38-per-rolling-24 h cap, not a rate limit), and the next cron
+  # tick is > 24 h later — exactly the spacing a 429 asks for. Retrying inside the run only spends
+  # the timeout learning the same thing. The `concurrency` group above already keeps two runs from
+  # overlapping, and `packagePrePublishChecks` skips everything already published, so tomorrow's run
+  # resumes where this one stopped.
+  #
+  # GITHUB_TOKEN, with `issues: write` only: the comment needs no more, and this is the one job in
+  # the file that does not hold the npm publish credential.
+  report-failed-publish:
+    name: Report a failed publish
+    needs: [default-branch-gate, verify, pack-framework-packages, publish-framework-packages]
+    if: ${{ failure() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Comment on the tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TRACKING_ISSUE: ${{ vars.PUBLISH_LOOP_TRACKING_ISSUE || '852' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REF: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          body="$(printf '%s\n' \
+            '<!-- publish-loop-failure -->' \
+            "The zero-touch publish loop (#852) failed on \`${REF}\`." \
+            '' \
+            "Run: ${RUN_URL}" \
+            '' \
+            'Nothing was retried: the publish script fails at once on a 429, and the next scheduled run is more than 24 h away — the spacing a 429 asks for. Investigate the run above, then re-run it or wait for the next tick. Everything already on npm is skipped on the next run, so a partial publish resumes where it stopped.')"
+          gh issue comment "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" --body "$body"
