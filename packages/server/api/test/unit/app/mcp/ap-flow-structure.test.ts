@@ -272,6 +272,23 @@ describe('ap_flow_structure — agent tool pins (#779)', () => {
 
         expect((result.content?.[0] as { text: string }).text).not.toContain('AGENT TOOL PINNED VERSION')
     })
+
+    // #779 (framework census for tools): the worker provisions a tool like a step, so a tool
+    // pinned to a qadam built against a retired framework context version must be marked the same
+    // way the step mark already is.
+    it('marks a tool whose pin needs a retired framework context version', async () => {
+        mockGet.mockResolvedValue({ name: '@aiqadam/qadam-test-tool', version: HEALTHY_VERSION })
+        const toolPin = `@aiqadam/qadam-test-tool@${HEALTHY_VERSION}`
+        mockUnsupportedPins.mockResolvedValue(new Map([[toolPin, { source: 'official', frameworkMajor: 0, contextVersion: '1', status: 'unsupported' }]]))
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: agentStep({ agentTools: [tool({ toolName: 'lookup', qadamVersion: HEALTHY_VERSION })] }) }))
+
+        const result = await callTool()
+
+        const text = (result.content?.[0] as { text: string }).text
+        expect(text).toContain('AGENT TOOL FRAMEWORK VERSION NO LONGER SUPPORTED')
+        expect(text).toContain('lookup')
+        expect(JSON.stringify(result.structuredContent?.steps)).toContain('"frameworkVersionSupported":false')
+    })
 })
 
 describe('ap_flow_structure — flow-authored values cannot masquerade as tool instructions (#480)', () => {

@@ -93,7 +93,13 @@ function getConfigStatus(step: Step): string {
 function qadamPinInfo({ step, qadamResolutions, unsupportedPins }: { step: Step, qadamResolutions: Map<string, boolean | undefined>, unsupportedPins: Map<string, PinFrameworkSupport> }): Pick<StepInfo, 'qadamPin' | 'qadamVersionResolvable' | 'preReleaseBuild' | 'frameworkVersionSupported' | 'agentToolPins'> {
     const agentToolPins = qadamPinUtil.getAgentToolPinsOfStep({ step }).map((tool): AgentToolPinInfo => {
         const pin = qadamPinUtil.pinOfTool({ tool })
-        return { toolName: tool.toolName, qadamPin: pin, qadamVersionResolvable: qadamResolutions.get(pin) }
+        return {
+            toolName: tool.toolName,
+            qadamPin: pin,
+            qadamVersionResolvable: qadamResolutions.get(pin),
+            // Only the negative is reported, matching the step's own `frameworkVersionSupported`.
+            ...(unsupportedPins.has(pin) ? { frameworkVersionSupported: false as const } : {}),
+        }
     })
     if ((step.type !== FlowActionType.PIECE && step.type !== FlowTriggerType.PIECE) || isNil(step.settings.qadamName) || isNil(step.settings.qadamVersion)) {
         return {}
@@ -160,11 +166,13 @@ function stepPinWarning(step: StepInfo): string {
 
 function agentToolPinWarning(tool: AgentToolPinInfo): string {
     const issue = mcpUtils.qadamPinIssue({ pin: tool.qadamPin, resolvable: tool.qadamVersionResolvable, subject: 'agent_tool' })
-    if (isNil(issue)) {
-        return ''
+    if (!isNil(issue)) {
+        const label = issue.severity === 'unavailable' ? 'AGENT TOOL PINNED VERSION UNAVAILABLE' : 'AGENT TOOL PINNED VERSION UNVERIFIED'
+        return ` ⚠️ ${label}: the agent tool ${mcpUtils.wrapUntrustedValue(tool.toolName)} ${issue.message}`
     }
-    const label = issue.severity === 'unavailable' ? 'AGENT TOOL PINNED VERSION UNAVAILABLE' : 'AGENT TOOL PINNED VERSION UNVERIFIED'
-    return ` ⚠️ ${label}: the agent tool ${mcpUtils.wrapUntrustedValue(tool.toolName)} ${issue.message}`
+    return tool.frameworkVersionSupported === false
+        ? ` ⚠️ AGENT TOOL FRAMEWORK VERSION NO LONGER SUPPORTED: update this step's agent tool ${mcpUtils.wrapUntrustedValue(tool.toolName)}`
+        : ''
 }
 
 // A pin signal is a decoration on top of the structure this tool exists to return — before this
@@ -187,7 +195,7 @@ async function resolvePinSignals({ qadamSteps, agentTools, projectId, log }: {
     const pins = qadamPinUtil.collectDistinctPins({ steps: qadamSteps, tools: agentTools })
     const [qadamResolutions, census] = await Promise.all([
         qadamPinUtil.resolvePins({ pins, platformId, log }),
-        tryCatch(() => frameworkCensusMarking(log).unsupportedPins({ qadamSteps, platformId })),
+        tryCatch(() => frameworkCensusMarking(log).unsupportedPins({ qadamSteps, agentTools, platformId })),
     ])
     if (!isNil(census.error)) {
         log.warn({ error: census.error, projectId }, '[apFlowStructure] Framework census lookup failed; steps returned without the framework-version mark')
@@ -531,7 +539,7 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
     return {
         title: 'ap_flow_structure',
         permission: Permission.READ_FLOW,
-        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), valid insert locations for ap_add_step, the flow\'s localeSource, whether each step\'s pinned qadam version, and the pinned qadam of each agent tool, is still available on this installation, whether a step runs a pre-release build from main, and whether a step\'s pinned qadam needs a framework version this release no longer supports. Pass includeInput=true to also get each step\'s full untruncated input in structuredContent; text input: lines are returned untruncated too.',
+        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), valid insert locations for ap_add_step, the flow\'s localeSource, whether each step\'s pinned qadam version, and the pinned qadam of each agent tool, is still available on this installation, whether a step runs a pre-release build from main, and whether a step\'s pinned qadam — or an agent tool\'s — needs a framework version this release no longer supports. Pass includeInput=true to also get each step\'s full untruncated input in structuredContent; text input: lines are returned untruncated too.',
         inputSchema: {
             flowId: z.string().describe('The id of the flow'),
             includeInput: z.boolean().optional().describe('When true, include the full step input (untruncated) in structuredContent.steps[].input and render text input: lines untruncated'),
@@ -611,6 +619,9 @@ type AgentToolPinInfo = {
     toolName: string
     qadamPin: string
     qadamVersionResolvable: boolean | undefined
+    // Only carried when the tool's pinned qadam needs a retired framework context version. Absent
+    // means the tool is fine, or no shim has been retired yet (mirrors the step's own field).
+    frameworkVersionSupported?: false
 }
 
 // The two per-pin signals `ap_flow_structure` decorates steps with: whether each pin resolves

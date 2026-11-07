@@ -26,6 +26,7 @@ import { z } from 'zod'
 import { flowService } from '../../flows/flow/flow.service'
 import { projectService } from '../../project/project-service'
 import { frameworkCensusMarking } from '../../qadams/census/framework-census-marking'
+import { PinFrameworkSupport } from '../../qadams/census/framework-census-service'
 import { qadamMetadataService } from '../../qadams/metadata/qadam-metadata-service'
 import { qadamPinUtil } from '../../qadams/metadata/qadam-pin-util'
 import { translationService } from '../../translation/translation.service'
@@ -300,7 +301,8 @@ function validatePreReleaseBuilds({ trigger }: { trigger: Step }): ValidationIss
 // ADR-0002 (#803): once a release retires a framework context version, a step pinned to a qadam
 // built against it stops running. The flow stays enabled and nothing disables it (#435) — this
 // category is the read-time signal, alongside `ap_flow_structure`'s per-step mark and the platform
-// Health page banner.
+// Health page banner. Covers agent-tool pins too: the worker provisions a tool the same way it
+// provisions a step, so a tool pinned to a retired-context qadam fails the same way (#779).
 // It is free until the first retirement: `unsupportedPins` skips the resolution entirely while the
 // support table's versions are all still run.
 async function validateFrameworkVersions({ trigger, platformId, log }: {
@@ -309,23 +311,38 @@ async function validateFrameworkVersions({ trigger, platformId, log }: {
     log: FastifyBaseLogger
 }): Promise<ValidationIssue[]> {
     const qadamSteps = qadamPinUtil.getQadamSteps({ trigger })
-    const unsupportedPins = await frameworkCensusMarking(log).unsupportedPins({ qadamSteps, platformId })
+    const agentTools = qadamPinUtil.getAgentToolPins({ trigger })
+    const unsupportedPins = await frameworkCensusMarking(log).unsupportedPins({ qadamSteps, agentTools, platformId })
 
-    return qadamSteps.flatMap((step): ValidationIssue[] => {
+    const contextOf = (support: PinFrameworkSupport): string => isNil(support.contextVersion)
+        ? 'an unknown context version'
+        : `framework context version ${support.contextVersion}`
+
+    const stepIssues = qadamSteps.flatMap((step): ValidationIssue[] => {
         const pin = qadamPinUtil.pinOf({ step })
         const support = unsupportedPins.get(pin)
         if (isNil(support)) {
             return []
         }
-        const context = isNil(support.contextVersion)
-            ? 'an unknown context version'
-            : `framework context version ${support.contextVersion}`
         return [{
             category: 'framework_version' as const,
             stepName: step.name,
-            message: `${mcpUtils.wrapUntrustedValue(step.displayName)} uses a framework version no longer supported — update this step. Its pinned qadam ${mcpUtils.wrapUntrustedValue(pin)} needs ${context}, which this release no longer runs.`,
+            message: `${mcpUtils.wrapUntrustedValue(step.displayName)} uses a framework version no longer supported — update this step. Its pinned qadam ${mcpUtils.wrapUntrustedValue(pin)} needs ${contextOf(support)}, which this release no longer runs.`,
         }]
     })
+    const toolIssues = agentTools.flatMap((tool): ValidationIssue[] => {
+        const pin = qadamPinUtil.pinOfTool({ tool })
+        const support = unsupportedPins.get(pin)
+        if (isNil(support)) {
+            return []
+        }
+        return [{
+            category: 'framework_version' as const,
+            stepName: tool.stepName,
+            message: `${mcpUtils.wrapUntrustedValue(tool.stepDisplayName)} has an agent tool (${mcpUtils.wrapUntrustedValue(tool.toolName)}) that uses a framework version no longer supported — update this step. Its pinned qadam ${mcpUtils.wrapUntrustedValue(pin)} needs ${contextOf(support)}, which this release no longer runs.`,
+        }]
+    })
+    return [...stepIssues, ...toolIssues]
 }
 
 // `ap_validate_flow` is the only pre-publish gate an automated flow builder has, and until now
