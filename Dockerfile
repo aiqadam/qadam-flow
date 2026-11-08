@@ -114,9 +114,10 @@ ENV TURBO_API=$TURBO_API \
 
 # Image flavour (ADR-0003, #807): `fat` seeds the store with every official qadam; `slim` seeds the
 # 27 core qadams and drops the community build from the runtime tree (except four qadams the server
-# itself depends on — see the slim-prune step below). Both still build every qadam, because the
-# build-qadam-artifacts.mjs archive each flavour's store seed is selected from needs every official
-# qadam's tarball available, regardless of which ones a given flavour keeps.
+# itself depends on — see the slim-prune step in the run stage below, STAGE 2). Both still build
+# every qadam here, because the build-qadam-artifacts.mjs archive each flavour's store seed is
+# selected from needs every official qadam's tarball available, regardless of which ones a given
+# flavour keeps.
 ARG QADAM_FLAVOUR=fat
 
 # The commit the artifacts are stamped with, for archive-index.json's own provenance record. CI
@@ -162,37 +163,6 @@ RUN node tools/scripts/qadams/bundle/build-image-seed.mjs \
         --flavour "$QADAM_FLAVOUR" \
         --repo .
 
-# `:slim` does not ship most community code, but four community qadams are the server's own direct
-# dependencies, not something a flow merely happens to use: `app-event-routing.module.ts` statically
-# imports slack / facebook-leads / intercom to parse their app-webhook payloads in-process, and
-# `event-puller-registry.ts` lazily imports telegram-bot for its long-polling trigger — both run
-# inside the server itself, never through the qadam version store a flow step's qadam is fetched
-# from (code-quality review, #807: deleting them unconditionally broke every slim boot with
-# `Cannot find module '@aiqadam/qadam-facebook-leads'`, since `app.ts` registers that module
-# unconditionally). Keeping these four here does not add them to the 27 "core" qadams
-# build-image-seed.mjs seeds the version store with below — that count, and whether a flow using
-# one of them as an action still has to fetch it, are unaffected; this is a separate, smaller list
-# of what the server process itself can't start without.
-#
-# Done before the dist index and the bundled metadata manifest are written, so both describe exactly
-# what the runtime can load. `rm -rf` does not fail on a missing/mismatched path, so a slim image
-# whose removal silently no-op'd would otherwise ship the full community tree under a
-# `org.aiqadam.qadam-flavour=slim` label with nothing in the build log to say so — check each kept
-# directory survived and nothing unexpected did.
-RUN if [ "$QADAM_FLAVOUR" = slim ]; then \
-      find packages/qadams/community -mindepth 1 -maxdepth 1 -type d \
-        ! -name facebook-leads ! -name intercom ! -name slack ! -name telegram-bot \
-        -exec rm -rf {} + \
-      && for kept in facebook-leads intercom slack telegram-bot; do \
-        test -d "packages/qadams/community/$kept" || { echo "slim pruning lost packages/qadams/community/$kept, which the server itself depends on" >&2; exit 1; }; \
-      done \
-      && [ "$(find packages/qadams/community -mindepth 1 -maxdepth 1 -type d | wc -l)" = 4 ]; \
-    fi
-
-# Index of the bundled qadams' dist folders (packages/qadams/dist-index.json). Without it every
-# fresh engine process walks the whole qadam tree before its first step can load (#419).
-RUN bun packages/server/engine/src/scripts/write-qadam-dist-index.ts packages/qadams
-
 # Generate migration manifest (ordered list of migration names) for image-tag-based rollback
 RUN node -e "\
   const {getMigrations} = require('./packages/server/api/dist/src/app/database/postgres-connection');\
@@ -224,17 +194,20 @@ COPY --from=build /usr/src/app/bunfig.toml ./
 COPY --from=build /usr/src/app/LICENSE .
 COPY --from=build /usr/src/app/NOTICE .
 
-# Copy workspace package.json files (needed for bun workspace resolution)
+# Copy workspace package.json files (needed for bun workspace resolution). Still the *full*
+# tree here, every flavour — the slim prune happens further below, after `bun install
+# --production`, not before it: `bun.lock` was resolved against every `packages/qadams/community/*`
+# workspace member, and pruning the ones slim does not keep before that install made bun see the
+# workspace set disagree with the lockfile and refuse with "lockfile had changes, but lockfile is
+# frozen" (code-quality review, #807 — found by actually running this Dockerfile, which nothing had
+# done before this session).
 COPY --from=build /usr/src/app/packages ./packages
-# The engine falls back to a tree walk without it, so a manifest lost on the way here would slow
-# every fresh engine without failing anything (#419).
-RUN test -s packages/qadams/dist-index.json
 
-# Same defense-in-depth as the dist-index check above, for the flavour's version-store seed #807
-# adds. The writer already fails the build on a real problem, but a build that crashed between
-# opening the file and writing to it, or a copy that silently dropped it, would otherwise surface
-# only as an empty version store at runtime — a confusing failure far from its cause instead of a
-# build failure at it.
+# Same defense-in-depth as the dist-index check further below, for the flavour's version-store seed
+# #807 adds — built in the build stage, so unaffected by where pruning happens here. The writer
+# already fails the build on a real problem, but a build that crashed between opening the file and
+# writing to it, or a copy that silently dropped it, would otherwise surface only as an empty
+# version store at runtime — a confusing failure far from its cause instead of a build failure at it.
 RUN test -s packages/qadams/version-store-seed/archive-index.json
 
 # Copy built engine
@@ -245,6 +218,40 @@ RUN --mount=type=cache,target=/root/.bun/install/cache \
 
 # Reset TLS check for runtime — SSL skip was build-time only
 ENV NODE_TLS_REJECT_UNAUTHORIZED=
+
+# `:slim` does not ship most community code, but four community qadams are the server's own direct
+# dependencies, not something a flow merely happens to use: `app-event-routing.module.ts` statically
+# imports slack / facebook-leads / intercom to parse their app-webhook payloads in-process, and
+# `event-puller-registry.ts` lazily imports telegram-bot for its long-polling trigger — both run
+# inside the server itself, never through the qadam version store a flow step's qadam is fetched
+# from (code-quality review, #807: deleting them unconditionally broke every slim boot with
+# `Cannot find module '@aiqadam/qadam-facebook-leads'`, since `app.ts` registers that module
+# unconditionally). Keeping these four here does not add them to the 27 "core" qadams
+# build-image-seed.mjs seeded the version store with above — that count, and whether a flow using
+# one of them as an action still has to fetch it, are unaffected; this is a separate, smaller list
+# of what the server process itself can't start without.
+#
+# After `bun install --production` (see the COPY above for why), and before the dist index and the
+# bundled metadata manifest are written, so both describe exactly what the runtime can load. `rm -rf`
+# does not fail on a missing/mismatched path, so a slim image whose removal silently no-op'd would
+# otherwise ship the full community tree under a `org.aiqadam.qadam-flavour=slim` label with nothing
+# in the build log to say so — check each kept directory survived and nothing unexpected did.
+RUN if [ "$QADAM_FLAVOUR" = slim ]; then \
+      find packages/qadams/community -mindepth 1 -maxdepth 1 -type d \
+        ! -name facebook-leads ! -name intercom ! -name slack ! -name telegram-bot \
+        -exec rm -rf {} + \
+      && for kept in facebook-leads intercom slack telegram-bot; do \
+        test -d "packages/qadams/community/$kept" || { echo "slim pruning lost packages/qadams/community/$kept, which the server itself depends on" >&2; exit 1; }; \
+      done \
+      && [ "$(find packages/qadams/community -mindepth 1 -maxdepth 1 -type d | wc -l)" = 4 ]; \
+    fi
+
+# Index of the bundled qadams' dist folders (packages/qadams/dist-index.json). Without it every
+# fresh engine process walks the whole qadam tree before its first step can load (#419). Generated
+# here, after the slim prune above, for the same reason the bundled metadata manifest below is: a
+# manifest from before the prune would list dist folders a slim image no longer carries.
+RUN bun packages/server/engine/src/scripts/write-qadam-dist-index.ts packages/qadams \
+    && test -s packages/qadams/dist-index.json
 
 # Serialized metadata of every bundled qadam (packages/qadams/bundled-qadams-metadata.json). Without
 # it the app's first catalogue read require()s every bundled qadam on its event loop, which blocked
