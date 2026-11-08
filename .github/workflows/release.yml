@@ -460,7 +460,7 @@ jobs:
           retention-days: 1
 
   publish:
-    name: Push ${{ matrix.flavour }} manifest & GitHub Release
+    name: Push ${{ matrix.flavour }} manifest
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -534,8 +534,34 @@ jobs:
           docker buildx imagetools inspect \
             ghcr.io/aiqadam/qadam-flow:${{ steps.release.outputs.version }}-${{ matrix.flavour }}
 
+  # Split from `publish` (reviewed, #807): `publish` is a 2-leg matrix (`fat`, `slim`) with
+  # `fail-fast: false`, so one flavour can fail while the other's manifest push succeeds. A GitHub
+  # Release step inside that matrix, gated `if: matrix.flavour == 'fat'`, would create the release
+  # the moment the fat leg finishes regardless of whether slim's own leg had failed — the release
+  # body unconditionally names both images and hands out a `docker pull ...-slim` command that would
+  # 404. Needing the whole `publish` job here (its default implicit success() checks every matrix
+  # leg) means the release is only created once both flavours are actually live, and never created
+  # — rather than created with a false claim — if either one is not.
+  release:
+    name: Create GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Compute the release coordinates
+        id: release
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          if [[ "$version" == *-* ]]; then
+            echo "stable=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "stable=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create GitHub Release
-        if: matrix.flavour == 'fat'
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
