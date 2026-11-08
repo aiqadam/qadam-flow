@@ -1282,6 +1282,13 @@ jobs:
   # wait for its own other legs. Skipped entirely off a push event — `needs.image` then reads
   # 'skipped' rather than 'success', which is why `e2e` below tolerates that result explicitly
   # instead of relying on the default all-needs-succeeded gate.
+  #
+  # KNOWN COUPLING (#807, reviewed, not fixed), same shape as release.yml's `build`/`publish`:
+  # `image` is one job with a 4-leg matrix and `fail-fast: false`, but its conclusion is a
+  # single `failure` if any leg fails, so one flavour's build failure blocks `image_publish`
+  # for both flavours even though the other flavour built fine. See release.yml's comment on
+  # its `build` job for the full reasoning on why this is left as-is (cheap, well-known
+  # recovery via re-running failed jobs; no image is ever published half-built).
   image_publish:
     name: Publish multi-arch manifest (${{ matrix.flavour }})
     needs: [image, platform-version]

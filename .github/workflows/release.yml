@@ -333,6 +333,20 @@ jobs:
           NPM_PUBLISH_INTERVAL_SECONDS: '3'
         run: tools/ci/publish-packed-tarballs.sh "${{ runner.temp }}/npm-packages"
 
+  # KNOWN COUPLING (#807, reviewed, not fixed): `build` is one job with a 4-leg matrix
+  # (2 platforms × 2 flavours) and `fail-fast: false`, so a failing leg never cancels the
+  # other three — but the job's own conclusion is still a single `failure` if any leg
+  # fails. `publish` below `needs: build`, so one flavour's build failure blocks `publish`
+  # for BOTH flavours, not just the broken one, even though the other flavour's images
+  # built fine and sit in the upload-artifact cache waiting. Decoupling this for real means
+  # two separately-named jobs (`build-fat` / `build-slim`) instead of one matrixed job —
+  # GitHub Actions `needs:` resolves per job id, never per matrix leg — which was judged
+  # not worth the duplication (or the reusable-workflow indirection to avoid it) for a
+  # failure mode with cheap, well-known recovery: re-run failed jobs from the Actions UI on
+  # the same tag run, no new tag needed, and `publish` then runs for both flavours. No
+  # image is ever published half-built or mismatched by this; it only delays a healthy
+  # flavour's publish until the broken one's build is retried. Revisit if that recovery
+  # step turns out to happen often enough to be worth the split.
   build:
     name: Build ${{ matrix.platform }} (${{ matrix.flavour }})
     needs: [verify, breaking-change-gate, version-tag-gate]
