@@ -66,6 +66,56 @@ const strayUnrefThrowLater = writeFixture({
     source: `module.exports = { code: async () => { const t = setInterval(() => { if (${LATER_STEP_STARTED}) throw new Error("UNREF STRAY FROM EARLIER STEP") }, 5); t.unref(); return { pid: process.pid } } }`,
 })
 
+// A step's outcome is sealed at the first `setImmediate` turn after `code()` settles (#602),
+// so a timer it leaves behind can never change that outcome, however late the scheduler runs.
+// These fixtures use a 0 ms timer on purpose: the runner's leftover check queues its own
+// 0 ms settle timer after it, and timers of equal duration fire in the order they were
+// created, so the stray fires while the step is still in flight, during the settle turns, which
+// exercises the after-seal branch (the check phase always runs before the timers phase, so it
+// cannot fire before the seal).
+// A delay such as 25 ms would only fire there when the process happened to stall.
+const SEALED_OUTCOME_FAILURE = 'OWN FAILURE OF THE STEP'
+
+const lateThrowAfterSuccess = writeFixture({
+    name: 'late_throw_after_success',
+    source: 'module.exports = { code: async () => { setTimeout(() => { throw new Error("LATE THROW") }, 0); return { pid: process.pid } } }',
+})
+
+// The overdue case a loaded worker produces by accident (#596), built on purpose: the timer
+// is already due when the step returns, yet it must still not outrank the first turn after
+// the return, which is what seals the step's outcome.
+const overdueThrowAfterSuccess = writeFixture({
+    name: 'overdue_throw_after_success',
+    source: 'module.exports = { code: async () => { setTimeout(() => { throw new Error("OVERDUE THROW") }, 5); const until = Date.now() + 40; while (Date.now() < until) { /* hold the loop past the timer\'s due time */ } return { pid: process.pid } } }',
+})
+
+const lateUnrefThrowAfterSuccess = writeFixture({
+    name: 'late_unref_throw_after_success',
+    source: 'module.exports = { code: async () => { setTimeout(() => { throw new Error("LATE UNREF THROW") }, 0).unref(); return { pid: process.pid } } }',
+})
+
+const lateRejectionAfterSuccess = writeFixture({
+    name: 'late_rejection_after_success',
+    source: 'module.exports = { code: async () => { setTimeout(() => { Promise.reject(new Error("LATE REJECTION")) }, 0); return { pid: process.pid } } }',
+})
+
+const lateThrowAfterFailure = writeFixture({
+    name: 'late_throw_after_failure',
+    source: `module.exports = { code: async () => { setTimeout(() => { throw new Error("LATE THROW") }, 0); throw new Error("${SEALED_OUTCOME_FAILURE}") } }`,
+})
+
+// Inside the window: these run before the runner's own first `setImmediate` turn on every
+// machine, so they fail the step that queued them.
+const floatingRejectionBeforeReturn = writeFixture({
+    name: 'floating_rejection_before_return',
+    source: 'module.exports = { code: async () => { Promise.reject(new Error("FLOATING REJECTION")); return { pid: process.pid } } }',
+})
+
+const immediateThrowBeforeReturn = writeFixture({
+    name: 'immediate_throw_before_return',
+    source: 'module.exports = { code: async () => { setImmediate(() => { throw new Error("IMMEDIATE THROW") }); return { pid: process.pid } } }',
+})
+
 // A step that logs heavily, and one that opens a handle and closes it properly, are both
 // clean: they must keep the reuse that makes this change worth having.
 const heavyLogger = writeFixture({
@@ -248,6 +298,34 @@ describe('noOpCodeSandbox', () => {
 
         expect(next).toEqual({ clean: true })
         expect(await runPid()).not.toBe(leakyPid)
+    })
+
+    it.each([
+        ['a timer that throws', lateThrowAfterSuccess],
+        ['a timer that is already overdue and throws', overdueThrowAfterSuccess],
+        ['an unref\'d timer that throws', lateUnrefThrowAfterSuccess],
+        ['a timer that leaves an unhandled rejection', lateRejectionAfterSuccess],
+    ])('should report success for a step that returns while leaving %s, and retire its runner (#602)', async (_label, fixture) => {
+        const leakyPid = await runPid(fixture)
+
+        expect(Number.isInteger(leakyPid)).toBe(true)
+        expect(await runPid()).not.toBe(leakyPid)
+    })
+
+    it('should keep a failing step\'s own error when it also leaves a timer that throws later (#602)', async () => {
+        const error = await noOpCodeSandbox.runCodeModule({ codeFilePath: lateThrowAfterFailure, inputs: {} })
+            .then(() => null, (reason: Error) => reason)
+
+        expect(error?.message).toContain(SEALED_OUTCOME_FAILURE)
+        expect(error?.message).not.toContain('LATE THROW')
+    })
+
+    it.each([
+        ['a promise rejection nobody handles', floatingRejectionBeforeReturn, 'FLOATING REJECTION'],
+        ['a throw from a setImmediate callback it queued', immediateThrowBeforeReturn, 'IMMEDIATE THROW'],
+    ])('should still fail a step whose own async error is %s before the first turn after it returns (#602)', async (_label, fixture, message) => {
+        await expect(noOpCodeSandbox.runCodeModule({ codeFilePath: fixture, inputs: {} }))
+            .rejects.toThrow(message)
     })
 
     it('should keep reusing the runner for a step that only logs heavily', async () => {

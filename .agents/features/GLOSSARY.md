@@ -107,11 +107,13 @@
 
 ## Releases & Environments
 
+> **Not implemented in this repo (#856).** Project Releases and Git Sync had a server in upstream `ee/`, removed here; there is no `/v1/project-releases` route and no Git code. Only leftovers remain (shared types, `Permission.*_PROJECT_RELEASE`, `Project.releasesEnabled`, `FileType.PROJECT_RELEASE`, and an unreachable web page kept as scaffolding for #43). The rows below are vocabulary for those leftovers, not features: do not build on them or describe them as available. Declarative project export/import is #43 (needs an ADR); per-resource export/import is the shipped MCP tools of #438.
+
 | Term | Definition (one sentence) | Aliases to avoid | Related terms |
 |---|---|---|---|
-| Git Sync | Bidirectional synchronization of published flows and tables with a Git repository branch. | version control, git integration | Project Release |
-| Project Release | A serialized snapshot of project state (flows, tables, connections) that can be imported/exported for environment promotion. | deployment, snapshot | Git Sync, externalId |
-| Release Plan | A computed diff showing what would change if a release were applied — used for review before committing. | sync plan, diff | Project Release |
+| Git Sync | (Not implemented.) Bidirectional synchronization of published flows and tables with a Git repository branch. | version control, git integration | Project Release |
+| Project Release | (Not implemented; no server route.) A serialized snapshot of project state (flows, tables, connections) that can be imported/exported for environment promotion. | deployment, snapshot | Git Sync, externalId |
+| Release Plan | (Not implemented.) A computed diff showing what would change if a release were applied — used for review before committing. | sync plan, diff | Project Release |
 
 ## Infrastructure
 

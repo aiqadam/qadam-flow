@@ -182,7 +182,8 @@ const MAX_CAUSE_DEPTH = 4
 // it answers the CONNECT itself, and undici reports only that status, in this message, as a
 // `RequestAbortedError` (`UND_ERR_ABORTED`); there is no status field to read instead. The request
 // never left the proxy, so a 5xx there (proxy-chain answers 500 when the app's name does not resolve,
-// 59x for its own upstream errors) is a connection that never opened. Anything else, the 403 the
+// 59x for its own upstream errors, and the egress proxy 502 when the app's port refuses the
+// connection) is a connection that never opened. Anything else, the 403 the
 // proxy sends for a blocked address above all, fails at once. A caller's own abort is a DOMException
 // with no code and no such message, so it is never mistaken for this. Pinned against real undici
 // and proxy-chain in `test/retrying-fetch-egress-proxy.test.ts`.

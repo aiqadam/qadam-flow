@@ -4,8 +4,9 @@
 ADR-0003's catalogue (#778): static JSON describing **every released version of every official
 qadam**, each with the integrity of the artifact that was released and the version's own
 `metadata.json` from #804. It gives an instance metadata for versions its image does not ship, which
-#806 (fetch), #807 (`:slim` carries a snapshot) and #808 (the unavailable-version fallback's props
-check) need. Published as static files on GitHub Pages under `https://flow.aiqadam.org/catalog/v1/`,
+#806 (fetch, merged — PR #969), #807 (`:slim` carries a snapshot) and #808 (the unavailable-version
+fallback's props check, merged — PR #882) read already. Published as static files on GitHub Pages
+under `https://flow.aiqadam.org/catalog/v1/`,
 appended to by releases, never rewritten. Where the API reads it is configurable, for mirroring
 (`AP_QADAM_VERSION_CATALOGUE_URL`) and for a local copy (`AP_QADAM_VERSION_CATALOGUE_DIRECTORY`, which
 wins over the URL — the knob a `:slim` snapshot in #807 will use).
@@ -161,11 +162,31 @@ npm signature check is mandatory for them (ADR-0003 "Fetching").
   - *API reads the catalogue and the store for builder, MCP and validation of an old version
     (#411, #422).* The store part is implemented (#779): an exact official pin is answered from the
     stored version's `metadata.json` before the registry or the bundled build, and `registry` lists
-    stored release versions. The rest of the proposed order — catalogue → #808's fallback — is not
-    wired. Serve catalogue-only metadata only once #806 can fetch that version, so the builder never
-    offers a version the worker cannot run.
+    stored release versions. **Update (2026-11-07):** #806 merged (fetch at publish/import/start-up,
+    PR #969), which was this bullet's own stated precondition for the catalogue half ("once #806 can
+    fetch that version"). That precondition is now met, but it only unblocks the *design* question,
+    not a safe mechanical wiring: `get`/`resolveVersions` is the hot path #879 added dedupe/caching
+    for specifically because many tool pins hit it per flow, and the existing catalogue consumers
+    (`snapshotExportSources`, `qadamPinFallbackSeams`) are both rare, one-shot calls (export, a pin
+    move) that can afford a direct read with no cache of their own — wiring the same reader into this
+    hot path without first giving it a TTL cache of its own (`storedQadamMetadata`'s pattern) risks a
+    GitHub Pages round trip, or the configured mirror's, on every miss. Separately, a catalogue hit
+    must be read-only *description* here (so #411/#422's symptom — an old step rendering with no
+    name/icon — is fixed) and must not be read as "the worker can run this now": whether the version
+    is actually fetched and safe to pin is still exactly #806 (publish/import/start-up) and #808's
+    load/props/caret checks at move time, not this read path. Treating a catalogue entry as already
+    runnable here would let the builder promise a version `get()` itself did nothing to fetch. Both
+    points are implementation-shape decisions (where the cache lives, what "found in catalogue, not
+    yet fetched" renders as to a caller), not leftover plumbing — worth a short design note before
+    code, not a mid-session call.
   - *`list()` "latest".* The highest version this instance can run (image or store), not the
     catalogue's highest; catalogue-only versions appear in `listVersions` once #806 can fetch them.
+    `list()` vs. `registry()` already encode this split on purpose: `list()` (the builder's "add a
+    step" picker) takes the highest version per name from the registry and bundled manifest only — a
+    version the store incidentally holds because one flow's exact pin fetched it is not a version to
+    offer as the default for a brand-new step — while `registry()` (the full picker for pinning an
+    existing step to a specific old version) already merges in every stored release (#779). No
+    further code answers this question; it is closed by the existing split.
 
 ## Domain Terms
 - **Qadam version catalogue** — this feature. Say "qadam version catalogue" (code:
