@@ -65,8 +65,7 @@ before trusting its silence — an empty output is not the same as a passing che
   evidence that turbo resolved it.
 - **A skipped required check never reports a conclusion.** A required context of the repo
   ruleset that is skipped via `paths-ignore` or a job-level `if:` leaves the PR permanently
-  unmergeable. A required job must
-  always run and always resolve, even when it short-circuits.
+  unmergeable. A required job must always run and always resolve, even when it short-circuits.
 - **Empty check conclusions read as pending, not passing.** `gh pr view --json statusCheckRollup`
   returns `""` (not `null`) for an in-flight check. Treat any falsy conclusion as pending, or you
   will read a running pipeline as green.

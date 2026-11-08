@@ -77,7 +77,8 @@ of the sandbox boundary. Add new rules above it.
 `platformAutomerge` hands the merge to GitHub, which waits for the **required** status contexts
 only. `Docker Image` and `Sandbox e2e (privileged)` are not required and cannot be: both are
 skipped on some diffs (`image` on a docs-only diff, `sandbox-e2e` on a pull request that touches no
-sandbox path), and a skipped required context reports no conclusion, which wedges the PR. #771 reached `main` that way with both red (#810).
+sandbox path), and a skipped required context reports no conclusion, which wedges the PR. #771
+reached `main` that way with both red (#810).
 
 `ci.yml` therefore has an always-reporting gate job, `image-sandbox-gate`, whose **job name is the
 required context: `Image + Sandbox Gate`** (same pattern as `verify` -> `Lint + Unit Tests` and
