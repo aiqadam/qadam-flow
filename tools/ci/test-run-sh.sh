@@ -1298,6 +1298,72 @@ else
   fail_case 'the fat image does not probe the registry' "$(cat "$fat_reach/.args")"
 fi
 
+# Official @aiqadam/* community qadams always fetch from npmjs, whatever QADAM_REGISTRY_URL says —
+# the default registry case must not probe twice.
+default_reach="$tmp/registry-default"
+mkdir -p "$default_reach"
+PATH="$curlbin:$PATH" CURL_LOG="$default_reach/.args" CURL_STDIN_LOG="$default_reach/.stdin" CURL_EXIT=0 \
+  QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:slim "$sut" -c '
+    . "$1"
+    cd "$2" || exit 1
+    check_qadam_registry
+  ' _ "$runsh" "$default_reach" >/dev/null 2>"$default_reach/.stderr"
+if [ "$(wc -l < "$default_reach/.args")" = 1 ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'the default (npmjs) registry is probed exactly once' "$(cat "$default_reach/.args")"
+fi
+
+# A stub that answers per-host: the custom registry succeeds, npmjs does not — the installer must
+# still warn, specifically about npmjs, since official qadams fetch from there regardless of
+# QADAM_REGISTRY_URL.
+perhost_curlbin="$tmp/registry-perhost-curlbin"
+mkdir -p "$perhost_curlbin"
+cat > "$perhost_curlbin/curl" <<'CURL'
+#!/bin/sh
+: "${CURL_LOG:?}"
+printf '%s\n' "$*" >> "$CURL_LOG"
+for arg in "$@"; do
+  case "$arg" in
+    *registry.npmjs.org*) exit "${NPMJS_EXIT:-0}" ;;
+  esac
+done
+exit "${CUSTOM_EXIT:-0}"
+CURL
+chmod +x "$perhost_curlbin/curl"
+
+custom_ok_npmjs_down="$tmp/registry-custom-ok-npmjs-down"
+mkdir -p "$custom_ok_npmjs_down"
+PATH="$perhost_curlbin:$PATH" CURL_LOG="$custom_ok_npmjs_down/.args" CUSTOM_EXIT=0 NPMJS_EXIT=7 \
+  QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:slim QADAM_REGISTRY_URL=https://registry.example.com "$sut" -c '
+    . "$1"
+    cd "$2" || exit 1
+    check_qadam_registry
+  ' _ "$runsh" "$custom_ok_npmjs_down" >/dev/null 2>"$custom_ok_npmjs_down/.stderr"
+if grep -qF 'cannot reach https://registry.npmjs.org' "$custom_ok_npmjs_down/.stderr" \
+  && grep -qF 'use the fat image' "$custom_ok_npmjs_down/.stderr" \
+  && [ "$(wc -l < "$custom_ok_npmjs_down/.args")" = 2 ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'a reachable custom registry still warns when npmjs itself is unreachable' "$(cat "$custom_ok_npmjs_down/.stderr")"
+fi
+
+# The mirror image: the custom registry is down, npmjs is up — warn about the custom registry.
+custom_down_npmjs_ok="$tmp/registry-custom-down-npmjs-ok"
+mkdir -p "$custom_down_npmjs_ok"
+PATH="$perhost_curlbin:$PATH" CURL_LOG="$custom_down_npmjs_ok/.args" CUSTOM_EXIT=7 NPMJS_EXIT=0 \
+  QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:slim QADAM_REGISTRY_URL=https://registry.example.com "$sut" -c '
+    . "$1"
+    cd "$2" || exit 1
+    check_qadam_registry
+  ' _ "$runsh" "$custom_down_npmjs_ok" >/dev/null 2>"$custom_down_npmjs_ok/.stderr"
+if grep -qF 'cannot reach the qadam registry at https://registry.example.com' "$custom_down_npmjs_ok/.stderr" \
+  && grep -qF 'use the fat image' "$custom_down_npmjs_ok/.stderr"; then
+  pass=$((pass + 1))
+else
+  fail_case 'an unreachable custom registry warns even when npmjs itself is fine' "$(cat "$custom_down_npmjs_ok/.stderr")"
+fi
+
 # Structural: the override must be resolved after generate_env (it writes COMPOSE_FILE into .env) and
 # before the stack is pulled and started, or the override would not apply to this run.
 sandboxed_line="$(line_of configure_sandboxed_compose)"

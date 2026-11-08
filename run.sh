@@ -543,11 +543,15 @@ image_is_slim() {
 # Any HTTP response counts as reachable — a 401 or 404 still proves DNS, TCP and TLS work, which is
 # all the installer can know without the registry's qadam protocol. Only a curl failure means the
 # registry is unreachable. The token travels through curl's stdin config, so it never appears in argv
-# or in the installer's output.
+# or in the installer's output. Takes an optional URL/token pair so check_qadam_registry below can
+# also probe npmjs on its own, regardless of what QADAM_REGISTRY_URL/QADAM_REGISTRY_TOKEN hold —
+# every caller before #807's own registry-probe review passed neither and got the globals.
 registry_reachable() {
-  probe_url="${QADAM_REGISTRY_URL%/}/-/ping"
-  if [ -n "$QADAM_REGISTRY_TOKEN" ]; then
-    escaped_token=$(printf '%s' "$QADAM_REGISTRY_TOKEN" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  probe_registry_url=${1:-$QADAM_REGISTRY_URL}
+  probe_registry_token=${2-$QADAM_REGISTRY_TOKEN}
+  probe_url="${probe_registry_url%/}/-/ping"
+  if [ -n "$probe_registry_token" ]; then
+    escaped_token=$(printf '%s' "$probe_registry_token" | sed 's/\\/\\\\/g; s/"/\\"/g')
     printf 'header = "Authorization: Bearer %s"\n' "$escaped_token" \
       | curl -sS -o /dev/null -m 5 -K - "$probe_url" >/dev/null 2>&1
   else
@@ -557,13 +561,32 @@ registry_reachable() {
 
 check_qadam_registry() {
   image_is_slim "$QADAM_FLOW_IMAGE" || return 0
+  registry_ok=yes
+
   log "checking the qadam registry at ${QADAM_REGISTRY_URL}"
   if registry_reachable; then
     log "qadam registry is reachable"
-    return 0
+  else
+    registry_ok=no
+    warn "cannot reach the qadam registry at ${QADAM_REGISTRY_URL} — a custom (non-@aiqadam) qadam that must be fetched will not be installable"
   fi
-  warn "cannot reach the qadam registry at ${QADAM_REGISTRY_URL} — qadams that must be fetched will not be installable"
-  warn "if this machine cannot reach that registry (or npm, for official qadams), use the fat image, which bundles every community qadam:"
+
+  # Official @aiqadam/* community qadams are always fetched from npmjs, whatever
+  # QADAM_REGISTRY_URL says (docs/install/options/image-flavours.mdx) — probe it too whenever it
+  # differs from the configured registry, so a host that reaches a custom registry but not npmjs
+  # itself still gets the warning here, not a confusing failure deep inside qadam fetch later.
+  if [ "${QADAM_REGISTRY_URL%/}" != "$DEFAULT_REGISTRY_URL" ]; then
+    log "checking npmjs (official qadams always fetch from there)"
+    if registry_reachable "$DEFAULT_REGISTRY_URL" ''; then
+      log "npmjs is reachable"
+    else
+      registry_ok=no
+      warn "cannot reach ${DEFAULT_REGISTRY_URL} — official qadams that must be fetched will not be installable"
+    fi
+  fi
+
+  [ "$registry_ok" = yes ] && return 0
+  warn "if this machine cannot reach the registry (or npmjs), use the fat image, which bundles every community qadam:"
   warn "  curl -fsSL https://flow.aiqadam.org/run.sh | QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:fat sh"
 }
 

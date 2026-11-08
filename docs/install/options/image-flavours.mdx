@@ -30,7 +30,7 @@ For compatibility with installs and scripts written before flavours existed, the
 
 `run.sh` pulls the slim image by default. It writes the choice into `.env` as `QADAM_FLOW_IMAGE`, so a later `docker compose pull` keeps it. On an existing install the installer keeps the image already pinned in `.env`; delete that line or pass an explicit image to change it.
 
-Before pulling the slim image, the installer probes the configured qadam registry. Any HTTP response counts as reachable — a `401` or `404` still proves DNS, TCP and TLS work. If the probe fails, the install continues, but it warns that community qadams cannot be installed and suggests re-running with the fat image:
+Before pulling the slim image, the installer probes the configured qadam registry, and separately probes npmjs itself whenever that registry is not npmjs — official `@aiqadam/*` community qadams always fetch from npmjs, whatever the registry is configured for, so a host that reaches a custom registry but not npmjs still gets a warning here. Any HTTP response counts as reachable — a `401` or `404` still proves DNS, TCP and TLS work. If either probe fails, the install continues, but it warns that qadams cannot be installed and suggests re-running with the fat image:
 
 ```bash
 curl -fsSL https://flow.aiqadam.org/run.sh | QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:fat sh
