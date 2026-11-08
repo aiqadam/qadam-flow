@@ -294,15 +294,19 @@ env_value() {
 
 set_env_value() {
   if grep -q "^$1=" .env; then
-    # Every caller used to pass an installer-generated value (port, path, image tag) that could
-    # never contain `&`/`|`/`\`; #807 is the first to pass an arbitrary operator-supplied secret
-    # (QADAM_REGISTRY_TOKEN) through here. Unescaped, a `|` breaks this sed command outright (it is
-    # the delimiter) and an `&` expands to the whole matched line in the replacement — so escape the
-    # value for sed's replacement syntax before it is interpolated in.
-    escaped_value=$(printf '%s' "$2" | sed 's/[\&|]/\\&/g')
+    # Every caller used to pass an installer-generated value (port, path, image tag); #807 is the
+    # first to pass an arbitrary operator-supplied secret (QADAM_REGISTRY_TOKEN) through here. An
+    # earlier version interpolated the value straight into a sed replacement string, which put the
+    # secret on sed's own command line — readable by any other local user via `ps` / `/proc/<pid>/
+    # cmdline` for as long as the process ran (app-sec review, #807). Delete the old line with `grep
+    # -v` (only the fixed key name ever appears in that argv, never the value) and append the new one
+    # with `printf`, exactly like the no-existing-line branch below — the value only ever reaches a
+    # file descriptor, never a command line.
     # cp -p seeds the temp file with .env's own mode before `>` truncates it, so renaming over a
     # hand-hardened .env can't widen AP_JWT_SECRET / AP_ENCRYPTION_KEY / the DB password to 0644.
-    cp -p .env .env.tmp && sed "s|^$1=.*|$1=$escaped_value|" .env > .env.tmp && mv .env.tmp .env
+    # `grep -v` exits 1 (not an error here) when the line being replaced was the file's only line —
+    # `|| true` keeps that from aborting the `&&` chain before the new line is appended.
+    cp -p .env .env.tmp && { grep -v "^$1=" .env > .env.tmp || true; } && printf '%s=%s\n' "$1" "$2" >> .env.tmp && mv .env.tmp .env
   else
     # Hand-written .env files often lack a trailing newline (VS Code's insertFinalNewline is off by
     # default); appending blind would glue the assignment onto the last line and destroy both.
