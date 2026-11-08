@@ -152,8 +152,11 @@ RUN node tools/scripts/qadams/bundle/build-image-seed.mjs \
         --repo .
 
 # `:slim` does not ship community code. Done before the dist index and the bundled metadata manifest
-# are written, so both describe exactly what the runtime can load.
-RUN if [ "$QADAM_FLAVOUR" = slim ]; then rm -rf packages/qadams/community; fi
+# are written, so both describe exactly what the runtime can load. `rm -rf` does not fail on a
+# missing/mismatched path, so a slim image whose removal silently no-op'd would otherwise ship the
+# full community tree under a `org.aiqadam.qadam-flavour=slim` label with nothing in the build log
+# to say so — check the directory is actually gone.
+RUN if [ "$QADAM_FLAVOUR" = slim ]; then rm -rf packages/qadams/community && test ! -d packages/qadams/community; fi
 
 # Index of the bundled qadams' dist folders (packages/qadams/dist-index.json). Without it every
 # fresh engine process walks the whole qadam tree before its first step can load (#419).
