@@ -127,7 +127,7 @@ const ApTableEditorPage = () => {
               ref={gridRef}
               columns={columns}
               rows={rows}
-              rowKeyGetter={(row: Row) => row.id}
+              getRowKey={(row: Row) => row.id}
               selectedRows={selectedRecords}
               onSelectedRowsChange={setSelectedRecords}
               className={cn(

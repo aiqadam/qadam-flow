@@ -1,7 +1,7 @@
 import { ApFlagId, isNil, Permission } from '@aiqadam/shared';
 import { Plus } from 'lucide-react';
 import { ReactNode } from 'react';
-import { Column, RenderCellProps } from 'react-data-grid';
+import { Column, RenderCellContentProps } from 'react-data-grid';
 
 import { useAuthorization } from '@/hooks/authorization-hooks';
 import { flagsHooks } from '@/hooks/flags-hooks';
@@ -84,7 +84,7 @@ export function useTableColumns(createEmptyRecord: () => void) {
         row,
         column,
         rowIdx,
-      }: RenderCellProps<Row, { id: string }>) => (
+      }: RenderCellContentProps<Row, { id: string }>) => (
         <EditableCell
           key={row.id + '_' + field.uuid}
           field={field}
