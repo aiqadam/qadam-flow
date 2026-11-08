@@ -81,7 +81,7 @@ settles.
 
 ## What the ticket asks for, today
 
-#778 was re-scoped by [ADR-0003](../../adr/0003-official-qadams-run-from-a-versioned-local-store.md)
+#778 was re-scoped by [ADR-0003](https://github.com/aiqadam/qadam-flow/blob/main/adr/0003-official-qadams-run-from-a-versioned-local-store.md)
 ([issue comment](https://github.com/aiqadam/qadam-flow/issues/778#issuecomment-6066247726),
 2026-10-08): a static JSON catalogue of every released version of every official qadam, with
 tarball integrity, published on GitHub Pages. That comment left three open questions to settle "in
@@ -96,7 +96,7 @@ the implementation":
 
 PR #830 (merged 2026-10-09, "Part of #778, not Closes") built the catalogue itself:
 `packages/server/api/src/app/qadams/catalogue/` — format, a release-time writer, and a reader,
-all with tests. See [`.agents/features/qadam-version-catalogue.md`](../../.agents/features/qadam-version-catalogue.md)
+all with tests. See [`.agents/features/qadam-version-catalogue.md`](https://github.com/aiqadam/qadam-flow/blob/main/.agents/features/qadam-version-catalogue.md)
 for the format and the reader/writer contract; it isn't repeated here.
 
 More has landed since that PR than its own "what is left" section suggested, and more than the
@@ -115,7 +115,7 @@ feature doc said before this pass:
   with nothing else to offer), but the *audited, reversible* replacement ADR-0003 asks for exists
   too: #808's `qadamPinMoveService` moves a step at publish time, with a caret check, the
   catalogue-backed props check above, and a load check, each recorded so it can be reverted. See
-  [`.agents/features/qadam-pin-moves.md`](../../.agents/features/qadam-pin-moves.md).
+  [`.agents/features/qadam-pin-moves.md`](https://github.com/aiqadam/qadam-flow/blob/main/.agents/features/qadam-pin-moves.md).
 
 Both consumers already name the gap explicitly in their own comments: *"The catalogue's default
 address answers 404 until #778 publishes it"* (`qadam-pin-fallback-seams.ts:24`,
@@ -207,7 +207,7 @@ installed" looks like from `get()`'s point of view isn't decided, and shouldn't 
   `snapshot-export-sources.ts` is the single binding both run-time consumers use, so flow export and
   the pin-fallback seam pick it up together. Tests cover the directory override, its precedence over
   the URL, and the default address.
-- Corrected [`.agents/features/qadam-version-catalogue.md`](../../.agents/features/qadam-version-catalogue.md):
+- Corrected [`.agents/features/qadam-version-catalogue.md`](https://github.com/aiqadam/qadam-flow/blob/main/.agents/features/qadam-version-catalogue.md):
   it previously said "nothing at run time calls the reader," which stopped being true once #853/#880
   and #808's first slice (#882) landed. Updated the open-questions section to match: question 3 is
   answered, questions 1 and 2 are open but not actionable yet, for the reasons above.
