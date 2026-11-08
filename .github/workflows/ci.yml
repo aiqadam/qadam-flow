@@ -1309,8 +1309,8 @@ jobs:
   # `sandbox-e2e`. Neither can be required itself — `image` is skipped on a docs-only diff and
   # `sandbox-e2e` on a PR that touches no sandbox path, and a skipped required context reports
   # nothing and wedges the PR. So this job is unconditional and carries the required name.
-  # Without it, a Renovate automerge waits for the other required contexts only and lands while those two are red; that is
-  # how #771 reached `main` (#810).
+  # Without it, a Renovate automerge waits for the other required contexts only and lands while
+  # those two are red; that is how #771 reached `main` (#810).
   #
   # The name "Image + Sandbox Gate" is the required context, matched by the ruleset on the job name:
   # it has been a required check of `main protect` since 2026-11-08 (#832), so renaming the job
@@ -1401,9 +1401,9 @@ jobs:
   # That is load-bearing, not cosmetic: this job is SKIPPED on most pull requests (see the
   # path gate in `changes`), and a *required* context that is skipped reports no conclusion at
   # all and leaves the PR permanently unmergeable. A new non-required context carries no such
-  # trap, because nothing in the ruleset waits for it. Do not promote this name into the required set without first
-  # making the job unconditional and fronting it with an always-reporting gate job, the way
-  # `verify` and `integration` are built.
+  # trap, because nothing in the ruleset waits for it. Do not promote this name into the required
+  # set without first making the job unconditional and fronting it with an always-reporting gate
+  # job, the way `verify` and `integration` are built.
   e2e:
     name: E2E Suite (docker compose)${{ github.event_name != 'push' && ' — against last published :main, not this PR' || '' }}
     # `image` and `image_publish` are needs, not just an ordering hint: on a push to main this
