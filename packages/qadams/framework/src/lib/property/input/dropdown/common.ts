@@ -3,7 +3,7 @@ import { z } from "zod";
 
 export const DropdownOption = z.object({
     label: z.string(),
-    value: z.unknown(),
+    value: z.unknown().optional(),
 })
 
 export type DropdownOption<T> = {

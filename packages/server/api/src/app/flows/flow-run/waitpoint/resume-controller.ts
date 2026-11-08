@@ -230,7 +230,7 @@ const RECORDED_MESSAGE = 'Your response has been recorded. You can close this pa
 
 const SlotCallbackBody = z.object({
     status: z.enum(['success', 'error']),
-    data: z.unknown(),
+    data: z.unknown().optional(),
 })
 
 const ResumeBySlotRequest = {

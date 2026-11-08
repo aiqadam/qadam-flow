@@ -48,7 +48,7 @@ const commonProps = {
 export const EmptyTrigger = z.object({
     ...commonProps,
     type: z.literal(FlowTriggerType.EMPTY),
-    settings: z.any(),
+    settings: z.any().optional(),
 })
 
 export type EmptyTrigger = z.infer<typeof EmptyTrigger>

@@ -88,7 +88,7 @@ export const TriggerBase = z.object({
   props: QadamPropertyMap,
   errorHandlingOptions: ErrorHandlingOptionsParam.optional(),
   type: z.nativeEnum(TriggerStrategy),
-  sampleData: z.unknown(),
+  sampleData: z.unknown().optional(),
   handshakeConfiguration: z.custom<WebhookHandshakeConfiguration>().optional(),
   renewConfiguration: WebhookRenewConfiguration.optional(),
   testStrategy: z.nativeEnum(TriggerTestStrategy),

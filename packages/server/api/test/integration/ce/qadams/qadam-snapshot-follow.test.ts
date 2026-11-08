@@ -287,13 +287,13 @@ function pieceAction({ name, qadamName, qadamVersion }: { name: string, qadamNam
 }
 
 function pinsOf({ flowVersion }: { flowVersion: FlowVersion }): string[] {
-    const steps: { settings: { qadamName?: string, qadamVersion?: string } }[] = []
-    let step: { settings: { qadamName?: string, qadamVersion?: string }, nextAction?: unknown } | undefined = flowVersion.trigger
+    const steps: { settings?: { qadamName?: string, qadamVersion?: string } }[] = []
+    let step: { settings?: { qadamName?: string, qadamVersion?: string }, nextAction?: unknown } | undefined = flowVersion.trigger
     while (step !== undefined) {
         steps.push(step)
         step = isStep(step.nextAction) ? step.nextAction : undefined
     }
-    return steps.filter((candidate) => candidate.settings.qadamName === QADAM).map((candidate) => candidate.settings.qadamVersion ?? '')
+    return steps.filter((candidate) => candidate.settings?.qadamName === QADAM).map((candidate) => candidate.settings?.qadamVersion ?? '')
 }
 
 function isStep(value: unknown): value is { settings: { qadamName?: string, qadamVersion?: string }, nextAction?: unknown } {

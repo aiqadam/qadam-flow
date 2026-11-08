@@ -136,7 +136,7 @@ export type ExecuteTriggerOperation<HT extends TriggerHookType> = BaseEngineOper
 
 
 export const TriggerPayload = z.object({
-    body: z.unknown(),
+    body: z.unknown().optional(),
     rawBody: z.unknown().optional(),
     headers: z.record(z.string(), z.string()),
     queryParams: z.record(z.string(), z.string()),
@@ -193,7 +193,7 @@ type ExecuteOnEnableTriggerResponse = {
 
 export const EngineHttpResponse = z.object({
     status: z.number(),
-    body: z.unknown(),
+    body: z.unknown().optional(),
     headers: z.record(z.string(), z.string()),
 })
 

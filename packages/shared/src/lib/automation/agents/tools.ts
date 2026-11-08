@@ -15,7 +15,7 @@ export enum FieldControlMode {
 
 export const PredefinedInputField = z.object({
     mode: z.nativeEnum(FieldControlMode),
-    value: z.unknown(),
+    value: z.unknown().optional(),
 })
 export type PredefinedInputField = z.infer<typeof PredefinedInputField>
 

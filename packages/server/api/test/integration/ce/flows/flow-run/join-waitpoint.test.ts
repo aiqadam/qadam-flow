@@ -163,6 +163,20 @@ describe('Join waitpoint', () => {
         expect(late.json().message).toContain('expired')
     })
 
+    // JSON drops `data: undefined`, so an error answer often arrives without the key (#949).
+    it('records an error answer that carries no data as a failed slot', async () => {
+        const { run, engineToken, projectId } = await setupParent({ status: FlowRunStatus.RUNNING })
+        const join: CreateWaitpointResponse = (await createJoin({ engineToken, run, projectId, slots: 2, failurePolicy: JoinFailurePolicy.enum.ALL_SETTLED })).json()
+        const [first] = join.slotResumeUrls ?? []
+
+        await answer({ url: first, body: { status: 'error' } })
+
+        const slots = await db.find<{ slotIndex: number, status: string, payload: string | null }>('waitpoint_slot', { waitpointId: join.id })
+        const byIndex = [...slots].sort((a, b) => a.slotIndex - b.slotIndex)
+        expect(byIndex.map((slot) => slot.status)).toEqual([WaitpointSlotStatus.FAILED, WaitpointSlotStatus.PENDING])
+        expect(JSON.parse(byIndex[0].payload ?? 'null')).toBeNull()
+    })
+
     it('answers the slot of a child that finished without a Return Response', async () => {
         const { run, engineToken, projectId } = await setupParent({ status: FlowRunStatus.RUNNING })
         const join: CreateWaitpointResponse = (await createJoin({ engineToken, run, projectId, slots: 2, failurePolicy: JoinFailurePolicy.enum.ALL_SETTLED })).json()

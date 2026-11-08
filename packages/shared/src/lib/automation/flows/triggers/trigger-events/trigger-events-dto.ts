@@ -18,7 +18,7 @@ export type ListTriggerEventsRequest = Omit<z.infer<typeof ListTriggerEventsRequ
 export const SaveTriggerEventRequest = z.object({
     projectId: ApId,
     flowId: z.string(),
-    mockData: z.unknown(),
+    mockData: z.unknown().optional(),
 })
 
 export type SaveTriggerEventRequest = z.infer<typeof SaveTriggerEventRequest>
