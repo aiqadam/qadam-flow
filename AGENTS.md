@@ -5,9 +5,12 @@ design. 238 qadams (27 core + 211 community). MCP support.
 
 End users install via `curl -fsSL https://flow.aiqadam.org/run.sh | sh`
 (POSIX script in repo root). The script downloads `docker-compose.yml`,
-generates a fresh `.env`, pulls `ghcr.io/aiqadam/qadam-flow:latest`, and
-brings the stack up on port 8080. Don't reintroduce `start.sh` — its job
-is covered by `run.sh` plus plain `docker compose` commands.
+generates a fresh `.env`, pulls `ghcr.io/aiqadam/qadam-flow:slim` (the
+platform plus the 27 core qadams; community qadams are fetched from the
+qadam registry on demand — see [Image flavours](docs/install/options/image-flavours.mdx),
+ADR-0003), and brings the stack up on port 8080. Don't reintroduce
+`start.sh` — its job is covered by `run.sh` plus plain `docker compose`
+commands.
 
 ## Read the whole ticket before you write a line — this is not optional
 

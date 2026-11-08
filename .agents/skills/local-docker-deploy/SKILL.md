@@ -17,15 +17,20 @@ curl -fsSL https://flow.aiqadam.org/run.sh | sh
 ```
 
 The script writes a fresh `.env` next to `docker-compose.yml`, pulls
-`ghcr.io/aiqadam/qadam-flow:latest`, brings up the stack, and waits for
-the API. Re-running it is idempotent.
+`ghcr.io/aiqadam/qadam-flow:slim` (ADR-0003, #807 — the 27 core qadams;
+community qadams fetch from the qadam registry on demand, configurable via
+`QADAM_REGISTRY_URL` / `QADAM_REGISTRY_TOKEN`), brings up the stack, and
+waits for the API. Re-running it is idempotent, and keeps whatever image an
+existing `.env` already pins — see
+[Image flavours](../../../docs/install/options/image-flavours.mdx).
 
 Build from local source instead of pulling:
 
 ```bash
 docker build --build-arg SKIP_SSL_VERIFY=true \
   --build-arg PLATFORM_VERSION="$(node tools/ci/compute-main-version.mjs --counter 0)" \
-  -t ghcr.io/aiqadam/qadam-flow:latest .
+  --build-arg QADAM_FLAVOUR=slim \
+  -t ghcr.io/aiqadam/qadam-flow:slim .
 docker compose up -d
 ```
 
@@ -33,9 +38,10 @@ docker compose up -d
 every CI build of the same line) instead of the last release it is not (ADR-0001, #798). Leave it
 out and the image reports the root `package.json`, the last release.
 
-`docker-compose.yml` reads the image name from `$QADAM_FLOW_IMAGE`
-(default `ghcr.io/aiqadam/qadam-flow:latest`). Tag a local build with
-that name (or override the env var) so the registry pull is skipped.
+`QADAM_FLAVOUR` (default `fat`) picks which qadams the image's version-store seed carries — `slim`
+for the 27 core qadams, `fat` for every official qadam. Tag the build to match what you intend to
+run (`:slim` or `:fat`) and pass the same tag in `QADAM_FLOW_IMAGE` if it is not the default
+`docker-compose.yml` reads, so the registry pull is skipped.
 
 ## Stack
 - **app** (port 8080:80) — API + frontend, a single Node process under `tini`
@@ -46,7 +52,9 @@ that name (or override the env var) so the registry pull is skipped.
 ## Key ENV vars
 - `AP_ENVIRONMENT=prod` (use `dev` only to opt into dev seeds)
 - `SKIP_SSL_VERIFY=true` build arg — for VPN/proxy environments with SSL interception
-- `QADAM_FLOW_IMAGE` — override the image tag picked up by `docker-compose.yml`
+- `QADAM_FLAVOUR=slim|fat` build arg — which qadams the image's version-store seed carries (default `fat`)
+- `QADAM_FLOW_IMAGE` — override the image tag picked up by `docker-compose.yml` (its own fallback, used only when `.env` has no `QADAM_FLOW_IMAGE` line, is `:latest`)
+- `QADAM_REGISTRY_URL` / `QADAM_REGISTRY_TOKEN` — where `run.sh` points the slim image's on-demand community-qadam fetch (default `https://registry.npmjs.org`, no token)
 
 ## Reset
 ```bash
