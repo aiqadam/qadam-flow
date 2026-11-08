@@ -46,9 +46,7 @@ const main = async () => {
 
     await rm(outDir, { recursive: true, force: true })
     await mkdir(outDir, { recursive: true })
-    for (const artifact of selected) {
-        await copyFile(path.join(archiveDir, artifact.file), path.join(outDir, artifact.file))
-    }
+    await Promise.all(selected.map((artifact) => copyFile(path.join(archiveDir, artifact.file), path.join(outDir, artifact.file))))
     await writeFile(path.join(outDir, INDEX_FILE), `${JSON.stringify({ formatVersion: 1, artifacts: selected }, null, 2)}\n`)
 
     console.log(JSON.stringify({
@@ -71,23 +69,25 @@ const readArchiveIndex = async ({ archiveDir }) => {
     if (parsed?.formatVersion !== 1 || !Array.isArray(parsed.artifacts)) {
         fail(`${indexPath} is not a version-1 archive index`)
     }
-    for (const artifact of parsed.artifacts) {
-        if (typeof artifact?.name !== 'string' || typeof artifact?.version !== 'string' || typeof artifact?.file !== 'string') {
-            fail(`${indexPath} has an artifact without name, version or file`)
-        }
-        if (!TARBALL_FILE_NAME.test(artifact.file)) {
-            fail(`${indexPath} names a tarball outside the archive directory: ${artifact.file}`)
-        }
-        const tarball = path.join(archiveDir, artifact.file)
-        if (!isInside({ root: archiveDir, target: tarball })) {
-            fail(`${indexPath} names a tarball outside the archive directory: ${artifact.file}`)
-        }
-        const stats = await stat(tarball).catch(() => null)
-        if (stats === null || !stats.isFile()) {
-            fail(`${indexPath} names a tarball that is not in the archive: ${artifact.file}`)
-        }
-    }
+    await Promise.all(parsed.artifacts.map((artifact) => validateArtifact({ artifact, archiveDir, indexPath })))
     return parsed
+}
+
+const validateArtifact = async ({ artifact, archiveDir, indexPath }) => {
+    if (typeof artifact?.name !== 'string' || typeof artifact?.version !== 'string' || typeof artifact?.file !== 'string') {
+        fail(`${indexPath} has an artifact without name, version or file`)
+    }
+    if (!TARBALL_FILE_NAME.test(artifact.file)) {
+        fail(`${indexPath} names a tarball with a path-unsafe file name: ${artifact.file}`)
+    }
+    const tarball = path.join(archiveDir, artifact.file)
+    if (!isInside({ root: archiveDir, target: tarball })) {
+        fail(`${indexPath} names a tarball outside the archive directory: ${artifact.file}`)
+    }
+    const stats = await stat(tarball).catch(() => null)
+    if (stats === null || !stats.isFile()) {
+        fail(`${indexPath} names a tarball that is not in the archive: ${artifact.file}`)
+    }
 }
 
 const selectCore = async ({ artifacts, repoRoot }) => {

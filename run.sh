@@ -294,9 +294,15 @@ env_value() {
 
 set_env_value() {
   if grep -q "^$1=" .env; then
+    # Every caller used to pass an installer-generated value (port, path, image tag) that could
+    # never contain `&`/`|`/`\`; #807 is the first to pass an arbitrary operator-supplied secret
+    # (QADAM_REGISTRY_TOKEN) through here. Unescaped, a `|` breaks this sed command outright (it is
+    # the delimiter) and an `&` expands to the whole matched line in the replacement — so escape the
+    # value for sed's replacement syntax before it is interpolated in.
+    escaped_value=$(printf '%s' "$2" | sed 's/[\&|]/\\&/g')
     # cp -p seeds the temp file with .env's own mode before `>` truncates it, so renaming over a
     # hand-hardened .env can't widen AP_JWT_SECRET / AP_ENCRYPTION_KEY / the DB password to 0644.
-    cp -p .env .env.tmp && sed "s|^$1=.*|$1=$2|" .env > .env.tmp && mv .env.tmp .env
+    cp -p .env .env.tmp && sed "s|^$1=.*|$1=$escaped_value|" .env > .env.tmp && mv .env.tmp .env
   else
     # Hand-written .env files often lack a trailing newline (VS Code's insertFinalNewline is off by
     # default); appending blind would glue the assignment onto the last line and destroy both.
@@ -480,9 +486,11 @@ validate_registry_token() {
 
 # The installer's unprefixed QADAM_REGISTRY_* overrides are written to .env prefixed with AP_, which
 # is the name the server reads. Without an override whatever .env already holds wins, so a hand-edited
-# registry or token survives an upgrade.
+# registry or token survives an upgrade. Both are validated on the value this run actually ends up
+# with — an explicit override, the default, or one adopted from an existing .env — not only on the
+# override, since an adopted value has never been checked by anything before it reaches `curl` in
+# registry_reachable().
 configure_registry() {
-  validate_registry_url
   existing_url=$(env_value AP_QADAM_REGISTRY_URL)
   if [ "$REGISTRY_URL_EXPLICIT" = yes ]; then
     if [ "$existing_url" != "$QADAM_REGISTRY_URL" ]; then
@@ -494,9 +502,9 @@ configure_registry() {
   elif [ "$ENV_EXISTED" = yes ]; then
     set_env_value AP_QADAM_REGISTRY_URL "$QADAM_REGISTRY_URL"
   fi
+  validate_registry_url
 
   if [ "$REGISTRY_TOKEN_EXPLICIT" = yes ]; then
-    validate_registry_token
     if [ -n "$QADAM_REGISTRY_TOKEN" ]; then
       log "using the registry token from QADAM_REGISTRY_TOKEN"
       set_env_value AP_QADAM_REGISTRY_TOKEN "$QADAM_REGISTRY_TOKEN"
@@ -507,6 +515,7 @@ configure_registry() {
   else
     QADAM_REGISTRY_TOKEN=$(env_value AP_QADAM_REGISTRY_TOKEN)
   fi
+  validate_registry_token
 }
 
 image_is_slim() {

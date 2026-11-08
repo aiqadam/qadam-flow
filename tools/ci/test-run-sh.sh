@@ -1194,6 +1194,44 @@ else
   fi
 fi
 
+# A malformed registry URL already sitting in .env (no override) must abort too, not only an
+# explicitly-passed one — configure_registry validates the value it ends up adopting, not only the
+# one main() saw before generate_env ran.
+bad_adopted_work="$tmp/registry-bad-adopted-url"
+mkdir -p "$bad_adopted_work"
+printf 'AP_QADAM_REGISTRY_URL=registry.example.com\n' > "$bad_adopted_work/.env"
+if "$sut" -c '
+  unset QADAM_REGISTRY_URL
+  . "$1"
+  cd "$2" || exit 1
+  configure_registry
+' _ "$runsh" "$bad_adopted_work" >/dev/null 2>"$bad_adopted_work/.stderr"; then
+  fail_case 'a malformed URL adopted from .env must abort'
+else
+  if grep -qF 'must start with http:// or https://' "$bad_adopted_work/.stderr"; then
+    pass=$((pass + 1))
+  else
+    fail_case 'adopted bad registry URL reports the shape it wants' "$(cat "$bad_adopted_work/.stderr")"
+  fi
+fi
+
+# set_env_value must round-trip a value containing sed's own delimiter and replacement-escape
+# characters (&, |, \) — the first real caller to pass an arbitrary secret through it (the registry
+# token), where every earlier caller only ever passed an installer-generated value.
+special_chars_work="$tmp/set-env-value-special-chars"
+mkdir -p "$special_chars_work"
+printf 'AP_QADAM_REGISTRY_TOKEN=old\n' > "$special_chars_work/.env"
+"$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  set_env_value AP_QADAM_REGISTRY_TOKEN "tok&en|with\\backslash"
+' _ "$runsh" "$special_chars_work" >/dev/null 2>"$special_chars_work/.stderr"
+if grep -qxF 'AP_QADAM_REGISTRY_TOKEN=tok&en|with\backslash' "$special_chars_work/.env"; then
+  pass=$((pass + 1))
+else
+  fail_case 'set_env_value round-trips &, | and \ unchanged' "$(cat "$special_chars_work/.env")"
+fi
+
 # Reachability accepts any HTTP response and sends the token on stdin, not argv. The stub records the
 # URL and the config it received.
 curlbin="$tmp/registry-curlbin"
