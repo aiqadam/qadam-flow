@@ -1,9 +1,9 @@
 // Turns the full #804 archive into the seed an image ships (ADR-0003, #807).
 //
-// The image builds every official qadam once so it can carry the catalogue for all of them
-// (#778), but `:slim` seeds the store with the 27 core qadams only. The archive is the input of
-// record — this never rebuilds or re-derives a tarball, it copies the files the index names and
-// writes the filtered index beside them.
+// The image builds every official qadam once into one shared archive, because `--pack`ing a
+// single pass is simpler than a per-flavour build, but `:slim` seeds the store with the 27 core
+// qadams only. The archive is the input of record — this never rebuilds or re-derives a tarball,
+// it copies the files the index names and writes the filtered index beside them.
 //
 //   node tools/scripts/qadams/bundle/build-image-seed.mjs \
 //       --archive /tmp/qadam-artifacts/archive --out packages/qadams/version-store-seed --flavour slim

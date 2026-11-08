@@ -113,14 +113,16 @@ ENV TURBO_API=$TURBO_API \
     TURBO_TEAM=$TURBO_TEAM
 
 # Image flavour (ADR-0003, #807): `fat` seeds the store with every official qadam; `slim` seeds the
-# 27 core qadams and drops the community build from the runtime tree. Both still build every qadam,
-# because both carry the catalogue snapshot for all of them (#778); the difference is what the
-# image ships, not what the build can see.
+# 27 core qadams and drops the community build from the runtime tree (except four qadams the server
+# itself depends on — see the slim-prune step below). Both still build every qadam, because the
+# build-qadam-artifacts.mjs archive each flavour's store seed is selected from needs every official
+# qadam's tarball available, regardless of which ones a given flavour keeps.
 ARG QADAM_FLAVOUR=fat
 
-# The commit the artifacts are stamped with. CI passes it because `.git` is excluded from the build
-# context; a local build gets the all-zero sha, which build-qadam-artifacts.mjs records as a dirty
-# commit (not a real, clean one) so the catalogue writer rejects it rather than crediting a fake sha.
+# The commit the artifacts are stamped with, for archive-index.json's own provenance record. CI
+# passes it because `.git` is excluded from the build context; a local build with no build-arg
+# leaves this empty, so build-qadam-artifacts.mjs below falls back to the well-known all-zero
+# placeholder and records it as a dirty commit rather than crediting a fake one as clean.
 ARG COMMIT_SHA=
 
 # Build frontend, engine, server API, worker, and all bundled qadams.
@@ -129,8 +131,22 @@ ARG COMMIT_SHA=
 RUN --network=host npx turbo run build --filter=web --filter=@aiqadam/engine --filter=api --filter=worker --filter='@aiqadam/qadam-*'
 
 # ADR-0003's artifacts (#804): one npm tarball per official qadam at the version this tree holds.
-# This is the image's store seed, and the input to the catalogue snapshot. `--out` must be outside
-# the repository, so it goes in /tmp and only the parts each flavour needs are copied back below.
+# This is the image's store seed. `--out` must be outside the repository, so it goes in /tmp and
+# only the parts each flavour needs are copied back below.
+#
+# NOT wired up here (deliberately, #807): #778's catalogue snapshot. Baking one into the image
+# from this archive alone — the only way available in this Dockerfile, with no step anywhere in
+# ci.yml/release.yml that checks out the already-published catalogue first — can only ever hold
+# this tree's own current version of each qadam, never "every released version" the catalogue
+# format promises (code-quality review, #807). `qadamPinFallbackSeams`'s `readPinMetadata` treats
+# an older pinned version that is simply absent from a catalogue with zero skipped (unparseable)
+# entries as proof the version was "never published", not merely unlisted — exactly the wrong call
+# against a necessarily-partial, from-scratch snapshot, for every qadam that has more than one
+# released version. #807's own issue thread flagged this directly: "Seed only after #851 lands (or
+# ships in the same change)" — #851's snapshot-plan computation exists but, per
+# .agents/rules/versioning.md, "the image does not apply it yet", so that gate is not met by this
+# branch either. Deferred to whichever change wires a real checkout-then-append release step; see
+# .agents/features/qadam-version-catalogue.md.
 RUN node tools/scripts/qadams/bundle/build-qadam-artifacts.mjs \
         --out /tmp/qadam-artifacts \
         --all \
@@ -138,26 +154,40 @@ RUN node tools/scripts/qadams/bundle/build-qadam-artifacts.mjs \
         --concurrency 4 \
         --commit "${COMMIT_SHA:-0000000000000000000000000000000000000000}"
 
-# The catalogue snapshot the image carries (#778, #807): metadata for every released version of
-# every official qadam, read by the API without any network request.
-RUN node packages/server/api/dist/src/scripts/append-qadam-version-catalogue.js \
-        --archive /tmp/qadam-artifacts/archive \
-        --catalogue packages/qadams/catalog/v1
-
-# What the app seeds the version store with at start-up. Both flavours include only the tarballs
-# their store should hold, even though the catalogue above covers every qadam.
+# What the app seeds the version store with at start-up. Each flavour includes only the tarballs
+# its store should hold.
 RUN node tools/scripts/qadams/bundle/build-image-seed.mjs \
         --archive /tmp/qadam-artifacts/archive \
         --out packages/qadams/version-store-seed \
         --flavour "$QADAM_FLAVOUR" \
         --repo .
 
-# `:slim` does not ship community code. Done before the dist index and the bundled metadata manifest
-# are written, so both describe exactly what the runtime can load. `rm -rf` does not fail on a
-# missing/mismatched path, so a slim image whose removal silently no-op'd would otherwise ship the
-# full community tree under a `org.aiqadam.qadam-flavour=slim` label with nothing in the build log
-# to say so — check the directory is actually gone.
-RUN if [ "$QADAM_FLAVOUR" = slim ]; then rm -rf packages/qadams/community && test ! -d packages/qadams/community; fi
+# `:slim` does not ship most community code, but four community qadams are the server's own direct
+# dependencies, not something a flow merely happens to use: `app-event-routing.module.ts` statically
+# imports slack / facebook-leads / intercom to parse their app-webhook payloads in-process, and
+# `event-puller-registry.ts` lazily imports telegram-bot for its long-polling trigger — both run
+# inside the server itself, never through the qadam version store a flow step's qadam is fetched
+# from (code-quality review, #807: deleting them unconditionally broke every slim boot with
+# `Cannot find module '@aiqadam/qadam-facebook-leads'`, since `app.ts` registers that module
+# unconditionally). Keeping these four here does not add them to the 27 "core" qadams
+# build-image-seed.mjs seeds the version store with below — that count, and whether a flow using
+# one of them as an action still has to fetch it, are unaffected; this is a separate, smaller list
+# of what the server process itself can't start without.
+#
+# Done before the dist index and the bundled metadata manifest are written, so both describe exactly
+# what the runtime can load. `rm -rf` does not fail on a missing/mismatched path, so a slim image
+# whose removal silently no-op'd would otherwise ship the full community tree under a
+# `org.aiqadam.qadam-flavour=slim` label with nothing in the build log to say so — check each kept
+# directory survived and nothing unexpected did.
+RUN if [ "$QADAM_FLAVOUR" = slim ]; then \
+      find packages/qadams/community -mindepth 1 -maxdepth 1 -type d \
+        ! -name facebook-leads ! -name intercom ! -name slack ! -name telegram-bot \
+        -exec rm -rf {} + \
+      && for kept in facebook-leads intercom slack telegram-bot; do \
+        test -d "packages/qadams/community/$kept" || { echo "slim pruning lost packages/qadams/community/$kept, which the server itself depends on" >&2; exit 1; }; \
+      done \
+      && [ "$(find packages/qadams/community -mindepth 1 -maxdepth 1 -type d | wc -l)" = 4 ]; \
+    fi
 
 # Index of the bundled qadams' dist folders (packages/qadams/dist-index.json). Without it every
 # fresh engine process walks the whole qadam tree before its first step can load (#419).
@@ -176,11 +206,6 @@ FROM base AS run
 ARG QADAM_FLAVOUR=fat
 
 WORKDIR /usr/src/app
-
-# The catalogue snapshot built above (#778, #807). The directory source takes precedence over the
-# published URL and makes no request, so a release instance knows every version it ships with even
-# when it cannot reach flow.aiqadam.org. An operator can override it in `.env`.
-ENV AP_QADAM_VERSION_CATALOGUE_DIRECTORY=/usr/src/app/packages/qadams/catalog/v1
 
 # Copy static configuration files first (better layer caching)
 COPY --from=build /usr/src/app/packages/server/api/src/assets/default.cf /usr/local/etc/isolate
@@ -205,13 +230,12 @@ COPY --from=build /usr/src/app/packages ./packages
 # every fresh engine without failing anything (#419).
 RUN test -s packages/qadams/dist-index.json
 
-# Same defense-in-depth as the dist-index check above, for the two artifacts #807 adds: the
-# flavour's version-store seed and the catalogue snapshot. Both writers already fail the build on a
-# real problem, but a build that crashed between opening the file and writing to it, or a copy that
-# silently dropped it, would otherwise surface only as an empty version store or a 404'd catalogue
-# read at runtime — a confusing failure far from its cause instead of a build failure at it.
-RUN test -s packages/qadams/version-store-seed/archive-index.json \
-    && test -s packages/qadams/catalog/v1/index.json
+# Same defense-in-depth as the dist-index check above, for the flavour's version-store seed #807
+# adds. The writer already fails the build on a real problem, but a build that crashed between
+# opening the file and writing to it, or a copy that silently dropped it, would otherwise surface
+# only as an empty version store at runtime — a confusing failure far from its cause instead of a
+# build failure at it.
+RUN test -s packages/qadams/version-store-seed/archive-index.json
 
 # Copy built engine
 COPY --from=build /usr/src/app/dist/packages/engine/ ./dist/packages/engine/

@@ -8,10 +8,10 @@ Qadam Flow publishes two images for every release. They run the same platform; t
 
 | Flavour | Tag | Qadams in the image | Use it when |
 | --- | --- | --- | --- |
-| Slim | `:<version>-slim`, `:slim` | The platform and the 27 core qadams | You can reach npm. This is what the installer uses. |
+| Slim | `:<version>-slim`, `:slim` | The platform, the 27 core qadams, and four community qadams the server itself needs to run (the Slack, Facebook Leads and Intercom app-webhook qadams, and the Telegram Bot long-polling qadam) | You can reach npm. This is what the installer uses. |
 | Fat | `:<version>-fat`, `:fat`, `:<version>`, `:latest` | The platform and every official qadam (core and community) | The host is offline or restricted to `ghcr.io`, or you want community qadams to work without fetching them. |
 
-Both images carry the [qadam version catalogue](/install/architecture/qadam-version-catalogue) snapshot for every official qadam, so either one can tell you about versions it does not ship.
+Neither image carries a [qadam version catalogue](/install/architecture/qadam-version-catalogue) snapshot yet — see that page for why.
 
 ## Which tag to pin
 

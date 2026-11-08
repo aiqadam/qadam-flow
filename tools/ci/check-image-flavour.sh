@@ -4,8 +4,13 @@
 #   tools/ci/check-image-flavour.sh ghcr.io/aiqadam/qadam-flow:1.2.3-slim slim
 #
 # `fat` must carry every official qadam in its store seed and the community packages on disk; `slim`
-# must carry only the core qadams and no community tree. Both must carry the catalogue snapshot for
-# every official qadam, because the catalogue is generated before the slim prune.
+# must carry only the core qadams in its store seed, plus the four community qadams the server
+# itself statically depends on (facebook-leads / intercom / slack for app-event-routing's webhook
+# parsing, telegram-bot for the long-polling event puller — see the Dockerfile's slim-prune step),
+# and no other community tree.
+#
+# The catalogue snapshot (#778) is deliberately not checked here: neither image carries one yet
+# (see the Dockerfile's "NOT wired up here" comment on the catalogue step).
 #
 # The image is pulled first, so this also proves the tag resolves to a manifest for this platform.
 
@@ -39,29 +44,40 @@ const path = require('node:path')
 const flavour = process.argv[1]
 const root = '/usr/src/app/packages/qadams'
 const seedDir = path.join(root, 'version-store-seed')
-const catalogueDir = path.join(root, 'catalog', 'v1')
 
 const fail = (message) => {
     console.error(`image-flavour: ${message}`)
     process.exit(1)
 }
 
-const qadamDirs = (dir) => {
+const qadamDirNames = (dir) => {
     if (!fs.existsSync(dir)) {
-        return 0
+        return []
     }
-    return fs.readdirSync(dir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).length
+    return fs.readdirSync(dir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name)
 }
 
-const core = qadamDirs(path.join(root, 'core'))
-const community = qadamDirs(path.join(root, 'community'))
+// The server's own direct dependencies (Dockerfile, #807, code-quality review) — kept in `:slim`
+// even though they're community qadams, because the server process itself requires them to boot.
+const ALWAYS_BUNDLED_COMMUNITY = ['facebook-leads', 'intercom', 'slack', 'telegram-bot']
+
+const core = qadamDirNames(path.join(root, 'core')).length
+const communityNames = qadamDirNames(path.join(root, 'community'))
+const community = communityNames.length
 const expected = flavour === 'slim' ? core : core + community
 
 if (core === 0) {
     fail('no core qadams are present')
 }
-if (flavour === 'slim' && community !== 0) {
-    fail(`the slim image ships ${community} community qadam director(ies)`)
+if (flavour === 'slim') {
+    const unexpected = communityNames.filter((name) => !ALWAYS_BUNDLED_COMMUNITY.includes(name))
+    if (unexpected.length > 0) {
+        fail(`the slim image ships unexpected community qadam director(ies): ${unexpected.join(', ')}`)
+    }
+    const missing = ALWAYS_BUNDLED_COMMUNITY.filter((name) => !communityNames.includes(name))
+    if (missing.length > 0) {
+        fail(`the slim image is missing the server's own community qadam dependenc(ies): ${missing.join(', ')}`)
+    }
 }
 if (flavour === 'fat' && community === 0) {
     fail('the fat image ships no community qadams')
@@ -89,15 +105,7 @@ for (const artifact of index.artifacts) {
     }
 }
 
-if (!fs.existsSync(path.join(catalogueDir, 'index.json'))) {
-    fail('the catalogue snapshot index is missing')
-}
-const catalogueQadams = qadamDirs(path.join(catalogueDir, 'qadams'))
-if (catalogueQadams < core) {
-    fail(`the catalogue snapshot covers ${catalogueQadams} qadam(s), fewer than the ${core} core qadams`)
-}
-
-console.log(`image-flavour: ${flavour} ok (${core} core, ${community} community, ${index.artifacts.length} seed artifacts, ${catalogueQadams} catalogue qadams)`)
+console.log(`image-flavour: ${flavour} ok (${core} core, ${community} community, ${index.artifacts.length} seed artifacts)`)
 JS
 )
 
