@@ -2,7 +2,7 @@ import { isNil } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { flowRepo } from '../../flows/flow/flow.repo'
 import { flowVersionRepo } from '../../flows/flow-version/flow-version.service'
-import { AgentToolPinOfStep, QadamPinnedStep, qadamPinUtil } from '../metadata/qadam-pin-util'
+import { QadamPinnedStep, qadamPinUtil } from '../metadata/qadam-pin-util'
 import { frameworkCensusPolicy } from './framework-census-policy'
 import {
     frameworkCensusService,
@@ -16,27 +16,22 @@ import {
 // (`hasRetiredContextVersion()`), so the surfaces keep their current cost.
 export const frameworkCensusMarking = (log: FastifyBaseLogger) => ({
     // The pins whose qadam needs a retired context version, keyed by pin. Empty while every
-    // context version the support table lists is still run. Covers agent-tool pins as well as
-    // step pins: the worker provisions a dead-context tool the same way it provisions a step
-    // (#779), so the two MCP surfaces that read this (`ap_validate_flow`, `ap_flow_structure`)
-    // must mark both.
+    // context version the support table lists is still run.
     async unsupportedPins({
         qadamSteps,
-        agentTools = [],
         platformId,
     }: {
         qadamSteps: QadamPinnedStep[]
-        agentTools?: AgentToolPinOfStep[]
         platformId: string
     }): Promise<Map<string, PinFrameworkSupport>> {
         if (
             !frameworkCensusPolicy.hasRetiredContextVersion() ||
-      (qadamSteps.length === 0 && agentTools.length === 0)
+      qadamSteps.length === 0
         ) {
             return new Map()
         }
         const supportByPin = await frameworkCensusService(log).resolvePins({
-            pins: qadamPinUtil.collectDistinctPins({ steps: qadamSteps, tools: agentTools }),
+            pins: qadamPinUtil.collectDistinctPins({ steps: qadamSteps }),
             platformId,
         })
         // A pin no version answers is already `ap_validate_flow`'s `qadam_version` error and
