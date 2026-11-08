@@ -444,6 +444,20 @@ jobs:
       - name: Test the qadam artifact build
         run: tools/ci/test-qadam-artifacts.sh
 
+      # #1027: a qadam that compiles against the AI SDK breaks with TS2322 when its `ai` /
+      # `@ai-sdk/*` pins and the platform's resolve to two copies of `@ai-sdk/provider`. Qadams have
+      # no `typecheck` script and `test` builds only dependencies, so before this step the break
+      # surfaced only in the Docker image build, after automerge (#815, #896, #997, #1025). The list
+      # is computed (tools/ci/ai-sdk-qadams.mjs), and an empty one fails the step rather than
+      # building nothing. The three platform packages above are already built.
+      - name: Build the qadams that depend on the AI SDK
+        run: |
+          set -euo pipefail
+          filters="$(node tools/ci/ai-sdk-qadams.mjs)"
+          echo "Building: ${filters}"
+          # shellcheck disable=SC2086 # one word per --filter flag
+          npx turbo run build ${filters}
+
       # ADR-0001 gate 6. Full tree, not a diff: the ESLint ban (packages/qadams/eslint.config.mjs,
       # #786) can be silenced by a disable comment; this scan cannot.
       - name: Test the qadam shared-imports checker

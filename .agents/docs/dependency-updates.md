@@ -44,7 +44,7 @@ The deciding constraint is the text `bun.lock` (Bun ≥ 1.2) in a bun-workspaces
 | Major individually, labelled `tech-debt` | `matchUpdateTypes: ["major"]` → `addLabels: ["tech-debt"]`, no group |
 | `@types/node` stays on the runtime major | `matchPackageNames: ["@types/node"]` → `allowedVersions: "<25"` (see below) |
 | Group the coupled families | one `packageRules` entry per family (below) |
-| `@ai-sdk/*` + `ai` | `groupName: "ai-sdk"` |
+| `@ai-sdk/*` + `ai` + `ai-gateway-provider` | `groupName: "ai-sdk"`, and it includes `@aiqadam/qadam-ai` (see "The one exception" below) |
 | `@opentelemetry/*` | `groupName: "opentelemetry"` |
 | `@aws-sdk/*` | `groupName: "aws-sdk"` |
 | `@tiptap/*` | `groupName: "tiptap"` |
@@ -109,6 +109,36 @@ republish ([`versioning.md`](../rules/versioning.md)), so the bot must never mak
 change silently. This also covers `packages/qadams/{framework,common}`. The qadams still
 appear transitively in the root `bun.lock`; the exclusion only stops PRs that target their
 own `package.json` files.
+
+### The one exception: `@aiqadam/qadam-ai` in the `ai-sdk` group (#1027)
+
+`@aiqadam/qadam-ai` compiles against the same AI SDK as the platform. Two different patches of
+`@ai-sdk/provider` / `@ai-sdk/provider-utils` are not assignable to each other, so when the
+`ai-sdk` group moved `packages/server/*` and `packages/web` and left the qadam on its old pins,
+`bun.lock` carried two copies and `@aiqadam/qadam-ai#build` failed with `TS2322`. That happened on
+#815, #871, #896 and #911 (each fixed by hand on the Renovate branch), then on #972 (#997, #999)
+and #1025 (#1024), which reached `main` through automerge and turned the `Docker Image` jobs red.
+
+So a `packageRules` entry re-enables `ai`, `@ai-sdk/*` and `ai-gateway-provider` for
+`packages/qadams/community/ai/package.json` only. The `ai-sdk` group then moves the platform and
+the qadam in one PR, and `renovate-changeset.yml` writes the `@aiqadam/qadam-ai` changeset. The
+rule stays narrow: no other qadam, and no other dependency of this qadam, is enabled.
+
+- It sits below the qadam disable (it re-enables) and below the patch-automerge rule (it sets
+  `automerge: false`), because a later matching rule wins, and above the `isolated-vm` rule,
+  which stays last.
+- Renovate automerges a group only when every upgrade in it is automerge
+  (`config.automerge = config.upgrades.every(...)` in `lib/workers/repository/updates/generate.ts`),
+  so the whole `ai-sdk` PR now waits for a human. That is deliberate: the policy above exists so a
+  published qadam's dependency never changes unattended, and the reviewer answers the versioning
+  behaviour question for the changeset the workflow wrote (`patch` by default; raise it if an
+  existing step would notice the change).
+
+The backstop is a required build, not this rule. `Lint + Unit Tests` builds every qadam that
+depends on `ai`, `@ai-sdk/*` or `ai-gateway-provider` (`tools/ci/ai-sdk-qadams.mjs`, step "Build the
+qadams that depend on the AI SDK" in `_verify.yml`), so a split copy fails a required check on the
+PR that introduces it, however that PR was opened. Before it, qadams had no `typecheck` script and
+`turbo run test` built only dependencies, so the break showed up only in the image build.
 
 ## DCO: `:gitSignOff`
 
