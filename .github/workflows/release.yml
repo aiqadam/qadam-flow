@@ -25,12 +25,15 @@ jobs:
   # docs/install/configuration/breaking-changes.mdx, but only because a person
   # noticed. Nothing in CI would have stopped the release otherwise.
   #
-  # WHY HERE AND NOT IN ci.yml. `:latest` — the tag every installer and every
-  # `docker pull` without a version resolves to — is published in exactly one
-  # place: the `publish` job below, on a tag push. ci.yml's `image` job pushes
-  # only `:main`, `:sha-…` and the `-main` prerelease version (`:2.0.0-main.<n>`). So a merge
-  # to `main` cannot reach a user, and the tag is the last point where a check
-  # can still stop one from doing so.
+  # WHY HERE AND NOT IN ci.yml. `:latest` — the fat-image tag any `docker pull`
+  # without a version or flavour resolves to, and the tag an install predating
+  # #807 still runs — is published in exactly one place: the `publish` job
+  # below, on a tag push. ci.yml's `image` job pushes only the per-flavour
+  # `:main-<flavour>`, `:sha-…-<flavour>` and `-main` prerelease version
+  # (`:2.0.0-main.<n>-<flavour>`), plus the unsuffixed `:main`/`:sha-…` aliases
+  # on fat for back-compat — never `:latest`. So a merge to `main` cannot reach
+  # a user, and the tag is the last point where a check can still stop one from
+  # doing so.
   #
   # WHY IT IS NOT JUST A REVIEW HABIT. The person cutting a release is often not
   # the person who wrote the breaking commit, and is reading dozens of commits
@@ -166,8 +169,9 @@ jobs:
   #
   # Packing lives in _pack-framework-packages.yml, not here, because a `v*` tag is no
   # longer the only way to reach them (#496): that tag IS the engine release — it moves the
-  # Docker `:latest` every `run.sh` install resolves to and cuts a GitHub Release — and
-  # requiring one in order to publish a `0.x` library was backwards. publish-packages.yml
+  # Docker `:slim`/`:fat` (and, for back-compat, `:latest`) tags `run.sh` and every pinned
+  # install resolve to, and cuts a GitHub Release — and requiring one in order to publish a
+  # `0.x` library was backwards. publish-packages.yml
   # calls the same workflow on `workflow_dispatch`. Read that file for what packing and
   # publishing do, why they are two jobs, and what a caller has to supply. What stays here is
   # only what is true of the TAG path.
