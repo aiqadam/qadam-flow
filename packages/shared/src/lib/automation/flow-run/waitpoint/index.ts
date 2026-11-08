@@ -26,7 +26,7 @@ export type JoinSlotStatus = z.infer<typeof JoinSlotStatus>
 
 export const JoinSlotResult = z.object({
     status: JoinSlotStatus,
-    data: z.unknown(),
+    data: z.unknown().optional(),
 })
 export type JoinSlotResult = z.infer<typeof JoinSlotResult>
 

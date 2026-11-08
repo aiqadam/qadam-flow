@@ -15,7 +15,7 @@ export enum SampleDataDataType {
 }
 export const SaveSampleDataRequest = z.object({
     stepName: z.string(),
-    payload: z.unknown(),
+    payload: z.unknown().optional(),
     type: z.enum(SampleDataFileType),
 })
 export type SaveSampleDataRequest = z.infer<typeof SaveSampleDataRequest>
@@ -40,8 +40,8 @@ export type CreateStepRunRequestBody = z.infer<typeof CreateStepRunRequestBody>
 export const StepRunResponse = z.object({
     runId: z.string(),
     success: z.boolean(),
-    input: z.unknown(),
-    output: z.unknown(),
+    input: z.unknown().optional(),
+    output: z.unknown().optional(),
     sampleDataFileId: z.string().optional(),
     sampleDataInputFileId: z.string().optional(),
     standardError: z.string(),

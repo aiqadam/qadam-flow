@@ -89,7 +89,7 @@ function buildSchema(props: QadamPropertyMap, auth: QadamAuthProperty | QadamAut
           propsSchema[name] = z.record(z.string(), z.any());
           break;
         case PropertyType.CUSTOM:
-          propsSchema[name] = z.unknown();
+          propsSchema[name] = z.unknown().optional();
           break;
       }
 

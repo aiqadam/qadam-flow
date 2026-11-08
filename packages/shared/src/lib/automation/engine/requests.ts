@@ -11,7 +11,7 @@ export const INLINE_SUBFLOW_DEPTH_LIMIT = 50
 
 export const ResolveInlineFlowRequest = z.object({
     flowId: z.string(),
-    payload: z.unknown(),
+    payload: z.unknown().optional(),
     // The run this call is being made FROM — the immediate parent for depth/ancestry
     // purposes. Sent by the engine from its own EngineConstants.flowRunId (never from
     // anything an action's own input controls), so nested inline calls each report the
@@ -79,7 +79,7 @@ export const SendFlowResponseRequest = z.object({
     httpRequestId: z.string(),
     runResponse: z.object({
         status: z.number(),
-        body: z.any(),
+        body: z.any().optional(),
         headers: z.record(z.string(), z.string()),
     }),
 })

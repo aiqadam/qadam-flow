@@ -3,7 +3,7 @@ import { z } from 'zod'
 
 export const ApMultipartFile = z.object({
     filename: z.string(),
-    data: z.unknown(),
+    data: z.unknown().optional(),
     type: z.literal('file'),
     mimetype: z.string().optional(),
 })

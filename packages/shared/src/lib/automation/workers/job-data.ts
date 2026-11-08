@@ -12,7 +12,7 @@ export const LATEST_JOB_DATA_SCHEMA_VERSION = 10
 
 export const InlineJobPayload = z.object({
     type: z.literal('inline'),
-    value: z.any(),
+    value: z.any().optional(),
 })
 
 export const RefJobPayload = z.object({
@@ -181,7 +181,7 @@ export const ExecuteValidateAuthJobData = z.object({
     platformId: z.string(),
     qadam: QadamPackage,
     schemaVersion: z.number(),
-    connectionValue: z.unknown(),
+    connectionValue: z.unknown().optional(),
     requestId: z.string(),
     webserverId: z.string(),
 })

@@ -1,5 +1,5 @@
 import path from 'path'
-import { ExecutionMode, FlowRunStatus, isNil, maxSocketHttpBufferSizeBytes, NetworkMode, ResolveInlineFlowResult, WorkerContract, WorkerToApiContract } from '@aiqadam/shared'
+import { ExecutionMode, FlowRunStatus, isNil, maxSocketHttpBufferSizeBytes, NetworkMode, ResolveInlineFlowRequest, ResolveInlineFlowResult, WorkerContract, WorkerToApiContract } from '@aiqadam/shared'
 import { Mutex } from 'async-mutex'
 import { nanoid } from 'nanoid'
 import { Logger } from 'pino'
@@ -127,7 +127,7 @@ function inlineProvisionLock(jobContext: SandboxJobContext): Mutex {
 }
 
 async function resolveInlineFlow(params: {
-    input: { flowId: string, payload: unknown, parentRunId: string }
+    input: ResolveInlineFlowRequest
     log: Logger
     apiClient: WorkerToApiContract
     jobContext: SandboxJobContext | null

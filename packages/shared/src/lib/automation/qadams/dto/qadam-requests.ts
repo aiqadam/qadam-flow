@@ -100,7 +100,7 @@ export const QadamOptionRequest = z.object({
     propertyName: z.string(),
     flowId: z.string(),
     flowVersionId: z.string(),
-    input: z.any(),
+    input: z.any().optional(),
     searchValue: z.string().optional(),
 })
 
