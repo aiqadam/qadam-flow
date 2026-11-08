@@ -11,7 +11,7 @@
   "devDependencies": {
     "@faker-js/faker": "10.6.0",
     "@playwright/test": "1.64.1",
-    "checkly": "6.9.10",
+    "checkly": "10.1.0",
     "dotenv": "17.2.3",
     "tslib": "2.6.2"
   }
