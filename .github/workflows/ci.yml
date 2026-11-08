@@ -394,9 +394,8 @@ jobs:
   # Required status check. Exists purely to keep the required context name stable
   # across the extraction above — same pattern, and the same reason, as the
   # `integration` gate further down. Unconditional so it always reports a
-  # conclusion: a skipped required check reports none at all under this repo's
-  # ruleset (strict_required_status_checks_policy), which would leave every PR
-  # permanently unmergeable.
+  # conclusion: a skipped required check reports none at all, which would leave
+  # every PR permanently unmergeable.
   verify:
     name: Lint + Unit Tests
     needs: verify-run
@@ -673,10 +672,10 @@ jobs:
   # on the OSV.dev API being reachable. A red result is therefore a backlog signal, not a verdict
   # on this PR, so `continue-on-error` stops it blocking. It is deliberately NOT a required
   # context of the `main protect` ruleset (those are "Lint + Unit Tests", "CE Integration Tests",
-  # "DCO Sign-off", "Validate Conventional Commits format" and, once a maintainer adds it, "Image + Sandbox Gate"). If it should ever become required it
-  # first has to be made blocking and fronted by an always-reporting gate job, the way `verify`
-  # and `integration` are built — a skipped required context reports no conclusion and wedges
-  # every PR under strict_required_status_checks_policy.
+  # "DCO Sign-off", "Validate Conventional Commits format" and "Image + Sandbox Gate"). If it
+  # should ever become required it first has to be made blocking and fronted by an
+  # always-reporting gate job, the way `verify` and `integration` are built — a skipped required
+  # context reports no conclusion and wedges every PR.
   #
   # It scans one file and installs nothing, so it does not touch the node_modules cache or its
   # key; see .agents/docs/node-modules-cache.md.
@@ -1308,16 +1307,14 @@ jobs:
 
   # Required status check (#832): the always-reporting front for `image` (both matrix legs) and
   # `sandbox-e2e`. Neither can be required itself — `image` is skipped on a docs-only diff and
-  # `sandbox-e2e` on a PR that touches no sandbox path, and under this repo's ruleset
-  # (strict_required_status_checks_policy) a skipped required context reports nothing and wedges
-  # the PR. So this job is unconditional and carries the required name. Without it, a Renovate
-  # automerge waits for the other required contexts only and lands while those two are red; that is
-  # how #771 reached `main` (#810).
+  # `sandbox-e2e` on a PR that touches no sandbox path, and a skipped required context reports
+  # nothing and wedges the PR. So this job is unconditional and carries the required name.
+  # Without it, a Renovate automerge waits for the other required contexts only and lands while
+  # those two are red; that is how #771 reached `main` (#810).
   #
   # The name "Image + Sandbox Gate" is the required context, matched by the ruleset on the job name:
-  # renaming it leaves every PR unmergeable once it has been added. A maintainer adds it by hand
-  # (Settings → Rules → Rulesets → `main protect` → Require status checks → "Image + Sandbox
-  # Gate"); the first run has to exist before GitHub offers it in the picker. See
+  # it has been a required check of `main protect` since 2026-11-08 (#832), so renaming the job
+  # leaves every PR unmergeable until the ruleset is changed to the new name. See
   # .agents/docs/dependency-updates.md.
   #
   # A skip passes only when it is justified, the way the `integration` gate does it: `image` may be
@@ -1395,19 +1392,18 @@ jobs:
   #
   # NOT a required status check, and named so it cannot be confused with one — the required
   # contexts are "Lint + Unit Tests", "CE Integration Tests", "DCO Sign-off",
-  # "Validate Conventional Commits format" and, once a maintainer adds it to the ruleset (#832),
-  # "Image + Sandbox Gate". "Validate Conventional Commits format" is pr-title.yml's JOB name,
-  # not its workflow name ("PR Title") — the ruleset matches job names, so the job name is the context.
+  # "Validate Conventional Commits format" and "Image + Sandbox Gate" (#832). "Validate
+  # Conventional Commits format" is pr-title.yml's JOB name, not its workflow name ("PR Title") —
+  # the ruleset matches job names, so the job name is the context.
   # It is called out because it reads like a disposable internal step, making it the one most
   # likely to be renamed by whoever consults this comment; renaming it leaves every PR
   # permanently unmergeable.
   # That is load-bearing, not cosmetic: this job is SKIPPED on most pull requests (see the
-  # path gate in `changes`), and under this repo's ruleset — strict_required_status_checks_policy:
-  # true — a *required* context that is skipped reports no conclusion at all and leaves the PR
-  # permanently unmergeable. A new non-required context carries no such trap, because nothing
-  # in the ruleset waits for it. Do not promote this name into the required set without first
-  # making the job unconditional and fronting it with an always-reporting gate job, the way
-  # `verify` and `integration` are built.
+  # path gate in `changes`), and a *required* context that is skipped reports no conclusion at
+  # all and leaves the PR permanently unmergeable. A new non-required context carries no such
+  # trap, because nothing in the ruleset waits for it. Do not promote this name into the required
+  # set without first making the job unconditional and fronting it with an always-reporting gate
+  # job, the way `verify` and `integration` are built.
   e2e:
     name: E2E Suite (docker compose)${{ github.event_name != 'push' && ' — against last published :main, not this PR' || '' }}
     # `image` and `image_publish` are needs, not just an ordering hint: on a push to main this
