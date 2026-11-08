@@ -1541,8 +1541,11 @@ jobs:
       # point of the PR trigger — but it does NOT test the PR's own code: read a green E2E on a
       # PR as "the job works", never as "these changes pass e2e".
       #
-      # The tag shape must match docker/metadata-action's `type=sha,format=short,prefix=sha-`
-      # in `image` above, which is the 7-character short SHA.
+      # e2e only ever tests fat (#807 did not extend this job to a flavour matrix), so this must
+      # match the unsuffixed `sha-<short>` alias `image_publish` computes for fat below
+      # (`type=raw,value=sha-${{ steps.short.outputs.sha }}`, from a plain `${GITHUB_SHA::7}`
+      # bash substring) — not `image`'s own flavour-suffixed `sha-<short>-<flavour>` tag from
+      # docker/metadata-action's `type=sha,format=short,prefix=sha-`, which this never pulls.
       - name: Resolve the image to test
         id: target
         env:
@@ -1884,8 +1887,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Same tag shape as `e2e`, and it must stay in step with docker/metadata-action's
-      # `type=sha,format=short,prefix=sha-` in the `image` job.
+      # Same tag shape as `e2e` — see that job's comment on this same step for which tag this
+      # must actually stay in step with (image_publish's fat alias, not image's own tag).
       - name: Resolve the image to test
         id: target
         env:
