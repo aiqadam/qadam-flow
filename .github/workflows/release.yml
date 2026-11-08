@@ -330,10 +330,10 @@ jobs:
         run: tools/ci/publish-packed-tarballs.sh "${{ runner.temp }}/npm-packages"
 
   build:
-    name: Build ${{ matrix.platform }}
+    name: Build ${{ matrix.platform }} (${{ matrix.flavour }})
     needs: [verify, breaking-change-gate, version-tag-gate]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: read
       packages: write
@@ -343,12 +343,24 @@ jobs:
         include:
           - platform: linux/amd64
             runner: ubuntu-latest
-            cacheScope: monolith-linux-amd64
-            artifactSuffix: linux-amd64
+            cacheScope: monolith-linux-amd64-fat
+            artifactSuffix: linux-amd64-fat
+            flavour: fat
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
-            cacheScope: monolith-linux-arm64
-            artifactSuffix: linux-arm64
+            cacheScope: monolith-linux-arm64-fat
+            artifactSuffix: linux-arm64-fat
+            flavour: fat
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            cacheScope: monolith-linux-amd64-slim
+            artifactSuffix: linux-amd64-slim
+            flavour: slim
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            cacheScope: monolith-linux-arm64-slim
+            artifactSuffix: linux-arm64-slim
+            flavour: slim
     steps:
       - uses: actions/checkout@v7
 
@@ -412,6 +424,7 @@ jobs:
             TURBO_TEAM=${{ env.TURBO_TEAM }}
             COMMIT_SHA=${{ github.sha }}
             BUILD_TIMESTAMP=${{ steps.build_meta.outputs.timestamp }}
+            QADAM_FLAVOUR=${{ matrix.flavour }}
           outputs: type=image,name=ghcr.io/aiqadam/qadam-flow,push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest
@@ -429,19 +442,23 @@ jobs:
           retention-days: 1
 
   publish:
-    name: Push manifest & GitHub Release
+    name: Push ${{ matrix.flavour }} manifest & GitHub Release
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: write
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        flavour: [fat, slim]
     steps:
-      - name: Download digests
+      - name: Download ${{ matrix.flavour }} digests
         uses: actions/download-artifact@v4
         with:
           path: /tmp/digests
-          pattern: digests-*
+          pattern: digests-*-${{ matrix.flavour }}
           merge-multiple: true
 
       - uses: docker/setup-buildx-action@v3
@@ -453,14 +470,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Tag scheme (ADR-0001 "The platform version"): the exact version (`:2.0.0`, the tag without
-      # its `v`, which version-tag-gate keeps equal to the version the image reports) plus the
-      # moving `:2.0` and `:latest`, the moving ones only for a release, never a prerelease tag.
-      # Builds of `main` get `:<next>-main.<n>`, `:main` and `:sha-<short>` from ci.yml instead.
-      #
-      # Flavours (#807, ADR-0003) are not built yet. When they are, every tag here takes a
-      # `-<flavour>` suffix (`:2.0.0-fat`, `:2.0.0-slim`), and `:latest` stays an alias of the fat
-      # image.
+      - name: Compute the release coordinates
+        id: release
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          base="${version%%-*}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "major_minor=${base%.*}" >> "$GITHUB_OUTPUT"
+          if [[ "$version" == *-* ]]; then
+            echo "stable=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "stable=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Tag scheme (ADR-0001 "The platform version"): the exact version with its flavour suffix
+      # (`:2.0.0-fat`, `:2.0.0-slim`) plus the moving `:2.0`/`:latest` (fat only) and `:fat`/`:slim`,
+      # the moving ones only for a release, never a prerelease tag. The unsuffixed exact tags stay
+      # on the fat image for installs and scripts that predate flavours; `:latest` is also fat.
+      # Builds of `main` get `:<next>-main.<n>-<flavour>`, `:main-<flavour>` and `:sha-<short>-<flavour>`
+      # from ci.yml instead.
       - name: Compute image tags
         id: meta
         uses: docker/metadata-action@v5
@@ -469,9 +497,12 @@ jobs:
           flavor: |
             latest=false
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(github.ref_name, '-') }}
-            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+            type=raw,value=${{ steps.release.outputs.version }}-${{ matrix.flavour }},priority=1000
+            type=raw,value=${{ steps.release.outputs.major_minor }}-${{ matrix.flavour }},enable=${{ steps.release.outputs.stable == 'true' }}
+            type=raw,value=${{ matrix.flavour }},enable=${{ steps.release.outputs.stable == 'true' }}
+            type=raw,value=latest,enable=${{ matrix.flavour == 'fat' && steps.release.outputs.stable == 'true' }}
+            type=raw,value=${{ steps.release.outputs.version }},enable=${{ matrix.flavour == 'fat' }}
+            type=raw,value=${{ steps.release.outputs.major_minor }},enable=${{ matrix.flavour == 'fat' && steps.release.outputs.stable == 'true' }}
 
       - name: Create multi-arch manifest and push
         working-directory: /tmp/digests
@@ -483,20 +514,31 @@ jobs:
       - name: Inspect manifest
         run: |
           docker buildx imagetools inspect \
-            ghcr.io/aiqadam/qadam-flow:${{ steps.meta.outputs.version }}
+            ghcr.io/aiqadam/qadam-flow:${{ steps.release.outputs.version }}-${{ matrix.flavour }}
 
       - name: Create GitHub Release
+        if: matrix.flavour == 'fat'
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ steps.release.outputs.stable == 'false' }}
           body: |
-            Docker image: `ghcr.io/aiqadam/qadam-flow:${{ steps.meta.outputs.version }}`
+            Docker images: `ghcr.io/aiqadam/qadam-flow:${{ steps.release.outputs.version }}-fat` and
+            `ghcr.io/aiqadam/qadam-flow:${{ steps.release.outputs.version }}-slim`.
+
+            `:slim` is what the installer uses and ships the 27 core qadams; `:fat` also bundles every
+            community qadam. `:latest` remains an alias of `:fat`.
 
             Supported platforms: `linux/amd64`, `linux/arm64`.
 
             ## Install
 
             ```bash
-            docker pull ghcr.io/aiqadam/qadam-flow:${{ steps.meta.outputs.version }}
+            curl -fsSL https://flow.aiqadam.org/run.sh | sh
+            ```
+
+            Or pull an image directly:
+
+            ```bash
+            docker pull ghcr.io/aiqadam/qadam-flow:${{ steps.release.outputs.version }}-slim
             ```

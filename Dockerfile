@@ -112,10 +112,48 @@ ENV TURBO_API=$TURBO_API \
     TURBO_TOKEN=$TURBO_TOKEN \
     TURBO_TEAM=$TURBO_TEAM
 
+# Image flavour (ADR-0003, #807): `fat` seeds the store with every official qadam; `slim` seeds the
+# 27 core qadams and drops the community build from the runtime tree. Both still build every qadam,
+# because both carry the catalogue snapshot for all of them (#778); the difference is what the
+# image ships, not what the build can see.
+ARG QADAM_FLAVOUR=fat
+
+# The commit the artifacts are stamped with. CI passes it because `.git` is excluded from the build
+# context; a local build gets the all-zero sha, which the archive accepts as "unknown".
+ARG COMMIT_SHA=
+
 # Build frontend, engine, server API, worker, and all bundled qadams.
 # Qadams must be pre-compiled because the runtime loader scans `<qadam>/dist/`
 # in standalone mode (no cloud registry).
 RUN --network=host npx turbo run build --filter=web --filter=@aiqadam/engine --filter=api --filter=worker --filter='@aiqadam/qadam-*'
+
+# ADR-0003's artifacts (#804): one npm tarball per official qadam at the version this tree holds.
+# This is the image's store seed, and the input to the catalogue snapshot. `--out` must be outside
+# the repository, so it goes in /tmp and only the parts each flavour needs are copied back below.
+RUN node tools/scripts/qadams/bundle/build-qadam-artifacts.mjs \
+        --out /tmp/qadam-artifacts \
+        --all \
+        --pack \
+        --concurrency 4 \
+        --commit "${COMMIT_SHA:-0000000000000000000000000000000000000000}"
+
+# The catalogue snapshot the image carries (#778, #807): metadata for every released version of
+# every official qadam, read by the API without any network request.
+RUN node packages/server/api/dist/src/scripts/append-qadam-version-catalogue.js \
+        --archive /tmp/qadam-artifacts/archive \
+        --catalogue packages/qadams/catalog/v1
+
+# What the app seeds the version store with at start-up. Both flavours include only the tarballs
+# their store should hold, even though the catalogue above covers every qadam.
+RUN node tools/scripts/qadams/bundle/build-image-seed.mjs \
+        --archive /tmp/qadam-artifacts/archive \
+        --out packages/qadams/version-store-seed \
+        --flavour "$QADAM_FLAVOUR" \
+        --repo .
+
+# `:slim` does not ship community code. Done before the dist index and the bundled metadata manifest
+# are written, so both describe exactly what the runtime can load.
+RUN if [ "$QADAM_FLAVOUR" = slim ]; then rm -rf packages/qadams/community; fi
 
 # Index of the bundled qadams' dist folders (packages/qadams/dist-index.json). Without it every
 # fresh engine process walks the whole qadam tree before its first step can load (#419).
@@ -131,7 +169,14 @@ RUN node -e "\
 ### STAGE 2: Run ###
 FROM base AS run
 
+ARG QADAM_FLAVOUR=fat
+
 WORKDIR /usr/src/app
+
+# The catalogue snapshot built above (#778, #807). The directory source takes precedence over the
+# published URL and makes no request, so a release instance knows every version it ships with even
+# when it cannot reach flow.aiqadam.org. An operator can override it in `.env`.
+ENV AP_QADAM_VERSION_CATALOGUE_DIRECTORY=/usr/src/app/packages/qadams/catalog/v1
 
 # Copy static configuration files first (better layer caching)
 COPY --from=build /usr/src/app/packages/server/api/src/assets/default.cf /usr/local/etc/isolate
@@ -166,8 +211,8 @@ RUN --mount=type=cache,target=/root/.bun/install/cache \
 ENV NODE_TLS_REJECT_UNAUTHORIZED=
 
 # Serialized metadata of every bundled qadam (packages/qadams/bundled-qadams-metadata.json). Without
-# it the app's first catalogue read require()s all 238 qadams on its event loop, which blocked every
-# request for 30–63 s on QA after each start (#598). Written here, after the production install and
+# it the app's first catalogue read require()s every bundled qadam on its event loop, which blocked
+# every request for 30–63 s on QA after each start (#598). Written here, after the production install and
 # not in the build stage, so the app's own scan code builds it against the exact tree and
 # node_modules it would scan at run time. Nothing under packages/ (qadam dists, node_modules) may
 # change after this step, or the manifest no longer describes the image. The writer fails the build
@@ -199,6 +244,7 @@ RUN node /tmp/stamp-platform-version.mjs "$PLATFORM_VERSION" package.json \
     && rm /tmp/stamp-platform-version.mjs
 
 LABEL service=qadam-flow
+LABEL org.aiqadam.qadam-flavour=$QADAM_FLAVOUR
 
 # PID 1 has to reap orphans, and Node does not reap processes it did not spawn.
 # Measured in this image: with `exec node` as PID 1 an orphaned child is left as

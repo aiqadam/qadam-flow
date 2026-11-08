@@ -60,6 +60,11 @@ jobs:
       - name: Test run.sh env reconciliation
         run: tools/ci/test-run-sh.sh
 
+      # The image store seed (#807, ADR-0003): `:slim` must keep only the core qadams while `:fat`
+      # keeps every official qadam. Fixtures only, so it also runs before the install.
+      - name: Test the image store seed
+        run: tools/ci/test-image-seed.sh
+
       # docker-entrypoint.sh is the other pure-shell entry point with no image
       # build behind it. #51 was a supervision regression nothing would have
       # caught; this suite runs against a stub `node` in seconds.

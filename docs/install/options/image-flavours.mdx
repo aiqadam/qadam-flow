@@ -1,0 +1,74 @@
+---
+title: "Image flavours"
+description: "Choose between the slim and fat Qadam Flow images, and configure the qadam registry"
+icon: "layer-group"
+---
+
+Qadam Flow publishes two images for every release. They run the same platform; they differ in which qadams they carry.
+
+| Flavour | Tag | Qadams in the image | Use it when |
+| --- | --- | --- | --- |
+| Slim | `:<version>-slim`, `:slim` | The platform and the 27 core qadams | You can reach npm. This is what the installer uses. |
+| Fat | `:<version>-fat`, `:fat`, `:<version>`, `:latest` | The platform and every official qadam (core and community) | The host is offline or restricted to `ghcr.io`, or you want community qadams to work without fetching them. |
+
+Both images carry the [qadam version catalogue](/install/architecture/qadam-version-catalogue) snapshot for every official qadam, so either one can tell you about versions it does not ship.
+
+## Which tag to pin
+
+Images are published with an exact version and a flavour:
+
+```bash
+docker pull ghcr.io/aiqadam/qadam-flow:1.2.3-slim
+docker pull ghcr.io/aiqadam/qadam-flow:1.2.3-fat
+```
+
+The moving tags `:slim` and `:fat` follow the latest release. Builds from `main` use `:main-slim`, `:main-fat`, and `:sha-<short>-slim` / `:sha-<short>-fat` instead.
+
+For compatibility with installs and scripts written before flavours existed, the exact version without a suffix (`:1.2.3`), the minor alias (`:1.2`), and `:latest` still point at the fat image. Prefer a suffixed tag: the unsuffixed aliases are deprecated for new installs.
+
+## What the installer uses
+
+`run.sh` pulls the slim image by default. It writes the choice into `.env` as `QADAM_FLOW_IMAGE`, so a later `docker compose pull` keeps it. On an existing install the installer keeps the image already pinned in `.env`; delete that line or pass an explicit image to change it.
+
+Before pulling the slim image, the installer probes the configured qadam registry. Any HTTP response counts as reachable — a `401` or `404` still proves DNS, TCP and TLS work. If the probe fails, the install continues, but it warns that community qadams cannot be installed and suggests re-running with the fat image:
+
+```bash
+curl -fsSL https://flow.aiqadam.org/run.sh | QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:fat sh
+```
+
+The fat image needs no registry probe because its community qadams are already in the image.
+
+## Configure the qadam registry
+
+The slim image fetches official community qadams from the public npm registry on demand, with the same npm signature check every `@aiqadam/*` version gets. `AP_QADAM_REGISTRY_URL` does **not** change that: it configures where a non-`@aiqadam` (custom) qadam version is fetched from, such as a private npm-compatible registry.
+
+Pass these to the installer:
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `QADAM_REGISTRY_URL` | `https://registry.npmjs.org` | Registry for custom (non-`@aiqadam/*`) qadams. `http://` and `https://` are accepted. |
+| `QADAM_REGISTRY_TOKEN` | *(none)* | Bearer token for a private registry. Never printed. |
+
+The installer writes them to `.env` as `AP_QADAM_REGISTRY_URL` and `AP_QADAM_REGISTRY_TOKEN`, which are the names the server reads. To change the registry without re-running the installer, edit those two values in `.env` and restart the stack:
+
+```bash
+docker compose up -d
+```
+
+The installer probes this URL before pulling the slim image and warns, suggesting `:fat`, when it is unreachable. Official `@aiqadam/*` qadams, including the community ones the slim image leaves out, are always fetched from the public npm registry with a signature check, whatever `AP_QADAM_REGISTRY_URL` says. See [Environment Variables](/install/configuration/environment-variables) for the full description.
+
+<Warning>
+A registry URL on a private or loopback address must also be in `AP_SSRF_ALLOW_LIST`, like every other outbound URL. See [Network security](/install/architecture/network-security).
+</Warning>
+
+## Change flavour on an existing install
+
+Set `QADAM_FLOW_IMAGE` to the flavour you want and re-run the installer:
+
+```bash
+curl -fsSL https://flow.aiqadam.org/run.sh | \
+  QADAM_FLOW_DIR=/path/to/qadam-flow \
+  QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:fat sh
+```
+
+Switching from fat to slim does not delete a community qadam already in the version store, and switching from slim to fat seeds the fat image's versions. Neither direction rewrites your flows.

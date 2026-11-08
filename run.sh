@@ -7,7 +7,7 @@
 # What it does (no git, no source build):
 #   1. Verifies docker + docker compose are available.
 #   2. Downloads docker-compose.yml into ./qadam-flow.
-#   3. Generates a fresh .env with random secrets.
+#   3. Generates a fresh .env with random secrets, the image and the qadam registry settings.
 #   4. docker compose pull.
 #   5. Upgrades the bundled PostgreSQL's data if it was written by an older major
 #      (dump with the old image, restore into a new volume, keep the old one).
@@ -19,8 +19,12 @@
 # Environment overrides:
 #   QADAM_FLOW_DIR   — install directory (default: ./qadam-flow)
 #   QADAM_FLOW_PORT  — host port the app is published on (default: 8080)
-#   QADAM_FLOW_IMAGE — docker image (default: ghcr.io/aiqadam/qadam-flow:latest)
+#   QADAM_FLOW_IMAGE — docker image (default: ghcr.io/aiqadam/qadam-flow:slim). Use
+#                      ghcr.io/aiqadam/qadam-flow:fat to bundle community qadams in the image instead
+#                      of fetching them from the registry.
 #   QADAM_FLOW_REF   — git ref for the compose file (default: main)
+#   QADAM_REGISTRY_URL   — qadam registry for community qadams (default: https://registry.npmjs.org)
+#   QADAM_REGISTRY_TOKEN — bearer token for that registry (default: none; never printed)
 #   QADAM_FLOW_SANDBOXED — `yes` lets the worker run an isolate execution mode
 #                          (SANDBOX_PROCESS / SANDBOX_CODE_AND_PROCESS): fetches
 #                          docker-compose.sandboxed.yml and selects it via COMPOSE_FILE in .env.
@@ -53,8 +57,32 @@ die()  { err "$1"; exit 1; }
 # ---------- defaults ---------------------------------------------------------
 
 QADAM_FLOW_DIR=${QADAM_FLOW_DIR:-qadam-flow}
-QADAM_FLOW_IMAGE=${QADAM_FLOW_IMAGE:-ghcr.io/aiqadam/qadam-flow:latest}
 QADAM_FLOW_REF=${QADAM_FLOW_REF:-main}
+
+# The slim image is the default install: it carries the platform and the 27 core qadams, then fetches
+# community qadams from the registry on demand (ADR-0003, #807). `:fat` still exists for offline or
+# registry-restricted installs and remains the `:latest` alias.
+DEFAULT_IMAGE=ghcr.io/aiqadam/qadam-flow:slim
+if [ -n "${QADAM_FLOW_IMAGE:-}" ]; then
+  IMAGE_EXPLICIT=yes
+else
+  IMAGE_EXPLICIT=no
+  QADAM_FLOW_IMAGE=$DEFAULT_IMAGE
+fi
+
+DEFAULT_REGISTRY_URL=https://registry.npmjs.org
+if [ -n "${QADAM_REGISTRY_URL:-}" ]; then
+  REGISTRY_URL_EXPLICIT=yes
+else
+  REGISTRY_URL_EXPLICIT=no
+  QADAM_REGISTRY_URL=$DEFAULT_REGISTRY_URL
+fi
+if [ "${QADAM_REGISTRY_TOKEN+x}" = x ]; then
+  REGISTRY_TOKEN_EXPLICIT=yes
+else
+  REGISTRY_TOKEN_EXPLICIT=no
+  QADAM_REGISTRY_TOKEN=''
+fi
 
 DEFAULT_PORT=8080
 # Whether the operator asked for a specific port matters: an explicit override must be pushed into an
@@ -340,10 +368,12 @@ reconcile_port() {
 
 generate_env() {
   if [ -f .env ]; then
+    ENV_EXISTED=yes
     log "reusing existing .env (delete it to regenerate secrets)"
     reconcile_port
     return 0
   fi
+  ENV_EXISTED=no
   log "generating .env with fresh random secrets"
   enc_key=$(openssl rand -hex 16)
   jwt_secret=$(openssl rand -hex 32)
@@ -398,13 +428,129 @@ AP_TELEMETRY_ENABLED=false
 
 # Engine
 AP_EXECUTION_MODE=UNSANDBOXED
+
+# Qadam registry — the slim image fetches community qadams from here on demand.
+AP_QADAM_REGISTRY_URL=${QADAM_REGISTRY_URL}
 EOF
+}
+
+# ---------- image and registry (#807) ----------------------------------------
+
+# ADR-0003 makes `:slim` the installer default. An existing install keeps whatever its .env already
+# pins, so an upgrade does not silently swap a fat image for a slim one; an explicit
+# QADAM_FLOW_IMAGE overrides both and is written back to .env.
+configure_image() {
+  existing_image=$(env_value QADAM_FLOW_IMAGE)
+  if [ "$IMAGE_EXPLICIT" = yes ]; then
+    if [ "$existing_image" != "$QADAM_FLOW_IMAGE" ]; then
+      log "using image ${QADAM_FLOW_IMAGE}"
+      set_env_value QADAM_FLOW_IMAGE "$QADAM_FLOW_IMAGE"
+    fi
+    return 0
+  fi
+  if [ -n "$existing_image" ]; then
+    QADAM_FLOW_IMAGE=$existing_image
+    if [ "$ENV_EXISTED" = yes ]; then
+      log "existing install uses ${QADAM_FLOW_IMAGE} — keeping it (set QADAM_FLOW_IMAGE to change)"
+    fi
+    return 0
+  fi
+  if [ "$ENV_EXISTED" = yes ]; then
+    # Installs predating #807 have no QADAM_FLOW_IMAGE line, so compose falls back to its own default.
+    QADAM_FLOW_IMAGE='ghcr.io/aiqadam/qadam-flow:latest'
+    log "existing install has no pinned image — keeping ${QADAM_FLOW_IMAGE}"
+  fi
+}
+
+validate_registry_url() {
+  case "$QADAM_REGISTRY_URL" in
+    http://?*|https://?*) ;;
+    *) die "QADAM_REGISTRY_URL must start with http:// or https:// (got '$QADAM_REGISTRY_URL')" ;;
+  esac
+  case "$QADAM_REGISTRY_URL" in
+    *[[:space:]]*) die "QADAM_REGISTRY_URL must not contain whitespace" ;;
+  esac
+}
+
+validate_registry_token() {
+  case "$QADAM_REGISTRY_TOKEN" in
+    *[[:cntrl:]]*) die "QADAM_REGISTRY_TOKEN must be a single line without control characters" ;;
+  esac
+}
+
+# The installer's unprefixed QADAM_REGISTRY_* overrides are written to .env prefixed with AP_, which
+# is the name the server reads. Without an override whatever .env already holds wins, so a hand-edited
+# registry or token survives an upgrade.
+configure_registry() {
+  validate_registry_url
+  existing_url=$(env_value AP_QADAM_REGISTRY_URL)
+  if [ "$REGISTRY_URL_EXPLICIT" = yes ]; then
+    if [ "$existing_url" != "$QADAM_REGISTRY_URL" ]; then
+      log "using qadam registry ${QADAM_REGISTRY_URL}"
+      set_env_value AP_QADAM_REGISTRY_URL "$QADAM_REGISTRY_URL"
+    fi
+  elif [ -n "$existing_url" ]; then
+    QADAM_REGISTRY_URL=$existing_url
+  elif [ "$ENV_EXISTED" = yes ]; then
+    set_env_value AP_QADAM_REGISTRY_URL "$QADAM_REGISTRY_URL"
+  fi
+
+  if [ "$REGISTRY_TOKEN_EXPLICIT" = yes ]; then
+    validate_registry_token
+    if [ -n "$QADAM_REGISTRY_TOKEN" ]; then
+      log "using the registry token from QADAM_REGISTRY_TOKEN"
+      set_env_value AP_QADAM_REGISTRY_TOKEN "$QADAM_REGISTRY_TOKEN"
+    else
+      remove_env_value AP_QADAM_REGISTRY_TOKEN
+      log "removed AP_QADAM_REGISTRY_TOKEN from .env"
+    fi
+  else
+    QADAM_REGISTRY_TOKEN=$(env_value AP_QADAM_REGISTRY_TOKEN)
+  fi
+}
+
+image_is_slim() {
+  case "$1" in
+    *@sha256:*) return 1 ;;
+  esac
+  image_tag=${1##*:}
+  case "$image_tag" in
+    slim|*-slim) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Any HTTP response counts as reachable — a 401 or 404 still proves DNS, TCP and TLS work, which is
+# all the installer can know without the registry's qadam protocol. Only a curl failure means the
+# registry is unreachable. The token travels through curl's stdin config, so it never appears in argv
+# or in the installer's output.
+registry_reachable() {
+  probe_url="${QADAM_REGISTRY_URL%/}/-/ping"
+  if [ -n "$QADAM_REGISTRY_TOKEN" ]; then
+    escaped_token=$(printf '%s' "$QADAM_REGISTRY_TOKEN" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    printf 'header = "Authorization: Bearer %s"\n' "$escaped_token" \
+      | curl -sS -o /dev/null -m 5 -K - "$probe_url" >/dev/null 2>&1
+  else
+    curl -sS -o /dev/null -m 5 "$probe_url" >/dev/null 2>&1
+  fi
+}
+
+check_qadam_registry() {
+  image_is_slim "$QADAM_FLOW_IMAGE" || return 0
+  log "checking the qadam registry at ${QADAM_REGISTRY_URL}"
+  if registry_reachable; then
+    log "qadam registry is reachable"
+    return 0
+  fi
+  warn "cannot reach the qadam registry at ${QADAM_REGISTRY_URL} — qadams that must be fetched will not be installable"
+  warn "if this machine cannot reach that registry (or npm, for official qadams), use the fat image, which bundles every community qadam:"
+  warn "  curl -fsSL https://flow.aiqadam.org/run.sh | QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:fat sh"
 }
 
 # ---------- run --------------------------------------------------------------
 
 pull_images() {
-  log "pulling ${QADAM_FLOW_IMAGE} (≈400 MB, one-time)"
+  log "pulling ${QADAM_FLOW_IMAGE} (one-time)"
   compose pull
 }
 
@@ -828,6 +974,12 @@ main() {
   log "platform: $PLATFORM"
   check_prereqs
   validate_port
+  # Validate installer overrides before generate_env writes them into a fresh .env. The values an
+  # existing .env supplies are validated again in configure_registry.
+  validate_registry_url
+  if [ "$REGISTRY_TOKEN_EXPLICIT" = yes ]; then
+    validate_registry_token
+  fi
   prepare_dir
   fetch_compose
   generate_env
@@ -838,6 +990,9 @@ main() {
   # After generate_env has produced .env, and before pull_images/up so every compose command in this
   # run already selects the override.
   configure_sandboxed_compose
+  configure_image
+  configure_registry
+  check_qadam_registry
   pull_images
   # Between the pull and the start: it needs the new postgres image, and PostgreSQL 18 must not be
   # started before its data has been restored.

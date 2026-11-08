@@ -36,7 +36,7 @@ When it finishes, open [http://localhost:8080/sign-up](http://localhost:8080/sig
     `AP_ENCRYPTION_KEY`, `AP_JWT_SECRET` and the PostgreSQL password are generated with `openssl rand`. Delete `.env` and re-run to rotate them.
   </Step>
   <Step title="Pulls the image and starts the stack">
-    Runs `docker compose pull` followed by `docker compose up -d`, using `ghcr.io/aiqadam/qadam-flow:latest` (roughly 400 MB on first pull).
+    Runs `docker compose pull` followed by `docker compose up -d`, using `ghcr.io/aiqadam/qadam-flow:slim` by default. The slim image carries the 27 core qadams and fetches community qadams from npm on demand; use `:fat` to bundle every official qadam instead. See [Image flavours](./image-flavours).
 
     On an install whose PostgreSQL data was written by PostgreSQL 14, it first copies that data to PostgreSQL 18 with a dump and restore, and keeps the old volume and the dump. See [Upgrade PostgreSQL 14 to 18](/install/guides/upgrade-postgres).
   </Step>
@@ -52,12 +52,16 @@ Set these before piping to `sh`, for example `QADAM_FLOW_DIR=/opt/qadam-flow`:
 | Variable           | Default                             | Effect                                                             |
 | ------------------ | ----------------------------------- | ------------------------------------------------------------------ |
 | `QADAM_FLOW_DIR`   | `qadam-flow`                        | Install directory the compose file and `.env` are written to.       |
-| `QADAM_FLOW_IMAGE` | `ghcr.io/aiqadam/qadam-flow:latest` | Image used by the app and worker services.                         |
+| `QADAM_FLOW_IMAGE` | `ghcr.io/aiqadam/qadam-flow:slim`   | Image used by the app and worker services. `:fat` bundles every official qadam. |
 | `QADAM_FLOW_REF`   | `main`                              | Git ref the `docker-compose.yml` is downloaded from.                |
+| `QADAM_REGISTRY_URL` | `https://registry.npmjs.org`      | Registry for custom (non-`@aiqadam/*`) qadams.                      |
+| `QADAM_REGISTRY_TOKEN` | *(none)*                         | Bearer token for a private registry. Never printed.                 |
 | `QADAM_FLOW_PORT`  | `8080`                              | Host port the app is published on, and the port used for `AP_FRONTEND_URL` and the health check. |
 | `QADAM_FLOW_SANDBOXED` | unset (tri-state)               | `yes` runs an isolate execution mode: fetches `docker-compose.sandboxed.yml` and selects it via `COMPOSE_FILE`. `no` removes that selection; unset leaves the install as it is. |
 
 <Note>
+`QADAM_FLOW_IMAGE`, `QADAM_REGISTRY_URL` and `QADAM_REGISTRY_TOKEN` are also written into the generated `.env` (the registry values with their `AP_` prefix). Re-running the installer against an existing install keeps the image and registry already recorded there unless you pass an override.
+
 `QADAM_FLOW_PORT` is written into the generated `.env`, and `docker-compose.yml` interpolates it into the app's port mapping (`${QADAM_FLOW_PORT:-8080}:80`). Re-running the installer against an existing install adopts the port already recorded in that `.env` unless you set `QADAM_FLOW_PORT` again, in which case the `.env` is updated in place.
 </Note>
 

@@ -4,22 +4,24 @@
 ADR-0003's catalogue (#778): static JSON describing **every released version of every official
 qadam**, each with the integrity of the artifact that was released and the version's own
 `metadata.json` from #804. It gives an instance metadata for versions its image does not ship, which
-#806 (fetch, merged — PR #969), #807 (`:slim` carries a snapshot) and #808 (the unavailable-version
-fallback's props check, merged — PR #882) read already. Published as static files on GitHub Pages
+#806 (fetch, merged — PR #969), #807 (both image flavours carry a snapshot) and #808 (the
+unavailable-version fallback's props check, merged — PR #882) read already. Published as static files on GitHub Pages
 under `https://flow.aiqadam.org/catalog/v1/`,
 appended to by releases, never rewritten. Where the API reads it is configurable, for mirroring
 (`AP_QADAM_VERSION_CATALOGUE_URL`) and for a local copy (`AP_QADAM_VERSION_CATALOGUE_DIRECTORY`, which
-wins over the URL — the knob a `:slim` snapshot in #807 will use).
+wins over the URL — the knob the image snapshot from #807 uses).
 
-**Format and reader done; hosting not done.** The format, the release-time writer and the API
+**Format, reader, release writer and image snapshot done; public hosting not done.** The format, the release-time writer and the API
 reader exist, with tests (#830). Two consumers now call the reader at run time: flow export's
 `snapshotExportSources` (ADR-0004, #853/#880 — a release's `metadata.json` for a pin export may
 rewrite to) and #808's pin-fallback seam (`qadamPinFallbackSeams`, first slice in #882 — the
 props-compatibility check a caret-range pin move needs). Both read through the same configured
 source (the published URL by default) and treat an unreadable catalogue as *unknown*, never as a reason to act — the fail-closed
 design ADR-0003 asks for. What is still missing is the other half: **no release workflow calls the
-writer, and nothing is published at the default URL**, so on a real instance both consumers read a
-404 today and every release-era pin is "unknown" (stays put). See
+writer and nothing is published at the default URL**, so a server without the image snapshot reads a
+404 and every release-era pin is "unknown" (stays put). Both image flavours now set
+`AP_QADAM_VERSION_CATALOGUE_DIRECTORY` to their baked `catalog/v1/`, so a Docker install reads the
+snapshot locally instead of the URL. See
 [`docs/research/778-qadam-version-catalogue-status.md`](../../docs/research/778-qadam-version-catalogue-status.md)
 for the full picture of what else is, and is not, safe to build before that lands.
 
@@ -130,8 +132,9 @@ npm signature check is mandatory for them (ADR-0003 "Fetching").
   `append` into `catalog/v1/` → `verify` → commit and push. Two concurrent releases are serialised by
   the push (a rejected push re-checks-out and re-runs; the writer is idempotent). Pages caches for
   10 minutes, so a new version is visible within that.
-- **`:slim` snapshot (#807).** The image copies a `catalog/v1/` tree in and the API reads it with the
-  `directory` source.
+- **Image snapshot (#807).** Both flavours append the whole official catalogue into `catalog/v1/`
+  during the build (before slim prunes community code) and set
+  `AP_QADAM_VERSION_CATALOGUE_DIRECTORY` to it; the API reads it with the `directory` source.
 - **Mirroring.** Copy the whole tree; any static server works. The API reads the published URL by
   default; `AP_QADAM_VERSION_CATALOGUE_URL` points it at a mirror and
   `AP_QADAM_VERSION_CATALOGUE_DIRECTORY` at a local copy (which takes precedence and makes no

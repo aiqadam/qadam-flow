@@ -7,14 +7,14 @@ icon: "book-open"
 The qadam version catalogue is a set of static JSON files that describe every released version of every official qadam: the integrity of the artifact that was released, and that version's metadata (its actions, triggers and props). [ADR-0003](https://github.com/aiqadam/qadam-flow/blob/main/adr/0003-official-qadams-run-from-a-versioned-local-store.md) uses it so that your server knows about qadam versions its image does not ship. For example, it can show and validate a flow step pinned to an older version, or decide whether a pinned version that cannot be fetched may move to a compatible one.
 
 <Warning>
-Nothing is published at the default address yet, so on a real instance the catalogue reads as unavailable and every release-era pin is treated as unknown rather than moved. Flow export and the unavailable-version fallback already read the catalogue (fail closed); fetching missing versions ([#806](https://github.com/aiqadam/qadam-flow/issues/806)) and the slim image ([#807](https://github.com/aiqadam/qadam-flow/issues/807)) are still to come. This page describes the format, where it will be published, and how to point the server at a mirror.
+The published catalogue at the default address may still be unavailable on an instance that cannot reach `flow.aiqadam.org` or has no local snapshot. Both image flavours carry a snapshot taken at build time ([#807](https://github.com/aiqadam/qadam-flow/issues/807)), so a normal Docker install reads it locally and never falls back to the network unless you unset `AP_QADAM_VERSION_CATALOGUE_DIRECTORY`. A server without either source treats every release-era pin as unknown rather than moving it. This page describes the format, where it is published, and how to point the server at a mirror.
 </Warning>
 
 ## Where it is published
 
 The catalogue is published on GitHub Pages at `https://flow.aiqadam.org/catalog/v1/`. Every release appends the versions it releases, and nothing is ever removed or changed. A version is never republished, so an entry stays valid for good.
 
-The slim image will carry a snapshot of the catalogue taken when the image was built. A server that cannot reach the published catalogue still knows every version up to its own release.
+Both the slim and fat images carry a snapshot of the catalogue taken when the image was built, covering every official qadam. A server that cannot reach the published catalogue still knows every version up to its own release.
 
 ## What it contains
 

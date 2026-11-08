@@ -24,6 +24,8 @@
 //                        `--pack` wrote (`archive-index.json` and the tarballs). Needed only when the
 //                        plan takes a qadam from the archive, and then `--pack` is too.
 //   --config <file>      per-qadam exceptions (default: qadam-artifact-config.json beside this)
+//   --commit <sha>       record this 40-character commit in `archive-index.json` instead of reading
+//                        it from `.git`; the image build has no `.git` in its context (#807)
 //
 // `--out` must not sit inside the repository: the load check resolves `@aiqadam/*` and `zod`
 // upward from each artifact, and a workspace `node_modules` above it would answer instead of the
@@ -54,10 +56,15 @@ const main = async () => {
             config: { type: 'string', default: DEFAULT_CONFIG_PATH },
             'snapshot-plan': { type: 'string' },
             'release-archive': { type: 'string' },
+            commit: { type: 'string' },
         },
     })
     if (!values.out || (!values.all && !values.qadams)) {
-        console.error('usage: build-qadam-artifacts.mjs --out <dir> (--all | --qadams <a,b>) [--concurrency n] [--no-load-check] [--pack] [--allow-failures] [--config file] [--snapshot-plan file [--release-archive dir]]')
+        console.error('usage: build-qadam-artifacts.mjs --out <dir> (--all | --qadams <a,b>) [--concurrency n] [--no-load-check] [--pack] [--allow-failures] [--config file] [--snapshot-plan file [--release-archive dir]] [--commit sha]')
+        process.exit(2)
+    }
+    if (values.commit !== undefined && !/^[0-9a-f]{40}$/.test(values.commit)) {
+        console.error(`--commit must be a 40-character lowercase hex commit sha (got '${values.commit}')`)
         process.exit(2)
     }
     const outRoot = resolve(values.out)
@@ -107,7 +114,7 @@ const main = async () => {
             return result
         },
     })
-    const commit = gitCommit()
+    const commit = gitCommit(values.commit)
     const report = {
         generatedAt: new Date().toISOString(),
         commit,
@@ -276,7 +283,10 @@ const printSummary = ({ report, outRoot }) => {
 
 const countBy = ({ values }) => values.reduce((counts, value) => ({ ...counts, [value]: (counts[value] ?? 0) + 1 }), {})
 
-const gitCommit = () => {
+const gitCommit = (shaOverride) => {
+    if (shaOverride !== undefined) {
+        return { sha: shaOverride, dirtyQadams: false }
+    }
     const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: REPO_ROOT, encoding: 'utf8' }).trim()
     const dirty = execFileSync('git', ['status', '--porcelain', '--', 'packages/qadams'], { cwd: REPO_ROOT, encoding: 'utf8' }).trim() !== ''
     return { sha, dirtyQadams: dirty }
