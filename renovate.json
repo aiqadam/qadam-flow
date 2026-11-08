@@ -70,7 +70,7 @@
     },
     {
       "description": "Families that must move together.",
-      "matchPackageNames": ["@ai-sdk/*", "ai", "ai-gateway-provider"],
+      "matchPackageNames": ["@ai-sdk/*", "ai", "ai-gateway-provider", "@openrouter/ai-sdk-provider"],
       "matchUpdateTypes": ["minor", "patch"],
       "groupName": "ai-sdk"
     },
@@ -111,9 +111,9 @@
       "automerge": false
     },
     {
-      "description": "The one exception to the qadam disable at the top (#1027). @aiqadam/qadam-ai compiles against the same AI SDK copy as the platform, so its ai / @ai-sdk/* / ai-gateway-provider pins must move in the ai-sdk group PR, or bun.lock carries two @ai-sdk/provider copies and its build fails with TS2322 (#815, #896, #997, #1025). A later rule wins, so this must stay below the qadam disable (it re-enables) and below the patch-automerge rule (it switches automerge off). automerge is off because a group automerges only when every upgrade in it does: the whole ai-sdk PR waits for a human to confirm the qadam-ai changeset level that renovate-changeset.yml writes.",
+      "description": "The one exception to the qadam disable at the top (#1027). @aiqadam/qadam-ai compiles against the same AI SDK copy as the platform, so its ai / @ai-sdk/* / ai-gateway-provider / @openrouter/ai-sdk-provider pins must move with the platform's, or bun.lock carries two @ai-sdk/provider copies and its build fails with TS2322 (#997, #1025). Minor and patch ride in the ai-sdk group; majors are included too and open per package like every major, so the qadam never stays on the old major. A later rule wins, so this must stay below the qadam disable (it re-enables) and below the patch-automerge rule (it switches automerge off). automerge is off because a group automerges only when every upgrade in it does: an ai-sdk PR that moves qadam-ai waits for a human to confirm the qadam-ai changeset level that renovate-changeset.yml writes (patch by default; a major usually needs more).",
       "matchFileNames": ["packages/qadams/community/ai/package.json"],
-      "matchPackageNames": ["@ai-sdk/*", "ai", "ai-gateway-provider"],
+      "matchPackageNames": ["@ai-sdk/*", "ai", "ai-gateway-provider", "@openrouter/ai-sdk-provider"],
       "enabled": true,
       "automerge": false
     },

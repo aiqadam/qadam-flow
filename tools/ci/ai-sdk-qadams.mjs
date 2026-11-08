@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 //
 // Prints one `--filter=<name>` per qadam that depends on the Vercel AI SDK (`ai`, `@ai-sdk/*`,
-// `ai-gateway-provider`), for `turbo run build` in the "Lint + unit test suite" job (#1027).
+// `ai-gateway-provider`, `@openrouter/ai-sdk-provider`), for `turbo run build` in the
+// "Lint + unit test suite" job (#1027).
 //
 // Why a build and not the typecheck: qadams declare no `typecheck` script, and `turbo run test`
 // builds only a package's dependencies (`^build`), so nothing on the required path ran `tsc` on
 // `@aiqadam/qadam-ai`. When its AI SDK pins lag the platform's, `bun.lock` carries two
-// `@ai-sdk/provider` copies that are not assignable to each other, and the TS2322 surfaced only
-// in the Docker image build — after automerge had already landed it on `main` (#815, #896, #997,
-// #1025). Building these qadams on every PR puts that failure on a required check.
+// `@ai-sdk/provider` copies that are not assignable to each other. #815, #871, #896 and #911 were
+// caught by hand on the Renovate branch; #972 (→ #997) and #1025 were not, and the TS2322
+// surfaced only in the Docker image build, after automerge had landed it on `main`. Building these
+// qadams on every PR puts that failure on a required check.
 //
 // The list is computed rather than hard-coded so a second qadam that starts depending on the SDK
 // is covered the day it does. An empty list is an error: a step that builds nothing passes, and
@@ -20,6 +22,8 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
+
+const AI_SDK_PACKAGES = new Set(['ai', 'ai-gateway-provider', '@openrouter/ai-sdk-provider'])
 
 const rootFlag = process.argv.indexOf('--root')
 const repoRoot = rootFlag === -1 ? process.cwd() : path.resolve(process.argv[rootFlag + 1])
@@ -51,5 +55,5 @@ function listManifests({ dir }) {
 
 function dependsOnAiSdk({ manifest }) {
   const deps = { ...manifest.dependencies, ...manifest.devDependencies, ...manifest.peerDependencies }
-  return Object.keys(deps).some((dep) => dep === 'ai' || dep === 'ai-gateway-provider' || dep.startsWith('@ai-sdk/'))
+  return Object.keys(deps).some((dep) => AI_SDK_PACKAGES.has(dep) || dep.startsWith('@ai-sdk/'))
 }
