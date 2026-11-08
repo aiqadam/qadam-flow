@@ -38,7 +38,8 @@ The deciding constraint is the text `bun.lock` (Bun ≥ 1.2) in a bun-workspaces
 | Requirement | Where |
 | --- | --- |
 | Security PRs open immediately | `vulnerabilityAlerts` + `osvVulnerabilityAlerts` (vulnerability PRs ignore `schedule`) |
-| Patch automerge once CI is green | `matchUpdateTypes: ["patch","pin","digest"]` → `automerge`, `platformAutomerge` |
+| Patch automerge once CI is green | `matchUpdateTypes: ["patch","pin","digest"]` → `automerge`, `platformAutomerge` (green = the required contexts, including `Image + Sandbox Gate`, see below) |
+| `isolated-vm` never automerges, and its Dockerfile pins move with the manifests | last `packageRules` entry (`automerge: false`, `platformAutomerge: false`, `groupName: "isolated-vm"`) + the `customManagers` regex entry (#810, #832) |
 | Minor batched weekly | `matchUpdateTypes: ["minor"]` → `groupName: "minor-updates"`, Monday schedule |
 | Major individually, labelled `tech-debt` | `matchUpdateTypes: ["major"]` → `addLabels: ["tech-debt"]`, no group |
 | `@types/node` stays on the runtime major | `matchPackageNames: ["@types/node"]` → `allowedVersions: "<25"` (see below) |
@@ -60,10 +61,45 @@ family from being split across PRs.
 `@types/node` is capped at the Node runtime major — `.nvmrc`, the `Dockerfile` base image and
 every workflow's `node-version` (24 today). Types ahead of the runtime let the typecheck pass
 calls that throw in production, and newer majors also raise the TypeScript floor (#906:
-`@types/node@26` needs TS 5.6 against the repo's 5.5.4). Move the cap in the PR that moves the
-runtime, not on its own. Inside the cap, every release from 24.13.3 on also declares
-`typeScriptVersion` 5.6, so a 24.x bump past 24.13.2 has to land together with the TypeScript
-bump (#627) — `minor-updates` groups both today.
+`@types/node@26` needs TS 5.6). Move the cap in the PR that moves the runtime, not on its own.
+Inside the cap, every release from 24.13.3 on also declares `typeScriptVersion` 5.6, which the
+TypeScript 5.9 bump (#627) satisfies. `@aiqadam/shared` and `qadam-assemblyai` still declare
+24.11.0: they are versioned packages, and a `devDependencies` change there forces a changeset
+(CI gate 1), so they catch up at their next release or with the Renovate PR that touches them.
+
+The `isolated-vm` entry must stay **last** in `packageRules`. Renovate applies every matching rule
+in order and the later one wins, so a rule appended after it that sets `automerge: true` (or
+that matches `isolated-vm` through a broader pattern) would silently re-enable unattended merges
+of the sandbox boundary. Add new rules above it.
+
+## Automerge and the Docker image / sandbox jobs (#832)
+
+`platformAutomerge` hands the merge to GitHub, which waits for the **required** status contexts
+only. `Docker Image` and `Sandbox e2e (privileged)` are not required and cannot be: both are
+skipped on some diffs (`image` on a docs-only diff, `sandbox-e2e` on a pull request that touches no
+sandbox path), and a skipped required context reports no conclusion, which wedges the PR under the
+ruleset's `strict_required_status_checks_policy`. #771 reached `main` that way with both red (#810).
+
+`ci.yml` therefore has an always-reporting gate job, `image-sandbox-gate`, whose **job name is the
+required context: `Image + Sandbox Gate`** (same pattern as `verify` -> `Lint + Unit Tests` and
+`integration` -> `CE Integration Tests`). It waits for `image` (both architectures) and
+`sandbox-e2e`, and fails when either failed or was cancelled. A skip passes only when it is
+justified: `image` skipped on a docs-only diff, `sandbox-e2e` skipped on a pull request whose
+`sandbox_relevant` classifier output is not `true`. Any other skip fails, because an unexplained
+skip is how #831 silently stopped every image build on `main`. Consequences worth knowing:
+
+- A pull request whose `Lint + Unit Tests` is red also shows this gate red, because `image` is
+  skipped behind `verify`. It is already unmergeable; the second red context is expected.
+- The gate finishes only once the image build and (when relevant) the sandbox e2e have finished,
+  so a Renovate patch PR now waits for the Docker build before it can automerge.
+- It does not cover `Publish multi-arch manifest`, `E2E Suite` or `E2E execution mode`: those run
+  against the published `:main` on PRs and only gate what happens after a merge. A red `image`
+  already skips them on `main`.
+
+**Merger action (the workflow cannot do it):** after the first CI run containing this job has
+reported, add `Image + Sandbox Gate` to the required status checks of the `main protect` ruleset
+(Settings -> Rules -> Rulesets -> `main protect` -> Require status checks to pass). Until then the
+job reports but nothing waits for it. Do not rename the job once it is required.
 
 ## The 238 qadams are excluded
 
@@ -94,7 +130,9 @@ in `.github/workflows/ci.yml`. It scans the text `bun.lock` directly with
 conversion is needed.
 
 - **Advisory by construction.** The job sets `continue-on-error: true` and is deliberately
-  not one of the four contexts the `main protect` ruleset requires. A scanner finding — or
+  not one of the contexts the `main protect` ruleset requires (`Lint + Unit Tests`,
+  `CE Integration Tests`, `DCO Sign-off`, `Validate Conventional Commits format`, plus
+  `Image + Sandbox Gate` once a maintainer adds it, #832). A scanner finding — or
   the OSV.dev API being unreachable — is a backlog signal, not a merge blocker. Promoting it
   to blocking is a separate decision: it would need the job made unconditional and fronted by
   an always-reporting gate job, the way `verify` and `integration` are built, because a
@@ -118,6 +156,7 @@ conversion is needed.
 1. Install the Mend Renovate app (<https://github.com/apps/renovate>) on
    `aiqadam/qadam-flow`; the config does nothing until the app runs.
 2. Enable "Allow auto-merge" in repository settings, so `platformAutomerge` can act.
-3. Confirm the `DCO Sign-off` job passes on the first Renovate PR. If the app ignores
+3. Add `Image + Sandbox Gate` to the `main protect` required status checks (#832; see above).
+4. Confirm the `DCO Sign-off` job passes on the first Renovate PR. If the app ignores
    `:gitSignOff` (it should not), the fallback is to exempt the bot in the DCO job, which
    is a workflow change and should be a deliberate, separate decision.

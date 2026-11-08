@@ -18,6 +18,19 @@ import { CodeSandbox } from '../../core/code/code-sandbox-common'
 //     saying so with `terminal` even when nothing is in flight, so the parent never
 //     dispatches to a process that has already started dying.
 //
+// A step's own outcome is sealed at a structural point, not after a stretch of time: the
+// first `setImmediate` turn after `code()` settles (#602). Up to that turn an async error
+// still fails the step — a rejection nobody handles, a throw from a `process.nextTick` or
+// `setImmediate` callback the step queued — because those run before the check phase on
+// every machine, whatever its load. After it, the runner is only deciding whether it can
+// be reused: a late error then ends the runner (`terminal`) and is dropped, and the step
+// keeps the outcome `code()` gave it. A timer's due time is never part of that rule, so
+// the outcome cannot depend on how long the scheduler stalled (before #602 a 25 ms timer
+// failed its own step once the process lost ~22 ms, and passed it otherwise).
+// Residual, and not new: a timer already due in the same loop turn as the step's own last
+// `await` can run before the check phase; that races the step's own scheduling exactly as
+// it did when every step had a process of its own.
+//
 // The leftover detection is **best-effort, not an enforced invariant**, and its gap is
 // specific. `PIPEWRAP`, `WRITEWRAP` and `SHUTDOWNWRAP` are excluded because the runner's
 // own stdout/stderr plumbing surfaces as all three the moment a write cannot complete
@@ -122,6 +135,10 @@ process.stderr.write = (chunk, ...args) => {
 
 process.on('disconnect', () => process.exit(0))
 
+// Set once the post-code() yield is over; from then on the step's outcome is fixed and a
+// late async error can only retire the runner, never replace that outcome.
+let sealedOutcome = null
+
 const liveResources = new Set()
 asyncHooks.createHook({
     init(asyncId, type) {
@@ -132,9 +149,22 @@ asyncHooks.createHook({
     destroy(asyncId) { liveResources.delete(asyncId) },
 }).enable()
 
+// Read live, not snapshotted when the outcome was built: the yield and settle turns can
+// themselves run more of a failing step's own queued callbacks, and anything they write
+// still belongs to this verdict.
+function withCapturedOutput(outcome) {
+    return outcome.success ? outcome : Object.assign({}, outcome, { stdout: tailCapped(stdoutBuf), stderr: tailCapped(stderrBuf) })
+}
+
 function failInFlight(error) {
     const id = inFlightId
+    const sealed = sealedOutcome
     inFlightId = null
+    sealedOutcome = null
+    if (sealed !== null && sealed.id === id) {
+        process.send(Object.assign({ terminal: true }, withCapturedOutput(sealed)), () => process.exit(1))
+        return
+    }
     process.send({ id: id === null ? -1 : id, success: false, error, stdout: tailCapped(stdoutBuf), stderr: tailCapped(stderrBuf), terminal: true }, () => process.exit(1))
 }
 
@@ -150,6 +180,7 @@ function leftBehind({ baseline, ownYields }) {
 
 process.on('message', async function(msg) {
     inFlightId = msg.id
+    sealedOutcome = null
     stdoutBuf = ''
     stderrBuf = ''
     const baseline = new Set(liveResources)
@@ -170,7 +201,9 @@ process.on('message', async function(msg) {
     // Yield so unhandledRejection fires before we report success.
     const ownYields = new Set()
     await new Promise(resolve => setImmediate(() => { ownYields.add(asyncHooks.executionAsyncId()); resolve() }))
+    if (inFlightId === msg.id) sealedOutcome = outcome
 
+    // From here an async error can no longer change the step's outcome (see the comment above the script).
     // Extra turns are spent only once something already looks left over: libuv destroys a
     // handle the step closed properly in its close phase, which can land one or more turns
     // after the first check and would otherwise cost a needless respawn. One turn cleared
@@ -184,20 +217,14 @@ process.on('message', async function(msg) {
 
     if (inFlightId !== msg.id) return
     inFlightId = null
+    sealedOutcome = null
 
-    // Read live, not snapshotted in the catch above: the yield and settle turns just spent
-    // can themselves run more of the failing step's own queued callbacks, and anything they
-    // write still belongs to this verdict.
-    if (!outcome.success) {
-        outcome.stdout = tailCapped(stdoutBuf)
-        outcome.stderr = tailCapped(stderrBuf)
-    }
-
+    const verdict = withCapturedOutput(outcome)
     if (leftover) {
-        process.send(Object.assign({ terminal: true }, outcome), () => process.exit(0))
+        process.send(Object.assign({ terminal: true }, verdict), () => process.exit(0))
         return
     }
-    process.send(outcome)
+    process.send(verdict)
 })
 `
 
