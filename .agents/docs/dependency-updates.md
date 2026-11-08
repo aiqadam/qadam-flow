@@ -136,12 +136,12 @@ rule stays narrow: no other qadam, and no other dependency of this qadam, is ena
   which stays last.
 - Renovate automerges a group only when every upgrade in it is automerge
   (`config.automerge = config.upgrades.every(...)` in `lib/workers/repository/updates/generate.ts`),
-  so an `ai-sdk` PR that moves the qadam waits for a human. A batch that moves only packages the
-  qadam does not pin (`@ai-sdk/provider`, `@ai-sdk/google-vertex`, `@ai-sdk/replicate` in the
-  server packages) still automerges; that case is what the required build below is for. That is deliberate: the policy above exists so a
-  published qadam's dependency never changes unattended, and the reviewer answers the versioning
-  behaviour question for the changeset the workflow wrote (`patch` by default; raise it if an
-  existing step would notice the change).
+  so an `ai-sdk` PR that moves the qadam waits for a human. That is deliberate: the policy above
+  exists so a published qadam's dependency never changes unattended, and the reviewer answers the
+  versioning behaviour question for the changeset the workflow wrote (`patch` by default; raise it
+  if an existing step would notice the change). A batch that moves only packages the qadam does
+  not pin (`@ai-sdk/provider`, `@ai-sdk/google-vertex`, `@ai-sdk/replicate` in the server packages)
+  still automerges; that case is what the required build below is for.
 
 The backstop is a required build, not this rule. `Lint + Unit Tests` builds every qadam that
 depends on any of those packages (`tools/ci/ai-sdk-qadams.mjs`, tested by

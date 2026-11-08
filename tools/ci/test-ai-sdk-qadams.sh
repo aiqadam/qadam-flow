@@ -61,8 +61,9 @@ new_root
 write_manifest community/b '{"name":"@aiqadam/qadam-b","devDependencies":{"@ai-sdk/openai":"4.0.109"}}'
 write_manifest community/a '{"name":"@aiqadam/qadam-a","dependencies":{"@openrouter/ai-sdk-provider":"3.1.0"}}'
 write_manifest community/c '{"name":"@aiqadam/qadam-c","peerDependencies":{"ai-gateway-provider":"4.0.2"}}'
-write_manifest community/c/node_modules/x '{"name":"x","dependencies":{"ai":"7.0.163"}}'
-expect 'every SDK package and section counts, node_modules is skipped, output is sorted' 0 '--filter=@aiqadam/qadam-a --filter=@aiqadam/qadam-b --filter=@aiqadam/qadam-c'
+write_manifest node_modules/x '{"name":"x","dependencies":{"ai":"7.0.163"}}'
+write_manifest community/dist/y '{"name":"y","dependencies":{"ai":"7.0.163"}}'
+expect 'every SDK package and section counts, node_modules and dist are skipped, output is sorted' 0 '--filter=@aiqadam/qadam-a --filter=@aiqadam/qadam-b --filter=@aiqadam/qadam-c'
 
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
