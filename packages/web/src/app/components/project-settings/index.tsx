@@ -1,6 +1,6 @@
 import { isNil, Permission, ProjectType } from '@aiqadam/shared';
 import { t } from 'i18next';
-import { GitBranch, Puzzle, Settings, Users } from 'lucide-react';
+import { Puzzle, Settings, Users } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
@@ -21,13 +21,12 @@ import { cn } from '@/lib/utils';
 
 import { ProjectAvatar } from '../project-avatar';
 
-import { EnvironmentSettings } from './environment';
 import { GeneralSettings, FormValues } from './general';
 import { McpServerSettings } from './mcp-server';
 import { projectSettingsUtils } from './project-settings-utils';
 import { PiecesSettings } from './qadams';
 
-type TabId = 'general' | 'team' | 'pieces' | 'environment' | 'mcp';
+type TabId = 'general' | 'team' | 'pieces' | 'mcp';
 
 interface ProjectSettingsDialogProps {
   open: boolean;
@@ -124,12 +123,6 @@ export function ProjectSettingsDialog({
       icon: <Puzzle className="w-4 h-4" />,
       disabled: false,
     },
-    {
-      id: 'environment' as TabId,
-      label: t('Environment'),
-      icon: <GitBranch className="w-4 h-4" />,
-      disabled: !checkAccess(Permission.READ_PROJECT_RELEASE),
-    },
   ].filter((tab) => !tab.disabled);
 
   const renderTabContent = () => {
@@ -140,8 +133,6 @@ export function ProjectSettingsDialog({
         return <ProjectMembersTab projectId={project.id} />;
       case 'pieces':
         return <PiecesSettings />;
-      case 'environment':
-        return <EnvironmentSettings />;
       case 'mcp':
         return <McpServerSettings />;
       default:

@@ -3,7 +3,6 @@ import { t } from 'i18next';
 import { useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 
-import { BoxIcon } from '@/components/icons/box';
 import { ConnectIcon } from '@/components/icons/connect';
 import { HistoryIcon } from '@/components/icons/history';
 import { LanguagesIcon } from '@/components/icons/languages';
@@ -12,7 +11,6 @@ import { WorkflowIcon } from '@/components/icons/workflow';
 import { useEmbedding } from '@/components/providers/embed-provider';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { projectCollectionUtils } from '@/features/projects';
 import { useAuthorization } from '@/hooks/authorization-hooks';
 import { authenticationSession } from '@/lib/authentication-session';
 
@@ -64,7 +62,6 @@ const AnimatedTab = ({
 };
 
 export const ProjectDashboardLayoutHeader = () => {
-  const { project } = projectCollectionUtils.useCurrentProject();
   const { checkAccess } = useAuthorization();
   const { embedState } = useEmbedding();
   const location = useLocation();
@@ -109,16 +106,6 @@ export const ProjectDashboardLayoutHeader = () => {
       icon: LanguagesIcon,
       hasPermission: checkAccess(Permission.READ_TRANSLATION),
       show: true,
-    },
-    {
-      to: authenticationSession.appendProjectRoutePrefix('/releases'),
-      icon: BoxIcon,
-      label: t('Releases'),
-      hasPermission:
-        project.releasesEnabled &&
-        checkAccess(Permission.READ_PROJECT_RELEASE) &&
-        !isEmbedded,
-      show: project.releasesEnabled,
     },
   ];
 

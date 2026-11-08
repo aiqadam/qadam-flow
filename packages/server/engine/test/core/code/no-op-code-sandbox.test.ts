@@ -1,6 +1,8 @@
+import { ChildProcess, spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { availableParallelism, tmpdir } from 'node:os'
 import path from 'node:path'
+import { onTestFinished } from 'vitest'
 import { noOpCodeSandbox } from '../../../src/lib/core/code/no-op-code-sandbox'
 
 const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'no-op-code-sandbox-'))
@@ -64,6 +66,56 @@ const strayUnrefThrowLater = writeFixture({
     source: `module.exports = { code: async () => { const t = setInterval(() => { if (${LATER_STEP_STARTED}) throw new Error("UNREF STRAY FROM EARLIER STEP") }, 5); t.unref(); return { pid: process.pid } } }`,
 })
 
+// A step's outcome is sealed at the first `setImmediate` turn after `code()` settles (#602),
+// so a timer it leaves behind can never change that outcome, however late the scheduler runs.
+// These fixtures use a 0 ms timer on purpose: the runner's leftover check queues its own
+// 0 ms settle timer after it, and timers of equal duration fire in the order they were
+// created, so the stray fires while the step is still in flight, during the settle turns, which
+// exercises the after-seal branch (the check phase always runs before the timers phase, so it
+// cannot fire before the seal).
+// A delay such as 25 ms would only fire there when the process happened to stall.
+const SEALED_OUTCOME_FAILURE = 'OWN FAILURE OF THE STEP'
+
+const lateThrowAfterSuccess = writeFixture({
+    name: 'late_throw_after_success',
+    source: 'module.exports = { code: async () => { setTimeout(() => { throw new Error("LATE THROW") }, 0); return { pid: process.pid } } }',
+})
+
+// The overdue case a loaded worker produces by accident (#596), built on purpose: the timer
+// is already due when the step returns, yet it must still not outrank the first turn after
+// the return, which is what seals the step's outcome.
+const overdueThrowAfterSuccess = writeFixture({
+    name: 'overdue_throw_after_success',
+    source: 'module.exports = { code: async () => { setTimeout(() => { throw new Error("OVERDUE THROW") }, 5); const until = Date.now() + 40; while (Date.now() < until) { /* hold the loop past the timer\'s due time */ } return { pid: process.pid } } }',
+})
+
+const lateUnrefThrowAfterSuccess = writeFixture({
+    name: 'late_unref_throw_after_success',
+    source: 'module.exports = { code: async () => { setTimeout(() => { throw new Error("LATE UNREF THROW") }, 0).unref(); return { pid: process.pid } } }',
+})
+
+const lateRejectionAfterSuccess = writeFixture({
+    name: 'late_rejection_after_success',
+    source: 'module.exports = { code: async () => { setTimeout(() => { Promise.reject(new Error("LATE REJECTION")) }, 0); return { pid: process.pid } } }',
+})
+
+const lateThrowAfterFailure = writeFixture({
+    name: 'late_throw_after_failure',
+    source: `module.exports = { code: async () => { setTimeout(() => { throw new Error("LATE THROW") }, 0); throw new Error("${SEALED_OUTCOME_FAILURE}") } }`,
+})
+
+// Inside the window: these run before the runner's own first `setImmediate` turn on every
+// machine, so they fail the step that queued them.
+const floatingRejectionBeforeReturn = writeFixture({
+    name: 'floating_rejection_before_return',
+    source: 'module.exports = { code: async () => { Promise.reject(new Error("FLOATING REJECTION")); return { pid: process.pid } } }',
+})
+
+const immediateThrowBeforeReturn = writeFixture({
+    name: 'immediate_throw_before_return',
+    source: 'module.exports = { code: async () => { setImmediate(() => { throw new Error("IMMEDIATE THROW") }); return { pid: process.pid } } }',
+})
+
 // A step that logs heavily, and one that opens a handle and closes it properly, are both
 // clean: they must keep the reuse that makes this change worth having.
 const heavyLogger = writeFixture({
@@ -93,6 +145,61 @@ const slowAndClean = writeFixture({
 const forgeTerminal = writeFixture({
     name: 'forge_terminal',
     source: 'module.exports = { code: async () => { console.log("PID=" + process.pid); process.send({ id: 0, success: true, terminal: true }); setInterval(() => {}, 50); return { pid: process.pid } } }',
+})
+
+const logsThenFails = writeFixture({
+    name: 'logs_then_fails',
+    source: `module.exports = { code: async () => {
+        for (let i = 0; i < 400; i++) { console.log('OUT-LINE-' + i) }
+        for (let i = 0; i < 400; i++) { console.error('ERR-LINE-' + i) }
+        throw new Error('boom')
+    } }`,
+})
+
+// `process.stdout.write` accepts a Uint8Array; it must be captured as text, not as its
+// comma-separated byte values (which is what `Uint8Array#toString()` returns).
+const writesBytesThenFails = writeFixture({
+    name: 'writes_bytes_then_fails',
+    source: `module.exports = { code: async () => {
+        process.stdout.write(new TextEncoder().encode('BYTES-STDOUT'))
+        process.stderr.write(new TextEncoder().encode('BYTES-STDERR'))
+        throw new Error('bytes boom')
+    } }`,
+})
+
+const writesOverCapThenFails = writeFixture({
+    name: 'writes_over_cap_then_fails',
+    source: `module.exports = { code: async () => {
+        process.stdout.write('STDOUT-HEAD-MARKER\\n')
+        process.stderr.write('STDERR-HEAD-MARKER\\n')
+        for (let i = 0; i < 4000; i++) process.stdout.write('A'.repeat(100))
+        for (let i = 0; i < 4000; i++) process.stderr.write('B'.repeat(100))
+        process.stdout.write('\\nSTDOUT-TAIL-MARKER')
+        process.stderr.write('\\nSTDERR-TAIL-MARKER')
+        throw new Error('cap boom')
+    } }`,
+})
+
+// Exercises the byte path's own bounded tail: a single write larger than the code-unit
+// budget must be sliced before decoding, and the marker after it must still survive.
+const writesManyBytesThenFails = writeFixture({
+    name: 'writes_many_bytes_then_fails',
+    source: `module.exports = { code: async () => {
+        process.stdout.write(new Uint8Array(600 * 1024).fill(88))
+        process.stdout.write(new TextEncoder().encode('\\nBYTES-TAIL-MARKER'))
+        throw new Error('many bytes boom')
+    } }`,
+})
+
+// Tenant code can forge `process.send`; a malformed frame must be ignored rather than
+// crashing the host (the pre-fix code threw on a non-string stdout), and the real verdict
+// must still be delivered afterwards.
+const forgesMalformedMessages = writeFixture({
+    name: 'forges_malformed_messages',
+    source: `module.exports = { code: async () => {
+        for (let id = 1; id <= 1000; id++) process.send({ id, success: false, error: 42, stdout: {}, stderr: [] })
+        throw new Error('real boom')
+    } }`,
 })
 
 function readPid(value: unknown): number {
@@ -193,6 +300,34 @@ describe('noOpCodeSandbox', () => {
         expect(await runPid()).not.toBe(leakyPid)
     })
 
+    it.each([
+        ['a timer that throws', lateThrowAfterSuccess],
+        ['a timer that is already overdue and throws', overdueThrowAfterSuccess],
+        ['an unref\'d timer that throws', lateUnrefThrowAfterSuccess],
+        ['a timer that leaves an unhandled rejection', lateRejectionAfterSuccess],
+    ])('should report success for a step that returns while leaving %s, and retire its runner (#602)', async (_label, fixture) => {
+        const leakyPid = await runPid(fixture)
+
+        expect(Number.isInteger(leakyPid)).toBe(true)
+        expect(await runPid()).not.toBe(leakyPid)
+    })
+
+    it('should keep a failing step\'s own error when it also leaves a timer that throws later (#602)', async () => {
+        const error = await noOpCodeSandbox.runCodeModule({ codeFilePath: lateThrowAfterFailure, inputs: {} })
+            .then(() => null, (reason: Error) => reason)
+
+        expect(error?.message).toContain(SEALED_OUTCOME_FAILURE)
+        expect(error?.message).not.toContain('LATE THROW')
+    })
+
+    it.each([
+        ['a promise rejection nobody handles', floatingRejectionBeforeReturn, 'FLOATING REJECTION'],
+        ['a throw from a setImmediate callback it queued', immediateThrowBeforeReturn, 'IMMEDIATE THROW'],
+    ])('should still fail a step whose own async error is %s before the first turn after it returns (#602)', async (_label, fixture, message) => {
+        await expect(noOpCodeSandbox.runCodeModule({ codeFilePath: fixture, inputs: {} }))
+            .rejects.toThrow(message)
+    })
+
     it('should keep reusing the runner for a step that only logs heavily', async () => {
         const first = await runPid(heavyLogger)
         const second = await runPid(heavyLogger)
@@ -242,6 +377,79 @@ describe('noOpCodeSandbox', () => {
 
         await noOpCodeSandbox.shutdown()
         expect(await waitUntilGone(forgedPid)).toBe(true)
+    })
+
+    // #609: the host used to recover a failing step's stdout/stderr from 'data' events on
+    // the runner's stdio pipes. A pipe write is asynchronous on Linux, so under enough CPU
+    // contention its 'data' event can reach the host after the IPC 'message' carrying the
+    // verdict already did — at which point the host had already stopped accumulating into
+    // `execution.stdout`/`stderr`, silently dropping the tail of the output. 12 busy loops
+    // reproduced this on 144 of 150 iterations before the fix on the machine this test was
+    // written on; the fix captures output inside the runner, synchronously at the `write`
+    // call, so it travels in the same IPC message as the verdict and the host no longer
+    // depends on pipe delivery order at all. The loop count scales with the core count so
+    // the same oversubscription margin holds on a CI runner with more cores, where a fixed
+    // small count would stop contending at all; it is capped at 64 to bound the number of
+    // busy processes, so on a machine with more than 32 cores the margin drops below 2x
+    // (CI's runner is 4 cores → 12 loops, the configuration the repro was measured in).
+    it('should keep the full stdout and stderr in a failure message under CPU contention (#609)', async () => {
+        const busyLoopCount = Math.min(64, Math.max(12, availableParallelism() * 2))
+        const busyLoops: ChildProcess[] = Array.from(
+            { length: busyLoopCount },
+            () => spawn(process.execPath, ['-e', 'while(true){}'], { stdio: 'ignore' }),
+        )
+        // `onTestFinished` (not a bare `finally`) so a timed-out test still reaps these —
+        // a `finally` inside the test body never runs once vitest has stopped awaiting it.
+        onTestFinished(() => {
+            busyLoops.forEach((loop) => loop.kill('SIGKILL'))
+        })
+
+        for (let i = 0; i < 30; i++) {
+            const error = await noOpCodeSandbox.runCodeModule({ codeFilePath: logsThenFails, inputs: {} })
+                .then(() => null, (reason: Error) => reason)
+
+            expect(error?.message).toContain('OUT-LINE-399')
+            expect(error?.message).toContain('ERR-LINE-399')
+        }
+    }, 30000)
+
+    it('should capture a Uint8Array write as text, not as its byte values', async () => {
+        const error = await noOpCodeSandbox.runCodeModule({ codeFilePath: writesBytesThenFails, inputs: {} })
+            .then(() => null, (reason: Error) => reason)
+
+        expect(error?.message).toContain('BYTES-STDOUT')
+        expect(error?.message).toContain('BYTES-STDERR')
+        expect(error?.message).not.toContain('66,89,84,69,83')
+    })
+
+    it('should bound a failure message that logs far more than the capture cap, keeping the tail', async () => {
+        const error = await noOpCodeSandbox.runCodeModule({ codeFilePath: writesOverCapThenFails, inputs: {} })
+            .then(() => null, (reason: Error) => reason)
+
+        expect(error?.message).toContain('cap boom')
+        // The lines nearest the failure are the diagnostics worth keeping.
+        expect(error?.message).toContain('STDOUT-TAIL-MARKER')
+        expect(error?.message).toContain('STDERR-TAIL-MARKER')
+        expect(error?.message).not.toContain('STDOUT-HEAD-MARKER')
+        expect(error?.message).not.toContain('STDERR-HEAD-MARKER')
+        // Two streams capped at 128 K code units each, plus the error and headers.
+        expect(error?.message.length).toBeLessThan(300 * 1024)
+    })
+
+    it('should keep the tail of a single oversized Uint8Array write', async () => {
+        const error = await noOpCodeSandbox.runCodeModule({ codeFilePath: writesManyBytesThenFails, inputs: {} })
+            .then(() => null, (reason: Error) => reason)
+
+        expect(error?.message).toContain('many bytes boom')
+        expect(error?.message).toContain('BYTES-TAIL-MARKER')
+        expect(error?.message.length).toBeLessThan(300 * 1024)
+    })
+
+    it('should ignore forged malformed runner messages and still deliver the real verdict', async () => {
+        const error = await noOpCodeSandbox.runCodeModule({ codeFilePath: forgesMalformedMessages, inputs: {} })
+            .then(() => null, (reason: Error) => reason)
+
+        expect(error?.message).toContain('real boom')
     })
 
     it('should tolerate shutdown when no execution has ever run', async () => {

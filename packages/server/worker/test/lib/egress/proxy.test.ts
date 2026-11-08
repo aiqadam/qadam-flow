@@ -28,6 +28,14 @@ async function closeServer(s: AnyServer): Promise<void> {
     return new Promise<void>((resolve) => s.close(() => resolve()))
 }
 
+async function reserveClosedPort(): Promise<number> {
+    const probe = createServer()
+    await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', () => resolve()))
+    const { port } = probe.address() as AddressInfo
+    await closeServer(probe)
+    return port
+}
+
 function fetchThroughProxy({ proxyPort, targetUrl, host }: {
     proxyPort: number
     targetUrl: string
@@ -193,6 +201,16 @@ describe('egress-proxy', () => {
                 target: 'example.com:abc',
             })
             expect(res.status).toBe(400)
+        })
+
+        it('answers 502 when the allowed target refuses the connection, instead of closing without a response (#608)', async () => {
+            const closedPort = await reserveClosedPort()
+            proxy = await startEgressProxy({ log, allowList: ['127.0.0.1'] })
+            const res = await connectThroughProxy({
+                proxyPort: proxy.port,
+                target: `127.0.0.1:${closedPort}`,
+            })
+            expect(res.status).toBe(502)
         })
 
         it('allows CONNECT when target IP is in allowList', async () => {

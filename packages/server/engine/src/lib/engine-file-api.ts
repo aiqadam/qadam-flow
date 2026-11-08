@@ -15,13 +15,14 @@ export const engineFileApi = {
     // signed S3 PUT is idempotent by definition.
     async upload({ engineToken, apiUrl, fileId, type, fileName, compression, data, retryPolicy }: UploadParams): Promise<UploadResult> {
         const headers = buildPutHeaders({ type, fileName, compression })
+        const payload = isArrayBufferBacked(data) ? data : new Uint8Array(data)
         const putUrl = `${apiUrl}v1/files/${fileId}?token=${encodeURIComponent(engineToken)}`
 
         const initial = await retryingFetch.fetch({
             url: putUrl,
             init: {
                 method: 'PUT',
-                body: data,
+                body: payload,
                 headers,
                 redirect: 'manual',
             },
@@ -40,7 +41,7 @@ export const engineFileApi = {
                 url: location,
                 init: {
                     method: 'PUT',
-                    body: data,
+                    body: payload,
                     headers: stripApHeaders(headers),
                     redirect: 'follow',
                 },
@@ -104,6 +105,12 @@ export const engineFileApi = {
         }
         return raw
     },
+}
+
+// TS 5.7+ types a Buffer's backing store as ArrayBufferLike, which fetch's BodyInit rejects because it
+// could be a SharedArrayBuffer view. A real ArrayBuffer view is sent as is; anything else is copied.
+function isArrayBufferBacked(data: Uint8Array): data is Uint8Array<ArrayBuffer> {
+    return data.buffer instanceof ArrayBuffer
 }
 
 function buildPutHeaders({ type, fileName, compression }: BuildHeadersParams): Record<string, string> {

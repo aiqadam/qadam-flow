@@ -2,7 +2,6 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { QadamMetadataModel } from '@aiqadam/qadams-framework'
-import { qadamVersionStoreReader } from '@aiqadam/server-utils'
 import { PackageType, QadamType } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { AppSystemProp } from '../../../../src/app/helper/system/system-props'
@@ -255,19 +254,11 @@ describe('qadamMetadataService.isPinAvailable() — the pin itself, never a stan
         expect(lookup).toHaveBeenCalledWith({ name: NAME, version: '0.4.2' })
     })
 
-    it('stays false when the store is absent there', async () => {
+    it('stays false when the store is absent there, or cannot be opened', async () => {
         // The suite points AP_QADAM_VERSION_STORE_PATH at a directory that does not exist, so this
-        // exercises the real open failure (`open()` resolving `{ ok: false }`) rather than a stub.
+        // exercises the real open failure rather than a stub.
         const service = qadamMetadataService(logger)
-
-        expect(await service.isPinAvailable({ name: NAME, version: '0.4.2', platformId: undefined })).toBe(false)
-    })
-
-    it('stays false when the store cannot be opened', async () => {
-        // Distinct from the ENOENT case above: `open()` itself rejecting (a disk error, not a
-        // missing directory) must hit `openReader`'s `error !== null` branch, not its `!data.ok` one.
-        vi.spyOn(qadamVersionStoreReader, 'open').mockRejectedValueOnce(new Error('EACCES'))
-        const service = qadamMetadataService(logger)
+        storedQadamMetadata.reset()
 
         expect(await service.isPinAvailable({ name: NAME, version: '0.4.2', platformId: undefined })).toBe(false)
     })

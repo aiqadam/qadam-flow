@@ -17,6 +17,8 @@ import { isNil, NPM_PACKAGE_NAME_REGEX, qadamVersionParser } from '@aiqadam/shar
 //                                                            cache of proofs beside the store, never part
 //                                                            of a version, so it adds nothing to a version's
 //                                                            digest and no version's record changes
+//   <root>/qadam-gc-ledger.json                              when GC (#478) first saw a version
+//                                                            unreferenced, beside the store the same way
 //
 // A version directory holds the artifact (`package.json`, its entry point, and for some formats
 // `node_modules`), `metadata.json`, and `integrity.json`, which the store writes last.
@@ -31,6 +33,7 @@ export const QADAM_VERSION_STORE_LAYOUT = {
     stagingDir: '.staging',
     trashDir: '.trash',
     signatureLedgerFile: 'qadam-signatures.json',
+    gcLedgerFile: 'qadam-gc-ledger.json',
     integrityFile: 'integrity.json',
     metadataFile: 'metadata.json',
     packageJsonFile: 'package.json',

@@ -15,7 +15,10 @@ import {
   tryParseFriendlyQadamError,
   FlowAction,
   FlowTrigger,
+  FlowVersion,
   LoopKeepBodies,
+  QadamAction,
+  QadamTrigger,
   loopSettingsDefaults,
   StepOutput,
 } from '@aiqadam/shared';
@@ -43,6 +46,7 @@ import { ErrorExplanationContext } from '../data-display/explanation-prompt';
 import { FriendlyErrorView } from '../data-display/friendly-error-view';
 import { StepDataPanelHeader } from '../step-data/step-data-panel-header';
 import { StepDataPanelViewToggle } from '../step-data/step-data-panel-view-toggle';
+import { FrameworkUnsupportedLabel } from '../step-settings/framework-unsupported-label';
 import { HeldStepLabel } from '../step-settings/held-step-label';
 import { PreReleaseBuildLabel } from '../step-settings/pre-release-build-label';
 import { UpdateAvailableLabel } from '../step-settings/update-available-label';
@@ -169,6 +173,13 @@ export const FlowStepInputOutput = () => {
         <div className="flex justify-end px-3 py-2 shrink-0">
           <StepDataPanelViewToggle />
         </div>
+        {selectedStep &&
+          (selectedStep.type === FlowActionType.PIECE ||
+            selectedStep.type === FlowTriggerType.PIECE) && (
+            <div className="px-3">
+              <RunPinLabels step={selectedStep} flowVersion={flowVersion} />
+            </div>
+          )}
         <div className="grow flex flex-col items-center justify-center w-full px-6 py-10 gap-4 text-center">
           <div className="flex items-center justify-center size-12 rounded-full bg-muted text-muted-foreground">
             <Info className="size-6" />
@@ -243,11 +254,7 @@ export const FlowStepInputOutput = () => {
         <LoopRunNote step={selectedStep} stepOutput={selectedStepOutput} />
         {(selectedStep.type === FlowActionType.PIECE ||
           selectedStep.type === FlowTriggerType.PIECE) && (
-          <div className="mb-2 flex flex-col gap-2 empty:hidden">
-            <PreReleaseBuildLabel step={selectedStep} />
-            <UpdateAvailableLabel step={selectedStep} readonly />
-            <HeldStepLabel step={selectedStep} flowId={flowVersion.flowId} />
-          </div>
+          <RunPinLabels step={selectedStep} flowVersion={flowVersion} />
         )}
         <Tabs
           value={activeTab}
@@ -324,6 +331,29 @@ export const FlowStepInputOutput = () => {
     </div>
   );
 };
+
+// ADR-0002 (#803): a run may have no output for the very step it needs to mark — an unsupported
+// step can fail or be skipped — so the pin labels are shown for a selected step whether or not the
+// run captured it.
+const RunPinLabels = ({
+  step,
+  flowVersion,
+}: {
+  step: QadamAction | QadamTrigger;
+  flowVersion: FlowVersion;
+}) => (
+  <div className="mb-2 flex flex-col gap-2 empty:hidden">
+    <FrameworkUnsupportedLabel
+      stepName={step.name}
+      flowId={flowVersion.flowId}
+      flowVersionId={flowVersion.id}
+      flowVersionUpdated={flowVersion.updated}
+    />
+    <PreReleaseBuildLabel step={step} />
+    <UpdateAvailableLabel step={step} readonly />
+    <HeldStepLabel step={step} flowId={flowVersion.flowId} />
+  </div>
+);
 
 const InternalErrorPanel = ({
   internalError,

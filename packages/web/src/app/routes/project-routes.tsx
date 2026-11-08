@@ -20,12 +20,6 @@ const FlowBuilderPage = React.lazy(() =>
 );
 const AnalyticsPage = React.lazy(() => import('./impact'));
 const LeaderboardPage = React.lazy(() => import('./leaderboard'));
-const ProjectReleasesPage = React.lazy(() =>
-  import('./project-release').then((m) => ({
-    default: m.ProjectReleasesPage,
-  })),
-);
-const ViewRelease = React.lazy(() => import('./project-release/view-release'));
 const RunsPage = React.lazy(() =>
   import('./runs').then((m) => ({ default: m.RunsPage })),
 );
@@ -138,17 +132,11 @@ export const projectRoutes = [
       </ProjectDashboardLayout>
     ),
   }),
+  // Project Releases has no server implementation in this repo (#856); the
+  // page and its API client stay in the tree as scaffolding for #43.
   ...ProjectRouterWrapper({
     path: routesThatRequireProjectId.singleRelease,
-    element: (
-      <ProjectDashboardLayout>
-        <PageTitle title="Releases">
-          <SuspenseWrapper>
-            <ViewRelease />
-          </SuspenseWrapper>
-        </PageTitle>
-      </ProjectDashboardLayout>
-    ),
+    element: <Navigate to={routesThatRequireProjectId.automations} replace />,
   }),
   ...ProjectRouterWrapper({
     path: routesThatRequireProjectId.tables,
@@ -218,15 +206,7 @@ export const projectRoutes = [
   }),
   ...ProjectRouterWrapper({
     path: routesThatRequireProjectId.releases,
-    element: (
-      <ProjectDashboardLayout>
-        <PageTitle title="Releases">
-          <SuspenseWrapper>
-            <ProjectReleasesPage />
-          </SuspenseWrapper>
-        </PageTitle>
-      </ProjectDashboardLayout>
-    ),
+    element: <Navigate to={routesThatRequireProjectId.automations} replace />,
   }),
   ...ProjectRouterWrapper({
     path: routesThatRequireProjectId.settings,

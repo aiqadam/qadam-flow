@@ -18,9 +18,6 @@ vi.mock('i18next', async (importOriginal) => ({
 vi.mock('@/app/components/project-settings/general', () => ({
   GeneralSettings: () => <div data-testid="general-tab-body" />,
 }));
-vi.mock('@/app/components/project-settings/environment', () => ({
-  EnvironmentSettings: () => <div data-testid="environment-tab-body" />,
-}));
 vi.mock('@/app/components/project-settings/mcp-server', () => ({
   McpServerSettings: () => <div data-testid="mcp-tab-body" />,
 }));

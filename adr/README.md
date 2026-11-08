@@ -111,3 +111,4 @@ Immutability of accepted ADRs is checked in review.
 | [`0003`](0003-official-qadams-run-from-a-versioned-local-store.md) | Official qadams run from a versioned local store, on libraries the platform provides | `accepted` |
 | [`0004`](0004-main-builds-give-changed-packages-their-own-prerelease-versions.md) | Builds from `main` give changed packages their own prerelease versions; qadam snapshots stay in the instance store and are never published | `accepted` |
 | [`0005`](0005-store-trusts-npm-signature-not-release-age.md) | The versioned store trusts the npm signature over an exact pin, not release age; versions resolve from the catalogue or the store | `accepted` |
+| [`0006`](0006-framework-owns-opaque-tool-and-language-model-types.md) | `qadams-framework` owns opaque `Tool`/`LanguageModel` placeholder types instead of re-exporting `ai`'s | `proposed` |

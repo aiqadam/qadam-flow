@@ -38,6 +38,22 @@ const systemPropDefaultValues: Partial<Record<SystemProp, string>> = {
     // ADR-0004 "Following `main`": `follow` on a `-main.<n>` build, `pin` on a release instance. The
     // version is read once, at load: it cannot change while this process runs.
     [AppSystemProp.QADAM_SNAPSHOT_POLICY]: qadamSnapshotPolicy.resolveDefault({ version: apVersionUtil.getCurrentRelease() }),
+    // ADR-0003 "Registry at install": where a non-`@aiqadam` / custom qadam version is fetched from
+    // when the store does not hold it (#806). No default for the token: a public registry needs
+    // none, and `run.sh` (#807) is expected to set both together for a private one. Never log the
+    // token's value — see `qadam-registry-config.ts`.
+    [AppSystemProp.QADAM_REGISTRY_URL]: 'https://registry.npmjs.org',
+    // Off-peak, daily, at an odd minute so it does not pile onto the top-of-the-hour jobs.
+    [AppSystemProp.QADAM_VERSION_STORE_GC_CRON]: '41 3 * * *',
+    // ADR-0003 "GC": a version nothing pins and the image no longer ships is collected after this
+    // many days unreferenced.
+    [AppSystemProp.QADAM_VERSION_STORE_GC_RETENTION_DAYS]: '10',
+    // ADR-0004 "Store (#478)": for each step, GC keeps the last N versions a pin move left behind as
+    // a revert target, even past the retention window above.
+    [AppSystemProp.QADAM_VERSION_STORE_GC_KEEP_LAST_N_VERSIONS]: '3',
+    // ADR-0004 "Store growth": the store-size gauge is always reported; this is only the operator
+    // warning's trip point. 5 GiB is ADR-0004's own example.
+    [AppSystemProp.QADAM_VERSION_STORE_SIZE_WARN_BYTES]: String(5 * 1024 * 1024 * 1024),
     [AppSystemProp.DB_TYPE]: DatabaseType.POSTGRES,
     [AppSystemProp.APP_WEBHOOK_SECRETS]: '{}',
     [AppSystemProp.PORT]: '3000',

@@ -7,7 +7,7 @@ icon: "book-open"
 The qadam version catalogue is a set of static JSON files that describe every released version of every official qadam: the integrity of the artifact that was released, and that version's metadata (its actions, triggers and props). [ADR-0003](https://github.com/aiqadam/qadam-flow/blob/main/adr/0003-official-qadams-run-from-a-versioned-local-store.md) uses it so that your server knows about qadam versions its image does not ship. For example, it can show and validate a flow step pinned to an older version, or decide whether a pinned version that cannot be fetched may move to a compatible one.
 
 <Warning>
-Nothing reads the catalogue yet, and nothing is published at the default address yet. Your server resolves qadams exactly as [Qadam syncing & versioning](/install/architecture/qadam-syncing) describes. The server starts reading the catalogue when fetching missing versions ([#806](https://github.com/aiqadam/qadam-flow/issues/806)), the slim image ([#807](https://github.com/aiqadam/qadam-flow/issues/807)) and the unavailable-version fallback ([#808](https://github.com/aiqadam/qadam-flow/issues/808)) ship. This page describes the format and where it will be published, so you can plan a mirror.
+Nothing is published at the default address yet, so on a real instance the catalogue reads as unavailable and every release-era pin is treated as unknown rather than moved. Flow export and the unavailable-version fallback already read the catalogue (fail closed); fetching missing versions ([#806](https://github.com/aiqadam/qadam-flow/issues/806)) and the slim image ([#807](https://github.com/aiqadam/qadam-flow/issues/807)) are still to come. This page describes the format, where it will be published, and how to point the server at a mirror.
 </Warning>
 
 ## Where it is published
@@ -61,10 +61,21 @@ The `v1` in the address is the format's major version. Within `v1` the format on
 
 ## Mirroring the catalogue
 
-The catalogue is a plain directory of files, so any static file server can mirror it. Copy the whole `catalog/v1/` tree, `index.json` and `qadams/` together, and keep copying it as releases append to it. The address the server reads will be configurable when the server starts reading the catalogue.
+The catalogue is a plain directory of files, so any static file server can mirror it. Copy the whole `catalog/v1/` tree, `index.json` and `qadams/` together, and keep copying it as releases append to it.
+
+The server reads the published address by default. To use a mirror instead, set one of:
+
+| Variable | Meaning |
+| --- | --- |
+| `AP_QADAM_VERSION_CATALOGUE_URL` | Base URL of the `catalog/v1/` directory, ending in `/`. Use it for a mirror served over HTTP(S). |
+| `AP_QADAM_VERSION_CATALOGUE_DIRECTORY` | Path to a local copy of `catalog/v1/`. Takes precedence over the URL, and sends no request at all — for an air-gapped mirror or the snapshot a slim image carries. |
 
 <Note>
 The server reads the catalogue through the same outbound-request filter as every other configured URL. A mirror on a private or loopback address needs that address in `AP_SSRF_ALLOW_LIST`. See [Network security](/install/architecture/network-security).
+</Note>
+
+<Note>
+When `AP_QADAM_VERSION_CATALOGUE_DIRECTORY` is set but missing or unreadable, the catalogue is treated as unavailable — the server does not fall back to `AP_QADAM_VERSION_CATALOGUE_URL`.
 </Note>
 
 ## Related

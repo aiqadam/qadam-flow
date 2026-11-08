@@ -26,9 +26,11 @@ import { z } from 'zod'
 import { flowService } from '../../flows/flow/flow.service'
 import { projectService } from '../../project/project-service'
 import { frameworkCensusMarking } from '../../qadams/census/framework-census-marking'
-import { PinFrameworkSupport } from '../../qadams/census/framework-census-service'
 import { qadamMetadataService } from '../../qadams/metadata/qadam-metadata-service'
 import { qadamPinUtil } from '../../qadams/metadata/qadam-pin-util'
+import { qadamPinHold } from '../../qadams/pin-moves/qadam-pin-hold'
+import { QadamPinMove } from '../../qadams/pin-moves/qadam-pin-move.dto'
+import { qadamPinMoveService } from '../../qadams/pin-moves/qadam-pin-move.service'
 import { translationService } from '../../translation/translation.service'
 import { mcpUtils } from './mcp-utils'
 
@@ -36,7 +38,7 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
     return {
         title: 'ap_validate_flow',
         permission: Permission.READ_FLOW,
-        description: 'Validate a flow for structural issues without publishing. Checks step validity, template references, and empty branches. Returns a detailed report with all issues found. Use this before ap_lock_and_publish to catch problems early.',
+        description: 'Validate a flow for structural issues without publishing. Checks step validity, template references, empty branches, qadam pins (including pre-release builds and held automatic pin moves), and other pre-publish defects. Returns a detailed report with all issues found. Use this before ap_lock_and_publish to catch problems early.',
         inputSchema: validateFlowInput.shape,
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         execute: async (args) => {
@@ -50,7 +52,10 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
 
                 const structural = validateFlow({ trigger: flow.version.trigger })
                 const platformId = await projectService(log).getPlatformId(mcp.projectId)
-                const [callFlowIssues, qadamVersionIssues, frameworkVersionIssues, concurrentLoopIssues, translationIssues] = await Promise.all([
+                // A flow with no qadam step can hold none, so it costs no hold read (and no
+                // platform/ownership read inside it), the same rule `ap_flow_structure` follows.
+                const hasQadamSteps = qadamPinUtil.getQadamSteps({ trigger: flow.version.trigger }).length > 0
+                const [callFlowIssues, qadamVersionIssues, frameworkVersionIssues, concurrentLoopIssues, translationIssues, heldMoves] = await Promise.all([
                     validateCallFlowSteps({
                         trigger: flow.version.trigger,
                         projectId: mcp.projectId,
@@ -80,15 +85,17 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                         platformId,
                         log,
                     }),
+                    hasQadamSteps ? findHeldPinMoves({ flowId: flow.id, projectId: mcp.projectId, platformId, log }) : [],
                 ])
-                const allIssues = [...structural.issues, ...qadamVersionIssues, ...frameworkVersionIssues, ...validatePreReleaseBuilds({ trigger: flow.version.trigger }), ...validateAgentToolCounts({ trigger: flow.version.trigger }), ...callFlowIssues, ...concurrentLoopIssues, ...translationIssues]
+                const allIssues = [...structural.issues, ...qadamVersionIssues, ...frameworkVersionIssues, ...validatePreReleaseBuilds({ trigger: flow.version.trigger }), ...validateFollowHeld({ trigger: flow.version.trigger, heldMoves }), ...validateAgentToolCounts({ trigger: flow.version.trigger }), ...callFlowIssues, ...concurrentLoopIssues, ...translationIssues]
                 const result = { ...structural, issues: allIssues }
                 // A warning is reported in the output but never blocks `valid` or counts toward
                 // "invalid" in the summary — today that is exactly (and only) the translation
                 // categories that describe something the run can recover from at run time (a
                 // fallback locale, a self-referential localeSource), never the ones that will
-                // actually throw. An informational issue (`info`, currently only the ADR-0004
-                // pre-release build note) is weaker still: a fact about the step, never a defect.
+                // actually throw. An informational issue (`info`, currently the ADR-0004
+                // pre-release build and follow-hold notes) is weaker still: a fact about the step,
+                // never a defect.
                 const errorIssues = allIssues.filter((issue) => issueSeverity(issue) === 'error')
                 const warningIssues = allIssues.filter((issue) => issueSeverity(issue) === 'warning')
                 const informationalIssues = allIssues.filter((issue) => issueSeverity(issue) === 'info')
@@ -280,8 +287,8 @@ function validateAgentToolCounts({ trigger }: { trigger: Step }): ValidationIssu
 // ADR-0004: a step pinned to a snapshot (`x.y.z-main.<n>`) runs a build from `main`, not a release.
 // That is a fact about where the step comes from, not a defect — the version resolves and the step
 // runs it — so it is reported at `severity: 'info'`, the lowest this tool has: visible to a flow
-// owner, never blocking publishing, and never counted as a warning. "Update available" and the
-// `follow` hold state are later slices.
+// owner, never blocking publishing, and never counted as a warning. "Update available" is a later
+// slice.
 function validatePreReleaseBuilds({ trigger }: { trigger: Step }): ValidationIssue[] {
     return qadamPinUtil.getQadamSteps({ trigger }).flatMap((step): ValidationIssue[] => {
         // The stored pin may carry a `^` or `~` range; the parser wants the exact version.
@@ -298,36 +305,44 @@ function validatePreReleaseBuilds({ trigger }: { trigger: Step }): ValidationIss
     })
 }
 
-function frameworkVersionContextOf(support: PinFrameworkSupport): string {
-    return isNil(support.contextVersion)
-        ? 'an unknown context version'
-        : `framework context version ${support.contextVersion}`
-}
-
-// Shared by a step's own pin and an agent tool's: both are "a pin needing a retired context
-// version", differing only in the sentence naming what carries the pin.
-function frameworkVersionIssue({ pin, stepName, prefix, unsupportedPins }: {
-    pin: string
-    stepName: string
-    prefix: string
-    unsupportedPins: Map<string, PinFrameworkSupport>
-}): ValidationIssue[] {
-    const support = unsupportedPins.get(pin)
-    if (isNil(support)) {
+// The hold from a revert (#854, ADR-0004 "Following `main`"): like the pre-release note this is a
+// fact about the step, not a defect — the step runs the version a person restored — so it is
+// reported at `severity: 'info'` and never blocks publishing. A read that fails drops the note and
+// leaves the rest of the report intact: the hold is a decoration on the validation, not the gate.
+async function findHeldPinMoves({ flowId, projectId, platformId, log }: {
+    flowId: string
+    projectId: string
+    platformId: string
+    log: FastifyBaseLogger
+}): Promise<QadamPinMove[]> {
+    const { data, error } = await tryCatch(() => qadamPinMoveService({ log }).listHeld({ flowId, projectId, platformId }))
+    if (!isNil(error)) {
+        log.warn({ error, flowId }, '[apValidateFlow] Held pin-move lookup failed; the report omits the follow-hold note')
         return []
     }
-    return [{
-        category: 'framework_version' as const,
-        stepName,
-        message: `${prefix} Its pinned qadam ${mcpUtils.wrapUntrustedValue(pin)} needs ${frameworkVersionContextOf(support)}, which this release no longer runs.`,
-    }]
+    return data?.data ?? []
+}
+
+function validateFollowHeld({ trigger, heldMoves }: { trigger: Step, heldMoves: QadamPinMove[] }): ValidationIssue[] {
+    return qadamPinUtil.getQadamSteps({ trigger }).flatMap((step): ValidationIssue[] => {
+        const hold = qadamPinHold.findForStep({ step, moves: heldMoves })
+        if (isNil(hold)) {
+            return []
+        }
+        const issue = mcpUtils.followHoldIssue({ fromVersion: hold.fromVersion, toVersion: hold.toVersion })
+        return [{
+            category: 'follow_hold' as const,
+            stepName: step.name,
+            severity: 'info' as const,
+            message: `${mcpUtils.wrapUntrustedValue(step.displayName)} ${issue.message}`,
+        }]
+    })
 }
 
 // ADR-0002 (#803): once a release retires a framework context version, a step pinned to a qadam
 // built against it stops running. The flow stays enabled and nothing disables it (#435) — this
 // category is the read-time signal, alongside `ap_flow_structure`'s per-step mark and the platform
-// Health page banner. Covers agent-tool pins too: the worker provisions a tool the same way it
-// provisions a step, so a tool pinned to a retired-context qadam fails the same way (#779).
+// Health page banner.
 // It is free until the first retirement: `unsupportedPins` skips the resolution entirely while the
 // support table's versions are all still run.
 async function validateFrameworkVersions({ trigger, platformId, log }: {
@@ -336,22 +351,23 @@ async function validateFrameworkVersions({ trigger, platformId, log }: {
     log: FastifyBaseLogger
 }): Promise<ValidationIssue[]> {
     const qadamSteps = qadamPinUtil.getQadamSteps({ trigger })
-    const agentTools = qadamPinUtil.getAgentToolPins({ trigger })
-    const unsupportedPins = await frameworkCensusMarking(log).unsupportedPins({ qadamSteps, agentTools, platformId })
+    const unsupportedPins = await frameworkCensusMarking(log).unsupportedPins({ qadamSteps, platformId })
 
-    const stepIssues = qadamSteps.flatMap((step) => frameworkVersionIssue({
-        pin: qadamPinUtil.pinOf({ step }),
-        stepName: step.name,
-        prefix: `${mcpUtils.wrapUntrustedValue(step.displayName)} uses a framework version no longer supported — update this step.`,
-        unsupportedPins,
-    }))
-    const toolIssues = agentTools.flatMap((tool) => frameworkVersionIssue({
-        pin: qadamPinUtil.pinOfTool({ tool }),
-        stepName: tool.stepName,
-        prefix: `${mcpUtils.wrapUntrustedValue(tool.stepDisplayName)} has an agent tool (${mcpUtils.wrapUntrustedValue(tool.toolName)}) that uses a framework version no longer supported — update this step.`,
-        unsupportedPins,
-    }))
-    return [...stepIssues, ...toolIssues]
+    return qadamSteps.flatMap((step): ValidationIssue[] => {
+        const pin = qadamPinUtil.pinOf({ step })
+        const support = unsupportedPins.get(pin)
+        if (isNil(support)) {
+            return []
+        }
+        const context = isNil(support.contextVersion)
+            ? 'an unknown context version'
+            : `framework context version ${support.contextVersion}`
+        return [{
+            category: 'framework_version' as const,
+            stepName: step.name,
+            message: `${mcpUtils.wrapUntrustedValue(step.displayName)} uses a framework version no longer supported — update this step. Its pinned qadam ${mcpUtils.wrapUntrustedValue(pin)} needs ${context}, which this release no longer runs.`,
+        }]
+    })
 }
 
 // `ap_validate_flow` is the only pre-publish gate an automated flow builder has, and until now
@@ -1025,12 +1041,13 @@ const CONDITIONAL_PAUSE_EVALUATORS: Record<string, (step: QadamStep) => string |
     [`${ASSEMBLYAI_QADAM}:${ASSEMBLYAI_TRANSCRIBE_ACTION}`]: readTranscribePauseReason,
 }
 
-const CATEGORY_ORDER: ValidationIssue['category'][] = ['step_validity', 'qadam_version', 'agent_tool_limit', 'pre_release_build', 'framework_version', 'template_reference', 'translation_key', 'translation_default_locale', 'translation_locale', 'empty_branch', 'subflow_payload', 'inline_pause', 'concurrent_pause']
+const CATEGORY_ORDER: ValidationIssue['category'][] = ['step_validity', 'qadam_version', 'agent_tool_limit', 'pre_release_build', 'follow_hold', 'framework_version', 'template_reference', 'translation_key', 'translation_default_locale', 'translation_locale', 'empty_branch', 'subflow_payload', 'inline_pause', 'concurrent_pause']
 const CATEGORY_LABELS: Record<ValidationIssue['category'], string> = {
     step_validity: 'Step Validity',
     qadam_version: 'Unavailable Qadam Versions',
     agent_tool_limit: 'Agent Tool Limits',
     pre_release_build: 'Pre-Release Builds',
+    follow_hold: 'Held Snapshot Follow Steps',
     framework_version: 'Unsupported Framework Versions',
     template_reference: 'Template References',
     translation_key: 'Unknown Translation Keys',
@@ -1126,7 +1143,7 @@ function formatIssueGroups(issues: ValidationIssue[]): string[] {
 }
 
 type ValidationIssue = {
-    category: 'step_validity' | 'qadam_version' | 'agent_tool_limit' | 'pre_release_build' | 'framework_version' | 'template_reference' | 'translation_key' | 'translation_locale' | 'translation_default_locale' | 'empty_branch' | 'subflow_payload' | 'inline_pause' | 'concurrent_pause'
+    category: 'step_validity' | 'qadam_version' | 'agent_tool_limit' | 'pre_release_build' | 'follow_hold' | 'framework_version' | 'template_reference' | 'translation_key' | 'translation_locale' | 'translation_default_locale' | 'empty_branch' | 'subflow_payload' | 'inline_pause' | 'concurrent_pause'
     stepName: string
     message: string
     // Omitted (or 'error') blocks `structuredContent.valid` and counts toward "invalid" in the
@@ -1136,8 +1153,9 @@ type ValidationIssue = {
     // Callable Flow, where it is a warning — that trigger can inherit a real locale from its caller
     // at run time, which this static check cannot rule out, so it is not a guaranteed failure there
     // the way it is for every other trigger type. 'info' is even weaker than a warning: a fact about
-    // the flow (currently only the ADR-0004 pre-release build note) that is neither a defect nor a
-    // risk, reported under its own "Notes" section and never counted as a warning or an issue.
+    // the flow (currently the ADR-0004 pre-release build and follow-hold notes) that is neither a
+    // defect nor a risk, reported under its own "Notes" section and never counted as a warning or
+    // an issue.
     severity?: 'error' | 'warning' | 'info'
 }
 

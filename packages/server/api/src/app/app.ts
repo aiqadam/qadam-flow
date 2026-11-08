@@ -1,6 +1,6 @@
 import { QadamMetadata } from '@aiqadam/qadams-framework'
 import { eventLoopMonitor } from '@aiqadam/server-utils'
-import { AddAllowedEmbedOriginsRequestBody, ApEnvironment, AppConnectionWithoutSensitiveData, ApplicationEventName, ConnectionDeletedEvent, ConnectionUpsertedEvent, Flow, FlowActivatedEvent, FlowCreatedEvent, FlowDeactivatedEvent, FlowDeletedEvent, FlowPublishedEvent, FlowRun, FlowRunFinishedEvent, FlowRunRetriedEvent, FlowRunStartedEvent, FlowUpdatedEvent, Folder, FolderCreatedEvent, FolderDeletedEvent, FolderUpdatedEvent, isNil, ProjectRelease, ProjectWithLimits, SignUpEvent, Template, UserEmailVerifiedEvent, UserInvitation, UserPasswordResetEvent, UserSignedInEvent, UserWithMetaInformation } from '@aiqadam/shared'
+import { AddAllowedEmbedOriginsRequestBody, ApEnvironment, AppConnectionWithoutSensitiveData, ApplicationEventName, ConnectionDeletedEvent, ConnectionUpsertedEvent, Flow, FlowActivatedEvent, FlowCreatedEvent, FlowDeactivatedEvent, FlowDeletedEvent, FlowPublishedEvent, FlowRun, FlowRunFinishedEvent, FlowRunRetriedEvent, FlowRunStartedEvent, FlowUpdatedEvent, Folder, FolderCreatedEvent, FolderDeletedEvent, FolderUpdatedEvent, isNil, ProjectWithLimits, SignUpEvent, Template, UserEmailVerifiedEvent, UserInvitation, UserPasswordResetEvent, UserSignedInEvent, UserWithMetaInformation } from '@aiqadam/shared'
 import replyFrom from '@fastify/reply-from'
 import swagger from '@fastify/swagger'
 import { createAdapter } from '@socket.io/redis-adapter'
@@ -54,12 +54,14 @@ import { frameworkCensusMarking } from './qadams/census/framework-census-marking
 import { frameworkCensusModule } from './qadams/census/framework-census-module'
 import { communityQadamsModule } from './qadams/community-qadam-module'
 import { startDevQadamWatcher } from './qadams/dev-qadam-watcher'
+import { qadamVersionFetchStartup } from './qadams/fetch/qadam-version-fetch-startup'
 import { qadamModule } from './qadams/metadata/qadam-metadata-controller'
 import { qadamMetadataService } from './qadams/metadata/qadam-metadata-service'
 import { qadamPinMoveModule } from './qadams/pin-moves/qadam-pin-move.module'
 import { qadamSnapshotFollow } from './qadams/pin-moves/qadam-snapshot-follow'
 import { qadamContextVersionBackfill } from './qadams/qadam-context-version-backfill'
 import { tagsModule } from './qadams/tags/tags-module'
+import { qadamVersionStoreGc } from './qadams/version-store/qadam-version-store-gc'
 import { qadamVersionStoreSeeding } from './qadams/version-store/qadam-version-store-seeding'
 import { storeEntryModule } from './store-entry/store-entry.module'
 import { tablesModule } from './tables/tables.module'
@@ -232,6 +234,7 @@ export const setupApp = async (app: FastifyInstance): Promise<FastifyInstance> =
 
     await app.register(communityQadamsModule)
     await qadamContextVersionBackfill(app.log).schedule()
+    await qadamVersionStoreGc(app.log).schedule()
 
     const isCanaryApp = system.getBoolean(AppSystemProp.IS_CANARY_APP) ?? false
     if (isCanaryApp) {
@@ -311,6 +314,11 @@ The application started on ${await domainHelper.getPublicApiUrl({ path: '' })}, 
     // before that seeding finishes: a snapshot pin then stays until the next boot. Boot is not
     // blocked on either.
     void qadamSnapshotFollow({ log: app.log }).run()
+    // ADR-0003 "Fetching", the start-up half (#806): fetches every pinned qadam version this
+    // instance's flows name that is missing from the store, from the registry. Another floating
+    // `void`, for the same reason as the two above — boot is not blocked on it, and it tolerates
+    // reading the store or the registry before either of them has finished its own pass.
+    void qadamVersionFetchStartup({ log: app.log }).run()
 }
 
 function registerOpenApiSchemas() {
@@ -341,7 +349,6 @@ function registerOpenApiSchemas() {
     globalRegistry.add(FlowRun, { id: 'flow-run' })
     globalRegistry.add(AppConnectionWithoutSensitiveData, { id: 'app-connection' })
     globalRegistry.add(QadamMetadata, { id: 'qadam' })
-    globalRegistry.add(ProjectRelease, { id: 'project-release' })
     globalRegistry.add(AddAllowedEmbedOriginsRequestBody, { id: 'embedding' })
 }
 

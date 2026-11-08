@@ -277,15 +277,58 @@ function createStore({ root, log, limits }: CreateStoreParams): QadamVersionStor
             .sort((a, b) => a.name === b.name ? semver.compare(a.version, b.version) : compareStrings(a.name, b.name))
     }
 
+    // Every platform namespace this store actually holds a directory for, not every platform the
+    // database knows about: a platform with no custom qadam has none, and this never asks the
+    // database (the store has no connection to it).
+    const listPlatformNamespaces = async (): Promise<string[]> => {
+        const platformsDir = path.join(root, QADAM_VERSION_STORE_LAYOUT.qadamsDir, QADAM_VERSION_STORE_LAYOUT.platformNamespaceDir)
+        return listDirectories({ dir: platformsDir })
+    }
+
+    // Every version in the store, official and every platform's custom namespace. For a sweep (GC,
+    // a size report) that must see the whole store, not one namespace at a time.
+    const listAllVersions = async (): Promise<QadamVersionCoordinates[]> => {
+        const platformIds = await listPlatformNamespaces()
+        const versions = await Promise.all([null, ...platformIds].map((platformId) => listVersions({ platformId })))
+        return versions.flat()
+    }
+
+    // Deletes a stored version. Like `replaceDamaged`, the version is moved aside with one atomic
+    // rename before its bytes are removed, so a reader (`read`) sees it present or absent, never
+    // half-deleted — removal is not a write this module otherwise makes, so there is no publish
+    // race to resolve here, only the same crash-safety the damaged-version path already needs.
+    // Never removes a version this store did not just resolve to a real directory: `validateCoordinates`
+    // guards the same way `commit`'s does.
+    const remove = async ({ coordinates }: { coordinates: QadamVersionCoordinates }): Promise<QadamVersionRemoveResult> => {
+        const validation = qadamVersionStoreLayout.validateCoordinates(coordinates)
+        if (!validation.valid) {
+            return { status: 'refused', reason: validation.reason }
+        }
+        const dir = qadamVersionStoreLayout.versionDir({ root, coordinates })
+        const aside = path.join(trashRoot, `${Date.now()}-${randomUUID()}`)
+        const moved = await tryCatch(() => rename(dir, aside))
+        if (moved.error !== null) {
+            if (fileSystemUtils.hasErrorCode({ error: moved.error, code: 'ENOENT' })) {
+                return { status: 'absent' }
+            }
+            throw moved.error
+        }
+        await rm(aside, { recursive: true, force: true })
+        return { status: 'removed' }
+    }
+
     return {
         root,
         read,
         has: async ({ coordinates }) => (await read({ coordinates })).status === QadamVersionReadStatus.PRESENT,
         listVersions,
+        listPlatformNamespaces,
+        listAllVersions,
         createStaging,
         discardStaging,
         commit,
         putTarball,
+        remove,
     }
 }
 
@@ -398,12 +441,21 @@ export type QadamVersionOriginInput = {
 export type QadamVersionStore = QadamVersionStoreReader & {
     has: (params: { coordinates: QadamVersionCoordinates }) => Promise<boolean>
     listVersions: (params: { platformId: string | null }) => Promise<QadamVersionCoordinates[]>
+    listPlatformNamespaces: () => Promise<string[]>
+    listAllVersions: () => Promise<QadamVersionCoordinates[]>
     // For a writer that assembles a version itself (an install, #806): stage, fill, commit.
     createStaging: () => Promise<string>
     discardStaging: (params: { stagingDir: string }) => Promise<void>
     commit: (params: CommitParams) => Promise<QadamVersionPutResult>
     putTarball: (params: PutTarballParams) => Promise<QadamVersionPutResult>
+    // For GC (#478) only: every other caller only ever adds a version, because a version is never
+    // reused (ADR-0001) and the store does not referee whether one is still needed.
+    remove: (params: { coordinates: QadamVersionCoordinates }) => Promise<QadamVersionRemoveResult>
 }
+
+export type QadamVersionRemoveResult =
+    | { status: 'removed' | 'absent' }
+    | { status: 'refused', reason: string }
 
 type OpenParams = {
     root: string
