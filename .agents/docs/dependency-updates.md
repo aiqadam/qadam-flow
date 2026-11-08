@@ -96,10 +96,11 @@ skip is how #831 silently stopped every image build on `main`. Consequences wort
   against the published `:main` on PRs and only gate what happens after a merge. A red `image`
   already skips them on `main`.
 
-**Merger action (the workflow cannot do it):** after the first CI run containing this job has
-reported, add `Image + Sandbox Gate` to the required status checks of the `main protect` ruleset
-(Settings -> Rules -> Rulesets -> `main protect` -> Require status checks to pass). Until then the
-job reports but nothing waits for it. Do not rename the job once it is required.
+**It is required.** `Image + Sandbox Gate` was added to the required status checks of the
+`main protect` ruleset on 2026-11-08 (#832), so a PR, a Renovate automerge included, cannot merge
+while `Docker Image` or `Sandbox e2e (privileged)` is red. The ruleset matches the job name, so
+renaming the job leaves every PR waiting on a context that never reports: change the ruleset in
+the same breath.
 
 ## The 238 qadams are excluded
 
@@ -170,8 +171,8 @@ conversion is needed.
 
 - **Advisory by construction.** The job sets `continue-on-error: true` and is deliberately
   not one of the contexts the `main protect` ruleset requires (`Lint + Unit Tests`,
-  `CE Integration Tests`, `DCO Sign-off`, `Validate Conventional Commits format`, plus
-  `Image + Sandbox Gate` once a maintainer adds it, #832). A scanner finding — or
+  `CE Integration Tests`, `DCO Sign-off`, `Validate Conventional Commits format` and
+  `Image + Sandbox Gate`, #832). A scanner finding — or
   the OSV.dev API being unreachable — is a backlog signal, not a merge blocker. Promoting it
   to blocking is a separate decision: it would need the job made unconditional and fronted by
   an always-reporting gate job, the way `verify` and `integration` are built, because a
@@ -195,7 +196,8 @@ conversion is needed.
 1. Install the Mend Renovate app (<https://github.com/apps/renovate>) on
    `aiqadam/qadam-flow`; the config does nothing until the app runs.
 2. Enable "Allow auto-merge" in repository settings, so `platformAutomerge` can act.
-3. Add `Image + Sandbox Gate` to the `main protect` required status checks (#832; see above).
+3. ~~Add `Image + Sandbox Gate` to the `main protect` required status checks~~ — done on
+   2026-11-08 (#832; see above).
 4. Confirm the `DCO Sign-off` job passes on the first Renovate PR. If the app ignores
    `:gitSignOff` (it should not), the fallback is to exempt the bot in the DCO job, which
    is a workflow change and should be a deliberate, separate decision.
