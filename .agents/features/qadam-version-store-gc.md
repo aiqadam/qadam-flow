@@ -74,9 +74,13 @@ size as a metric with an operator warning above a configurable threshold.
   revert reaches back into, kept even past the retention window.
 
 ## Not done yet
-- **Custom-registry fetch** is still not implemented. `qadamRegistryConfig` records where a fetch
-  would go; `run.sh` now calls `checkReachability` for the slim image and passes
-  `QADAM_REGISTRY_URL` / `QADAM_REGISTRY_TOKEN` into `.env`, but nothing fetches a custom version yet.
+- **Custom-registry fetch** is still not implemented. `qadamRegistryConfig.checkReachability` has no
+  production caller — only its own test exercises it, left for the fetch path (#806) to call. `run.sh`
+  does its own, separate reachability probe in shell (`registry_reachable()`, same semantics: any HTTP
+  response counts, only a connection failure does not) before pulling the slim image, and passes
+  `QADAM_REGISTRY_URL` / `QADAM_REGISTRY_TOKEN` into `.env` as `AP_QADAM_REGISTRY_URL` /
+  `AP_QADAM_REGISTRY_TOKEN` — it does not call `checkReachability` itself, since the installer runs
+  before any server process exists to call it from.
   Image seeding (#807) now exists; its GC rule ("not shipped by the current image") reads the seed
   index through `qadamVersionStoreSeed.listImageVersions`.
 - **Framework version in audit records and the census** (ADR-0004: "record each snapshot's exact
