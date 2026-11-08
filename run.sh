@@ -518,6 +518,13 @@ configure_registry() {
   validate_registry_token
 }
 
+# A tag-based guess, not a resolved answer: a digest-pinned image (`@sha256:...`) is always treated
+# as "not slim" below, even when that digest happens to point at a slim build. Resolving it properly
+# would mean an extra registry/manifest-inspect call before every pull, for a pin style most installs
+# don't use — not worth it for the cost of one operator skipping a check that only ever produces a
+# warning (check_qadam_registry's probe gates nothing; a reachability miss still lets the install
+# continue). A digest-pinned slim image that can't reach its registry fails later, at qadam-fetch
+# time, with a less specific error instead of this installer's upfront warning.
 image_is_slim() {
   case "$1" in
     *@sha256:*) return 1 ;;
