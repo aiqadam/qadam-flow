@@ -1309,6 +1309,12 @@ jobs:
       matrix:
         flavour: [fat, slim]
     steps:
+      # Needed for the "Smoke the published manifest" step below, which runs
+      # tools/ci/check-image-flavour.sh from the checkout — this job otherwise never touches the
+      # repo (code-quality review, #807: without it that step failed on every push to main with the
+      # script missing, after both manifests had already been pushed).
+      - uses: actions/checkout@v7
+
       - name: Download ${{ matrix.flavour }} digests
         uses: actions/download-artifact@v4
         with:
