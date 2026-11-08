@@ -51,7 +51,8 @@
     },
     "@aiqadam/qadam-sftp": {
       "optionalNative": {
-        "ssh2": "ssh2 requires its sshcrypto addon inside try/catch and falls back to Node's crypto; cpu-features likewise"
+        "ssh2": "ssh2 requires its sshcrypto addon inside try/catch and falls back to Node's crypto",
+        "cpu-features": "ssh2's own optional dependency, required inside try/catch in ssh2/lib/protocol/constants.js and left undefined on failure"
       }
     },
     "@aiqadam/qadam-snowflake": {
