@@ -119,7 +119,8 @@ ENV TURBO_API=$TURBO_API \
 ARG QADAM_FLAVOUR=fat
 
 # The commit the artifacts are stamped with. CI passes it because `.git` is excluded from the build
-# context; a local build gets the all-zero sha, which the archive accepts as "unknown".
+# context; a local build gets the all-zero sha, which build-qadam-artifacts.mjs records as a dirty
+# commit (not a real, clean one) so the catalogue writer rejects it rather than crediting a fake sha.
 ARG COMMIT_SHA=
 
 # Build frontend, engine, server API, worker, and all bundled qadams.
@@ -203,6 +204,14 @@ COPY --from=build /usr/src/app/packages ./packages
 # The engine falls back to a tree walk without it, so a manifest lost on the way here would slow
 # every fresh engine without failing anything (#419).
 RUN test -s packages/qadams/dist-index.json
+
+# Same defense-in-depth as the dist-index check above, for the two artifacts #807 adds: the
+# flavour's version-store seed and the catalogue snapshot. Both writers already fail the build on a
+# real problem, but a build that crashed between opening the file and writing to it, or a copy that
+# silently dropped it, would otherwise surface only as an empty version store or a 404'd catalogue
+# read at runtime — a confusing failure far from its cause instead of a build failure at it.
+RUN test -s packages/qadams/version-store-seed/archive-index.json \
+    && test -s packages/qadams/catalog/v1/index.json
 
 # Copy built engine
 COPY --from=build /usr/src/app/dist/packages/engine/ ./dist/packages/engine/

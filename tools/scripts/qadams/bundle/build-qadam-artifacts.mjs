@@ -25,7 +25,10 @@
 //                        plan takes a qadam from the archive, and then `--pack` is too.
 //   --config <file>      per-qadam exceptions (default: qadam-artifact-config.json beside this)
 //   --commit <sha>       record this 40-character commit in `archive-index.json` instead of reading
-//                        it from `.git`; the image build has no `.git` in its context (#807)
+//                        it from `.git`; the image build has no `.git` in its context (#807). The
+//                        well-known all-zero sha (what a local `docker build` falls back to when it
+//                        has no real commit to pass) is recorded as dirty, not clean, so the
+//                        catalogue writer rejects it instead of crediting a fake commit.
 //
 // `--out` must not sit inside the repository: the load check resolves `@aiqadam/*` and `zod`
 // upward from each artifact, and a workspace `node_modules` above it would answer instead of the
@@ -42,6 +45,9 @@ import { ARTIFACT_STATUS, qadamArtifact } from './qadam-artifact.mjs'
 
 const REPO_ROOT = resolve(import.meta.dirname, '..', '..', '..', '..')
 const DEFAULT_CONFIG_PATH = join(import.meta.dirname, 'qadam-artifact-config.json')
+// What the Dockerfile's COMMIT_SHA build-arg falls back to for a local `docker build` with no real
+// commit to pass (#807) — names no commit, so it must never be reported as clean.
+const UNKNOWN_COMMIT_SHA = '0'.repeat(40)
 
 const main = async () => {
     const { values } = parseArgs({
@@ -285,7 +291,7 @@ const countBy = ({ values }) => values.reduce((counts, value) => ({ ...counts, [
 
 const gitCommit = (shaOverride) => {
     if (shaOverride !== undefined) {
-        return { sha: shaOverride, dirtyQadams: false }
+        return { sha: shaOverride, dirtyQadams: shaOverride === UNKNOWN_COMMIT_SHA }
     }
     const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: REPO_ROOT, encoding: 'utf8' }).trim()
     const dirty = execFileSync('git', ['status', '--porcelain', '--', 'packages/qadams'], { cwd: REPO_ROOT, encoding: 'utf8' }).trim() !== ''

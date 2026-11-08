@@ -44,10 +44,15 @@ const main = async () => {
         ? index.artifacts
         : await selectCore({ artifacts: index.artifacts, repoRoot })
 
-    await rm(outDir, { recursive: true, force: true })
-    await mkdir(outDir, { recursive: true })
-    await Promise.all(selected.map((artifact) => copyFile(path.join(archiveDir, artifact.file), path.join(outDir, artifact.file))))
-    await writeFile(path.join(outDir, INDEX_FILE), `${JSON.stringify({ formatVersion: 1, artifacts: selected }, null, 2)}\n`)
+    try {
+        await rm(outDir, { recursive: true, force: true })
+        await mkdir(outDir, { recursive: true })
+        await Promise.all(selected.map((artifact) => copyFile(path.join(archiveDir, artifact.file), path.join(outDir, artifact.file))))
+        await writeFile(path.join(outDir, INDEX_FILE), `${JSON.stringify({ formatVersion: 1, artifacts: selected }, null, 2)}\n`)
+    }
+    catch (error) {
+        fail(`cannot write the seed to ${outDir} (${error?.code ?? error?.message})`)
+    }
 
     console.log(JSON.stringify({
         flavour: values.flavour,
