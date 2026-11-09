@@ -5,6 +5,7 @@ import {
     FlowVersion,
     isNil,
 } from '@aiqadam/shared'
+import { system } from '../../../helper/system/system'
 import { Migration } from '.'
 
 export const cleanUpAgentTools: Migration = {
@@ -12,7 +13,16 @@ export const cleanUpAgentTools: Migration = {
     migrate: async (flowVersion: FlowVersion): Promise<FlowVersion> => {
         const newVersion = flowStructureUtil.transferFlow(flowVersion, (step) => {
             if (step.type === FlowActionType.PIECE && step.settings.qadamName === '@aiqadam/qadam-agent') {
-                const tools = (step.settings.input['agentTools'] as { type: string, toolName: string, qadamMetadata: { qadamName: string, qadamVersion: string, actionName: string, connectionExternalId: string }, flowId: string }[]) ?? []
+                const rawTools = step.settings.input['agentTools']
+                // `input` is `z.record(z.string(), z.unknown())` — nothing upstream guarantees
+                // `agentTools` is an array. A non-array here would throw on `.map` below, which
+                // `flowVersionMigrationService.migrate` rethrows and pages on-call for, 500ing every
+                // read of that one flow version. Treat it as nothing to migrate instead (#1028).
+                if (!isNil(rawTools) && !Array.isArray(rawTools)) {
+                    system.globalLogger().warn({ flowVersionId: flowVersion.id, stepName: step.name }, '[cleanUpAgentTools] skipping step with a non-array agentTools input')
+                    return step
+                }
+                const tools = (rawTools as { type: string, toolName: string, qadamMetadata: { qadamName: string, qadamVersion: string, actionName: string, connectionExternalId: string }, flowId: string }[] | undefined) ?? []
                 const newTools = tools.map(tool => {
                     switch (tool.type) {
                         case 'PIECE': {

@@ -56,6 +56,11 @@ function readToolName(version: FlowVersion): string {
     return step.settings.input[AgentQadamProps.AGENT_TOOLS][0].toolName
 }
 
+function readTools(version: FlowVersion): Record<string, unknown>[] {
+    const step = (version.trigger as unknown as { nextAction: { settings: { input: Record<string, Record<string, unknown>[]> } } }).nextAction
+    return step.settings.input[AgentQadamProps.AGENT_TOOLS]
+}
+
 describe('agent PIECE tool names — #247', () => {
     // The regression test for the typo itself. Before the fix this stayed at the legacy name,
     // silently, and there was no test to notice.
@@ -91,5 +96,35 @@ describe('agent PIECE tool names — #247', () => {
         const migrated = await migrateV23AgentQadamToolNamesRedo.migrate(version)
 
         expect(readToolName(migrated)).toBe('flow_tool')
+    })
+
+    // #1028: `step.settings.input` is `z.record(z.string(), z.unknown())` — nothing upstream
+    // guarantees `agentTools` is an array. Before this fix, `tools.map` threw `TypeError` on a
+    // string or an object, 500ing the flow read instead of leaving the step untouched.
+    it.each([
+        ['a string', 'not-an-array'],
+        ['an object', { foo: 'bar' }],
+    ])('v23 leaves the step untouched when agentTools is %s', async (_label, agentTools) => {
+        const version = agentFlowVersion({ schemaVersion: '23', toolName: 'legacy_name' })
+        const step = (version.trigger as unknown as { nextAction: { settings: { input: Record<string, unknown> } } }).nextAction
+        step.settings.input[AgentQadamProps.AGENT_TOOLS] = agentTools
+
+        const migrated = await migrateV23AgentQadamToolNamesRedo.migrate(version)
+        const migratedStep = (migrated.trigger as unknown as { nextAction: { settings: { input: Record<string, unknown> } } }).nextAction
+
+        expect(migratedStep.settings.input[AgentQadamProps.AGENT_TOOLS]).toEqual(agentTools)
+        expect(migrated.schemaVersion).toBe('24')
+    })
+
+    // `null`/`undefined` already went through the pre-existing `?? []` fallback and never threw —
+    // this just pins that it still migrates to an empty array rather than being left as `null`.
+    it('v23 migrates a null agentTools to an empty array', async () => {
+        const version = agentFlowVersion({ schemaVersion: '23', toolName: 'legacy_name' })
+        const step = (version.trigger as unknown as { nextAction: { settings: { input: Record<string, unknown> } } }).nextAction
+        step.settings.input[AgentQadamProps.AGENT_TOOLS] = null
+
+        const migrated = await migrateV23AgentQadamToolNamesRedo.migrate(version)
+
+        expect(readTools(migrated)).toEqual([])
     })
 })

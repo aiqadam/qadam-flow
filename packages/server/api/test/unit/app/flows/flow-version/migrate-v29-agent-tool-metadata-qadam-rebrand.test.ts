@@ -192,6 +192,36 @@ describe('agent PIECE tool metadata qadam rebrand', () => {
         expect(migrated.trigger).toEqual(version.trigger)
     })
 
+    // #1028: `step.settings.input` is `z.record(z.string(), z.unknown())` — nothing upstream
+    // guarantees `agentTools` is an array. Before this fix, `isNil(tools)` let a string or an
+    // object through and `tools.map` threw `TypeError`, 500ing the flow read.
+    it.each([
+        ['a string', 'not-an-array'],
+        ['an object', { foo: 'bar' }],
+    ])('leaves the step untouched when agentTools is %s', async (_label, agentTools) => {
+        const version = agentFlowVersion({ schemaVersion: '29', tools: [] })
+        const step = (version.trigger as unknown as { nextAction: { settings: { input: Record<string, unknown> } } }).nextAction
+        step.settings.input[AgentQadamProps.AGENT_TOOLS] = agentTools
+
+        const migrated = await migrateV29AgentToolMetadataQadamRebrand.migrate(version)
+        const migratedStep = (migrated.trigger as unknown as { nextAction: { settings: { input: Record<string, unknown> } } }).nextAction
+
+        expect(migratedStep.settings.input[AgentQadamProps.AGENT_TOOLS]).toEqual(agentTools)
+        expect(migrated.schemaVersion).toBe('30')
+    })
+
+    // `null`/`undefined` already went through the pre-existing `isNil` guard and never threw.
+    it('leaves the step untouched when agentTools is null', async () => {
+        const version = agentFlowVersion({ schemaVersion: '29', tools: [] })
+        const step = (version.trigger as unknown as { nextAction: { settings: { input: Record<string, unknown> } } }).nextAction
+        step.settings.input[AgentQadamProps.AGENT_TOOLS] = null
+
+        const migrated = await migrateV29AgentToolMetadataQadamRebrand.migrate(version)
+        const migratedStep = (migrated.trigger as unknown as { nextAction: { settings: { input: Record<string, unknown> } } }).nextAction
+
+        expect(migratedStep.settings.input[AgentQadamProps.AGENT_TOOLS]).toBeNull()
+    })
+
     // Safe to apply twice: after the first pass the tool only has `qadamMetadata`, so a second pass
     // must be a no-op.
     it('is idempotent', async () => {
