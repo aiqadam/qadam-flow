@@ -472,6 +472,11 @@ jobs:
       matrix:
         flavour: [fat, slim]
     steps:
+      # Needed for the "Smoke the released manifest" step below, which runs
+      # tools/ci/check-image-flavour.sh from the checkout — this job otherwise never touches the
+      # repo (same gap ci.yml's image_publish had, code-quality review, #807).
+      - uses: actions/checkout@v7
+
       - name: Download ${{ matrix.flavour }} digests
         uses: actions/download-artifact@v4
         with:
@@ -533,6 +538,16 @@ jobs:
         run: |
           docker buildx imagetools inspect \
             ghcr.io/aiqadam/qadam-flow:${{ steps.release.outputs.version }}-${{ matrix.flavour }}
+
+      # The tagged release images are what run.sh and every operator actually pull — ci.yml's
+      # `image`/`image_publish` jobs smoke-check `main` builds, but nothing here did the same for a
+      # real release until this step (advisory review, #807): a flavour-composition bug could ship
+      # undetected in a tagged release even though CI had already caught it on `main`.
+      - name: Smoke the released ${{ matrix.flavour }} manifest
+        run: |
+          tools/ci/check-image-flavour.sh \
+            "ghcr.io/aiqadam/qadam-flow:${{ steps.release.outputs.version }}-${{ matrix.flavour }}" \
+            "${{ matrix.flavour }}"
 
   # Split from `publish` (reviewed, #807): `publish` is a 2-leg matrix (`fat`, `slim`) with
   # `fail-fast: false`, so one flavour can fail while the other's manifest push succeeds. A GitHub

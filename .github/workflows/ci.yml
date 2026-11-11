@@ -1228,13 +1228,16 @@ jobs:
             PLATFORM_VERSION=${{ needs.platform-version.outputs.version }}
             QADAM_FLAVOUR=${{ matrix.flavour }}
 
+      # `steps.meta.outputs.version` is metadata-action's own priority-resolved primary tag (the
+      # `priority=1000` line above, flavour suffix included) — read that output directly rather than
+      # assuming it is first in `steps.meta.outputs.tags`, which would silently break if a future
+      # edit reordered or added a line to the `tags:` block above (advisory review, #807).
       - name: Smoke the built ${{ matrix.flavour }} image
         if: github.event_name != 'push'
-        env:
-          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
         run: |
-          image="$(printf '%s\n' "$IMAGE_TAGS" | head -n 1)"
-          tools/ci/check-image-flavour.sh "$image" "${{ matrix.flavour }}"
+          tools/ci/check-image-flavour.sh \
+            "ghcr.io/aiqadam/qadam-flow:${{ steps.meta.outputs.version }}" \
+            "${{ matrix.flavour }}"
 
       - name: Build and push by digest (main)
         id: build

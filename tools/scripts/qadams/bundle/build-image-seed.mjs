@@ -43,6 +43,10 @@ const main = async () => {
     const selected = values.flavour === 'fat'
         ? index.artifacts
         : await selectCore({ artifacts: index.artifacts, repoRoot })
+    // Only the artifacts this flavour actually ships pay the stat() cost, and only their shape and
+    // tarball presence gate the build — `slim` no longer fails over a community tarball it was
+    // never going to copy (advisory review, #807).
+    await Promise.all(selected.map((artifact) => validateArtifact({ artifact, archiveDir, indexPath: path.join(archiveDir, INDEX_FILE) })))
 
     try {
         await rm(outDir, { recursive: true, force: true })
@@ -74,7 +78,6 @@ const readArchiveIndex = async ({ archiveDir }) => {
     if (parsed?.formatVersion !== 1 || !Array.isArray(parsed.artifacts)) {
         fail(`${indexPath} is not a version-1 archive index`)
     }
-    await Promise.all(parsed.artifacts.map((artifact) => validateArtifact({ artifact, archiveDir, indexPath })))
     return parsed
 }
 
@@ -109,28 +112,31 @@ const selectCore = async ({ artifacts, repoRoot }) => {
 const readCoreQadamNames = async ({ repoRoot }) => {
     const coreDir = path.join(repoRoot, CORE_DIR)
     const entries = await readdir(coreDir, { withFileTypes: true }).catch((error) => fail(`cannot list ${coreDir} (${error?.code ?? error?.message})`))
-    const names = new Set()
-    for (const entry of entries) {
-        if (!entry.isDirectory()) {
-            continue
-        }
-        const manifestPath = path.join(coreDir, entry.name, 'package.json')
-        let manifest
-        try {
-            manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
-        }
-        catch (error) {
-            fail(`cannot read ${manifestPath} (${error?.code ?? error?.message})`)
-        }
-        if (typeof manifest?.name !== 'string') {
-            fail(`${manifestPath} has no package name`)
-        }
-        names.add(manifest.name)
-    }
-    if (names.size === 0) {
+    const names = await Promise.all(
+        entries
+            .filter((entry) => entry.isDirectory())
+            .map((entry) => readCoreQadamName({ coreDir, entry })),
+    )
+    const nameSet = new Set(names)
+    if (nameSet.size === 0) {
         fail(`no core qadams found under ${coreDir}`)
     }
-    return names
+    return nameSet
+}
+
+const readCoreQadamName = async ({ coreDir, entry }) => {
+    const manifestPath = path.join(coreDir, entry.name, 'package.json')
+    let manifest
+    try {
+        manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+    }
+    catch (error) {
+        return fail(`cannot read ${manifestPath} (${error?.code ?? error?.message})`)
+    }
+    if (typeof manifest?.name !== 'string') {
+        return fail(`${manifestPath} has no package name`)
+    }
+    return manifest.name
 }
 
 const isInside = ({ root, target }) => {
