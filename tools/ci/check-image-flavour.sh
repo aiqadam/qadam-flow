@@ -3,14 +3,13 @@
 #
 #   tools/ci/check-image-flavour.sh ghcr.io/aiqadam/qadam-flow:1.2.3-slim slim
 #
-# `fat` must carry every official qadam in its store seed and the community packages on disk; `slim`
-# must carry only the core qadams in its store seed, plus the four community qadams the server
-# itself statically depends on (facebook-leads / intercom / slack for app-event-routing's webhook
-# parsing, telegram-bot for the long-polling event puller — see the Dockerfile's slim-prune step),
-# and no other community tree.
+# `fat` must carry every official qadam's community package on disk; `slim` must carry only the
+# core qadams on disk, plus the four community qadams the server itself statically depends on
+# (facebook-leads / intercom / slack for app-event-routing's webhook parsing, telegram-bot for the
+# long-polling event puller — see the Dockerfile's slim-prune step), and no other community tree.
 #
-# The catalogue snapshot (#778) is deliberately not checked here: neither image carries one yet
-# (see the Dockerfile's "NOT wired up here" comment on the catalogue step).
+# Neither the qadam-version-store seed nor the catalogue snapshot (#778) is checked here: neither
+# image carries one yet (see the Dockerfile's "NOT wired up here" comment, #807).
 #
 # The image is pulled first, so this also proves the tag resolves to a manifest for this platform.
 
@@ -43,7 +42,6 @@ const path = require('node:path')
 
 const flavour = process.argv[1]
 const root = '/usr/src/app/packages/qadams'
-const seedDir = path.join(root, 'version-store-seed')
 
 const fail = (message) => {
     console.error(`image-flavour: ${message}`)

@@ -513,6 +513,14 @@ validate_registry_token() {
   case "$QADAM_REGISTRY_TOKEN" in
     *[[:cntrl:]]*) die "QADAM_REGISTRY_TOKEN must be a single line without control characters" ;;
   esac
+  # docker-compose.yml loads .env via `env_file:`, and Compose interpolates `$VAR`/`${VAR}` in
+  # env_file values the same way it does in the compose file itself — a `$` not meant as a
+  # reference needs `$$` there. set_env_value writes the token as-is, so a token containing `$`
+  # would reach the server silently truncated or altered rather than rejected (verified against a
+  # live `docker compose run`, #807). Reject it here instead of letting it corrupt quietly.
+  case "$QADAM_REGISTRY_TOKEN" in
+    *'$'*) die "QADAM_REGISTRY_TOKEN must not contain '\$' — docker compose would alter it when loading .env" ;;
+  esac
 }
 
 # The installer's unprefixed QADAM_REGISTRY_* overrides are written to .env prefixed with AP_, which

@@ -1215,6 +1215,25 @@ else
   fi
 fi
 
+# A token containing '$' must abort before docker compose ever starts — compose's own env_file
+# interpolation would silently alter it at container start (verified against a live
+# `docker compose run`, #807).
+dollar_token_work="$tmp/registry-dollar-token"
+mkdir -p "$dollar_token_work"
+if QADAM_REGISTRY_URL=https://registry.example.com QADAM_REGISTRY_TOKEN='tok$en' "$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  configure_registry
+' _ "$runsh" "$dollar_token_work" >/dev/null 2>"$dollar_token_work/.stderr"; then
+  fail_case 'a registry token containing $ must abort'
+else
+  if grep -qF "QADAM_REGISTRY_TOKEN must not contain" "$dollar_token_work/.stderr"; then
+    pass=$((pass + 1))
+  else
+    fail_case 'bad registry token reports the shape it wants' "$(cat "$dollar_token_work/.stderr")"
+  fi
+fi
+
 # set_env_value must round-trip a value containing sed's own delimiter and replacement-escape
 # characters (&, |, \) — the first real caller to pass an arbitrary secret through it (the registry
 # token), where every earlier caller only ever passed an installer-generated value.
