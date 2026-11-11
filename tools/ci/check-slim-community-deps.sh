@@ -1,5 +1,5 @@
 #!/bin/sh
-# Keeps three independent copies of one list in sync (#807, ADR-0003, advisory review): the
+# Keeps three independent copies of one list in sync (#807, ADR-0003): the
 # community qadams `:slim`'s prune step in the Dockerfile keeps, the ones
 # check-image-flavour.sh expects a slim image to carry, and the ones the server itself actually
 # imports (app-event-routing.module.ts's static slack/facebook-leads/intercom imports,

@@ -1426,7 +1426,7 @@ else
 fi
 
 # An unencoded `@` inside the password itself must not leave part of the password visible — cut at
-# the LAST `@` in the authority, not the first (app-sec review, #807 round 2).
+# the LAST `@` in the authority, not the first.
 redact_at_in_password="$("$sut" -c '. "$1"; redact_registry_url "$2"' _ "$runsh" 'https://u:p@ss@reg.example/')"
 if [ "$redact_at_in_password" = 'https://reg.example/' ]; then
   pass=$((pass + 1))

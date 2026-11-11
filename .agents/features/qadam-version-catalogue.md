@@ -38,22 +38,20 @@ registry artifact) are replaced by ADR-0003 (maintainer comment on #778, 2026-10
 plus each stored version's `metadata.json` (#805) are the source of truth, and the metadata is the
 artifact's own (#804), never re-derived.
 
-**What this means for `:slim` today (code-quality review, #807).** `list()` (below, "the builder's
-'add a step' picker") does not read the catalogue at all — it never has, with or without a snapshot
-baked into an image. So a published catalogue would not by itself make a never-before-used
-community qadam appear in a slim instance's builder; `list()` would need its own change to consult
-it, which is not this file's "hosting not done" gap and not #807's scope. Until then, slim's builder
-offers only the core set plus whatever community qadam a flow has already pinned (`registry()`
-already merges every stored release — see the "`list()` 'latest'" bullet below for the split). This
-rhymes with, but is narrower than, the "Harder / risks" line in ADR-0003 ("slim instances depend on
-the registry and the catalogue host for anything not yet in their store") — **not the same risk**
-(second code-quality pass, #807): that line, and the ADR's own "Catalogue" decision ("slim images
-carry a snapshot"), describe a slim instance that *has* a catalogue snapshot still depending on
-reachability for anything not yet fetched. It does not say the builder's own picker stays blind to
-the catalogue even when one is reachable — `list()` never having read the catalogue, with or
-without a snapshot, is a fact about this codebase the ADR did not weigh, not a risk it already
-accepted. "A fresh slim builder offers ~31 qadams, not 238" is new information this PR's own review
-surfaced; it belongs in the PR body as a finding, not as something ADR-0003 pre-approved.
+**What this means for `:slim` today.** `list()` (below, "the builder's 'add a step' picker") does
+not read the catalogue at all — it never has, with or without a snapshot baked into an image. So a
+published catalogue would not by itself make a never-before-used community qadam appear in a slim
+instance's builder; `list()` would need its own change to consult it, which is not this file's
+"hosting not done" gap and not #807's scope. Until then, slim's builder offers only the core set
+plus whatever community qadam a flow has already pinned (`registry()` already merges every stored
+release — see the "`list()` 'latest'" bullet below for the split). This rhymes with, but is
+narrower than, the "Harder / risks" line in ADR-0003 ("slim instances depend on the registry and
+the catalogue host for anything not yet in their store") — **not the same risk**: that line, and
+the ADR's own "Catalogue" decision ("slim images carry a snapshot"), describe a slim instance that
+*has* a catalogue snapshot still depending on reachability for anything not yet fetched. It does
+not say the builder's own picker stays blind to the catalogue even when one is reachable — `list()`
+never having read the catalogue, with or without a snapshot, is a fact about this codebase the ADR
+did not weigh, not a risk it already accepted: a fresh slim builder offers ~31 qadams, not 238.
 `docs/install/options/image-flavours.mdx` states the actual limitation plainly.
 
 ## Key Files

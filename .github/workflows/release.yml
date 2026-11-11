@@ -465,8 +465,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # `contents: write` moved with GitHub Release creation to the `release` job below when this job
-    # was split into a fat/slim matrix (#807, app-sec review) — this job only checks out the repo
-    # (for the smoke step) and pushes to GHCR now, neither of which needs it.
+    # was split into a fat/slim matrix (#807) — this job only checks out the repo (for the smoke
+    # step) and pushes to GHCR now, neither of which needs it.
     permissions:
       contents: read
       packages: write
@@ -477,7 +477,7 @@ jobs:
     steps:
       # Needed for the "Smoke the released manifest" step below, which runs
       # tools/ci/check-image-flavour.sh from the checkout — this job otherwise never touches the
-      # repo (same gap ci.yml's image_publish had, code-quality review, #807).
+      # repo (same gap ci.yml's image_publish had, #807).
       - uses: actions/checkout@v7
 
       - name: Download ${{ matrix.flavour }} digests
@@ -547,8 +547,8 @@ jobs:
 
       # The tagged release images are what run.sh and every operator actually pull — ci.yml's
       # `image`/`image_publish` jobs smoke-check `main` builds, but nothing here did the same for a
-      # real release until this step (advisory review, #807): a flavour-composition bug could ship
-      # undetected in a tagged release even though CI had already caught it on `main`.
+      # real release until this step (#807): a flavour-composition bug could ship undetected in a
+      # tagged release even though CI had already caught it on `main`.
       - name: Smoke the released ${{ matrix.flavour }} manifest
         env:
           VERSION: ${{ steps.release.outputs.version }}

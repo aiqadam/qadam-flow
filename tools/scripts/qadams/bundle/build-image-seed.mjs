@@ -44,8 +44,8 @@ const main = async () => {
         ? index.artifacts
         : await selectCore({ artifacts: index.artifacts, repoRoot })
     // Only the artifacts this flavour actually ships pay the stat() cost, and only their shape and
-    // tarball presence gate the build — `slim` no longer fails over a community tarball it was
-    // never going to copy (advisory review, #807).
+    // tarball presence gate the build — `slim` does not fail over a community tarball it was never
+    // going to copy.
     await Promise.all(selected.map((artifact) => validateArtifact({ artifact, archiveDir, indexPath: path.join(archiveDir, INDEX_FILE) })))
 
     try {

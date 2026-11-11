@@ -55,7 +55,7 @@ const qadamDirNames = (dir) => {
     return fs.readdirSync(dir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name)
 }
 
-// The server's own direct dependencies (Dockerfile, #807, code-quality review) — kept in `:slim`
+// The server's own direct dependencies (see the Dockerfile, #807) — kept in `:slim`
 // even though they're community qadams, because the server process itself requires them to boot.
 const ALWAYS_BUNDLED_COMMUNITY = ['facebook-leads', 'intercom', 'slack', 'telegram-bot']
 

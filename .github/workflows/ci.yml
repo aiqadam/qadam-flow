@@ -1231,7 +1231,7 @@ jobs:
       # `steps.meta.outputs.version` is metadata-action's own priority-resolved primary tag (the
       # `priority=1000` line above, flavour suffix included) — read that output directly rather than
       # assuming it is first in `steps.meta.outputs.tags`, which would silently break if a future
-      # edit reordered or added a line to the `tags:` block above (advisory review, #807).
+      # edit reordered or added a line to the `tags:` block above.
       - name: Smoke the built ${{ matrix.flavour }} image
         if: github.event_name != 'push'
         env:
@@ -1317,8 +1317,8 @@ jobs:
     steps:
       # Needed for the "Smoke the published manifest" step below, which runs
       # tools/ci/check-image-flavour.sh from the checkout — this job otherwise never touches the
-      # repo (code-quality review, #807: without it that step failed on every push to main with the
-      # script missing, after both manifests had already been pushed).
+      # repo (#807: without it that step failed on every push to main with the script missing,
+      # after both manifests had already been pushed).
       - uses: actions/checkout@v7
 
       - name: Download ${{ matrix.flavour }} digests
@@ -1371,7 +1371,7 @@ jobs:
             "ghcr.io/aiqadam/qadam-flow:${VERSION}-${FLAVOUR}" \
             "${FLAVOUR}"
 
-  # Required status check (#832): the always-reporting front for `image` (both matrix legs) and
+  # Required status check (#832): the always-reporting front for `image` (all matrix legs) and
   # `sandbox-e2e`. Neither can be required itself — `image` is skipped on a docs-only diff and
   # `sandbox-e2e` on a PR that touches no sandbox path, and a skipped required context reports
   # nothing and wedges the PR. So this job is unconditional and carries the required name.
@@ -1388,7 +1388,7 @@ jobs:
   # irrelevant, and nothing else. An unjustified skip fails — #831 skipped `image` on every push to
   # main without anyone noticing, and a gate that read every skip as a pass would have hidden it
   # here too. `failure` and `cancelled` always fail. `needs.image.result` aggregates the matrix: it
-  # is `failure` if either architecture failed.
+  # is `failure` if any platform/flavour leg failed.
   image-sandbox-gate:
     name: Image + Sandbox Gate
     needs: [changes, image, sandbox-e2e]
