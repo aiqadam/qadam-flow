@@ -1257,12 +1257,13 @@ if PATH="$curlbin:$PATH" CURL_LOG="$reach_work/.args" CURL_STDIN_LOG="$reach_wor
     cd "$2" || exit 1
     registry_reachable
   ' _ "$runsh" "$reach_work" >/dev/null 2>&1; then
-  if grep -qF 'https://registry.example.com/-/ping' "$reach_work/.args" \
+  if grep -qF 'url = "https://registry.example.com/-/ping"' "$reach_work/.stdin" \
     && grep -qF 'Authorization: Bearer secret-token' "$reach_work/.stdin" \
-    && ! grep -qF 'secret-token' "$reach_work/.args"; then
+    && ! grep -qF 'secret-token' "$reach_work/.args" \
+    && ! grep -qF 'registry.example.com' "$reach_work/.args"; then
     pass=$((pass + 1))
   else
-    fail_case 'reachability probes /-/ping with the token off argv' "$(cat "$reach_work/.args") / $(cat "$reach_work/.stdin" 2>/dev/null)"
+    fail_case 'reachability probes /-/ping with the URL and token off argv' "$(cat "$reach_work/.args") / $(cat "$reach_work/.stdin" 2>/dev/null)"
   fi
 else
   fail_case 'reachability accepts a successful probe' 'registry_reachable returned non-zero'
@@ -1323,11 +1324,12 @@ cat > "$perhost_curlbin/curl" <<'CURL'
 #!/bin/sh
 : "${CURL_LOG:?}"
 printf '%s\n' "$*" >> "$CURL_LOG"
-for arg in "$@"; do
-  case "$arg" in
-    *registry.npmjs.org*) exit "${NPMJS_EXIT:-0}" ;;
-  esac
-done
+# The URL now travels on stdin (`-K -`), not argv, so decide which host this probe targets by
+# reading the config curl would have read.
+stdin_content=$(cat)
+case "$stdin_content" in
+  *registry.npmjs.org*) exit "${NPMJS_EXIT:-0}" ;;
+esac
 exit "${CUSTOM_EXIT:-0}"
 CURL
 chmod +x "$perhost_curlbin/curl"
@@ -1382,6 +1384,24 @@ if grep -qF 'using qadam registry https://registry.example.com/npm' "$redact_wor
   pass=$((pass + 1))
 else
   fail_case 'the log message keeps the host, minus credentials' "$(cat "$redact_work/.stdout")"
+fi
+
+# An unencoded `@` inside the password itself must not leave part of the password visible — cut at
+# the LAST `@` in the authority, not the first (app-sec review, #807 round 2).
+redact_at_in_password="$("$sut" -c '. "$1"; redact_registry_url "$2"' _ "$runsh" 'https://u:p@ss@reg.example/')"
+if [ "$redact_at_in_password" = 'https://reg.example/' ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'an unencoded @ in the password is fully redacted' "$redact_at_in_password"
+fi
+
+# An `@` that legitimately appears in the path (not the authority), such as a scoped npm package
+# name, must survive unredacted — only an `@` before the first `/` after the scheme is credentials.
+redact_at_in_path="$("$sut" -c '. "$1"; redact_registry_url "$2"' _ "$runsh" 'https://npm.pkg.github.com/@aiqadam')"
+if [ "$redact_at_in_path" = 'https://npm.pkg.github.com/@aiqadam' ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'an @ in the path (no credentials) is left alone' "$redact_at_in_path"
 fi
 
 # A plaintext registry with a token set warns that the token travels unencrypted.

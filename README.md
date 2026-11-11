@@ -45,8 +45,10 @@ curl -fsSL https://flow.aiqadam.org/run.sh | sh
 
 This drops a fresh `./qadam-flow/` next to your shell, pulls
 `ghcr.io/aiqadam/qadam-flow:slim` (the platform plus the 27 core qadams;
-community qadams are fetched from the qadam registry on demand —
-see [Image flavours](docs/install/options/image-flavours.mdx)), generates
+a flow that already pins another community qadam fetches it from the
+qadam registry, but the builder's "add a step" list only offers qadams
+the instance already knows about — see
+[Image flavours](docs/install/options/image-flavours.mdx)), generates
 random secrets in `.env`, brings up postgres + redis + app + workers, and
 prints the URL when the API is ready. Works on macOS (Docker Desktop),
 Linux (dockerd), and Windows via WSL2.

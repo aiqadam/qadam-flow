@@ -17,11 +17,13 @@ curl -fsSL https://flow.aiqadam.org/run.sh | sh
 ```
 
 The script writes a fresh `.env` next to `docker-compose.yml`, pulls
-`ghcr.io/aiqadam/qadam-flow:slim` (ADR-0003, #807 — the 27 core qadams;
-community qadams fetch from the qadam registry on demand, configurable via
-`QADAM_REGISTRY_URL` / `QADAM_REGISTRY_TOKEN`), brings up the stack, and
-waits for the API. Re-running it is idempotent, and keeps whatever image an
-existing `.env` already pins — see
+`ghcr.io/aiqadam/qadam-flow:slim` (ADR-0003, #807 — the 27 core qadams; a
+flow that already pins another community qadam fetches it from the qadam
+registry, configurable via `QADAM_REGISTRY_URL` / `QADAM_REGISTRY_TOKEN`,
+but the builder's "add a step" list only offers qadams the instance
+already knows about), brings up the stack, and waits for the API.
+Re-running it is idempotent, and keeps whatever image an existing `.env`
+already pins — see
 [Image flavours](../../../docs/install/options/image-flavours.mdx).
 
 Build from local source instead of pulling:

@@ -45,10 +45,15 @@ The gate then passes and prints the tagger's name, email and reason into the job
 The one-line installer used to pull `ghcr.io/aiqadam/qadam-flow:latest`, which bundled every official
 qadam. Every release now publishes two images instead:
 
-- **`:1.2.3-slim` / `:slim`** — the platform and the 27 core qadams. Community qadams are fetched
-  from npm on demand. This is what `run.sh` installs from now on.
+- **`:1.2.3-slim` / `:slim`** — the platform, the 27 core qadams, and four community qadams the
+  server itself needs to run. This is what `run.sh` installs from now on. A flow step that already
+  pins another community qadam — imported from elsewhere, or added by exact name and version
+  through the API/MCP — fetches that exact version from npm; the builder's own "add a step" list,
+  though, offers only qadams the instance already knows about (see
+  [Image flavours](/install/options/image-flavours)).
 - **`:1.2.3-fat` / `:fat`** — the platform and every official qadam, core and community. Use it when
-  the host cannot reach the qadam registry.
+  the host cannot reach the qadam registry, or when flows need to pick a community qadam from the
+  builder that the instance has never pinned before.
 
 `:latest`, the unsuffixed exact version (`:1.2.3`), and the minor alias (`:1.2`) still point at the
 fat image, so an install that pins one of them keeps running the same qadams it did before. Those

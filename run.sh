@@ -477,12 +477,21 @@ configure_image() {
 # land in terminal output or CI logs (app-sec review, #807). Pure parameter expansion, not sed —
 # portable to dash without a `-E`/`-r` extended-regex flag. Only rewrites a `scheme://...@...`
 # shape; a URL with no `://` (already invalid, caught by validate_registry_url) is echoed as-is.
+#
+# Cuts at the LAST `@` within the authority (host[:port]) specifically, not the first `@` in the
+# whole string: a URL parser (and a browser/curl) reads everything up to the last `@` before the
+# next `/` as userinfo, so an unencoded `@` inside the password itself (`user:p@ss@host`) would
+# otherwise leave part of the password in the redacted output (app-sec review, #807). Splitting the
+# authority off by its own terminating `/` first, then cutting that piece at its last `@`, keeps an
+# `@` that legitimately appears later in the path (`host/a@b`) untouched.
 redact_registry_url() {
   case "$1" in
     *://*@*)
       registry_url_scheme=${1%%://*}
       registry_url_after_scheme=${1#*://}
-      printf '%s://%s\n' "$registry_url_scheme" "${registry_url_after_scheme#*@}"
+      registry_url_authority=${registry_url_after_scheme%%/*}
+      registry_url_rest=${registry_url_after_scheme#"$registry_url_authority"}
+      printf '%s://%s%s\n' "$registry_url_scheme" "${registry_url_authority##*@}" "$registry_url_rest"
       ;;
     *)
       printf '%s\n' "$1"
@@ -572,21 +581,26 @@ image_is_slim() {
 
 # Any HTTP response counts as reachable — a 401 or 404 still proves DNS, TCP and TLS work, which is
 # all the installer can know without the registry's qadam protocol. Only a curl failure means the
-# registry is unreachable. The token travels through curl's stdin config, so it never appears in argv
-# or in the installer's output. Takes an optional URL/token pair so check_qadam_registry below can
-# also probe npmjs on its own, regardless of what QADAM_REGISTRY_URL/QADAM_REGISTRY_TOKEN hold —
-# every caller before #807's own registry-probe review passed neither and got the globals.
+# registry is unreachable. The token AND the URL both travel through curl's stdin config (`-K -`),
+# never as a command-line argument: an operator-supplied token never belongs on argv, and an
+# operator can also write credentials directly into the URL itself (`https://user:pass@host`) even
+# though the docs point at QADAM_REGISTRY_TOKEN for that — either way it must not be readable by
+# another local user via `ps` / `/proc/<pid>/cmdline` for the life of the probe (app-sec review,
+# #807). Takes an optional URL/token pair so check_qadam_registry below can also probe npmjs on its
+# own, regardless of what QADAM_REGISTRY_URL/QADAM_REGISTRY_TOKEN hold — every caller before #807's
+# own registry-probe review passed neither and got the globals.
 registry_reachable() {
   probe_registry_url=${1:-$QADAM_REGISTRY_URL}
   probe_registry_token=${2-$QADAM_REGISTRY_TOKEN}
   probe_url="${probe_registry_url%/}/-/ping"
-  if [ -n "$probe_registry_token" ]; then
-    escaped_token=$(printf '%s' "$probe_registry_token" | sed 's/\\/\\\\/g; s/"/\\"/g')
-    printf 'header = "Authorization: Bearer %s"\n' "$escaped_token" \
-      | curl -sS -o /dev/null -m 5 -K - "$probe_url" >/dev/null 2>&1
-  else
-    curl -sS -o /dev/null -m 5 "$probe_url" >/dev/null 2>&1
-  fi
+  escaped_probe_url=$(printf '%s' "$probe_url" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  {
+    printf 'url = "%s"\n' "$escaped_probe_url"
+    if [ -n "$probe_registry_token" ]; then
+      escaped_token=$(printf '%s' "$probe_registry_token" | sed 's/\\/\\\\/g; s/"/\\"/g')
+      printf 'header = "Authorization: Bearer %s"\n' "$escaped_token"
+    fi
+  } | curl -sS -o /dev/null -m 5 -K - >/dev/null 2>&1
 }
 
 # The isolate execution modes (SANDBOX_PROCESS, SANDBOX_CODE_AND_PROCESS) do not read the qadam

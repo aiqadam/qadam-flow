@@ -45,10 +45,16 @@ community qadam appear in a slim instance's builder; `list()` would need its own
 it, which is not this file's "hosting not done" gap and not #807's scope. Until then, slim's builder
 offers only the core set plus whatever community qadam a flow has already pinned (`registry()`
 already merges every stored release — see the "`list()` 'latest'" bullet below for the split). This
-is the practical face of the "Harder / risks" line in ADR-0003 ("slim instances depend on the
-registry and the catalogue host for anything not yet in their store"): the risk was accepted when
-slim was chosen as `run.sh`'s default, but it was not, before this review, written down anywhere a
-user would read it. `docs/install/options/image-flavours.mdx` now says so explicitly.
+rhymes with, but is narrower than, the "Harder / risks" line in ADR-0003 ("slim instances depend on
+the registry and the catalogue host for anything not yet in their store") — **not the same risk**
+(second code-quality pass, #807): that line, and the ADR's own "Catalogue" decision ("slim images
+carry a snapshot"), describe a slim instance that *has* a catalogue snapshot still depending on
+reachability for anything not yet fetched. It does not say the builder's own picker stays blind to
+the catalogue even when one is reachable — `list()` never having read the catalogue, with or
+without a snapshot, is a fact about this codebase the ADR did not weigh, not a risk it already
+accepted. "A fresh slim builder offers ~31 qadams, not 238" is new information this PR's own review
+surfaced; it belongs in the PR body as a finding, not as something ADR-0003 pre-approved.
+`docs/install/options/image-flavours.mdx` states the actual limitation plainly.
 
 ## Key Files
 - `packages/server/api/src/app/qadams/catalogue/qadam-version-catalogue-format.ts` — the format, shared by writer and reader: layout, zod schemas (lenient for readers, strict for the writer), `integrityOf`, deterministic `serializeIndex`, `QADAM_VERSION_CATALOGUE_DEFAULT_URL`, size bounds
