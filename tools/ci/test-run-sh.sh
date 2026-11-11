@@ -1405,8 +1405,8 @@ else
   fail_case 'an unreachable custom registry warns even when npmjs itself is fine' "$(cat "$custom_down_npmjs_ok/.stderr")"
 fi
 
-# A URL with embedded credentials must never reach log/warn/die output in cleartext (app-sec
-# review, #807) — only the host after the `user:pass@` part.
+# A URL with embedded credentials must never reach log/warn/die output in cleartext (#807) — only
+# the host after the `user:pass@` part.
 redact_work="$tmp/registry-redact"
 mkdir -p "$redact_work"
 QADAM_REGISTRY_URL='https://deploy:s3cr3t@registry.example.com/npm' "$sut" -c '

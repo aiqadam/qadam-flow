@@ -60,7 +60,7 @@ Pass these to the installer:
 | `QADAM_REGISTRY_URL` | `https://registry.npmjs.org` | Registry for custom (non-`@aiqadam/*`) qadams. `http://` and `https://` are accepted. |
 | `QADAM_REGISTRY_TOKEN` | *(none)* | Bearer token for a private registry. Never printed. |
 
-The installer writes them to `.env` as `AP_QADAM_REGISTRY_URL` and `AP_QADAM_REGISTRY_TOKEN`, which are the names the server reads. To change the registry without re-running the installer, edit those two values in `.env` and restart the stack:
+The installer writes them to `.env` as `AP_QADAM_REGISTRY_URL` and `AP_QADAM_REGISTRY_TOKEN`, which are the names the server's config validates (see below for what it does, and does not yet, do with them). To change the registry without re-running the installer, edit those two values in `.env` and restart the stack:
 
 ```bash
 docker compose up -d

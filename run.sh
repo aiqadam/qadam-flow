@@ -617,8 +617,8 @@ registry_reachable() {
 # The isolate execution modes (SANDBOX_PROCESS, SANDBOX_CODE_AND_PROCESS) do not read the qadam
 # version store yet (#779) — they only run the qadams the image itself bundles. That has not
 # mattered while every install ran the fat image, which bundles everything; on slim, a community
-# qadam fetched into the store on demand still cannot run under an isolate mode (code-quality
-# review, #807). Checked after configure_image, so $QADAM_FLOW_IMAGE already reflects what this run
+# qadam fetched into the store on demand still cannot run under an isolate mode (#807). Checked
+# after configure_image, so $QADAM_FLOW_IMAGE already reflects what this run
 # actually ends up with — an explicit override or one adopted from an existing .env, not only the
 # early default.
 warn_if_sandboxed_slim() {
