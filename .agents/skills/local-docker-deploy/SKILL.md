@@ -18,10 +18,11 @@ curl -fsSL https://flow.aiqadam.org/run.sh | sh
 
 The script writes a fresh `.env` next to `docker-compose.yml`, pulls
 `ghcr.io/aiqadam/qadam-flow:slim` (ADR-0003, #807 — the 27 core qadams; a
-flow that already pins another community qadam fetches it from the qadam
-registry, configurable via `QADAM_REGISTRY_URL` / `QADAM_REGISTRY_TOKEN`,
-but the builder's "add a step" list only offers qadams the instance
-already knows about), brings up the stack, and waits for the API.
+flow that already pins another community qadam fetches it from npmjs, but
+the builder's "add a step" list only offers qadams the instance already
+knows about. `QADAM_REGISTRY_URL` / `QADAM_REGISTRY_TOKEN` configure a
+*different* registry, for custom non-`@aiqadam/*` qadams only), brings up
+the stack, and waits for the API.
 Re-running it is idempotent, and keeps whatever image an existing `.env`
 already pins — see
 [Image flavours](../../../docs/install/options/image-flavours.mdx).
@@ -41,7 +42,8 @@ every CI build of the same line) instead of the last release it is not (ADR-0001
 out and the image reports the root `package.json`, the last release.
 
 `QADAM_FLAVOUR` (default `fat`) picks which qadams the image's version-store seed carries — `slim`
-for the 27 core qadams, `fat` for every official qadam. Tag the build to match what you intend to
+for the 27 core qadams (plus four community qadams the server itself imports), `fat` for every
+official qadam. Tag the build to match what you intend to
 run (`:slim` or `:fat`) and pass the same tag in `QADAM_FLOW_IMAGE` if it is not the default
 `docker-compose.yml` reads, so the registry pull is skipped.
 
@@ -56,7 +58,7 @@ run (`:slim` or `:fat`) and pass the same tag in `QADAM_FLOW_IMAGE` if it is not
 - `SKIP_SSL_VERIFY=true` build arg — for VPN/proxy environments with SSL interception
 - `QADAM_FLAVOUR=slim|fat` build arg — which qadams the image's version-store seed carries (default `fat`)
 - `QADAM_FLOW_IMAGE` — override the image tag picked up by `docker-compose.yml` (its own fallback, used only when `.env` has no `QADAM_FLOW_IMAGE` line, is `:latest`)
-- `QADAM_REGISTRY_URL` / `QADAM_REGISTRY_TOKEN` — where `run.sh` points the slim image's on-demand community-qadam fetch (default `https://registry.npmjs.org`, no token)
+- `QADAM_REGISTRY_URL` / `QADAM_REGISTRY_TOKEN` — registry for a custom (non-`@aiqadam/*`) qadam version; official qadams always fetch from npmjs regardless of this setting (default `https://registry.npmjs.org`, no token)
 
 ## Reset
 ```bash
