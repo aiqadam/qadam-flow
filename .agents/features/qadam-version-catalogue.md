@@ -38,6 +38,18 @@ registry artifact) are replaced by ADR-0003 (maintainer comment on #778, 2026-10
 plus each stored version's `metadata.json` (#805) are the source of truth, and the metadata is the
 artifact's own (#804), never re-derived.
 
+**What this means for `:slim` today (code-quality review, #807).** `list()` (below, "the builder's
+'add a step' picker") does not read the catalogue at all — it never has, with or without a snapshot
+baked into an image. So a published catalogue would not by itself make a never-before-used
+community qadam appear in a slim instance's builder; `list()` would need its own change to consult
+it, which is not this file's "hosting not done" gap and not #807's scope. Until then, slim's builder
+offers only the core set plus whatever community qadam a flow has already pinned (`registry()`
+already merges every stored release — see the "`list()` 'latest'" bullet below for the split). This
+is the practical face of the "Harder / risks" line in ADR-0003 ("slim instances depend on the
+registry and the catalogue host for anything not yet in their store"): the risk was accepted when
+slim was chosen as `run.sh`'s default, but it was not, before this review, written down anywhere a
+user would read it. `docs/install/options/image-flavours.mdx` now says so explicitly.
+
 ## Key Files
 - `packages/server/api/src/app/qadams/catalogue/qadam-version-catalogue-format.ts` — the format, shared by writer and reader: layout, zod schemas (lenient for readers, strict for the writer), `integrityOf`, deterministic `serializeIndex`, `QADAM_VERSION_CATALOGUE_DEFAULT_URL`, size bounds
 - `packages/server/api/src/app/qadams/catalogue/qadam-version-catalogue.ts` — the reader: `qadamVersionCatalogue.read({ source })` → `names()`, `versions({ name })`, `entry(...)`, `readMetadata(...)`; never throws, every outcome is a status

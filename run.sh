@@ -472,10 +472,28 @@ configure_image() {
   fi
 }
 
+# Strips a `user:pass@` userinfo part before a URL reaches `log`/`warn`/`die`, so credentials an
+# operator put in the URL itself (rather than QADAM_REGISTRY_TOKEN, which the docs point at) don't
+# land in terminal output or CI logs (app-sec review, #807). Pure parameter expansion, not sed —
+# portable to dash without a `-E`/`-r` extended-regex flag. Only rewrites a `scheme://...@...`
+# shape; a URL with no `://` (already invalid, caught by validate_registry_url) is echoed as-is.
+redact_registry_url() {
+  case "$1" in
+    *://*@*)
+      registry_url_scheme=${1%%://*}
+      registry_url_after_scheme=${1#*://}
+      printf '%s://%s\n' "$registry_url_scheme" "${registry_url_after_scheme#*@}"
+      ;;
+    *)
+      printf '%s\n' "$1"
+      ;;
+  esac
+}
+
 validate_registry_url() {
   case "$QADAM_REGISTRY_URL" in
     http://?*|https://?*) ;;
-    *) die "QADAM_REGISTRY_URL must start with http:// or https:// (got '$QADAM_REGISTRY_URL')" ;;
+    *) die "QADAM_REGISTRY_URL must start with http:// or https:// (got '$(redact_registry_url "$QADAM_REGISTRY_URL")')" ;;
   esac
   case "$QADAM_REGISTRY_URL" in
     *[[:space:]]*) die "QADAM_REGISTRY_URL must not contain whitespace" ;;
@@ -498,7 +516,7 @@ configure_registry() {
   existing_url=$(env_value AP_QADAM_REGISTRY_URL)
   if [ "$REGISTRY_URL_EXPLICIT" = yes ]; then
     if [ "$existing_url" != "$QADAM_REGISTRY_URL" ]; then
-      log "using qadam registry ${QADAM_REGISTRY_URL}"
+      log "using qadam registry $(redact_registry_url "$QADAM_REGISTRY_URL")"
       set_env_value AP_QADAM_REGISTRY_URL "$QADAM_REGISTRY_URL"
     fi
   elif [ -n "$existing_url" ]; then
@@ -520,6 +538,18 @@ configure_registry() {
     QADAM_REGISTRY_TOKEN=$(env_value AP_QADAM_REGISTRY_TOKEN)
   fi
   validate_registry_token
+
+  # A non-TLS registry sends the bearer token in plaintext over the network (app-sec review,
+  # #807): validate_registry_url accepts http:// for an air-gapped/internal registry with no TLS
+  # termination, but a token on top of that is a real exposure worth flagging, not silently
+  # accepting.
+  case "$QADAM_REGISTRY_URL" in
+    http://*)
+      if [ -n "$QADAM_REGISTRY_TOKEN" ]; then
+        warn "QADAM_REGISTRY_URL uses http:// with a registry token set — the token will be sent unencrypted. Use https:// for a private registry if possible."
+      fi
+      ;;
+  esac
 }
 
 # A tag-based guess, not a resolved answer: a digest-pinned image (`@sha256:...`) is always treated
@@ -559,16 +589,30 @@ registry_reachable() {
   fi
 }
 
+# The isolate execution modes (SANDBOX_PROCESS, SANDBOX_CODE_AND_PROCESS) do not read the qadam
+# version store yet (#779) — they only run the qadams the image itself bundles. That has not
+# mattered while every install ran the fat image, which bundles everything; on slim, a community
+# qadam fetched into the store on demand still cannot run under an isolate mode (code-quality
+# review, #807). Checked after configure_image, so $QADAM_FLOW_IMAGE already reflects what this run
+# actually ends up with — an explicit override or one adopted from an existing .env, not only the
+# early default.
+warn_if_sandboxed_slim() {
+  image_is_slim "$QADAM_FLOW_IMAGE" || return 0
+  if is_sandboxed_requested || sandboxed_compose_selected_in_env; then
+    warn "QADAM_FLOW_SANDBOXED is on with the slim image: the sandboxed execution modes do not read the qadam version store yet, so only the qadams this image bundles (the core set) run there — a community qadam fetched on demand will not work in sandboxed mode. Use the fat image for sandboxed execution with community qadams."
+  fi
+}
+
 check_qadam_registry() {
   image_is_slim "$QADAM_FLOW_IMAGE" || return 0
   registry_ok=yes
 
-  log "checking the qadam registry at ${QADAM_REGISTRY_URL}"
+  log "checking the qadam registry at $(redact_registry_url "$QADAM_REGISTRY_URL")"
   if registry_reachable; then
     log "qadam registry is reachable"
   else
     registry_ok=no
-    warn "cannot reach the qadam registry at ${QADAM_REGISTRY_URL} — a custom (non-@aiqadam) qadam that must be fetched will not be installable"
+    warn "cannot reach the qadam registry at $(redact_registry_url "$QADAM_REGISTRY_URL") — a custom (non-@aiqadam) qadam that must be fetched will not be installable"
   fi
 
   # Official @aiqadam/* community qadams are always fetched from npmjs, whatever
@@ -1034,6 +1078,7 @@ main() {
   # run already selects the override.
   configure_sandboxed_compose
   configure_image
+  warn_if_sandboxed_slim
   configure_registry
   check_qadam_registry
   pull_images

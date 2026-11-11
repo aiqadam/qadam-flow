@@ -13,6 +13,17 @@ Qadam Flow publishes two images for every release. They run the same platform; t
 
 Neither image carries a [qadam version catalogue](/install/architecture/qadam-version-catalogue) snapshot yet — see that page for why.
 
+<Warning>
+**On a slim install, "add a step" only offers qadams the instance already knows about**: the core
+set bundled in the image, plus any community qadam a flow has already pinned (imported from
+elsewhere, or added through the API/MCP by exact name and version). The qadam-version fetch that
+runs on publish/import only resolves a pin a flow step already names — it does not make a
+never-before-used community qadam appear in the builder's own picker. That needs the qadam version
+catalogue (above) wired into the picker, which is not done yet. Until then, a fresh slim install
+cannot offer a community qadam nobody has pinned on it yet; use `:fat` if your flows need to pick
+from the full community set.
+</Warning>
+
 ## Which tag to pin
 
 Images are published with an exact version and a flavour:
@@ -40,7 +51,7 @@ The fat image needs no registry probe because its community qadams are already i
 
 ## Configure the qadam registry
 
-The slim image fetches official community qadams from the public npm registry on demand, with the same npm signature check every `@aiqadam/*` version gets. `AP_QADAM_REGISTRY_URL` does **not** change that: it configures where a non-`@aiqadam` (custom) qadam version is fetched from, such as a private npm-compatible registry.
+When a flow step already names an official community qadam pin — imported from another instance, or added by exact name and version through the API/MCP — the slim image fetches that exact version from the public npm registry, with the same npm signature check every `@aiqadam/*` version gets. See the warning above: this is not the same as the builder's "add a step" list offering that qadam in the first place. `AP_QADAM_REGISTRY_URL` does **not** change where official qadams come from: it configures where a non-`@aiqadam` (custom) qadam version is fetched from, such as a private npm-compatible registry.
 
 Pass these to the installer:
 
@@ -71,4 +82,4 @@ curl -fsSL https://flow.aiqadam.org/run.sh | \
   QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:fat sh
 ```
 
-Switching from fat to slim does not delete a community qadam already in the version store, and switching from slim to fat seeds the fat image's versions. Neither direction rewrites your flows.
+Switching flavour does not itself delete anything from the version store, and switching from slim to fat seeds the fat image's versions alongside what's already there. Neither direction rewrites your flows. A community qadam version no flow pins is still subject to the store's [garbage collection](/install/architecture/qadam-version-store#garbage-collection) after the usual retention window, the same as on fat — switching to slim does not exempt it, and switching back to fat does not restore anything GC already removed.

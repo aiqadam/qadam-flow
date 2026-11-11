@@ -464,8 +464,11 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # `contents: write` moved with GitHub Release creation to the `release` job below when this job
+    # was split into a fat/slim matrix (#807, app-sec review) — this job only checks out the repo
+    # (for the smoke step) and pushes to GHCR now, neither of which needs it.
     permissions:
-      contents: write
+      contents: read
       packages: write
     strategy:
       fail-fast: false

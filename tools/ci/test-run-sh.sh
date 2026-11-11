@@ -1364,6 +1364,108 @@ else
   fail_case 'an unreachable custom registry warns even when npmjs itself is fine' "$(cat "$custom_down_npmjs_ok/.stderr")"
 fi
 
+# A URL with embedded credentials must never reach log/warn/die output in cleartext (app-sec
+# review, #807) — only the host after the `user:pass@` part.
+redact_work="$tmp/registry-redact"
+mkdir -p "$redact_work"
+QADAM_REGISTRY_URL='https://deploy:s3cr3t@registry.example.com/npm' "$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  configure_registry
+' _ "$runsh" "$redact_work" >"$redact_work/.stdout" 2>"$redact_work/.stderr"
+if grep -qF 's3cr3t' "$redact_work/.stdout" "$redact_work/.stderr"; then
+  fail_case 'URL credentials never reach log output' "$(cat "$redact_work/.stdout") / $(cat "$redact_work/.stderr")"
+else
+  pass=$((pass + 1))
+fi
+if grep -qF 'using qadam registry https://registry.example.com/npm' "$redact_work/.stdout"; then
+  pass=$((pass + 1))
+else
+  fail_case 'the log message keeps the host, minus credentials' "$(cat "$redact_work/.stdout")"
+fi
+
+# A plaintext registry with a token set warns that the token travels unencrypted.
+cleartext_token_work="$tmp/registry-cleartext-token"
+mkdir -p "$cleartext_token_work"
+QADAM_REGISTRY_URL=http://registry.example.com QADAM_REGISTRY_TOKEN=a-token "$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  configure_registry
+' _ "$runsh" "$cleartext_token_work" >/dev/null 2>"$cleartext_token_work/.stderr"
+if grep -qF 'will be sent unencrypted' "$cleartext_token_work/.stderr"; then
+  pass=$((pass + 1))
+else
+  fail_case 'http:// with a token warns about cleartext transmission' "$(cat "$cleartext_token_work/.stderr")"
+fi
+
+# The same plaintext registry with no token set must not warn — there is nothing to leak.
+cleartext_no_token_work="$tmp/registry-cleartext-no-token"
+mkdir -p "$cleartext_no_token_work"
+QADAM_REGISTRY_URL=http://registry.example.com QADAM_REGISTRY_TOKEN= "$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  configure_registry
+' _ "$runsh" "$cleartext_no_token_work" >/dev/null 2>"$cleartext_no_token_work/.stderr"
+if grep -qF 'will be sent unencrypted' "$cleartext_no_token_work/.stderr"; then
+  fail_case 'http:// with no token does not warn' "$(cat "$cleartext_no_token_work/.stderr")"
+else
+  pass=$((pass + 1))
+fi
+
+# Sandboxed mode plus the slim image must warn: the isolate execution modes don't read the version
+# store (#779), so a community qadam fetched into it still can't run there.
+sandboxed_slim_work="$tmp/sandboxed-slim"
+mkdir -p "$sandboxed_slim_work"
+QADAM_FLOW_SANDBOXED=yes QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:slim "$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  generate_env
+  configure_sandboxed_compose
+  configure_image
+  warn_if_sandboxed_slim
+' _ "$runsh" "$sandboxed_slim_work" >/dev/null 2>"$sandboxed_slim_work/.stderr"
+if grep -qF 'do not read the qadam version store yet' "$sandboxed_slim_work/.stderr"; then
+  pass=$((pass + 1))
+else
+  fail_case 'sandboxed mode on the slim image warns' "$(cat "$sandboxed_slim_work/.stderr")"
+fi
+
+# The same combo on the fat image must not warn — fat bundles every community qadam, so the isolate
+# modes not reading the store doesn't lose anything.
+sandboxed_fat_work="$tmp/sandboxed-fat"
+mkdir -p "$sandboxed_fat_work"
+QADAM_FLOW_SANDBOXED=yes QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:fat "$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  generate_env
+  configure_sandboxed_compose
+  configure_image
+  warn_if_sandboxed_slim
+' _ "$runsh" "$sandboxed_fat_work" >/dev/null 2>"$sandboxed_fat_work/.stderr"
+if grep -qF 'do not read the qadam version store yet' "$sandboxed_fat_work/.stderr"; then
+  fail_case 'sandboxed mode on the fat image does not warn' "$(cat "$sandboxed_fat_work/.stderr")"
+else
+  pass=$((pass + 1))
+fi
+
+# Slim with no sandboxed mode requested must not warn either.
+slim_unsandboxed_work="$tmp/slim-unsandboxed"
+mkdir -p "$slim_unsandboxed_work"
+QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:slim "$sut" -c '
+  unset QADAM_FLOW_SANDBOXED
+  . "$1"
+  cd "$2" || exit 1
+  generate_env
+  configure_sandboxed_compose
+  configure_image
+  warn_if_sandboxed_slim
+' _ "$runsh" "$slim_unsandboxed_work" >/dev/null 2>"$slim_unsandboxed_work/.stderr"
+if grep -qF 'do not read the qadam version store yet' "$slim_unsandboxed_work/.stderr"; then
+  fail_case 'slim with no sandboxed mode does not warn' "$(cat "$slim_unsandboxed_work/.stderr")"
+else
+  pass=$((pass + 1))
+fi
+
 # Structural: the override must be resolved after generate_env (it writes COMPOSE_FILE into .env) and
 # before the stack is pulled and started, or the override would not apply to this run.
 sandboxed_line="$(line_of configure_sandboxed_compose)"
