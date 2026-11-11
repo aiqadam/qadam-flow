@@ -127,8 +127,8 @@ RUN --network=host npx turbo run build --filter=web --filter=@aiqadam/engine --f
 # yet (#851 not landed, so `tools/scripts/qadams/snapshot/` computes what version a build would get
 # but, per .agents/rules/versioning.md, "the image does not apply it yet"), seeding would let the
 # FIRST `:main` image's code for that version win forever on any persisted store volume, silently
-# masking every later `:main` image's changes under the same unchanged version (code-quality review,
-# #807). The catalogue snapshot has its own, separate reason not to ship yet — see
+# masking every later `:main` image's changes under the same unchanged version (#807). The
+# catalogue snapshot has its own, separate reason not to ship yet — see
 # .agents/features/qadam-version-catalogue.md. Both tools (`build-image-seed.mjs` here,
 # `compute-snapshot-plan.mjs` already wired into ci.yml's platform-version job) stay built and
 # tested for whichever change applies snapshot versions to the image and re-enables this.
@@ -148,6 +148,13 @@ RUN node -e "\
 FROM base AS run
 
 ARG QADAM_FLAVOUR=fat
+# Anything other than `fat`/`slim` would otherwise silently skip the slim-prune check below (its
+# `[ "$QADAM_FLAVOUR" = slim ]` guard) and ship a fat tree under a mislabelled
+# `org.aiqadam.qadam-flavour` — fail the build instead.
+RUN case "$QADAM_FLAVOUR" in \
+      fat|slim) ;; \
+      *) echo "QADAM_FLAVOUR must be 'fat' or 'slim', got '$QADAM_FLAVOUR'" >&2; exit 1 ;; \
+    esac
 
 WORKDIR /usr/src/app
 
@@ -173,8 +180,7 @@ COPY --from=build /usr/src/app/NOTICE .
 # --production`, not before it: `bun.lock` was resolved against every `packages/qadams/community/*`
 # workspace member, and pruning the ones slim does not keep before that install made bun see the
 # workspace set disagree with the lockfile and refuse with "lockfile had changes, but lockfile is
-# frozen" (code-quality review, #807 — found by actually running this Dockerfile, which nothing had
-# done before this session).
+# frozen" (#807 — found by actually running this Dockerfile, which nothing had done before that).
 COPY --from=build /usr/src/app/packages ./packages
 
 # Copy built engine
@@ -191,12 +197,11 @@ ENV NODE_TLS_REJECT_UNAUTHORIZED=
 # imports slack / facebook-leads / intercom to parse their app-webhook payloads in-process, and
 # `event-puller-registry.ts` lazily imports telegram-bot for its long-polling trigger — both run
 # inside the server itself, never through the qadam version store a flow step's qadam is fetched
-# from (code-quality review, #807: deleting them unconditionally broke every slim boot with
-# `Cannot find module '@aiqadam/qadam-facebook-leads'`, since `app.ts` registers that module
-# unconditionally). Keeping these four here is unrelated to the 27 "core" qadams `:slim` otherwise
-# keeps — whether a flow using one of them as an action still has to fetch it on demand is
-# unaffected; this is a separate, smaller list of what the server process itself can't start
-# without.
+# from (#807: deleting them unconditionally broke every slim boot with `Cannot find module
+# '@aiqadam/qadam-facebook-leads'`, since `app.ts` registers that module unconditionally). Keeping
+# these four here is unrelated to the 27 "core" qadams `:slim` otherwise keeps — whether a flow
+# using one of them as an action still has to fetch it on demand is unaffected; this is a separate,
+# smaller list of what the server process itself can't start without.
 #
 # After `bun install --production` (see the COPY above for why), and before the dist index and the
 # bundled metadata manifest are written, so both describe exactly what the runtime can load. `rm -rf`
