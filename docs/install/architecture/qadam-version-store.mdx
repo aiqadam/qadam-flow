@@ -7,7 +7,7 @@ icon: "boxes-stacked"
 The qadam version store is a directory on a persistent volume where the server keeps the code of each qadam version it holds, by name and exact version. It is how [ADR-0003](https://github.com/aiqadam/qadam-flow/blob/main/adr/0003-official-qadams-run-from-a-versioned-local-store.md) makes a flow step pinned to `tables@0.5.1` run the code of `tables@0.5.1` across server upgrades, instead of whatever version the current image bundles.
 
 <Warning>
-The store is only partly in use. A worker runs an official qadam version from the store when the store holds it, in the `UNSANDBOXED` and `SANDBOX_CODE_ONLY` execution modes (see [How a step finds its code](#how-a-step-finds-its-code)), and the server answers the same pin from that version's own metadata for the builder, the framework census and the worker's provisioning. An image ships a seed for the store: `:slim` seeds the 27 core qadams and `:fat` seeds every official qadam ([#807](https://github.com/aiqadam/qadam-flow/issues/807)). The sandboxed execution modes and custom qadams do not use the store yet ([#779](https://github.com/aiqadam/qadam-flow/issues/779)).
+The store is only partly in use. A worker runs an official qadam version from the store when the store holds it, in the `UNSANDBOXED` and `SANDBOX_CODE_ONLY` execution modes (see [How a step finds its code](#how-a-step-finds-its-code)), and the server answers the same pin from that version's own metadata for the builder, the framework census and the worker's provisioning. But no image ships versions to put in it: [#807](https://github.com/aiqadam/qadam-flow/issues/807) built the `:slim` / `:fat` flavours and the seeding tool, but deliberately leaves the Dockerfile unwired to it until [#851](https://github.com/aiqadam/qadam-flow/issues/851) lands — the store never overwrites an already-stored version, so seeding a `:main` build today could let a changed-but-unbumped qadam's old code win forever over its own later versions. So on a real install the store is empty and flows run the qadams bundled with the image, as [Qadam syncing & versioning](/install/architecture/qadam-syncing) describes. The sandboxed execution modes and custom qadams do not use the store yet ([#779](https://github.com/aiqadam/qadam-flow/issues/779)).
 </Warning>
 
 ## Where it lives
@@ -32,7 +32,7 @@ When the app starts, it creates the store's directories if they are missing, rem
 [qadamVersionStore] Seeded the qadam version store from the image {"status":"no-seed","stored":0,"present":0,"kept":0,"failed":0,"durationMs":3}
 ```
 
-`status` is `done` on an image that ships a seed, or `no-seed` on one that carries no seed directory. `stored` counts versions copied in, `present` counts ones already held, and `kept` counts versions in the store that this release cannot use, for example ones a later release wrote before you rolled back; they are left in place for that release. A seed that fails is logged as a warning and does not stop the app.
+`status` is `no-seed` on every image until [#851](https://github.com/aiqadam/qadam-flow/issues/851) and a later change apply it, since [#807](https://github.com/aiqadam/qadam-flow/issues/807) deliberately does not wire a seed into either flavour. `kept` counts versions in the store that this release cannot use, for example ones a later release wrote before you rolled back; they are left in place for that release. A seed that fails is logged as a warning and does not stop the app.
 
 ## How a step finds its code
 

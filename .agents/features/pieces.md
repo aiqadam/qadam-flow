@@ -170,8 +170,11 @@ versions (#779):** a forked engine (`UNSANDBOXED`, `SANDBOX_CODE_ONLY`) loads an
 pin from the store first, and the API resolves the same pin from the store's own `metadata.json`
 (`qadamMetadataService.get` / `getMany` / `resolveVersion`, `storedQadamMetadata`) so the builder,
 the worker's provisioning and the framework census see the version the engine runs. `registry`
-lists stored release versions too. Isolate modes and custom qadams still do not resolve through it. The image seeds
-it at start-up (#807): `:slim` with the 27 core qadams, `:fat` with every official qadam. "Store"
+lists stored release versions too. Isolate modes and custom qadams still do not resolve through it, and no
+image seeds it (#807 built `:fat` / `:slim` and the seeding tool but deliberately leaves it unwired
+until #851 lands — a `:main` build's changed-but-unbumped qadam code would otherwise be masked
+forever by whichever `:main` image seeded a version first, since the store never overwrites an
+already-stored version), so on a real install it is still empty. "Store"
 alone is ambiguous here (Store qadam, Store Entry): say "qadam version store".
 - **Where.** `AP_QADAM_VERSION_STORE_PATH` (default `/var/lib/qadam-flow/qadam-versions`).
   `docker-compose.yml` mounts the named volume `qadam_versions` there on the app (read-write, it
@@ -246,7 +249,9 @@ alone is ambiguous here (Store qadam, Store Entry): say "qadam version store".
 - **Seeding** (`qadam-version-store-seed.ts`, `qadamVersionStoreSeeding` in the API's
   `appPostBoot`, background, never throws). Report: `stored`, `present`, `kept`, `failed`. Reads `AP_QADAM_VERSION_STORE_SEED_PATH` (default
   `packages/qadams/version-store-seed`): #804's `--pack` output, `archive-index.json` + tarballs,
-  filtered by `tools/scripts/qadams/bundle/build-image-seed.mjs` for the image flavour. Idempotent; replicas
+  which `tools/scripts/qadams/bundle/build-image-seed.mjs` (#807) can filter for an image flavour —
+  built and tested, but no Dockerfile step calls it yet (deferred past #851, see "Resolution" above).
+  No image ships a seed directory, so today every start logs `status: no-seed`. Idempotent; replicas
   serialise on the `qadam-version-store-seed` `distributedLock`, and correctness does not depend on
   it. A version already stored is kept even if the image's tarball differs (warned). One line per
   start: `[qadamVersionStore] Seeded the qadam version store from the image {status, stored, present, kept, failed, durationMs}`.

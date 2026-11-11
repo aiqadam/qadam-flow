@@ -39,7 +39,7 @@ For compatibility with installs and scripts written before flavours existed, the
 
 ## What the installer uses
 
-`run.sh` pulls the slim image by default. It writes the choice into `.env` as `QADAM_FLOW_IMAGE`, so a later `docker compose pull` keeps it. On an existing install the installer keeps the image already pinned in `.env`; delete that line or pass an explicit image to change it.
+`run.sh` pulls the slim image by default. It writes the choice into `.env` as `QADAM_FLOW_IMAGE`, so a later `docker compose pull` keeps it. On an existing install the installer keeps the image already pinned in `.env`; pass an explicit `QADAM_FLOW_IMAGE` to change it. Deleting the line does **not** restore the slim default — an existing install with no `QADAM_FLOW_IMAGE` line falls back to `:latest` (fat), since that line's absence predates flavours.
 
 Before pulling the slim image, the installer probes the configured qadam registry, and separately probes npmjs itself whenever that registry is not npmjs — official `@aiqadam/*` community qadams always fetch from npmjs, whatever the registry is configured for, so a host that reaches a custom registry but not npmjs still gets a warning here. Any HTTP response counts as reachable — a `401` or `404` still proves DNS, TCP and TLS work. If either probe fails, the install continues, but it warns that qadams cannot be installed and suggests re-running with the fat image:
 
@@ -82,4 +82,4 @@ curl -fsSL https://flow.aiqadam.org/run.sh | \
   QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:fat sh
 ```
 
-Switching flavour does not itself delete anything from the version store, and switching from slim to fat seeds the fat image's versions alongside what's already there. Neither direction rewrites your flows. A community qadam version no flow pins is still subject to the store's [garbage collection](/install/architecture/qadam-version-store#garbage-collection) after the usual retention window, the same as on fat — switching to slim does not exempt it, and switching back to fat does not restore anything GC already removed.
+Switching flavour does not itself delete anything from the version store. Neither direction rewrites your flows. A community qadam version no flow pins is still subject to the store's [garbage collection](/install/architecture/qadam-version-store#garbage-collection) after the usual retention window, the same as on fat — switching to slim does not exempt it, and switching back to fat does not restore anything GC already removed.

@@ -62,7 +62,6 @@ const ALWAYS_BUNDLED_COMMUNITY = ['facebook-leads', 'intercom', 'slack', 'telegr
 const core = qadamDirNames(path.join(root, 'core')).length
 const communityNames = qadamDirNames(path.join(root, 'community'))
 const community = communityNames.length
-const expected = flavour === 'slim' ? core : core + community
 
 if (core === 0) {
     fail('no core qadams are present')
@@ -81,29 +80,7 @@ if (flavour === 'fat' && community === 0) {
     fail('the fat image ships no community qadams')
 }
 
-let index
-try {
-    index = JSON.parse(fs.readFileSync(path.join(seedDir, 'archive-index.json'), 'utf8'))
-}
-catch (error) {
-    fail(`cannot read the store seed index (${error?.code ?? error?.message})`)
-}
-if (index?.formatVersion !== 1 || !Array.isArray(index.artifacts)) {
-    fail('the store seed index is not a version-1 archive index')
-}
-if (index.artifacts.length !== expected) {
-    fail(`the ${flavour} store seed has ${index.artifacts.length} artifact(s), expected ${expected}`)
-}
-for (const artifact of index.artifacts) {
-    if (typeof artifact?.name !== 'string' || typeof artifact?.file !== 'string') {
-        fail('the store seed index has an artifact without name or file')
-    }
-    if (!fs.existsSync(path.join(seedDir, artifact.file))) {
-        fail(`the store seed is missing ${artifact.file}`)
-    }
-}
-
-console.log(`image-flavour: ${flavour} ok (${core} core, ${community} community, ${index.artifacts.length} seed artifacts)`)
+console.log(`image-flavour: ${flavour} ok (${core} core, ${community} community)`)
 JS
 )
 
