@@ -1234,10 +1234,13 @@ jobs:
       # edit reordered or added a line to the `tags:` block above (advisory review, #807).
       - name: Smoke the built ${{ matrix.flavour }} image
         if: github.event_name != 'push'
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          FLAVOUR: ${{ matrix.flavour }}
         run: |
           tools/ci/check-image-flavour.sh \
-            "ghcr.io/aiqadam/qadam-flow:${{ steps.meta.outputs.version }}" \
-            "${{ matrix.flavour }}"
+            "ghcr.io/aiqadam/qadam-flow:${VERSION}" \
+            "${FLAVOUR}"
 
       - name: Build and push by digest (main)
         id: build

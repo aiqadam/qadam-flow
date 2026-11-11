@@ -550,10 +550,13 @@ jobs:
       # real release until this step (advisory review, #807): a flavour-composition bug could ship
       # undetected in a tagged release even though CI had already caught it on `main`.
       - name: Smoke the released ${{ matrix.flavour }} manifest
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          FLAVOUR: ${{ matrix.flavour }}
         run: |
           tools/ci/check-image-flavour.sh \
-            "ghcr.io/aiqadam/qadam-flow:${{ steps.release.outputs.version }}-${{ matrix.flavour }}" \
-            "${{ matrix.flavour }}"
+            "ghcr.io/aiqadam/qadam-flow:${VERSION}-${FLAVOUR}" \
+            "${FLAVOUR}"
 
   # Split from `publish` (reviewed, #807): `publish` is a 2-leg matrix (`fat`, `slim`) with
   # `fail-fast: false`, so one flavour can fail while the other's manifest push succeeds. A GitHub
