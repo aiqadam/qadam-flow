@@ -1269,6 +1269,26 @@ else
   fail_case 'reachability accepts a successful probe' 'registry_reachable returned non-zero'
 fi
 
+# A token containing curl config's own special characters (", \) must still reach curl unchanged —
+# registry_reachable's escaping (run.sh: sed 's/\\/\\\\/g; s/"/\\"/g') exists exactly for this case.
+reach_special="$tmp/registry-reach-special"
+mkdir -p "$reach_special"
+if PATH="$curlbin:$PATH" CURL_LOG="$reach_special/.args" CURL_STDIN_LOG="$reach_special/.stdin" CURL_EXIT=0 \
+  QADAM_REGISTRY_URL=https://registry.example.com/ QADAM_REGISTRY_TOKEN='tok"en\with' "$sut" -c '
+    . "$1"
+    cd "$2" || exit 1
+    registry_reachable
+  ' _ "$runsh" "$reach_special" >/dev/null 2>&1; then
+  if grep -qF 'header = "Authorization: Bearer tok\"en\\with"' "$reach_special/.stdin" \
+    && ! grep -qF 'tok"en\with' "$reach_special/.args"; then
+    pass=$((pass + 1))
+  else
+    fail_case 'reachability escapes " and \ in the token for curl -K' "$(cat "$reach_special/.stdin" 2>/dev/null)"
+  fi
+else
+  fail_case 'reachability accepts a successful probe with a special-character token' 'registry_reachable returned non-zero'
+fi
+
 reach_fail="$tmp/registry-unreachable"
 mkdir -p "$reach_fail"
 PATH="$curlbin:$PATH" CURL_LOG="$reach_fail/.args" CURL_STDIN_LOG="$reach_fail/.stdin" CURL_EXIT=7 \
