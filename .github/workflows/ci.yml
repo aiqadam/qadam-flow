@@ -1360,10 +1360,13 @@ jobs:
             $(printf 'ghcr.io/aiqadam/qadam-flow@sha256:%s ' *)
 
       - name: Smoke the published ${{ matrix.flavour }} manifest
+        env:
+          VERSION: ${{ needs.platform-version.outputs.version }}
+          FLAVOUR: ${{ matrix.flavour }}
         run: |
           tools/ci/check-image-flavour.sh \
-            "ghcr.io/aiqadam/qadam-flow:${{ needs.platform-version.outputs.version }}-${{ matrix.flavour }}" \
-            "${{ matrix.flavour }}"
+            "ghcr.io/aiqadam/qadam-flow:${VERSION}-${FLAVOUR}" \
+            "${FLAVOUR}"
 
   # Required status check (#832): the always-reporting front for `image` (both matrix legs) and
   # `sandbox-e2e`. Neither can be required itself — `image` is skipped on a docs-only diff and

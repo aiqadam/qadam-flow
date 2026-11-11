@@ -538,9 +538,12 @@ jobs:
             $(printf 'ghcr.io/aiqadam/qadam-flow@sha256:%s ' *)
 
       - name: Inspect manifest
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          FLAVOUR: ${{ matrix.flavour }}
         run: |
           docker buildx imagetools inspect \
-            ghcr.io/aiqadam/qadam-flow:${{ steps.release.outputs.version }}-${{ matrix.flavour }}
+            "ghcr.io/aiqadam/qadam-flow:${VERSION}-${FLAVOUR}"
 
       # The tagged release images are what run.sh and every operator actually pull — ci.yml's
       # `image`/`image_publish` jobs smoke-check `main` builds, but nothing here did the same for a
