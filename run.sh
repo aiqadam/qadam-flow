@@ -23,7 +23,10 @@
 #                      ghcr.io/aiqadam/qadam-flow:fat to bundle community qadams in the image instead
 #                      of fetching them from the registry.
 #   QADAM_FLOW_REF   — git ref for the compose file (default: main)
-#   QADAM_REGISTRY_URL   — qadam registry for community qadams (default: https://registry.npmjs.org)
+#   QADAM_REGISTRY_URL   — registry for a custom (non-@aiqadam) qadam version the store does not
+#                          already hold (ADR-0003 "Registry at install"); official qadams always
+#                          come from npmjs regardless of this setting, and custom fetching is not
+#                          yet consumed by the server (default: https://registry.npmjs.org)
 #   QADAM_REGISTRY_TOKEN — bearer token for that registry (default: none; never printed)
 #   QADAM_FLOW_SANDBOXED — `yes` lets the worker run an isolate execution mode
 #                          (SANDBOX_PROCESS / SANDBOX_CODE_AND_PROCESS): fetches
@@ -298,7 +301,7 @@ set_env_value() {
     # first to pass an arbitrary operator-supplied secret (QADAM_REGISTRY_TOKEN) through here. An
     # earlier version interpolated the value straight into a sed replacement string, which put the
     # secret on sed's own command line — readable by any other local user via `ps` / `/proc/<pid>/
-    # cmdline` for as long as the process ran (app-sec review, #807). Delete the old line with `grep
+    # cmdline` for as long as the process ran. Delete the old line with `grep
     # -v` (only the fixed key name ever appears in that argv, never the value) and append the new one
     # with `printf`, exactly like the no-existing-line branch below — the value only ever reaches a
     # file descriptor, never a command line.
@@ -439,7 +442,8 @@ AP_TELEMETRY_ENABLED=false
 # Engine
 AP_EXECUTION_MODE=UNSANDBOXED
 
-# Qadam registry — the slim image fetches community qadams from here on demand.
+# Qadam registry — where a custom (non-@aiqadam) qadam version would be fetched from; not yet
+# consumed by the server (official qadams always come from npmjs regardless of this setting).
 AP_QADAM_REGISTRY_URL=${QADAM_REGISTRY_URL}
 EOF
 }
@@ -474,14 +478,14 @@ configure_image() {
 
 # Strips a `user:pass@` userinfo part before a URL reaches `log`/`warn`/`die`, so credentials an
 # operator put in the URL itself (rather than QADAM_REGISTRY_TOKEN, which the docs point at) don't
-# land in terminal output or CI logs (app-sec review, #807). Pure parameter expansion, not sed —
+# land in terminal output or CI logs. Pure parameter expansion, not sed —
 # portable to dash without a `-E`/`-r` extended-regex flag. Only rewrites a `scheme://...@...`
 # shape; a URL with no `://` (already invalid, caught by validate_registry_url) is echoed as-is.
 #
 # Cuts at the LAST `@` within the authority (host[:port]) specifically, not the first `@` in the
 # whole string: a URL parser (and a browser/curl) reads everything up to the last `@` before the
 # next `/` as userinfo, so an unencoded `@` inside the password itself (`user:p@ss@host`) would
-# otherwise leave part of the password in the redacted output (app-sec review, #807). Splitting the
+# otherwise leave part of the password in the redacted output. Splitting the
 # authority off by its own terminating `/` first, then cutting that piece at its last `@`, keeps an
 # `@` that legitimately appears later in the path (`host/a@b`) untouched.
 redact_registry_url() {
@@ -556,10 +560,9 @@ configure_registry() {
   fi
   validate_registry_token
 
-  # A non-TLS registry sends the bearer token in plaintext over the network (app-sec review,
-  # #807): validate_registry_url accepts http:// for an air-gapped/internal registry with no TLS
-  # termination, but a token on top of that is a real exposure worth flagging, not silently
-  # accepting.
+  # A non-TLS registry sends the bearer token in plaintext over the network: validate_registry_url
+  # accepts http:// for an air-gapped/internal registry with no TLS termination, but a token on top
+  # of that is a real exposure worth flagging, not silently accepting.
   case "$QADAM_REGISTRY_URL" in
     http://*)
       if [ -n "$QADAM_REGISTRY_TOKEN" ]; then
@@ -593,10 +596,10 @@ image_is_slim() {
 # never as a command-line argument: an operator-supplied token never belongs on argv, and an
 # operator can also write credentials directly into the URL itself (`https://user:pass@host`) even
 # though the docs point at QADAM_REGISTRY_TOKEN for that — either way it must not be readable by
-# another local user via `ps` / `/proc/<pid>/cmdline` for the life of the probe (app-sec review,
-# #807). Takes an optional URL/token pair so check_qadam_registry below can also probe npmjs on its
-# own, regardless of what QADAM_REGISTRY_URL/QADAM_REGISTRY_TOKEN hold — every caller before #807's
-# own registry-probe review passed neither and got the globals.
+# another local user via `ps` / `/proc/<pid>/cmdline` for the life of the probe. Takes an optional
+# URL/token pair so check_qadam_registry below can also probe npmjs on its own, regardless of what
+# QADAM_REGISTRY_URL/QADAM_REGISTRY_TOKEN hold — every other caller passes neither and gets the
+# globals.
 registry_reachable() {
   probe_registry_url=${1:-$QADAM_REGISTRY_URL}
   probe_registry_token=${2-$QADAM_REGISTRY_TOKEN}
