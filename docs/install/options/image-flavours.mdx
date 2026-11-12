@@ -66,7 +66,7 @@ The installer writes them to `.env` as `AP_QADAM_REGISTRY_URL` and `AP_QADAM_REG
 docker compose up -d
 ```
 
-The installer probes this URL before pulling the slim image and warns, suggesting `:fat`, when it is unreachable. Official `@aiqadam/*` qadams, including the community ones the slim image leaves out, are always fetched from the public npm registry with a signature check, whatever `AP_QADAM_REGISTRY_URL` says. Custom (non-`@aiqadam`) fetching from this registry is not implemented yet — the setting is recorded and probed, but nothing yet reads it to fetch a custom qadam. See [Environment Variables](/install/configuration/environment-variables) for the full description.
+The installer probes this URL before pulling the slim image and warns, suggesting `:fat`, when it is unreachable. Official `@aiqadam/*` qadams, including the community ones the slim image leaves out, are always fetched from the public npm registry with a signature check, whatever `AP_QADAM_REGISTRY_URL` says. A custom (non-`@aiqadam`) qadam is fetched from this registry too, once it names something other than npmjs — npmjs is never asked for a custom name. See [Environment Variables](/install/configuration/environment-variables) for the full description, and `AP_QADAM_CUSTOM_SIGNATURE_CHECK_ENABLED` for the matching signature setting.
 
 <Warning>
 A registry URL on a private or loopback address must also be in `AP_SSRF_ALLOW_LIST`, like every other outbound URL. See [Network security](/install/architecture/network-security).

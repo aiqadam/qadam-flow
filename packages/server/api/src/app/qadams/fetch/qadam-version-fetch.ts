@@ -5,6 +5,7 @@ import { system } from '../../helper/system/system'
 import { AppSystemProp } from '../../helper/system/system-props'
 import { qadamMetadataService } from '../metadata/qadam-metadata-service'
 import { QadamPinnedStep, qadamPinUtil } from '../metadata/qadam-pin-util'
+import { qadamRegistryConfig, QadamRegistryConfig } from '../version-store/qadam-registry-config'
 import { qadamVersionStoreAccess } from '../version-store/qadam-version-store-access'
 
 // ADR-0003 "Fetching", the publish/import/start-up half: given the pins a flow (or, at start-up,
@@ -16,10 +17,19 @@ import { qadamVersionStoreAccess } from '../version-store/qadam-version-store-ac
 // Never asked of the network, by design (ADR-0005 §2: "any caller that turns a range into a version
 // takes that version from the catalogue or the store, never by asking a registry"): a range pin
 // (`^`/`~`, left at the pin's own version string so `qadamVersionParser.parse` — which accepts no
-// prefix — reads it as unparseable rather than as its floor), a `-main.` snapshot pin (moved only by
-// the checked fallback, #808/ADR-0004), and a custom (non-`@aiqadam/`) pin (the configurable
-// registry from #478 exists, but only records where a custom version would come from; custom
-// fetching is not implemented here, so it is left alone).
+// prefix — reads it as unparseable rather than as its floor), and a `-main.` snapshot pin (moved only
+// by the checked fallback, #808/ADR-0004).
+//
+// A custom (non-`@aiqadam/`) pin (#806 remainder, #1056) is a candidate too, but only once a platform
+// configures its own registry (#478): ADR-0005 §2 forbids asking npmjs for a custom name ("a custom
+// pin is not looked up on the public registry... deferred to #478"), so when `qadamRegistryConfig`
+// still answers the default npmjs URL there is nowhere to fetch a custom pin from, and it is left
+// alone exactly as before this slice. A custom pin also needs a `platformId` — nothing to namespace
+// it under otherwise — so one collected with none (a caller that does not have it yet) is left alone
+// too. Its signature is checked the same way an official pin's is (`npmPackageSignature`, reused —
+// not re-derived), but only refused on failure when `QADAM_CUSTOM_SIGNATURE_CHECK_ENABLED` is on
+// (off by default): the keys this image pins are npmjs's, and most private registries' packages were
+// never signed by them.
 //
 // Short-circuits in the TESTING environment the same way `flowTriggerSideEffect` does for its own
 // external call: there is no registry to fetch from in an integration test, and the module-level
@@ -65,7 +75,8 @@ async function fetchMissing({ pins, platformId, log }: FetchMissingPinsParams & 
     if (environment === ApEnvironment.TESTING) {
         return EMPTY_SUMMARY
     }
-    const allCandidates = collectCandidates({ pins })
+    const registry = qadamRegistryConfig.get()
+    const allCandidates = collectCandidates({ pins, platformId, registry })
     if (allCandidates.length === 0) {
         return EMPTY_SUMMARY
     }
@@ -86,27 +97,40 @@ async function fetchMissing({ pins, platformId, log }: FetchMissingPinsParams & 
         return EMPTY_SUMMARY
     }
     const ledger = qadamSignatureLedger.open({ dir: opened.store.root, log })
+    // Read once per call, not once per candidate: the setting cannot change mid-call, and a call
+    // commonly carries many custom candidates that would otherwise re-read the same env var.
+    const customSignatureCheckEnabled = system.getBoolean(AppSystemProp.QADAM_CUSTOM_SIGNATURE_CHECK_ENABLED) ?? false
     const deadline = Date.now() + FETCH_CALL_BUDGET_MS
     const outcomes: FetchOutcome[] = []
     for (const batch of chunk(missing, FETCH_CONCURRENCY)) {
         const batchResults = await Promise.all(batch.map(async (candidate): Promise<FetchOutcome> => ({
             candidate,
-            result: await qadamVersionStoreFetch.fetchFromRegistry({ store: opened.store, ledger, name: candidate.name, version: candidate.version, log, deadline }),
+            result: await qadamVersionStoreFetch.fetchFromRegistry({
+                store: opened.store,
+                ledger,
+                name: candidate.name,
+                version: candidate.version,
+                log,
+                deadline,
+                ...(candidate.kind === 'custom'
+                    ? { registryUrl: registry.url, registryToken: registry.token, platformId: candidate.platformId, requireSignature: customSignatureCheckEnabled }
+                    : {}),
+            }),
         })))
         outcomes.push(...batchResults)
     }
     return summarize({ outcomes, log })
 }
 
-function collectCandidates({ pins }: { pins: string[] }): QadamFetchCandidate[] {
+function collectCandidates({ pins, platformId, registry }: { pins: string[], platformId: PlatformId | undefined, registry: QadamRegistryConfig }): QadamFetchCandidate[] {
     const byKey = new Map<string, QadamFetchCandidate>()
     for (const pin of pins) {
         const { name, version } = qadamPinUtil.splitPin({ pin })
         // A step's `qadamName` is stored as a bare string with no length or pattern check of its own
         // (`isOfficialQadamName` is only a scope-prefix test), so without this an arbitrary-length
-        // `@aiqadam/<junk>` would still reach `readVersionDocument` and spend a registry round trip —
-        // wasted, since `putTarball` would refuse the name anyway, but spent before that refusal.
-        if (!isOfficialQadamName(name) || name.length > NPM_PACKAGE_NAME_MAX_LENGTH || !NPM_PACKAGE_NAME_REGEX.test(name)) {
+        // name would still reach `readVersionDocument` and spend a registry round trip — wasted,
+        // since `putTarball` would refuse the name anyway, but spent before that refusal.
+        if (name.length > NPM_PACKAGE_NAME_MAX_LENGTH || !NPM_PACKAGE_NAME_REGEX.test(name)) {
             continue
         }
         // `parse` accepts no `^`/`~` prefix, so a range pin fails it here rather than being resolved
@@ -115,7 +139,18 @@ function collectCandidates({ pins }: { pins: string[] }): QadamFetchCandidate[] 
         if (isNil(parsed) || parsed.snapshot !== null) {
             continue
         }
-        byKey.set(`${name}@${version}`, { name, version })
+        if (isOfficialQadamName(name)) {
+            byKey.set(`${name}@${version}`, { name, version, kind: 'official' })
+            continue
+        }
+        // A custom pin needs somewhere to namespace it under (`platformId`) and somewhere other than
+        // npmjs to ask (ADR-0005 §2: asking npmjs for a custom name would leak the private package
+        // name to a public lookup) — without either, it is left alone for the existing fallback, the
+        // same as before this slice.
+        if (isNil(platformId) || qadamRegistryConfig.isDefault({ url: registry.url })) {
+            continue
+        }
+        byKey.set(`${name}@${version}`, { name, version, kind: 'custom', platformId })
     }
     return [...byKey.values()]
 }
@@ -154,10 +189,10 @@ export type QadamVersionFetchSummary = {
     failed: number
 }
 
-type QadamFetchCandidate = {
-    name: string
-    version: string
-}
+type QadamFetchCandidate = { name: string, version: string } & (
+    | { kind: 'official' }
+    | { kind: 'custom', platformId: PlatformId }
+)
 
 type FetchOutcome = {
     candidate: QadamFetchCandidate
