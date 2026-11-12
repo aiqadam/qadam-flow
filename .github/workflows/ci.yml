@@ -1126,6 +1126,11 @@ jobs:
     # still required (via `image-sandbox-gate`), and `verify`'s is required separately (as
     # "Lint + Unit Tests") — a lint failure no longer blocks the build from starting, it just
     # also fails its own required check.
+    #
+    # `verify` is NOT dropped from `image_publish` below, on purpose (#811, reviewed): this job
+    # only ever builds, it never has the external side effect of making a broken commit's image
+    # pullable under a public tag — that happens in `image_publish`, which still waits on `verify`
+    # for exactly that reason.
     needs: [changes, platform-version]
     # Status-aware on purpose (#831). A bare expression is wrapped in an implicit success(), which
     # checks every upstream job, not just `needs:` — and `platform-version` is skipped on a
@@ -1340,13 +1345,25 @@ jobs:
   # recovery via re-running failed jobs; no image is ever published half-built).
   image_publish:
     name: Publish multi-arch manifest (${{ matrix.flavour }})
-    needs: [image, platform-version]
+    # `verify` is back here, deliberately NOT on `image` (#811, reviewed): `image` no longer waits
+    # for it, so its ~6 min build overlaps with `verify`'s ~5.5 min median instead of following it
+    # — that is the PR-feedback-time win. But a push to `main` is the one event where this job has
+    # an external side effect nothing downstream can undo: it is what actually creates and pushes
+    # the public `:<version>-<flavour>`/`:main-<flavour>`/`:sha-<short>-<flavour>` tags (and the
+    # unsuffixed fat aliases) that `run.sh` and every `docker pull` read. Required-check gates
+    # (`image-sandbox-gate`, "Lint + Unit Tests") only ever run at PR-merge time; nothing re-checks
+    # `verify` before THIS push, so a commit that reaches `main` without `verify` having actually
+    # passed on it — an admin bypassing branch protection, a flaky required check, a direct push if
+    # the ruleset ever allows one — would otherwise still get published. Gating the publish step
+    # itself (rather than `image`'s build) keeps the parallelism gain and keeps this one guarantee.
+    needs: [image, verify, platform-version]
     # Status-aware for the same reason as `image` (#831): the implicit success() would see the
     # skipped `semver-override` upstream and skip the publish on every push to main.
     if: >-
       !cancelled()
       && github.event_name == 'push'
       && needs.image.result == 'success'
+      && needs.verify.result == 'success'
       && needs.platform-version.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1530,10 +1547,18 @@ jobs:
     # push and workflow_dispatch always run it. A pull_request only does when it touches the
     # suite or this workflow: the real trigger cannot be proven on the PR that adds it, and
     # ~10 min on every unrelated PR is not worth paying for a signal about `main`.
+    #
+    # The `image_publish` skip-tolerance is now event-gated (#811, reviewed): since
+    # `image_publish` added `verify` to its own `needs:`, a push to main can ALSO produce a
+    # 'skipped' `image_publish` when `verify` failed — not only the PR/dispatch case this
+    # tolerance was written for. Testing `:main` in that case would silently exercise an image
+    # from a PREVIOUS, unrelated build, reading as "e2e passed" about a commit it never touched.
+    # So a push-event skip is no longer tolerated; only a non-push skip is (the original case).
     if: >-
       always()
       && needs.image.result == 'success'
-      && (needs.image_publish.result == 'success' || needs.image_publish.result == 'skipped')
+      && (needs.image_publish.result == 'success'
+          || (needs.image_publish.result == 'skipped' && github.event_name != 'push'))
       && (github.event_name != 'pull_request' || needs.changes.outputs.e2e_relevant == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -1868,10 +1893,14 @@ jobs:
   e2e-execution-modes:
     name: E2E execution mode ${{ matrix.mode }}
     needs: [changes, image, image_publish]
+    # Same event-gated skip tolerance as `e2e` above, and for the same reason (#811, reviewed):
+    # `image_publish` can now report 'skipped' on a push to main too (when `verify` failed), and
+    # that case must not fall back to testing `:main` as if this were a PR.
     if: >-
       always()
       && needs.image.result == 'success'
-      && (needs.image_publish.result == 'success' || needs.image_publish.result == 'skipped')
+      && (needs.image_publish.result == 'success'
+          || (needs.image_publish.result == 'skipped' && github.event_name != 'push'))
       && (github.event_name != 'pull_request'
           || needs.changes.outputs.e2e_relevant == 'true'
           || needs.changes.outputs.sandbox_relevant == 'true')
