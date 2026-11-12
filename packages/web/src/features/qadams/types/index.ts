@@ -124,3 +124,18 @@ export type HeldQadamPinMoveCause = 'PUBLISH' | 'SNAPSHOT_FOLLOW';
 export type FlowVersionFrameworkCensus = {
   unsupportedStepNames: string[];
 };
+
+// ADR-0003 "Unavailable version" (#808): a step whose pinned qadam version is unavailable and was
+// not moved to the image's build automatically, with why — what `GET /v1/qadam-pin-moves/check`
+// answers for one flow version, and what "version unavailable — update this step" marks.
+export type QadamPinStay = {
+  stepName: string;
+  qadamName: string;
+  version: string;
+  reason: string;
+  detail: string;
+};
+
+export type FlowVersionPinStayCheck = {
+  pinStays: QadamPinStay[];
+};

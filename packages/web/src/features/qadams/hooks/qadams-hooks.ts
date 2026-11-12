@@ -29,6 +29,7 @@ import {
   StepMetadataWithSuggestions,
   CategorizedStepMetadataWithSuggestions,
   FlowVersionFrameworkCensus,
+  FlowVersionPinStayCheck,
   HeldQadamPinMove,
 } from '@/features/qadams/types';
 import { flagsHooks } from '@/hooks/flags-hooks';

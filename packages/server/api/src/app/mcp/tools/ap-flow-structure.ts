@@ -593,7 +593,7 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
     return {
         title: 'ap_flow_structure',
         permission: Permission.READ_FLOW,
-        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), valid insert locations for ap_add_step, the flow\'s localeSource, whether each step\'s pinned qadam version, and the pinned qadam of each agent tool, is still available on this installation, whether a step runs a pre-release build from main, whether a step is held at its version because a person reverted an automatic pin move, and whether a step\'s pinned qadam — or an agent tool\'s — needs a framework version this release no longer supports. Pass includeInput=true to also get each step\'s full untruncated input in structuredContent; text input: lines are returned untruncated too.',
+        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), valid insert locations for ap_add_step, the flow\'s localeSource, whether each step\'s pinned qadam version, and the pinned qadam of each agent tool, is still available on this installation, whether a step runs a pre-release build from main, whether a step is held at its version because a person reverted an automatic pin move, whether a step\'s pin is unavailable and was not moved to the image\'s build automatically (marked "version unavailable — update this step"), and whether a step\'s pinned qadam — or an agent tool\'s — needs a framework version this release no longer supports. Pass includeInput=true to also get each step\'s full untruncated input in structuredContent; text input: lines are returned untruncated too.',
         inputSchema: {
             flowId: z.string().describe('The id of the flow'),
             includeInput: z.boolean().optional().describe('When true, include the full step input (untruncated) in structuredContent.steps[].input and render text input: lines untruncated'),
@@ -623,10 +623,10 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
                 // distinct pins, though no worse than `ap_validate_flow` already accepts.
                 const qadamSteps = qadamPinUtil.getQadamSteps({ trigger: flow.version.trigger })
                 const agentTools = qadamPinUtil.getAgentToolPins({ trigger: flow.version.trigger })
-                const { qadamResolutions, unsupportedPins, heldMoves } = qadamSteps.length === 0
+                const { qadamResolutions, unsupportedPins, heldMoves, pinStays } = qadamSteps.length === 0
                     ? emptyPinSignals()
-                    : await resolvePinSignals({ flowId: flow.id, qadamSteps, agentTools, projectId: mcp.projectId, log })
-                const { structure, stepByName } = buildFlowStructure({ trigger: flow.version.trigger, qadamResolutions, unsupportedPins, heldMoves })
+                    : await resolvePinSignals({ flowId: flow.id, flowVersionId: flow.version.id, qadamSteps, agentTools, projectId: mcp.projectId, log })
+                const { structure, stepByName } = buildFlowStructure({ trigger: flow.version.trigger, qadamResolutions, unsupportedPins, heldMoves, pinStays })
                 const positions = flowCanvasUtils.computeStepPositions(flow.version.trigger)
                 const localeSource = flow.version.localeSource ?? null
                 const text = [
@@ -656,6 +656,7 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
                             ...(s.qadamPin !== undefined ? { qadamPin: s.qadamPin, qadamVersionResolvable: s.qadamVersionResolvable } : {}),
                             ...(s.preReleaseBuild === true ? { preReleaseBuild: true } : {}),
                             ...(s.followHeld !== undefined ? { followHeld: s.followHeld } : {}),
+                            ...(s.pinStay !== undefined ? { pinStay: s.pinStay } : {}),
                             ...(s.agentToolPins !== undefined ? { agentToolPins: s.agentToolPins } : {}),
                             ...(s.frameworkVersionSupported === false ? { frameworkVersionSupported: false } : {}),
                         })),
