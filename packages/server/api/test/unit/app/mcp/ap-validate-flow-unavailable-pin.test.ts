@@ -100,8 +100,9 @@ async function validate(flow: Record<string, unknown> = flowWithPieceStep()): Pr
 }
 
 // ADR-0003 "Unavailable version" / "Versions that were never published" (#808): a step whose pin
-// is unavailable and was not moved to the image's build is reported as a warning — it calls for
-// action but never disables the flow (#435) and never blocks publishing.
+// is unavailable and was not moved to the image's build is reported in place of the generic
+// `qadam_version` issue for the same confirmed-missing pin, keeping the same (error) severity —
+// ADR-0003's "the flow is never disabled" (#435) is about the REST publish gate, not this report.
 describe('ap_validate_flow — version unavailable, update this step (ADR-0003, #808)', () => {
     beforeEach(() => {
         vi.clearAllMocks()
@@ -111,25 +112,27 @@ describe('ap_validate_flow — version unavailable, update this step (ADR-0003, 
         mockCheckPinStays.mockResolvedValue([pinStay()])
     })
 
-    it('reports the step as a warning with its reason', async () => {
+    it('reports the step as a blocking issue with its reason', async () => {
         const { text, structuredContent } = await validate()
 
         expect(text).toContain('Version Unavailable — Update This Step:')
         expect(text).toContain('is pinned to a version that is unavailable')
+        expect(structuredContent.valid).toBe(false)
 
-        const warnings = structuredContent.warnings as { category: string, stepName: string, message: string, severity: string }[]
-        expect(warnings).toContainEqual(expect.objectContaining({ category: 'version_unavailable', stepName: 'step_1' }))
-        expect((structuredContent.warnings as { category: string }[]).length).toBe(1)
+        const issues = structuredContent.issues as { category: string, stepName: string, message: string }[]
+        expect(issues).toContainEqual(expect.objectContaining({ category: 'version_unavailable', stepName: 'step_1' }))
+        expect((structuredContent.warnings as unknown[]).length).toBe(0)
     })
 
-    it('reports the step once, under version_unavailable rather than the generic qadam_version', async () => {
+    it('reports the step once, under version_unavailable rather than the generic qadam_version, and still blocks publishing', async () => {
         mockGet.mockResolvedValue(undefined)
 
         const { structuredContent } = await validate()
 
-        const categories = (structuredContent.warnings as { category: string }[]).map((issue) => issue.category)
+        const categories = (structuredContent.issues as { category: string }[]).map((issue) => issue.category)
         expect(categories).toContain('version_unavailable')
         expect(categories).not.toContain('qadam_version')
+        expect(structuredContent.valid).toBe(false)
     })
 
     it('keeps an unavailable agent-tool pin reported when that step is also marked', async () => {
@@ -142,9 +145,8 @@ describe('ap_validate_flow — version unavailable, update this step (ADR-0003, 
 
         const { structuredContent } = await validate(flow)
 
-        const warnings = structuredContent.warnings as { category: string, stepName: string }[]
         const issues = structuredContent.issues as { category: string, stepName: string, message: string }[]
-        expect(warnings).toContainEqual(expect.objectContaining({ category: 'version_unavailable', stepName: 'step_1' }))
+        expect(issues).toContainEqual(expect.objectContaining({ category: 'version_unavailable', stepName: 'step_1' }))
         expect(issues).toContainEqual(expect.objectContaining({
             category: 'qadam_version',
             stepName: 'step_1',
@@ -164,16 +166,16 @@ describe('ap_validate_flow — version unavailable, update this step (ADR-0003, 
         const { text, structuredContent } = await validate()
 
         expect(text).not.toContain('Version Unavailable — Update This Step:')
-        expect((structuredContent.warnings as { category: string }[]).map(i => i.category)).not.toContain('version_unavailable')
+        expect((structuredContent.issues as { category: string }[]).map(i => i.category)).not.toContain('version_unavailable')
     })
 
-    it('drops the warning but still validates the flow when the read fails', async () => {
+    it('drops the mark but still validates the flow when the read fails', async () => {
         mockCheckPinStays.mockRejectedValue(new Error('connection terminated unexpectedly'))
 
         const { text, structuredContent } = await validate()
 
         expect(text).not.toContain('Version Unavailable — Update This Step:')
-        expect((structuredContent.warnings as { category: string }[]).map(i => i.category)).not.toContain('version_unavailable')
+        expect((structuredContent.issues as { category: string }[]).map(i => i.category)).not.toContain('version_unavailable')
         expect(structuredContent.issues).toBeDefined()
         expect(log.warn).toHaveBeenCalledWith(
             expect.objectContaining({ flowId: 'flow-1' }),

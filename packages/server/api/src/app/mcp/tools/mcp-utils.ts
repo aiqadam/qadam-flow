@@ -593,7 +593,7 @@ function qadamPinIssue({ pin, resolvable, subject = 'step' }: { pin: string, res
             severity: 'unavailable',
             message: subject === 'agent_tool'
                 ? `is pinned to ${wrapUntrustedValue(pin)}, which this installation does not have. Update the tool to an available version with ap_update_step. A run fails only where the pinned version is not already cached on the worker; removing and re-adding the tool is not required.`
-                : `is pinned to ${wrapUntrustedValue(pin)}, which this installation does not have. Update this step to an available version with ap_update_step, or re-create the trigger with ap_update_trigger. The flow is not disabled; a run fails only where the pinned version is not already cached on the worker.`,
+                : `is pinned to ${wrapUntrustedValue(pin)}, which this installation does not have. ap_update_step cannot change a step's pinned version — delete and re-add the step with ap_add_step at an available version, or re-create the trigger with ap_update_trigger. The flow is not disabled; a run fails only where the pinned version is not already cached on the worker.`,
         }
     }
     return {

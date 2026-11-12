@@ -683,11 +683,11 @@ async function saveHeldMove({ platformId, projectId, flowId, flowVersionId }: { 
     return record
 }
 
-// A call as `qadamPinMoveService` makes it from a publish, against the fixture qadam's fake image.
 function checkWith({ ctx, flowVersion, seams }: { ctx: TestContext, flowVersion: FlowVersion, seams: FakeSeams }) {
     return qadamPinMoveService({ log: app.log, seams }).checkUnavailablePins({ flowId: flowVersion.flowId, flowVersionId: flowVersion.id, projectId: ctx.project.id, platformId: ctx.platform.id })
 }
 
+// A call as `qadamPinMoveService` makes it from a publish, against the fixture qadam's fake image.
 function moveWith({ ctx, flowVersion, seams, actorUserId }: { ctx: TestContext, flowVersion: FlowVersion, seams: FakeSeams, actorUserId?: string }) {
     return qadamPinMoveService({ log: app.log, seams }).moveUnavailablePins(moveParams({ ctx, flowVersion, actorUserId }))
 }

@@ -102,7 +102,7 @@ describe('ap_validate_flow — qadam pin resolution wording (#474)', () => {
         mockGetPlatformId.mockResolvedValue('platform-1')
     })
 
-    it('flags a confirmed-missing pin with the assertive wording and the non-destructive remedy', async () => {
+    it('flags a confirmed-missing pin with the assertive wording and its working remedy', async () => {
         mockGet.mockResolvedValue(undefined)
         mockGetOnePopulated.mockResolvedValue(flowWithPieceStep({ qadamVersion: '0.0.1-gone' }))
 
@@ -110,8 +110,8 @@ describe('ap_validate_flow — qadam pin resolution wording (#474)', () => {
 
         expect(text).toContain('Unavailable Qadam Versions')
         expect(text).toContain('which this installation does not have')
-        expect(text).toContain('Update this step to an available version')
-        expect(text).not.toContain('delete and re-add')
+        expect(text).toContain('ap_update_step cannot change a step\'s pinned version')
+        expect(text).toContain('delete and re-add the step')
     })
 
     // Blocking-adjacent finding: a lookup that merely errored must not be worded as a confirmed

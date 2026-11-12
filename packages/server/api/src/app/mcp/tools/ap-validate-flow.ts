@@ -350,11 +350,15 @@ function validateFollowHeld({ trigger, heldMoves }: { trigger: Step, heldMoves: 
 }
 
 // ADR-0003 "Unavailable version" / "Versions that were never published" (#808): a step whose pin
-// is unavailable and a publish or the snapshot follow pass did not move it. Unlike the pre-release
-// and follow-hold notes above this is `severity: 'warning'`, not `'info'`: there is no audited move
-// behind whatever the step runs today, so unlike those two facts it calls for action, even though
-// it never blocks publishing (ADR-0003, #435 — the flow is never disabled). A read that fails
-// drops the warning and leaves the rest of the report intact, the same as the hold read.
+// is unavailable and a publish or the snapshot follow pass did not move it. `checkUnavailablePins`
+// only ever reports a step whose pin `isPinAvailable` already confirmed missing (`findUnavailablePins`
+// prefilters to that), so this is always the same confirmed-miss case `qadam_version` (#432) blocks
+// on — it replaces that issue (see the filter in the caller), not softens it. Unlike the pre-release
+// and follow-hold notes above it keeps the default (error) severity, same as `qadam_version`: ADR-0003
+// says publishing is never blocked and the flow is never disabled (#435) — that is the REST publish
+// gate's and the worker's concern, not this advisory report's, and `ap_validate_flow`'s whole purpose
+// is to catch exactly this before an agent calls `ap_lock_and_publish`. A read that fails drops the
+// issue and leaves the rest of the report intact, the same as the hold read.
 async function findPinStays({ flowId, flowVersionId, projectId, platformId, log }: {
     flowId: string
     flowVersionId: string
@@ -381,7 +385,6 @@ function validateUnavailablePinStays({ trigger, pinStays }: { trigger: Step, pin
         return [{
             category: 'version_unavailable' as const,
             stepName: step.name,
-            severity: 'warning' as const,
             message: `${mcpUtils.wrapUntrustedValue(step.displayName)} ${issue.message}`,
         }]
     })
@@ -1222,9 +1225,10 @@ type ValidationIssue = {
     message: string
     // Omitted (or 'error') blocks `structuredContent.valid` and counts toward "invalid" in the
     // summary; 'warning' is reported but never blocks. `translation_locale` (missing a non-default
-    // locale, or a `$t` nested inside `localeSource`) is always a warning, and so is
-    // `version_unavailable` (ADR-0003, #808): the step's pin was not moved to the image's build
-    // automatically, which calls for action but never disables the flow (#435).
+    // locale, or a `$t` nested inside `localeSource`) is always a warning. `version_unavailable`
+    // (ADR-0003, #808) keeps the default (error) severity: it replaces a `qadam_version` issue for
+    // the same confirmed-missing pin (#432), and ADR-0003's "the flow is never disabled" (#435) is
+    // about the REST publish gate and the worker, not this advisory report.
     // `translation_default_locale` (no usable locale for this `$t` reference) is an error for every
     // trigger except subflows' Callable Flow, where it is a warning — that trigger can inherit a
     // real locale from its caller at run time, which this static check cannot rule out, so it is
