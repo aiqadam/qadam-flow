@@ -381,7 +381,7 @@ const AutomationsPageContent = ({ projectId }: { projectId: string }) => {
         onMoveClick={() => dialogs.setMoveToDialogOpen(true)}
         onDeleteClick={() => mutations.handleBulkDelete(selectedItems)}
         onExportClick={(keepSnapshots) =>
-          mutations.handleBulkExport(selectedItems, keepSnapshots)
+          mutations.handleBulkExport({ selectedItems, keepSnapshots })
         }
         onClearSelection={clearSelection}
       />

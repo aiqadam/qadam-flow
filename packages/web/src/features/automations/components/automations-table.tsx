@@ -30,7 +30,10 @@ type AutomationsTableProps = {
   onDeleteItem: (item: TreeItem) => void;
   onDuplicateFlow: (flow: PopulatedFlow) => void;
   onMoveItem: (item: TreeItem, folderId: string) => void;
-  onExportFlow: (flow: PopulatedFlow, keepSnapshots?: boolean) => void;
+  onExportFlow: (params: {
+    flow: PopulatedFlow;
+    keepSnapshots?: boolean;
+  }) => void;
   onExportTable: (table: Table) => void;
   canKeepSnapshots?: boolean;
   onCreateInFolder?: (folderId: string, kind: CreateInFolderKind) => void;

@@ -64,7 +64,10 @@ type AutomationsTableRowProps = {
   onDelete: () => void;
   onDuplicate: (flow: PopulatedFlow) => void;
   onMoveTo: (item: TreeItem, folderId: string) => void;
-  onExportFlow: (flow: PopulatedFlow, keepSnapshots?: boolean) => void;
+  onExportFlow: (params: {
+    flow: PopulatedFlow;
+    keepSnapshots?: boolean;
+  }) => void;
   onExportTable: (table: Table) => void;
   canKeepSnapshots?: boolean;
   onCreateInFolder?: (folderId: string, kind: CreateInFolderKind) => void;
@@ -302,7 +305,9 @@ export const AutomationsTableRow = ({
               )}
 
             {isFlowItem(item) && !embedState.hideExportAndImportFlow && (
-              <DropdownMenuItem onClick={() => onExportFlow(item.data)}>
+              <DropdownMenuItem
+                onClick={() => onExportFlow({ flow: item.data })}
+              >
                 <Download className="h-4 w-4 mr-2" />
                 {t('Export')}
               </DropdownMenuItem>
@@ -311,7 +316,11 @@ export const AutomationsTableRow = ({
             {isFlowItem(item) &&
               !embedState.hideExportAndImportFlow &&
               canKeepSnapshots && (
-                <DropdownMenuItem onClick={() => onExportFlow(item.data, true)}>
+                <DropdownMenuItem
+                  onClick={() =>
+                    onExportFlow({ flow: item.data, keepSnapshots: true })
+                  }
+                >
                   <Download className="h-4 w-4 mr-2" />
                   {t('exportKeepingPrereleasePins')}
                 </DropdownMenuItem>
