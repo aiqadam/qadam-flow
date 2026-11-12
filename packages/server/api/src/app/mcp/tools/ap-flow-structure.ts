@@ -29,7 +29,7 @@ import { PinFrameworkSupport } from '../../qadams/census/framework-census-servic
 import { AgentToolPinOfStep, QadamPinnedStep, qadamPinUtil } from '../../qadams/metadata/qadam-pin-util'
 import { qadamPinHold } from '../../qadams/pin-moves/qadam-pin-hold'
 import { QadamPinMove } from '../../qadams/pin-moves/qadam-pin-move.dto'
-import { qadamPinMoveService } from '../../qadams/pin-moves/qadam-pin-move.service'
+import { PinStay, qadamPinMoveService } from '../../qadams/pin-moves/qadam-pin-move.service'
 import { mcpUtils } from './mcp-utils'
 
 type StepInfo = {
@@ -59,6 +59,11 @@ type StepInfo = {
     // Only carried when a person reverted a move of this step, so the snapshot follow pass holds it
     // until its version changes (ADR-0004). Like `preReleaseBuild` this is a fact, not a fault.
     followHeld?: FollowHeldInfo
+    // Only carried when the step's pin is unavailable and was not moved to the image's build
+    // automatically (ADR-0003, #808) — unlike `followHeld`/`preReleaseBuild` this IS a fault: there
+    // is no audited move behind whatever the step runs today. Absent means the pin is available,
+    // or it was (or will be) moved.
+    pinStay?: PinStayInfo
     // Only carried when the pinned qadam needs a framework context version this release no longer
     // runs (ADR-0002, #803). Absent means the step is fine, or no shim has been retired yet.
     frameworkVersionSupported?: false
@@ -96,7 +101,7 @@ function getConfigStatus(step: Step): string {
 // the lookup errored) precisely so a caller that must not conflate the last two — the heal
 // migration — can tell them apart. This is a read-only report, not a persister, so it passes the
 // raw tri-state value straight through; `qadamPinWarning` below is where the collapse happens.
-function qadamPinInfo({ step, qadamResolutions, unsupportedPins, heldMoves }: { step: Step, qadamResolutions: Map<string, boolean | undefined>, unsupportedPins: Map<string, PinFrameworkSupport>, heldMoves: QadamPinMove[] }): Pick<StepInfo, 'qadamPin' | 'qadamVersionResolvable' | 'preReleaseBuild' | 'frameworkVersionSupported' | 'agentToolPins' | 'followHeld'> {
+function qadamPinInfo({ step, qadamResolutions, unsupportedPins, heldMoves, pinStays }: { step: Step, qadamResolutions: Map<string, boolean | undefined>, unsupportedPins: Map<string, PinFrameworkSupport>, heldMoves: QadamPinMove[], pinStays: Map<string, PinStay> }): Pick<StepInfo, 'qadamPin' | 'qadamVersionResolvable' | 'preReleaseBuild' | 'frameworkVersionSupported' | 'agentToolPins' | 'followHeld' | 'pinStay'> {
     const agentToolPins = qadamPinUtil.getAgentToolPinsOfStep({ step }).map((tool): AgentToolPinInfo => {
         const pin = qadamPinUtil.pinOfTool({ tool })
         return {
@@ -116,6 +121,7 @@ function qadamPinInfo({ step, qadamResolutions, unsupportedPins, heldMoves }: { 
     // exists to end.
     const pin = qadamPinUtil.pinOf({ step })
     const hold = qadamPinHold.findForStep({ step, moves: heldMoves })
+    const stay = pinStays.get(step.name)
     return {
         qadamPin: pin,
         qadamVersionResolvable: qadamResolutions.get(pin),
@@ -123,6 +129,7 @@ function qadamPinInfo({ step, qadamResolutions, unsupportedPins, heldMoves }: { 
         // The stored pin may carry a `^` or `~` range; the parser wants the exact version.
         ...(qadamVersionParser.isSnapshot({ version: flowQadamUtil.getExactVersion(step.settings.qadamVersion) }) ? { preReleaseBuild: true as const } : {}),
         ...(isNil(hold) ? {} : { followHeld: { fromVersion: hold.fromVersion, toVersion: hold.toVersion, revertedAt: hold.revertedAt } }),
+        ...(isNil(stay) ? {} : { pinStay: { reason: stay.reason, detail: stay.detail } }),
         // Only the negative is reported: a step whose framework version is still run carries
         // nothing, so the default case adds no noise (the `logFlags` pattern).
         ...(unsupportedPins.has(pin) ? { frameworkVersionSupported: false as const } : {}),
@@ -156,6 +163,17 @@ function followHoldLabel(step: StepInfo): string {
         return ''
     }
     return ` [${mcpUtils.followHoldIssue({ fromVersion: step.followHeld.fromVersion, toVersion: step.followHeld.toVersion }).label}]`
+}
+
+// ADR-0003 "Unavailable version": the step's pin is unavailable and was not moved to the image's
+// build automatically. Unlike `preReleaseBuildLabel`/`followHoldLabel` this carries the warning
+// glyph: there is no audited move behind whatever the step runs today, so it is a fault, not a
+// fact. Wording is shared with `ap_validate_flow` via `mcpUtils.pinStayIssue`.
+function pinStayWarning(step: StepInfo): string {
+    if (isNil(step.pinStay)) {
+        return ''
+    }
+    return ` ⚠️ [${mcpUtils.pinStayIssue({ detail: step.pinStay.detail }).label}]`
 }
 
 // Wording is shared with `ap_validate_flow` via `mcpUtils.qadamPinIssue`, so the two tools cannot
@@ -200,8 +218,9 @@ function agentToolPinWarning(tool: AgentToolPinInfo): string {
 // that degrades to "no pin info" rather than failing the response, the way `ap_validate_flow`'s
 // equivalent unwrapped call is allowed to for a one-shot pre-publish gate. A failed census lookup
 // degrades the same way, to no framework-version mark.
-async function resolvePinSignals({ flowId, qadamSteps, agentTools, projectId, log }: {
+async function resolvePinSignals({ flowId, flowVersionId, qadamSteps, agentTools, projectId, log }: {
     flowId: string
+    flowVersionId: string
     qadamSteps: QadamPinnedStep[]
     agentTools: AgentToolPinOfStep[]
     projectId: string
@@ -212,11 +231,12 @@ async function resolvePinSignals({ flowId, qadamSteps, agentTools, projectId, lo
         return emptyPinSignals()
     }
     const pins = qadamPinUtil.collectDistinctPins({ steps: qadamSteps, tools: agentTools })
-    const [qadamResolutions, census, held] = await Promise.all([
+    const [qadamResolutions, census, held, stays] = await Promise.all([
         qadamPinUtil.resolvePins({ pins, platformId, log }),
         tryCatch(() => frameworkCensusMarking(log).unsupportedPins({ qadamSteps, agentTools, platformId })),
         // The hold is a decoration too: a failed read costs the mark, never the structure.
         tryCatch(() => qadamPinMoveService({ log }).listHeld({ flowId, projectId, platformId })),
+        tryCatch(() => qadamPinMoveService({ log }).checkUnavailablePins({ flowId, flowVersionId, projectId, platformId })),
     ])
     if (!isNil(census.error)) {
         log.warn({ error: census.error, projectId }, '[apFlowStructure] Framework census lookup failed; steps returned without the framework-version mark')
@@ -224,10 +244,14 @@ async function resolvePinSignals({ flowId, qadamSteps, agentTools, projectId, lo
     if (!isNil(held.error)) {
         log.warn({ error: held.error, flowId }, '[apFlowStructure] Held pin-move lookup failed; steps returned without the follow-hold mark')
     }
+    if (!isNil(stays.error)) {
+        log.warn({ error: stays.error, flowId }, '[apFlowStructure] Unavailable-pin check failed; steps returned without the version-unavailable mark')
+    }
     return {
         qadamResolutions,
         unsupportedPins: census.data ?? new Map<string, PinFrameworkSupport>(),
         heldMoves: held.data?.data ?? [],
+        pinStays: new Map((stays.data ?? []).map((stay) => [stay.stepName, stay])),
     }
 }
 
@@ -236,6 +260,7 @@ function emptyPinSignals(): PinSignals {
         qadamResolutions: new Map<string, boolean | undefined>(),
         unsupportedPins: new Map<string, PinFrameworkSupport>(),
         heldMoves: [],
+        pinStays: new Map<string, PinStay>(),
     }
 }
 
@@ -329,7 +354,7 @@ function formatBranchConditions(conditions: BranchCondition[][]): string {
     return groups.join(' OR ')
 }
 
-function buildFlowStructure({ trigger, qadamResolutions, unsupportedPins, heldMoves }: { trigger: Step, qadamResolutions: Map<string, boolean | undefined>, unsupportedPins: Map<string, PinFrameworkSupport>, heldMoves: QadamPinMove[] }): { structure: StepInfo[], stepByName: Map<string, Step> } {
+function buildFlowStructure({ trigger, qadamResolutions, unsupportedPins, heldMoves, pinStays }: { trigger: Step, qadamResolutions: Map<string, boolean | undefined>, unsupportedPins: Map<string, PinFrameworkSupport>, heldMoves: QadamPinMove[], pinStays: Map<string, PinStay> }): { structure: StepInfo[], stepByName: Map<string, Step> } {
     const allSteps = flowStructureUtil.getAllSteps(trigger)
     const stepByName = new Map(allSteps.map(s => [s.name, s]))
     const structure = allSteps.map((step): StepInfo => {
@@ -345,7 +370,7 @@ function buildFlowStructure({ trigger, qadamResolutions, unsupportedPins, heldMo
                 ...logFlags(step),
                 configStatus: getConfigStatus(step),
                 input: getStepInput(step),
-                ...qadamPinInfo({ step, qadamResolutions, unsupportedPins, heldMoves }),
+                ...qadamPinInfo({ step, qadamResolutions, unsupportedPins, heldMoves, pinStays }),
             }
         }
         let parentName: string | null = null
@@ -400,7 +425,7 @@ function buildFlowStructure({ trigger, qadamResolutions, unsupportedPins, heldMo
             ...logFlags(step),
             configStatus: getConfigStatus(step),
             input: getStepInput(step),
-            ...qadamPinInfo({ step, qadamResolutions, unsupportedPins, heldMoves }),
+            ...qadamPinInfo({ step, qadamResolutions, unsupportedPins, heldMoves, pinStays }),
         }
     })
     return { structure, stepByName }
@@ -459,7 +484,7 @@ function formatFlowStructure(
             if (fullStep && fullStep.type === FlowTriggerType.PIECE && fullStep.settings.qadamName) {
                 triggerDetail = ` (qadam: ${mcpUtils.wrapUntrustedValue(fullStep.settings.qadamName)}, trigger: ${fullStep.settings.triggerName ? mcpUtils.wrapUntrustedValue(fullStep.settings.triggerName) : 'not set'})`
             }
-            lines.push(`- [TRIGGER] ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${triggerDetail}${preReleaseBuildLabel(step)}${followHoldLabel(step)}${qadamPinWarning(step)}${frameworkVersionWarning(step)} | parent: — | ${step.configStatus}${sampleLabel}${skipLabel}${logLabel}${canvasLabel}`)
+            lines.push(`- [TRIGGER] ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${triggerDetail}${preReleaseBuildLabel(step)}${followHoldLabel(step)}${pinStayWarning(step)}${qadamPinWarning(step)}${frameworkVersionWarning(step)} | parent: — | ${step.configStatus}${sampleLabel}${skipLabel}${logLabel}${canvasLabel}`)
             if (fullStep) {
                 lines.push(...formatStepSettings(fullStep, includeInput))
             }
@@ -474,7 +499,7 @@ function formatFlowStructure(
             if (s?.qadamName) stepDetail = ` (qadam: ${mcpUtils.wrapUntrustedValue(s.qadamName)}, action: ${s.actionName ? mcpUtils.wrapUntrustedValue(s.actionName) : 'not set'})`
         }
 
-        lines.push(`- ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${stepDetail}${preReleaseBuildLabel(step)}${followHoldLabel(step)}${qadamPinWarning(step)}${frameworkVersionWarning(step)} | parent: ${step.parentName} | ${rel} | ${step.configStatus}${sampleLabel}${skipLabel}${logLabel}${canvasLabel}`)
+        lines.push(`- ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${stepDetail}${preReleaseBuildLabel(step)}${followHoldLabel(step)}${pinStayWarning(step)}${qadamPinWarning(step)}${frameworkVersionWarning(step)} | parent: ${step.parentName} | ${rel} | ${step.configStatus}${sampleLabel}${skipLabel}${logLabel}${canvasLabel}`)
 
         if (fullStep) {
             lines.push(...formatStepSettings(fullStep, includeInput))
@@ -654,16 +679,23 @@ type AgentToolPinInfo = {
     frameworkVersionSupported?: false
 }
 
-// The two per-pin signals `ap_flow_structure` decorates steps with: whether each pin resolves
-// (#474), and which pins need a retired framework context version (#803).
+// The pin signals `ap_flow_structure` decorates steps with: whether each pin resolves (#474),
+// which pins need a retired framework context version (#803), which steps are held after a
+// reverted move (#854), and which steps' pins are unavailable and were not moved (#808).
 type PinSignals = {
     qadamResolutions: Map<string, boolean | undefined>
     unsupportedPins: Map<string, PinFrameworkSupport>
     heldMoves: QadamPinMove[]
+    pinStays: Map<string, PinStay>
 }
 
 type FollowHeldInfo = {
     fromVersion: string
     toVersion: string
     revertedAt: string | null
+}
+
+type PinStayInfo = {
+    reason: string
+    detail: string
 }

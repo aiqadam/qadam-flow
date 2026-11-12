@@ -630,6 +630,20 @@ function followHoldIssue({ fromVersion, toVersion }: { fromVersion: string, toVe
     }
 }
 
+// ADR-0003 "Unavailable version" / "Versions that were never published": a step whose pinned
+// version is unavailable and a publish or the snapshot follow pass did not move it to the image's
+// build — `detail` names why (`qadamPinFallbackDecision.StayReason`, or one `qadamPinMoveService`
+// adds for a held or edited step). Unlike `preReleaseBuildIssue`/`followHoldIssue` this is not a
+// fact to state at the lowest severity: there is no audited move behind whatever the step runs
+// today, so it is exactly the mark "version unavailable — update this step" names. The step still
+// runs (the run-time net stands in), and the flow is never disabled over it (#435).
+function pinStayIssue({ detail }: { detail: string }): PinStayIssue {
+    return {
+        label: 'VERSION UNAVAILABLE',
+        message: `is pinned to a version that is unavailable and was not moved to the image's build automatically: ${detail}. Update this step.`,
+    }
+}
+
 function extractOptionsArray(options: unknown): Array<{ label: string, value: unknown }> | null {
     if (Array.isArray(options)) return options
 
@@ -671,6 +685,7 @@ export const mcpUtils = {
     qadamPinIssue,
     preReleaseBuildIssue,
     followHoldIssue,
+    pinStayIssue,
     RESOLVE_TIMEOUT_MS,
     STEP_REFERENCE_HINT,
     LOOP_COLLECT_INPUT_SCHEMA,
@@ -684,7 +699,7 @@ export const mcpUtils = {
     BRANCH_CONDITIONS_INPUT_SCHEMA,
 }
 
-export type { PropSummary, QadamPinIssue, PreReleaseBuildIssue, FollowHoldIssue }
+export type { PropSummary, QadamPinIssue, PreReleaseBuildIssue, FollowHoldIssue, PinStayIssue }
 
 type ExtractQadamFlowErrorDetailParams = {
     err: unknown
@@ -759,6 +774,11 @@ type PreReleaseBuildIssue = {
 }
 
 type FollowHoldIssue = {
+    label: string
+    message: string
+}
+
+type PinStayIssue = {
     label: string
     message: string
 }

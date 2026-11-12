@@ -119,6 +119,33 @@ export const qadamPinMoveService = ({ log, seams = qadamPinFallbackSeams({ log }
         return { flowVersion: committed.flowVersion, moved: committed.moved, stayed: [...plan.stayed, ...releaseStays, ...committed.lost] }
     },
 
+    // The builder's, MCP's and runs' per-version read of what "version unavailable — update this
+    // step" (ADR-0003) marks: a dry run of the same decision `moveUnavailablePins` makes, without
+    // writing anything. Unlike the move it reads any flow version, draft or published — a
+    // published version is never rewritten, so its own unavailable pin is otherwise never seen
+    // again after its own publish. Project scoped and lenient like the framework census
+    // (`frameworkCensusMarking.unsupportedStepsOfFlowVersion`): a flow or version the caller
+    // cannot resolve answers no stays, not an error, since this is advisory state a missing read
+    // must not block editing or viewing a run over.
+    async checkUnavailablePins({ flowId, flowVersionId, projectId, platformId }: CheckUnavailablePinsParams): Promise<PinStay[]> {
+        const flow = await flowRepo().findOneBy({ id: flowId, projectId })
+        const flowVersion = isNil(flow) ? null : await flowVersionRepo().findOneBy({ id: flowVersionId, flowId })
+        if (isNil(flowVersion)) {
+            return []
+        }
+        const steps = qadamPinUtil.getQadamSteps({ trigger: flowVersion.trigger }).filter(isExactPin)
+        if (steps.length === 0) {
+            return []
+        }
+        const unavailable = await findUnavailablePins({ steps, platformId, log })
+        if (unavailable.size === 0) {
+            return []
+        }
+        const held = await findHeldRewrites({ flowId, platformId })
+        const plan = await planMoves({ steps: steps.filter((step) => unavailable.has(qadamPinUtil.pinOf({ step }))), held, platformId, seams })
+        return plan.stayed
+    },
+
     async list({ platformId, query }: { platformId: PlatformId, query: ListQadamPinMovesRequestQuery }): Promise<SeekPage<QadamPinMove>> {
         const decodedCursor = paginationHelper.decodeCursor(query.cursor ?? null)
         const paginator = buildPaginator({
@@ -390,6 +417,13 @@ type MoveUnavailablePinsParams = {
     cause: QadamPinMoveCause
     // The person whose publish caused it, when there is one.
     actorUserId?: UserId
+}
+
+type CheckUnavailablePinsParams = {
+    flowId: FlowId
+    flowVersionId: string
+    projectId: ProjectId
+    platformId: PlatformId
 }
 
 type FollowAvailablePinsParams = {

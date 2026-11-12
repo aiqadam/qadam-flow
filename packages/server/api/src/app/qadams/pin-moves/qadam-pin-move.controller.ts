@@ -6,7 +6,7 @@ import { entitiesMustBeOwnedByCurrentProject } from '../../authentication/author
 import { EntitySourceType, ProjectResourceType } from '../../core/security/authorization/common'
 import { securityAccess } from '../../core/security/authorization/fastify-security'
 import { FlowEntity } from '../../flows/flow/flow.entity'
-import { ListHeldQadamPinMovesRequestQuery, ListQadamPinMovesRequestQuery, QadamPinMove, QadamPinMovePage, RevertedQadamPinMove } from './qadam-pin-move.dto'
+import { CheckQadamPinStaysRequestQuery, ListHeldQadamPinMovesRequestQuery, ListQadamPinMovesRequestQuery, QadamPinMove, QadamPinMovePage, QadamPinStayCheck, RevertedQadamPinMove } from './qadam-pin-move.dto'
 import { qadamPinMoveService } from './qadam-pin-move.service'
 
 export const qadamPinMoveController: FastifyPluginAsyncZod = async (app) => {
@@ -24,6 +24,20 @@ export const qadamPinMoveController: FastifyPluginAsyncZod = async (app) => {
             projectId: req.projectId,
             platformId: req.principal.platform.id,
         })
+    })
+
+    // The builder's, MCP's and runs' project-scoped read of "version unavailable — update this
+    // step" (ADR-0003) for one flow version. `/check` is a static segment of the same collection,
+    // so it outranks `/:id` and can never be read as a record id, the same as `/held`.
+    app.get('/check', CheckQadamPinStaysRequest, async (req): Promise<QadamPinStayCheck> => {
+        return {
+            pinStays: await qadamPinMoveService({ log: req.log }).checkUnavailablePins({
+                flowId: req.query.flowId,
+                flowVersionId: req.query.flowVersionId,
+                projectId: req.projectId,
+                platformId: req.principal.platform.id,
+            }),
+        }
     })
 
     app.get('/:id', GetQadamPinMoveRequest, async (req) => {
@@ -101,6 +115,34 @@ const ListHeldQadamPinMovesRequest = {
         querystring: ListHeldQadamPinMovesRequestQuery,
         response: {
             [StatusCodes.OK]: QadamPinMovePage,
+        },
+    },
+}
+
+// The mark is a property of the flow version, so any member of the flow's project with read
+// access can read it, not only a platform admin — the same read #808 deferred for the hold. The
+// flow entity resolves the project from `flowId`; the service checks the version belongs to that
+// flow and the flow to the project, so another project's flow version is neither resolved nor read.
+const CheckQadamPinStaysRequest = {
+    config: {
+        security: securityAccess.project(
+            [PrincipalType.USER, PrincipalType.SERVICE],
+            Permission.READ_FLOW,
+            {
+                type: ProjectResourceType.TABLE,
+                tableName: FlowEntity,
+                entitySourceType: EntitySourceType.QUERY,
+                lookup: {
+                    paramKey: 'flowId',
+                    entityField: 'id',
+                },
+            }),
+    },
+    schema: {
+        tags: ['qadam-pin-moves'],
+        querystring: CheckQadamPinStaysRequestQuery,
+        response: {
+            [StatusCodes.OK]: QadamPinStayCheck,
         },
     },
 }
