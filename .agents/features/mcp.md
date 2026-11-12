@@ -60,9 +60,10 @@ Exposes a Qadam Flow project as a Model Context Protocol (MCP) server so that AI
 - `ap_read_step_code` — read full source code of a CODE step, plus its `logInput`/`logOutput`
 - `ap_validate_flow`, `ap_validate_step_config` — validation helpers. `ap_validate_flow` reports
   issue categories: `step_validity`, `qadam_version` (a pinned qadam version this installation
-  cannot resolve, #432), `version_unavailable` (replaces `qadam_version` for the same confirmed-missing
-  pin with the reason it was not moved automatically — "update this step" — and keeps the same
-  error severity, #808),
+  cannot resolve, #432), `version_unavailable` (the pin is unavailable and was not moved
+  automatically — "update this step", #808; keeps `qadam_version`'s error severity, and its
+  destructive delete-and-re-add remedy, only for a step `qadam_version`'s own — more lenient —
+  check ALSO confirms has no fallback; every other stay, e.g. `reverted-by-user`, is a warning),
   `framework_version` (a pinned qadam built against a framework context
   version this release no longer runs, #803; a pin that does not resolve gets `qadam_version` only, #838), `template_reference`, `empty_branch`, and — since
   #391 — `subflow_payload`

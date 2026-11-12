@@ -635,18 +635,24 @@ function followHoldIssue({ fromVersion, toVersion }: { fromVersion: string, toVe
 // build — `detail` names why (`qadamPinFallbackDecision.StayReason`, or one `qadamPinMoveService`
 // adds for a held or edited step). Unlike `preReleaseBuildIssue`/`followHoldIssue` this is not a
 // fact to state at the lowest severity: there is no audited move behind whatever the step runs
-// today, so it is exactly the mark "version unavailable — update this step" names. The step still
-// runs (the run-time net stands in), and the flow is never disabled over it (#435).
-// The remedy is deliberately left out of this message: for a step that was deliberately held
-// (`reverted-by-user`) suggesting "delete and re-add" would push an agent to undo exactly the
-// hold a person chose, and the run-time fallback is still serving every one of these reasons —
-// unlike a confirmed-missing pin (`qadamPinIssue`'s `resolvable === false` case), there is always
-// something running this step today. `ap_validate_flow` appends the destructive remedy itself,
-// only for a step it also confirms has nothing serving it.
-function pinStayIssue({ detail }: { detail: string }): PinStayIssue {
+// today, so it is exactly the mark "version unavailable — update this step" names. The flow is
+// never disabled over it (#435), but unlike `reverted-by-user` (always still resolvable — the
+// bundled fallback serves a held step by construction) a reason like `props-incompatible` or
+// `target-not-loaded` is not guaranteed to still be served: on a `-main` instance `checkNet`'s
+// run-time rule is stricter than `decide`'s, so the same reason can also be a confirmed miss there.
+// `confirmedMissing` is the caller's own, more lenient check (`qadam_version`'s `resolvePins`)
+// ALSO confirming nothing serves the step — only then is the destructive delete-and-re-add remedy
+// warranted, the same rule `qadamPinIssue` applies to its own `resolvable === false` case; a step
+// that was deliberately held (`reverted-by-user`) must never get it, since it would push an agent
+// to undo exactly the hold a person chose. `ap_flow_structure` passes `false` here: it never shows
+// this message (only `.label`), so the field exists for `ap_validate_flow` alone.
+function pinStayIssue({ detail, confirmedMissing }: { detail: string, confirmedMissing: boolean }): PinStayIssue {
+    const action = confirmedMissing
+        ? 'ap_update_step cannot change a step\'s pinned version — delete and re-add the step with ap_add_step at an available version, or re-create the trigger with ap_update_trigger.'
+        : 'Update this step.'
     return {
         label: 'VERSION UNAVAILABLE',
-        message: `is pinned to a version that is unavailable and was not moved to the image's build automatically: ${wrapUntrustedValue(detail)}. Update this step.`,
+        message: `is pinned to a version that is unavailable and was not moved to the image's build automatically: ${wrapUntrustedValue(detail)}. ${action}`,
     }
 }
 

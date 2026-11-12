@@ -188,10 +188,15 @@ function qadamPinWarning(step: StepInfo): string {
 }
 
 function stepPinWarning(step: StepInfo): string {
-    // The specific mark says more than the generic one, and says it for the same pin: when the
-    // version-unavailable check explains this step, showing "pinned version unavailable" beside it
-    // would be the same fact twice, in two different actionable wordings.
-    if (isNil(step.qadamPin) || !isNil(step.pinStay)) {
+    // The specific mark says more than the generic one, and says it for the same pin and the same
+    // fact, ONLY when the generic check also confirms the pin missing (`qadamVersionResolvable ===
+    // false`) — showing "pinned version unavailable" beside it would then be the same fact twice.
+    // When the pin is marked but still resolvable (`reverted-by-user` served by the bundled
+    // fallback) `qadamPinIssue` already returns nothing for `resolvable === true`, so this check
+    // changes nothing there; when the lookup merely errored (`undefined`, unverified) the generic
+    // warning is the ONLY place the "do not delete or re-add" caution is said, and must not be
+    // dropped just because the step also carries a stay.
+    if (isNil(step.qadamPin) || (!isNil(step.pinStay) && step.qadamVersionResolvable === false)) {
         return ''
     }
     const issue = mcpUtils.qadamPinIssue({ pin: step.qadamPin, resolvable: step.qadamVersionResolvable })
