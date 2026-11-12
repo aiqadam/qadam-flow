@@ -64,6 +64,11 @@ type StepInfo = {
     // is no audited move behind whatever the step runs today. Absent means the pin is available,
     // or it was (or will be) moved.
     pinStay?: PinStayInfo
+    // Only carried when an import (or export round trip) could not move this step's own pin, or
+    // one of its agent tools' pins, to a release (ADR-0004, #808) — `settings.exportedUnresolvedPin`
+    // (`import-flow.ts`). Unlike `pinStay` this names no installation-side fact, so it never carries
+    // a warning glyph either, matching the web counterpart (`update-this-step-label.tsx`).
+    updateThisStep?: UpdateThisStepInfo
     // Only carried when the pinned qadam needs a framework context version this release no longer
     // runs (ADR-0002, #803). Absent means the step is fine, or no shim has been retired yet.
     frameworkVersionSupported?: false
@@ -101,8 +106,9 @@ function getConfigStatus(step: Step): string {
 // the lookup errored) precisely so a caller that must not conflate the last two — the heal
 // migration — can tell them apart. This is a read-only report, not a persister, so it passes the
 // raw tri-state value straight through; `qadamPinWarning` below is where the collapse happens.
-function qadamPinInfo({ step, qadamResolutions, unsupportedPins, heldMoves, pinStays }: { step: Step, qadamResolutions: Map<string, boolean | undefined>, unsupportedPins: Map<string, PinFrameworkSupport>, heldMoves: QadamPinMove[], pinStays: Map<string, PinStay> }): Pick<StepInfo, 'qadamPin' | 'qadamVersionResolvable' | 'preReleaseBuild' | 'frameworkVersionSupported' | 'agentToolPins' | 'followHeld' | 'pinStay'> {
-    const agentToolPins = qadamPinUtil.getAgentToolPinsOfStep({ step }).map((tool): AgentToolPinInfo => {
+function qadamPinInfo({ step, qadamResolutions, unsupportedPins, heldMoves, pinStays }: { step: Step, qadamResolutions: Map<string, boolean | undefined>, unsupportedPins: Map<string, PinFrameworkSupport>, heldMoves: QadamPinMove[], pinStays: Map<string, PinStay> }): Pick<StepInfo, 'qadamPin' | 'qadamVersionResolvable' | 'preReleaseBuild' | 'frameworkVersionSupported' | 'agentToolPins' | 'followHeld' | 'pinStay' | 'updateThisStep'> {
+    const rawAgentTools = qadamPinUtil.getAgentToolPinsOfStep({ step })
+    const agentToolPins = rawAgentTools.map((tool): AgentToolPinInfo => {
         const pin = qadamPinUtil.pinOfTool({ tool })
         return {
             toolName: tool.toolName,
@@ -122,6 +128,7 @@ function qadamPinInfo({ step, qadamResolutions, unsupportedPins, heldMoves, pinS
     const pin = qadamPinUtil.pinOf({ step })
     const hold = qadamPinHold.findForStep({ step, moves: heldMoves })
     const stay = pinStays.get(step.name)
+    const updateThisStep = exportedUnresolvedInfo({ step, rawAgentTools })
     return {
         qadamPin: pin,
         qadamVersionResolvable: qadamResolutions.get(pin),
@@ -130,10 +137,31 @@ function qadamPinInfo({ step, qadamResolutions, unsupportedPins, heldMoves, pinS
         ...(qadamVersionParser.isSnapshot({ version: flowQadamUtil.getExactVersion(step.settings.qadamVersion) }) ? { preReleaseBuild: true as const } : {}),
         ...(isNil(hold) ? {} : { followHeld: { fromVersion: hold.fromVersion, toVersion: hold.toVersion, revertedAt: hold.revertedAt } }),
         ...(isNil(stay) ? {} : { pinStay: { reason: stay.reason, detail: stay.detail } }),
+        ...(isNil(updateThisStep) ? {} : { updateThisStep }),
         // Only the negative is reported: a step whose framework version is still run carries
         // nothing, so the default case adds no noise (the `logFlags` pattern).
         ...(unsupportedPins.has(pin) ? { frameworkVersionSupported: false as const } : {}),
     }
+}
+
+// ADR-0004: `markExportedUnresolved` (`import-flow.ts`) stamps a step's own exact pin onto
+// `settings.exportedUnresolvedPin` when the importer could not confirm a released equivalent for
+// it, OR for one of its agent tools (a tool cannot carry its own mark, so the step's own version
+// stands in for the tool case too). The mark is unconditionally cleared by changing the step's own
+// pin — matching the web counterpart (`update-this-step-label.tsx`) exactly, so the two surfaces
+// never disagree about which steps carry the note.
+function exportedUnresolvedInfo({ step, rawAgentTools }: { step: QadamPinnedStep, rawAgentTools: AgentToolPinOfStep[] }): UpdateThisStepInfo | undefined {
+    const mark = step.settings.exportedUnresolvedPin
+    if (isNil(mark)) {
+        return undefined
+    }
+    const exactVersion = flowQadamUtil.getExactVersion(step.settings.qadamVersion)
+    const isOwnPinMarked = mark === exactVersion
+    const hasSnapshotTool = rawAgentTools.some((tool) => qadamVersionParser.isSnapshot({ version: flowQadamUtil.getExactVersion(tool.qadamVersion) }))
+    if (!isOwnPinMarked && !hasSnapshotTool) {
+        return undefined
+    }
+    return { hasSnapshotTool }
 }
 
 // The ticket's own wording (ADR-0002, #803). `ap_validate_flow`'s `framework_version` message and
@@ -186,6 +214,17 @@ function pinStayWarning(step: StepInfo): string {
     const confirmedMissing = step.qadamVersionResolvable === false
     const issue = mcpUtils.pinStayIssue({ detail: step.pinStay.detail, confirmedMissing })
     return confirmedMissing ? ` ⚠️ [${issue.label}]: this step ${issue.message}` : ` ⚠️ [${issue.label}]`
+}
+
+// ADR-0004 import mark: like `preReleaseBuildLabel`/`followHoldLabel` this carries no warning
+// glyph — it names no installation-side fact about whether the pin resolves, only the importer's
+// own note that nobody has confirmed a released equivalent for it (ADR-0003, #808). Wording is
+// shared with `ap_validate_flow` via `mcpUtils.updateThisStepIssue`.
+function updateThisStepLabel(step: StepInfo): string {
+    if (isNil(step.updateThisStep)) {
+        return ''
+    }
+    return ` [${mcpUtils.updateThisStepIssue({ hasSnapshotTool: step.updateThisStep.hasSnapshotTool }).label}]`
 }
 
 // Wording is shared with `ap_validate_flow` via `mcpUtils.qadamPinIssue`, so the two tools cannot
@@ -504,7 +543,7 @@ function formatFlowStructure(
             if (fullStep && fullStep.type === FlowTriggerType.PIECE && fullStep.settings.qadamName) {
                 triggerDetail = ` (qadam: ${mcpUtils.wrapUntrustedValue(fullStep.settings.qadamName)}, trigger: ${fullStep.settings.triggerName ? mcpUtils.wrapUntrustedValue(fullStep.settings.triggerName) : 'not set'})`
             }
-            lines.push(`- [TRIGGER] ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${triggerDetail}${preReleaseBuildLabel(step)}${followHoldLabel(step)}${pinStayWarning(step)}${qadamPinWarning(step)}${frameworkVersionWarning(step)} | parent: — | ${step.configStatus}${sampleLabel}${skipLabel}${logLabel}${canvasLabel}`)
+            lines.push(`- [TRIGGER] ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${triggerDetail}${preReleaseBuildLabel(step)}${followHoldLabel(step)}${pinStayWarning(step)}${updateThisStepLabel(step)}${qadamPinWarning(step)}${frameworkVersionWarning(step)} | parent: — | ${step.configStatus}${sampleLabel}${skipLabel}${logLabel}${canvasLabel}`)
             if (fullStep) {
                 lines.push(...formatStepSettings(fullStep, includeInput))
             }
@@ -519,7 +558,7 @@ function formatFlowStructure(
             if (s?.qadamName) stepDetail = ` (qadam: ${mcpUtils.wrapUntrustedValue(s.qadamName)}, action: ${s.actionName ? mcpUtils.wrapUntrustedValue(s.actionName) : 'not set'})`
         }
 
-        lines.push(`- ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${stepDetail}${preReleaseBuildLabel(step)}${followHoldLabel(step)}${pinStayWarning(step)}${qadamPinWarning(step)}${frameworkVersionWarning(step)} | parent: ${step.parentName} | ${rel} | ${step.configStatus}${sampleLabel}${skipLabel}${logLabel}${canvasLabel}`)
+        lines.push(`- ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${stepDetail}${preReleaseBuildLabel(step)}${followHoldLabel(step)}${pinStayWarning(step)}${updateThisStepLabel(step)}${qadamPinWarning(step)}${frameworkVersionWarning(step)} | parent: ${step.parentName} | ${rel} | ${step.configStatus}${sampleLabel}${skipLabel}${logLabel}${canvasLabel}`)
 
         if (fullStep) {
             lines.push(...formatStepSettings(fullStep, includeInput))
@@ -613,7 +652,7 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
     return {
         title: 'ap_flow_structure',
         permission: Permission.READ_FLOW,
-        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), valid insert locations for ap_add_step, the flow\'s localeSource, whether each step\'s pinned qadam version, and the pinned qadam of each agent tool, is still available on this installation, whether a step runs a pre-release build from main, whether a step is held at its version because a person reverted an automatic pin move, whether a step\'s pin is unavailable and was not moved to the image\'s build automatically (marked "version unavailable — update this step"), and whether a step\'s pinned qadam — or an agent tool\'s — needs a framework version this release no longer supports. Pass includeInput=true to also get each step\'s full untruncated input in structuredContent; text input: lines are returned untruncated too.',
+        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), valid insert locations for ap_add_step, the flow\'s localeSource, whether each step\'s pinned qadam version, and the pinned qadam of each agent tool, is still available on this installation, whether a step runs a pre-release build from main, whether a step is held at its version because a person reverted an automatic pin move, whether a step\'s pin is unavailable and was not moved to the image\'s build automatically (marked "version unavailable — update this step"), whether an import could not move a step\'s own pin, or one of its agent tools\' pins, to a release (marked "update this step"), and whether a step\'s pinned qadam — or an agent tool\'s — needs a framework version this release no longer supports. Pass includeInput=true to also get each step\'s full untruncated input in structuredContent; text input: lines are returned untruncated too.',
         inputSchema: {
             flowId: z.string().describe('The id of the flow'),
             includeInput: z.boolean().optional().describe('When true, include the full step input (untruncated) in structuredContent.steps[].input and render text input: lines untruncated'),
@@ -677,6 +716,7 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
                             ...(s.preReleaseBuild === true ? { preReleaseBuild: true } : {}),
                             ...(s.followHeld !== undefined ? { followHeld: s.followHeld } : {}),
                             ...(s.pinStay !== undefined ? { pinStay: s.pinStay } : {}),
+                            ...(s.updateThisStep !== undefined ? { updateThisStep: s.updateThisStep } : {}),
                             ...(s.agentToolPins !== undefined ? { agentToolPins: s.agentToolPins } : {}),
                             ...(s.frameworkVersionSupported === false ? { frameworkVersionSupported: false } : {}),
                         })),
@@ -719,4 +759,8 @@ type FollowHeldInfo = {
 type PinStayInfo = {
     reason: PinStayReason
     detail: string
+}
+
+type UpdateThisStepInfo = {
+    hasSnapshotTool: boolean
 }

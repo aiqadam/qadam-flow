@@ -661,6 +661,24 @@ function pinStayIssue({ detail, confirmedMissing }: { detail: string, confirmedM
     }
 }
 
+// ADR-0004: an import (or export round trip) could not move this step's pin to a release, and
+// `markExportedUnresolved` recorded that on `settings.exportedUnresolvedPin` (`import-flow.ts`).
+// Unlike `pinStayIssue` this names no installation-side fact — the pin itself may well resolve —
+// it is purely the importer's own note that nobody has confirmed a released equivalent, so the
+// action is always the soft "update this step", never the destructive remedy, and both
+// pin-reporting tools state it at their lowest severity (ADR-0003/#808's web counterpart,
+// `update-this-step-label.tsx`, never blocks either). `hasSnapshotTool` distinguishes the two
+// wordings the web label already uses: the mark can describe the step's own pin, or — since a
+// tool is not a step and so cannot carry its own mark — an agent tool still pinned to a snapshot.
+function updateThisStepIssue({ hasSnapshotTool }: { hasSnapshotTool: boolean }): UpdateThisStepIssue {
+    return {
+        label: 'UPDATE THIS STEP',
+        message: hasSnapshotTool
+            ? 'was imported with an agent tool pinned to a pre-release build that could not be moved to a released version. Update that tool.'
+            : 'was imported with a pre-release build that could not be moved to a released version. Update its version.',
+    }
+}
+
 function extractOptionsArray(options: unknown): Array<{ label: string, value: unknown }> | null {
     if (Array.isArray(options)) return options
 
@@ -703,6 +721,7 @@ export const mcpUtils = {
     preReleaseBuildIssue,
     followHoldIssue,
     pinStayIssue,
+    updateThisStepIssue,
     RESOLVE_TIMEOUT_MS,
     STEP_REFERENCE_HINT,
     LOOP_COLLECT_INPUT_SCHEMA,
@@ -796,6 +815,11 @@ type FollowHoldIssue = {
 }
 
 type PinStayIssue = {
+    label: string
+    message: string
+}
+
+type UpdateThisStepIssue = {
     label: string
     message: string
 }

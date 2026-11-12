@@ -39,7 +39,7 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
     return {
         title: 'ap_validate_flow',
         permission: Permission.READ_FLOW,
-        description: 'Validate a flow for structural issues without publishing. Checks step validity, template references, empty branches, qadam pins (including pre-release builds, held automatic pin moves, and pins that are unavailable and were not moved automatically), and other pre-publish defects. Returns a detailed report with all issues found. Use this before ap_lock_and_publish to catch problems early.',
+        description: 'Validate a flow for structural issues without publishing. Checks step validity, template references, empty branches, qadam pins (including pre-release builds, held automatic pin moves, pins that are unavailable and were not moved automatically, and steps an import could not move to a release), and other pre-publish defects. Returns a detailed report with all issues found. Use this before ap_lock_and_publish to catch problems early.',
         inputSchema: validateFlowInput.shape,
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         execute: async (args) => {
@@ -108,7 +108,7 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                 // "unverified" step keeps its own safe, non-destructive `qadam_version` issue
                 // alongside the new warning rather than losing it (#474).
                 const qadamVersionIssuesWithoutMarked = qadamVersionIssues.stepIssues.filter((issue) => !(pinStayStepNames.has(issue.stepName) && confirmedMissingStepNames.has(issue.stepName)))
-                const allIssues = [...structural.issues, ...qadamVersionIssuesWithoutMarked, ...qadamVersionIssues.toolIssues, ...frameworkVersionIssues, ...validatePreReleaseBuilds({ trigger: flow.version.trigger }), ...validateFollowHeld({ trigger: flow.version.trigger, heldMoves }), ...validateUnavailablePinStays({ trigger: flow.version.trigger, pinStays, confirmedMissingStepNames }), ...validateAgentToolCounts({ trigger: flow.version.trigger }), ...callFlowIssues, ...concurrentLoopIssues, ...translationIssues]
+                const allIssues = [...structural.issues, ...qadamVersionIssuesWithoutMarked, ...qadamVersionIssues.toolIssues, ...frameworkVersionIssues, ...validatePreReleaseBuilds({ trigger: flow.version.trigger }), ...validateFollowHeld({ trigger: flow.version.trigger, heldMoves }), ...validateUnavailablePinStays({ trigger: flow.version.trigger, pinStays, confirmedMissingStepNames }), ...validateUpdateThisStep({ trigger: flow.version.trigger }), ...validateAgentToolCounts({ trigger: flow.version.trigger }), ...callFlowIssues, ...concurrentLoopIssues, ...translationIssues]
                 const result = { ...structural, issues: allIssues }
                 // A warning is reported in the output but never blocks `valid` or counts toward
                 // "invalid" in the summary — today that is exactly (and only) the translation
@@ -328,6 +328,39 @@ function validatePreReleaseBuilds({ trigger }: { trigger: Step }): ValidationIss
         const issue = mcpUtils.preReleaseBuildIssue({ pin: qadamPinUtil.pinOf({ step }) })
         return [{
             category: 'pre_release_build' as const,
+            stepName: step.name,
+            severity: 'info' as const,
+            message: `${mcpUtils.wrapUntrustedValue(step.displayName)} ${issue.message}`,
+        }]
+    })
+}
+
+// ADR-0004: `markExportedUnresolved` (`import-flow.ts`) stamps a step's own exact pin onto
+// `settings.exportedUnresolvedPin` when an import (or export round trip) could not confirm a
+// released equivalent for it, or for one of its agent tools (a tool cannot carry its own mark, so
+// the step's own version stands in for that case too). Unlike `validateUnavailablePinStays` this
+// names no installation-side fact about whether the pin resolves, only the importer's own note
+// that nobody has confirmed a release for it, so it never escalates past `info` — no `ap_lock_and_
+// publish` gate is warranted, matching the web counterpart (`update-this-step-label.tsx`), which
+// also never blocks. Clearing the mark is purely by changing the step's own pin, mirroring the
+// web's own `isOwnPinMarked` check exactly, so the two surfaces never disagree about which steps
+// carry the note.
+function validateUpdateThisStep({ trigger }: { trigger: Step }): ValidationIssue[] {
+    return qadamPinUtil.getQadamSteps({ trigger }).flatMap((step): ValidationIssue[] => {
+        const mark = step.settings.exportedUnresolvedPin
+        if (isNil(mark)) {
+            return []
+        }
+        const exactVersion = flowQadamUtil.getExactVersion(step.settings.qadamVersion)
+        const isOwnPinMarked = mark === exactVersion
+        const hasSnapshotTool = qadamPinUtil.getAgentToolPinsOfStep({ step }).some((tool) =>
+            qadamVersionParser.isSnapshot({ version: flowQadamUtil.getExactVersion(tool.qadamVersion) }))
+        if (!isOwnPinMarked && !hasSnapshotTool) {
+            return []
+        }
+        const issue = mcpUtils.updateThisStepIssue({ hasSnapshotTool })
+        return [{
+            category: 'update_this_step' as const,
             stepName: step.name,
             severity: 'info' as const,
             message: `${mcpUtils.wrapUntrustedValue(step.displayName)} ${issue.message}`,
@@ -1147,7 +1180,7 @@ const CONDITIONAL_PAUSE_EVALUATORS: Record<string, (step: QadamStep) => string |
     [`${ASSEMBLYAI_QADAM}:${ASSEMBLYAI_TRANSCRIBE_ACTION}`]: readTranscribePauseReason,
 }
 
-const CATEGORY_ORDER: ValidationIssue['category'][] = ['step_validity', 'qadam_version', 'version_unavailable', 'agent_tool_limit', 'pre_release_build', 'follow_hold', 'framework_version', 'template_reference', 'translation_key', 'translation_default_locale', 'translation_locale', 'empty_branch', 'subflow_payload', 'inline_pause', 'concurrent_pause']
+const CATEGORY_ORDER: ValidationIssue['category'][] = ['step_validity', 'qadam_version', 'version_unavailable', 'agent_tool_limit', 'pre_release_build', 'follow_hold', 'update_this_step', 'framework_version', 'template_reference', 'translation_key', 'translation_default_locale', 'translation_locale', 'empty_branch', 'subflow_payload', 'inline_pause', 'concurrent_pause']
 const CATEGORY_LABELS: Record<ValidationIssue['category'], string> = {
     step_validity: 'Step Validity',
     qadam_version: 'Unavailable Qadam Versions',
@@ -1155,6 +1188,7 @@ const CATEGORY_LABELS: Record<ValidationIssue['category'], string> = {
     agent_tool_limit: 'Agent Tool Limits',
     pre_release_build: 'Pre-Release Builds',
     follow_hold: 'Held Snapshot Follow Steps',
+    update_this_step: 'Imported Steps Not Moved To A Release',
     framework_version: 'Unsupported Framework Versions',
     template_reference: 'Template References',
     translation_key: 'Unknown Translation Keys',
@@ -1250,7 +1284,7 @@ function formatIssueGroups(issues: ValidationIssue[]): string[] {
 }
 
 type ValidationIssue = {
-    category: 'step_validity' | 'qadam_version' | 'version_unavailable' | 'agent_tool_limit' | 'pre_release_build' | 'follow_hold' | 'framework_version' | 'template_reference' | 'translation_key' | 'translation_locale' | 'translation_default_locale' | 'empty_branch' | 'subflow_payload' | 'inline_pause' | 'concurrent_pause'
+    category: 'step_validity' | 'qadam_version' | 'version_unavailable' | 'agent_tool_limit' | 'pre_release_build' | 'follow_hold' | 'update_this_step' | 'framework_version' | 'template_reference' | 'translation_key' | 'translation_locale' | 'translation_default_locale' | 'empty_branch' | 'subflow_payload' | 'inline_pause' | 'concurrent_pause'
     stepName: string
     message: string
     // Omitted (or 'error') blocks `structuredContent.valid` and counts toward "invalid" in the
@@ -1266,8 +1300,9 @@ type ValidationIssue = {
     // real locale from its caller at run time, which this static check cannot rule out, so it is
     // not a guaranteed failure there the way it is for every other trigger type. 'info' is even
     // weaker than a warning: a fact about the flow (currently the ADR-0004 pre-release build and
-    // follow-hold notes) that is neither a defect nor a risk, reported under its own "Notes" section
-    // and never counted as a warning or an issue.
+    // follow-hold notes, and `update_this_step`'s import-time mark, which names no installation-side
+    // fact at all) that is neither a defect nor a risk, reported under its own "Notes" section and
+    // never counted as a warning or an issue.
     severity?: 'error' | 'warning' | 'info'
 }
 
