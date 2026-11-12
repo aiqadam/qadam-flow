@@ -125,8 +125,16 @@ export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag, pack
 
   // ADR-0003 "Qadams at `1.0.0`" (#804): decided before the legacy `dist`-output check below,
   // which a bundle artifact never satisfies — it is built straight from `src` by qadamArtifact,
-  // never from a qadam's own `dist`.
+  // never from a qadam's own `dist`. Legacy qadams can still reach a real `npm publish` through
+  // `tools/scripts/qadams/publish-qadam.ts` (the single-qadam community-publish script, #787
+  // tracks retiring it) — a bundle-format qadam never can, which the guard right below this is
+  // what enforces: same shape and same "ahead of every other check" placement as the
+  // skipRegistryCheck guard above, for the same reason — a caller that gets this wrong should be
+  // told so before any network call, not after one that, offline, would otherwise time this out.
   const bundleFormat = await isBundleFormatQadam({ path })
+  if (bundleFormat && !packDestination && !dryRun) {
+    throw new Error(`[publishPackage] ${path} is an ADR-0003 bundle-format qadam — it only ever publishes through packDestination or dryRun, never a direct publish.`)
+  }
 
   const outputPath = `${path}/dist`
 
@@ -150,12 +158,7 @@ export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag, pack
   const { version } = await readPackageJson(path)
 
   if (bundleFormat) {
-    // Same shape as the skipRegistryCheck guard above: a bundle-format qadam only ever ships
-    // through the pack → tools/ci/publish-packed-tarballs.sh split (#486), the same as every
-    // other official qadam — there is no direct-publish code path for either format.
-    if (!packDestination && !dryRun) {
-      throw new Error(`[publishPackage] ${path}@${version} is an ADR-0003 bundle-format qadam — it only ever publishes through packDestination or dryRun, never a direct publish.`)
-    }
+    // The packDestination-or-dryRun guard already ran, before the registry check above.
     const destination = packDestination ?? mkdtempSync(join(tmpdir(), 'qadam-flow-npm-pack-'))
     const packed = await packQadamBundleArtifact({ path, version, packDestination: destination })
     // Same marker, same reason, as the legacy branch below: without it, a bundle packed with the

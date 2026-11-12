@@ -31,6 +31,17 @@ const resolveQadamPath = (path: string): { absolutePath: string, canonicalPath: 
 // which format a given official-qadam path+version publishes as — publishNpmPackage branches on
 // it before the legacy `dist`-output check, which a bundle artifact (built straight from `src`,
 // never from a qadam's own `dist`) does not satisfy.
+//
+// `@aiqadam/qadam-assemblyai` is already `2.0.0` in the legacy format — the only official qadam
+// past `1.0.0` before this ticket (versioning.md). A plain `semver.major(version) >= 1` gate means
+// its own NEXT publish, even a patch unrelated to this migration, switches it to the bundle
+// format; there is no carve-out for "already past 1.0.0 under the old mechanism" here. That is a
+// deliberate choice, not an oversight: the loader already has to read both formats for every other
+// qadam (ADR-0003), so which format a given version is in has no behavioural effect a flow author
+// would notice, and the build fails LOUDLY (ARTIFACT_STATUS other than OK) rather than shipping
+// something broken if assemblyai's source ever needs a `qadam-artifact-config.json` exception it
+// doesn't have — checked at the time of this change, assemblyai builds as a plain `bundle` with no
+// exception needed.
 export const isBundleFormatQadam = async ({ path }: IsBundleFormatQadamParams): Promise<boolean> => {
   const { absolutePath, canonicalPath } = resolveQadamPath(path)
   const isOfficialQadam = OFFICIAL_QADAM_ROOTS.some((root) => canonicalPath === root || canonicalPath.startsWith(`${root}/`))
@@ -82,7 +93,8 @@ export const packQadamBundleArtifact = async ({ path, version, packDestination }
 // `Promise.resolve().then(() => require(...))` rather than a bare `require`, and what actually
 // resolves that promise at run time is Node 22.12+/24 being able to `require()` an ES module in
 // the first place — which stops working the moment anything in qadam-artifact.mjs's own import
-// graph (today: only snapshot-plan.mjs, checked for this) gains a top-level `await`
+// graph (today: snapshot-plan.mjs and its own transitive imports, tools/ci/check-changesets.mjs
+// and tools/ci/compute-main-version.mjs — checked, none has one) gains a top-level `await`
 // (`ERR_REQUIRE_ASYNC_MODULE`). Re-check that import graph before adding one.
 const importQadamArtifact = () => import('../qadams/bundle/qadam-artifact.mjs')
 

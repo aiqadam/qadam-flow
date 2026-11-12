@@ -628,7 +628,10 @@ fs.writeFileSync(path, JSON.stringify(json, null, 2) + '\n')
 # tarballs.sh split (#486).
 # No `skipRegistryCheck` here, deliberately: that flag has its own, earlier, pre-existing guard
 # against the same shape of call (tested above), and this assertion is specifically about the NEW
-# bundle-format guard, which has to fire on its own once a 1.0.0+ qadam reaches it.
+# bundle-format guard, which has to fire on its own once a 1.0.0+ qadam reaches it. It now runs
+# ahead of packagePrePublishChecks (same reordering as the pre-existing guard it sits beside), so
+# this call never reaches the real registry — reviewed and moved for exactly that reason: it used
+# to run after the registry check, which made this assertion registry-network-dependent.
 bundle_direct_publish_out="$(cd "$repo_root" && timeout 120 "$ts_node_bin" --project "$ts_project" -e "
 const { publishNpmPackage } = require('./tools/scripts/utils/publish-npm-package')
 publishNpmPackage({ path: '${bundle_fixture_path}' }).then((result) => {

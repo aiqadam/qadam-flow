@@ -679,7 +679,10 @@ jobs:
     # packages and the qadam archive are independent artifacts, and a problem in one must not hold
     # back the other two.
     needs: [publish, archive-qadam-artifacts]
-    if: ${{ always() && needs.publish.result == 'success' }}
+    # `!cancelled()`, not `always()`: this job must still skip if the whole workflow run is
+    # cancelled while archive-qadam-artifacts is still in flight, which `always()` would not do —
+    # it overrides cancellation as well as a skipped/failed `needs`, not only the latter.
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -698,8 +701,9 @@ jobs:
 
       # `mkdir -p` unconditionally, so the glob below always resolves against a real (possibly
       # empty) directory rather than one that may or may not exist depending on whether the
-      # download ran — action-gh-release's `files:` glob tolerates matching nothing, it does not
-      # tolerate the directory itself being absent in the same way.
+      # download ran. Not verified against action-gh-release's own source whether an absent
+      # directory and an empty one actually behave differently for its `files:` glob — this costs
+      # one shell call either way, so it is not worth leaving to find out on a real release.
       - name: Make room for the archived qadam artifacts
         run: mkdir -p "${{ runner.temp }}/release-archive"
 
