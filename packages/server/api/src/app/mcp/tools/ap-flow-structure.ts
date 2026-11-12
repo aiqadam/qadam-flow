@@ -173,9 +173,15 @@ function pinStayWarning(step: StepInfo): string {
     if (isNil(step.pinStay)) {
         return ''
     }
-    // Only `.label` is read here, so `confirmedMissing` never affects this line — passed as
-    // `false` since this is never the destructive-remedy text `ap_validate_flow` builds.
-    return ` ⚠️ [${mcpUtils.pinStayIssue({ detail: step.pinStay.detail, confirmedMissing: false }).label}]`
+    // A step that is both marked and confirmed missing (`qadamVersionResolvable === false`) is
+    // exactly the case `stepPinWarning` below suppresses its own generic warning for — this line
+    // is then the ONLY place the destructive, but correct, remedy is said in the text output, so
+    // it must carry the full message here, not just the label. Every other marked step (still
+    // resolvable, or unverified) keeps the label-only line: `stepPinWarning`'s own warning already
+    // says the remedy (or the "do not delete" caution) for those.
+    const confirmedMissing = step.qadamVersionResolvable === false
+    const issue = mcpUtils.pinStayIssue({ detail: step.pinStay.detail, confirmedMissing })
+    return confirmedMissing ? ` ⚠️ [${issue.label}]: this step ${issue.message}` : ` ⚠️ [${issue.label}]`
 }
 
 // Wording is shared with `ap_validate_flow` via `mcpUtils.qadamPinIssue`, so the two tools cannot

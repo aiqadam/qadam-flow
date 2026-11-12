@@ -644,6 +644,18 @@ describe('ap_flow_structure — version unavailable, update this step (ADR-0003,
         expect(text).not.toContain('PINNED VERSION UNAVAILABLE')
     })
 
+    // A confirmed-missing marked step is the one case `stepPinWarning` suppresses its own generic
+    // warning for — the mark line is then the only place a remedy is said at all, so it must carry
+    // one, not just the bracket label (code-quality review, round 3).
+    it('carries the working remedy on the mark line itself, for a confirmed-missing step', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: DEAD_VERSION }) }))
+
+        const result = await callTool()
+
+        const text = result.content?.[0]?.text
+        expect(text).toContain('delete and re-add the step with ap_add_step')
+    })
+
     it('reads the mark for the flow and its version in the caller\'s project', async () => {
         mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: DEAD_VERSION }) }))
 
