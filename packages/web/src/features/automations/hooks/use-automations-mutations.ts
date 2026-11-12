@@ -247,7 +247,7 @@ export function useAutomationsMutations(deps: MutationDeps) {
   });
 
   const handleBulkExport = useCallback(
-    (selectedItems: SelectedItemsMap) => {
+    (selectedItems: SelectedItemsMap, keepSnapshots?: boolean) => {
       const { flowIds, tableIds } = getSelectedIdsByType(selectedItems);
 
       if (flowIds.length > 0) {
@@ -260,7 +260,7 @@ export function useAutomationsMutations(deps: MutationDeps) {
           .map((id) => flowsById.get(id))
           .filter((flow): flow is PopulatedFlow => !isNil(flow));
         if (flowsToExport.length > 0) {
-          exportFlows({ flows: flowsToExport });
+          exportFlows({ flows: flowsToExport, keepSnapshots });
         }
       }
 
@@ -284,8 +284,8 @@ export function useAutomationsMutations(deps: MutationDeps) {
   );
 
   const handleExportFlow = useCallback(
-    (flow: PopulatedFlow) => {
-      exportFlows({ flows: [flow] });
+    (flow: PopulatedFlow, keepSnapshots?: boolean) => {
+      exportFlows({ flows: [flow], keepSnapshots });
     },
     [exportFlows],
   );

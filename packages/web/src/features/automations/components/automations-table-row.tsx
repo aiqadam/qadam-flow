@@ -64,8 +64,9 @@ type AutomationsTableRowProps = {
   onDelete: () => void;
   onDuplicate: (flow: PopulatedFlow) => void;
   onMoveTo: (item: TreeItem, folderId: string) => void;
-  onExportFlow: (flow: PopulatedFlow) => void;
+  onExportFlow: (flow: PopulatedFlow, keepSnapshots?: boolean) => void;
   onExportTable: (table: Table) => void;
+  canKeepSnapshots?: boolean;
   onCreateInFolder?: (folderId: string, kind: CreateInFolderKind) => void;
   userHasPermissionToWriteFlow?: boolean;
   userHasPermissionToWriteTable?: boolean;
@@ -90,6 +91,7 @@ export const AutomationsTableRow = ({
   onMoveTo,
   onExportFlow,
   onExportTable,
+  canKeepSnapshots = false,
   onCreateInFolder,
   userHasPermissionToWriteFlow = true,
   userHasPermissionToWriteTable = true,
@@ -305,6 +307,15 @@ export const AutomationsTableRow = ({
                 {t('Export')}
               </DropdownMenuItem>
             )}
+
+            {isFlowItem(item) &&
+              !embedState.hideExportAndImportFlow &&
+              canKeepSnapshots && (
+                <DropdownMenuItem onClick={() => onExportFlow(item.data, true)}>
+                  <Download className="h-4 w-4 mr-2" />
+                  {t('exportKeepingPrereleasePins')}
+                </DropdownMenuItem>
+              )}
 
             {isTableItem(item) && (
               <DropdownMenuItem onClick={() => onExportTable(item.data)}>

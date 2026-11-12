@@ -1,4 +1,9 @@
-import { Permission, UncategorizedFolderId } from '@aiqadam/shared';
+import {
+  ApFlagId,
+  Permission,
+  UncategorizedFolderId,
+  qadamVersionParser,
+} from '@aiqadam/shared';
 import { t } from 'i18next';
 import { useCallback } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
@@ -31,6 +36,7 @@ import { projectCollectionUtils, getProjectName } from '@/features/projects';
 import { qadamsHooks } from '@/features/qadams';
 import { ImportTableDialog } from '@/features/tables/components/import-table-dialog';
 import { useAuthorization } from '@/hooks/authorization-hooks';
+import { flagsHooks } from '@/hooks/flags-hooks';
 import { authenticationSession } from '@/lib/authentication-session';
 
 export const AutomationsPage = () => {
@@ -133,6 +139,14 @@ const AutomationsPageContent = ({ projectId }: { projectId: string }) => {
   });
 
   const { qadams } = qadamsHooks.useQadams({});
+
+  // Only a build from `main` runs pre-release qadam pins, so only there is there anything to keep.
+  const { data: platformVersion } = flagsHooks.useFlag<string>(
+    ApFlagId.CURRENT_VERSION,
+  );
+  const canKeepSnapshots = qadamVersionParser.isSnapshot({
+    version: platformVersion ?? '',
+  });
 
   // Bulk actions resolve selected items from the loaded treeItems, so the
   // selection must never outlive the view that produced it. Clearing it on
@@ -334,6 +348,7 @@ const AutomationsPageContent = ({ projectId }: { projectId: string }) => {
             onMoveItem={mutations.handleMoveItem}
             onExportFlow={mutations.handleExportFlow}
             onExportTable={mutations.handleExportTable}
+            canKeepSnapshots={canKeepSnapshots}
             onCreateInFolder={handleCreateInFolder}
             userHasPermissionToWriteFlow={userHasPermissionToWriteFlow}
             userHasPermissionToWriteTable={userHasPermissionToWriteTable}
@@ -362,9 +377,12 @@ const AutomationsPageContent = ({ projectId }: { projectId: string }) => {
         isMoving={mutations.isMoving}
         isExporting={mutations.isExporting}
         hasMovableOrExportableItems={hasMovableOrExportableItems(selectedItems)}
+        canKeepSnapshots={canKeepSnapshots}
         onMoveClick={() => dialogs.setMoveToDialogOpen(true)}
         onDeleteClick={() => mutations.handleBulkDelete(selectedItems)}
-        onExportClick={() => mutations.handleBulkExport(selectedItems)}
+        onExportClick={(keepSnapshots) =>
+          mutations.handleBulkExport(selectedItems, keepSnapshots)
+        }
         onClearSelection={clearSelection}
       />
 
