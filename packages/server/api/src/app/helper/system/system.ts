@@ -43,6 +43,11 @@ const systemPropDefaultValues: Partial<Record<SystemProp, string>> = {
     // none, and `run.sh` (#807) is expected to set both together for a private one. Never log the
     // token's value — see `qadam-registry-config.ts`.
     [AppSystemProp.QADAM_REGISTRY_URL]: 'https://registry.npmjs.org',
+    // Off by default (#806 remainder, #1056): a custom qadam's registry is not npmjs, so the keys
+    // this image pins only verify a custom package that happens to be a verbatim npmjs mirror. An
+    // operator who configures a registry whose packages are signed that way opts in; everyone else
+    // keeps today's behaviour (no signature asked of a custom fetch).
+    [AppSystemProp.QADAM_CUSTOM_SIGNATURE_CHECK_ENABLED]: 'false',
     // Off-peak, daily, at an odd minute so it does not pile onto the top-of-the-hour jobs.
     [AppSystemProp.QADAM_VERSION_STORE_GC_CRON]: '41 3 * * *',
     // ADR-0003 "GC": a version nothing pins and the image no longer ships is collected after this

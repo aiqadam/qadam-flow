@@ -3,14 +3,26 @@ import { ApEnvironment } from '@aiqadam/shared'
 import type { FastifyBaseLogger } from 'fastify'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const DEFAULT_REGISTRY_URL = 'https://registry.npmjs.org'
+
 const mockIsPinAvailable = vi.fn()
 const mockOpenStore = vi.fn()
 const mockLedgerOpen = vi.fn()
 const mockFetchFromRegistry = vi.fn()
+const mockGetBoolean = vi.fn()
+const mockRegistryGet = vi.fn()
 
 vi.mock('../../../../src/app/helper/system/system', () => ({
     system: {
         getOrThrow: vi.fn().mockReturnValue(ApEnvironment.PRODUCTION),
+        getBoolean: (...args: unknown[]) => mockGetBoolean(...args),
+    },
+}))
+
+vi.mock('../../../../src/app/qadams/version-store/qadam-registry-config', () => ({
+    qadamRegistryConfig: {
+        get: (...args: unknown[]) => mockRegistryGet(...args),
+        isDefault: ({ url }: { url: string }) => url.trim().replace(/\/+$/, '').toLowerCase() === DEFAULT_REGISTRY_URL,
     },
 }))
 
@@ -47,14 +59,62 @@ describe('qadamVersionFetch.fetchMissingPins', () => {
         mockLedgerOpen.mockReturnValue({})
         mockIsPinAvailable.mockResolvedValue(false)
         mockFetchFromRegistry.mockResolvedValue({ outcome: QadamVersionFetchOutcome.FETCHED, version: {} })
+        mockGetBoolean.mockReturnValue(false)
+        mockRegistryGet.mockReturnValue({ url: DEFAULT_REGISTRY_URL, token: null })
     })
 
-    it('ignores a custom (non-@aiqadam/) pin: the registry for it is not built yet', async () => {
+    it('ignores a custom (non-@aiqadam/) pin when no platformId is given: nothing to namespace it under', async () => {
         const summary = await qadamVersionFetch(log).fetchMissingPins({ pins: ['my-custom-qadam@1.0.0'], platformId: undefined })
 
         expect(summary).toEqual({ attempted: 0, fetched: 0, failed: 0 })
         expect(mockIsPinAvailable).not.toHaveBeenCalled()
         expect(mockFetchFromRegistry).not.toHaveBeenCalled()
+    })
+
+    it('ignores a custom (non-@aiqadam/) pin when the registry is still the default npmjs: ADR-0005 §2 forbids asking npmjs for a custom name', async () => {
+        const summary = await qadamVersionFetch(log).fetchMissingPins({ pins: ['my-custom-qadam@1.0.0'], platformId: 'platform-1' })
+
+        expect(summary).toEqual({ attempted: 0, fetched: 0, failed: 0 })
+        expect(mockIsPinAvailable).not.toHaveBeenCalled()
+        expect(mockFetchFromRegistry).not.toHaveBeenCalled()
+    })
+
+    it('fetches a custom pin from the configured registry once a platformId and a non-default registry are both present', async () => {
+        mockRegistryGet.mockReturnValue({ url: 'https://npm.example.internal', token: 'secret-token' })
+
+        const summary = await qadamVersionFetch(log).fetchMissingPins({ pins: ['my-custom-qadam@1.0.0'], platformId: 'platform-1' })
+
+        expect(summary).toEqual({ attempted: 1, fetched: 1, failed: 0 })
+        expect(mockIsPinAvailable).toHaveBeenCalledWith(expect.objectContaining({ name: 'my-custom-qadam', version: '1.0.0', platformId: 'platform-1' }))
+        expect(mockFetchFromRegistry).toHaveBeenCalledWith(expect.objectContaining({
+            name: 'my-custom-qadam',
+            version: '1.0.0',
+            registryUrl: 'https://npm.example.internal',
+            registryToken: 'secret-token',
+            platformId: 'platform-1',
+            requireSignature: false,
+        }))
+    })
+
+    it('requires a verified signature for a custom pin when the custom signature check setting is on', async () => {
+        mockRegistryGet.mockReturnValue({ url: 'https://npm.example.internal', token: null })
+        mockGetBoolean.mockReturnValue(true)
+
+        await qadamVersionFetch(log).fetchMissingPins({ pins: ['my-custom-qadam@1.0.0'], platformId: 'platform-1' })
+
+        expect(mockFetchFromRegistry).toHaveBeenCalledWith(expect.objectContaining({ requireSignature: true }))
+    })
+
+    it('never sends a custom registry URL, token or requireSignature for an official pin', async () => {
+        mockRegistryGet.mockReturnValue({ url: 'https://npm.example.internal', token: 'secret-token' })
+        mockGetBoolean.mockReturnValue(true)
+
+        await qadamVersionFetch(log).fetchMissingPins({ pins: ['@aiqadam/qadam-csv@0.6.0'], platformId: 'platform-1' })
+
+        const call = mockFetchFromRegistry.mock.calls[0][0]
+        expect(call).not.toHaveProperty('registryUrl')
+        expect(call).not.toHaveProperty('registryToken')
+        expect(call).not.toHaveProperty('requireSignature')
     })
 
     it('ignores an official-scoped name that is not itself a well-formed npm package name', async () => {
@@ -176,6 +236,8 @@ describe('qadamVersionFetch.fetchMissingStepPins', () => {
         mockLedgerOpen.mockReturnValue({})
         mockIsPinAvailable.mockResolvedValue(false)
         mockFetchFromRegistry.mockResolvedValue({ outcome: QadamVersionFetchOutcome.FETCHED, version: {} })
+        mockGetBoolean.mockReturnValue(false)
+        mockRegistryGet.mockReturnValue({ url: DEFAULT_REGISTRY_URL, token: null })
     })
 
     it('collects the distinct pins off the steps it is given and fetches each missing one', async () => {

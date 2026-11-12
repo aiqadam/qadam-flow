@@ -1,0 +1,5 @@
+---
+"@aiqadam/platform": minor
+---
+
+A custom (non-`@aiqadam/*`) qadam pin missing from the version store is now fetched into it the same way an official one is (ADR-0003 "Fetching", #806 remainder / #1056): when a flow is published, when a flow is imported, and in a background pass at start-up — but only once `AP_QADAM_REGISTRY_URL` names something other than the default npmjs registry, since a custom package is never looked up there. The fetch authenticates with `AP_QADAM_REGISTRY_TOKEN` when the registry is private, and stores the version under the platform's own namespace. A new platform setting, `AP_QADAM_CUSTOM_SIGNATURE_CHECK_ENABLED` (off by default), gates whether a custom fetch is refused for carrying no npm publish signature that verifies against the keys this image pins — the same check already mandatory for `@aiqadam/*`. Off is the default because most private registries' packages were never signed by npmjs; a verified signature is still persisted either way. Resolving an already-fetched custom version back out of the store (so it is not re-fetched on every publish/import/start-up) is separate, tracked follow-up work (#779).

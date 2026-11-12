@@ -257,6 +257,138 @@ describe('qadamVersionStoreFetch.fetchFromRegistry', () => {
         expect(first.outcome).toBe(QadamVersionFetchOutcome.FETCHED)
         expect(second.outcome).toBe(QadamVersionFetchOutcome.FETCHED)
     })
+
+    describe('a custom pin (#806 remainder, #1056): a configured registry, a token, a platform namespace and an optional signature requirement', () => {
+        const PLATFORM_ID = '123456789012345678901'
+        const CUSTOM = { platformId: PLATFORM_ID, name: 'my-custom-qadam', version: '1.0.0' }
+        const CUSTOM_REGISTRY_URL = 'https://npm.example.internal'
+        const CUSTOM_TARBALL_URL = `${CUSTOM_REGISTRY_URL}/my-custom-qadam/-/my-custom-qadam-1.0.0.tgz`
+
+        let customBundle: { data: Buffer, integrity: string }
+
+        beforeEach(() => {
+            const data = tarFixtures.tarball({ entries: tarFixtures.artifactEntries({ files: tarFixtures.bundleFiles({ name: CUSTOM.name, version: CUSTOM.version }) }) })
+            customBundle = { data, integrity: tarFixtures.integrity({ data }) }
+        })
+
+        it('sends the configured bearer token on both the version-document read and the tarball download', async () => {
+            mockGet.mockImplementation(async (_url: string, config?: { responseType?: string }) => config?.responseType === 'arraybuffer'
+                ? { data: customBundle.data }
+                : { data: registryDoc({ name: CUSTOM.name, version: CUSTOM.version, integrity: customBundle.integrity, tarball: CUSTOM_TARBALL_URL }) })
+
+            const { store, ledger } = await openStoreAndLedger()
+            const result = await qadamVersionStoreFetch.fetchFromRegistry({
+                store, ledger, name: CUSTOM.name, version: CUSTOM.version, log,
+                registryUrl: CUSTOM_REGISTRY_URL, registryToken: 'secret-token', platformId: PLATFORM_ID, requireSignature: false,
+            })
+
+            expect(result.outcome).toBe(QadamVersionFetchOutcome.FETCHED)
+            expect(mockGet).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ headers: { Authorization: 'Bearer secret-token' } }))
+        })
+
+        it('stores a custom pin under the platform\'s namespace, not the official one', async () => {
+            mockGet.mockImplementation(async (_url: string, config?: { responseType?: string }) => config?.responseType === 'arraybuffer'
+                ? { data: customBundle.data }
+                : { data: registryDoc({ name: CUSTOM.name, version: CUSTOM.version, integrity: customBundle.integrity, tarball: CUSTOM_TARBALL_URL }) })
+
+            const { store, ledger } = await openStoreAndLedger()
+            await qadamVersionStoreFetch.fetchFromRegistry({
+                store, ledger, name: CUSTOM.name, version: CUSTOM.version, log,
+                registryUrl: CUSTOM_REGISTRY_URL, platformId: PLATFORM_ID, requireSignature: false,
+            })
+
+            expect(await store.has({ coordinates: CUSTOM })).toBe(true)
+            expect(await store.has({ coordinates: { ...CUSTOM, platformId: null } })).toBe(false)
+        })
+
+        it('refuses a non-https registryUrl before reading the version document, whether or not a token is set', async () => {
+            const { store, ledger } = await openStoreAndLedger()
+            const result = await qadamVersionStoreFetch.fetchFromRegistry({
+                store, ledger, name: CUSTOM.name, version: CUSTOM.version, log,
+                registryUrl: 'http://npm.example.internal', platformId: PLATFORM_ID, requireSignature: false,
+            })
+
+            expect(result.outcome).toBe(QadamVersionFetchOutcome.MALFORMED_METADATA)
+            expect(mockGet).not.toHaveBeenCalled()
+        })
+
+        it('also refuses a non-https registryUrl when a token is set, before the token could ever be sent', async () => {
+            const { store, ledger } = await openStoreAndLedger()
+            const result = await qadamVersionStoreFetch.fetchFromRegistry({
+                store, ledger, name: CUSTOM.name, version: CUSTOM.version, log,
+                registryUrl: 'http://npm.example.internal', registryToken: 'secret-token', platformId: PLATFORM_ID, requireSignature: false,
+            })
+
+            expect(result.outcome).toBe(QadamVersionFetchOutcome.MALFORMED_METADATA)
+            expect(mockGet).not.toHaveBeenCalled()
+        })
+
+        it('does not build a double-slash version-document URL from a registryUrl with a trailing slash', async () => {
+            mockGet.mockImplementation(async (_url: string, config?: { responseType?: string }) => config?.responseType === 'arraybuffer'
+                ? { data: customBundle.data }
+                : { data: registryDoc({ name: CUSTOM.name, version: CUSTOM.version, integrity: customBundle.integrity, tarball: CUSTOM_TARBALL_URL }) })
+
+            const { store, ledger } = await openStoreAndLedger()
+            const result = await qadamVersionStoreFetch.fetchFromRegistry({
+                store, ledger, name: CUSTOM.name, version: CUSTOM.version, log,
+                registryUrl: `${CUSTOM_REGISTRY_URL}/`, platformId: PLATFORM_ID, requireSignature: false,
+            })
+
+            expect(result.outcome).toBe(QadamVersionFetchOutcome.FETCHED)
+            expect(mockGet).toHaveBeenCalledWith(`${CUSTOM_REGISTRY_URL}/my-custom-qadam/1.0.0`, expect.anything())
+        })
+
+        it('does not refuse an unsigned custom pin when requireSignature is false, the default for a custom fetch', async () => {
+            mockReadSignatures.mockReturnValue([])
+            mockVerifying.mockReturnValue([])
+            mockGet.mockImplementation(async (_url: string, config?: { responseType?: string }) => config?.responseType === 'arraybuffer'
+                ? { data: customBundle.data }
+                : { data: registryDoc({ name: CUSTOM.name, version: CUSTOM.version, integrity: customBundle.integrity, tarball: CUSTOM_TARBALL_URL }) })
+
+            const { store, ledger } = await openStoreAndLedger()
+            const result = await qadamVersionStoreFetch.fetchFromRegistry({
+                store, ledger, name: CUSTOM.name, version: CUSTOM.version, log,
+                registryUrl: CUSTOM_REGISTRY_URL, platformId: PLATFORM_ID, requireSignature: false,
+            })
+
+            expect(result.outcome).toBe(QadamVersionFetchOutcome.FETCHED)
+            expect(await store.has({ coordinates: CUSTOM })).toBe(true)
+        })
+
+        it('refuses an unsigned custom pin when requireSignature is true, the platform setting turned on', async () => {
+            mockReadSignatures.mockReturnValue([])
+            mockVerifying.mockReturnValue([])
+            mockGet.mockResolvedValue({ data: registryDoc({ name: CUSTOM.name, version: CUSTOM.version, integrity: customBundle.integrity, tarball: CUSTOM_TARBALL_URL }) })
+
+            const { store, ledger } = await openStoreAndLedger()
+            const result = await qadamVersionStoreFetch.fetchFromRegistry({
+                store, ledger, name: CUSTOM.name, version: CUSTOM.version, log,
+                registryUrl: CUSTOM_REGISTRY_URL, platformId: PLATFORM_ID, requireSignature: true,
+            })
+
+            expect(result.outcome).toBe(QadamVersionFetchOutcome.UNSIGNED)
+            expect(await store.has({ coordinates: CUSTOM })).toBe(false)
+        })
+
+        it('still persists a custom pin\'s signature when it happens to verify, even though it was not required', async () => {
+            mockGet.mockImplementation(async (_url: string, config?: { responseType?: string }) => config?.responseType === 'arraybuffer'
+                ? { data: customBundle.data }
+                : { data: registryDoc({ name: CUSTOM.name, version: CUSTOM.version, integrity: customBundle.integrity, tarball: CUSTOM_TARBALL_URL }) })
+
+            const { store, ledger } = await openStoreAndLedger()
+            const result = await qadamVersionStoreFetch.fetchFromRegistry({
+                store, ledger, name: CUSTOM.name, version: CUSTOM.version, log,
+                registryUrl: CUSTOM_REGISTRY_URL, platformId: PLATFORM_ID, requireSignature: false,
+            })
+
+            expect(result.outcome).toBe(QadamVersionFetchOutcome.FETCHED)
+            // `checkStoredVersions` itself always exempts a custom (non-null `platformId`) version
+            // without consulting the ledger (`classifyStored`), so the persisted proof is checked
+            // directly, the same way a future reader of a custom package's proof would.
+            const checked = await ledger.check({ packages: [{ name: CUSTOM.name, version: CUSTOM.version, integrity: customBundle.integrity }] })
+            expect(checked.verified).toEqual([{ name: CUSTOM.name, version: CUSTOM.version, integrity: customBundle.integrity }])
+        })
+    })
 })
 
 async function openStoreAndLedger() {
@@ -268,8 +400,8 @@ async function openStoreAndLedger() {
     return { store: opened.store, ledger }
 }
 
-function registryDoc({ integrity, tarball }: { integrity: string, tarball: string }): unknown {
-    return { name: QADAM.name, version: QADAM.version, dist: { integrity, tarball, signatures: [{ keyid: 'k', sig: 's' }] } }
+function registryDoc({ name = QADAM.name, version = QADAM.version, integrity, tarball }: { name?: string, version?: string, integrity: string, tarball: string }): unknown {
+    return { name, version, dist: { integrity, tarball, signatures: [{ keyid: 'k', sig: 's' }] } }
 }
 
 function httpError({ status }: { status: number }): Error & { response: { status: number } } {

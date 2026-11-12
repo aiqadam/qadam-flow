@@ -32,6 +32,16 @@ import { StoredQadamVersion } from './qadam-version-store-read'
 // configures, so that setting must not reach this constant.
 export const DEFAULT_QADAM_REGISTRY_URL = 'https://registry.npmjs.org'
 
+// A custom (non-`@aiqadam/*`) fetch is the same function with three things supplied by the caller
+// (`qadam-version-fetch.ts`, #806 remainder / #1056) instead of defaulted: `registryUrl` and
+// `registryToken` name the platform's configured registry (#478) instead of npmjs, `platformId`
+// puts the stored version in that platform's namespace instead of the official one, and
+// `requireSignature` reads the platform setting gating the check below — off by default, because
+// the keys this image pins are npmjs's, and a private registry's packages are not signed by them
+// unless they happen to be a verbatim npmjs mirror. An official fetch never sets any of the three:
+// it always verifies (`requireSignature` defaults to `true`) against npmjs (the other two default
+// to npmjs / the official namespace).
+
 export enum QadamVersionFetchOutcome {
     FETCHED = 'fetched',
     // The registry has no such version of this name: a 404 on the version document.
@@ -55,12 +65,25 @@ export type QadamVersionFetchResult =
     | { outcome: Exclude<QadamVersionFetchOutcome, QadamVersionFetchOutcome.FETCHED>, reason: string }
 
 export const qadamVersionStoreFetch = {
-    // Fetches exactly `name@version` from the registry into `store`, verifying npmjs's signature
-    // first and refusing to store anything it did not sign. Never throws: every failure is a typed
-    // outcome, because a fetch that cannot complete is not this release's problem to crash over —
-    // the existing unavailable-version fallback (#808) is what a caller falls through to.
-    fetchFromRegistry: async ({ store, ledger, name, version, log, registryUrl = DEFAULT_QADAM_REGISTRY_URL, deadline = Date.now() + DEFAULT_FETCH_BUDGET_MS }: FetchFromRegistryParams): Promise<QadamVersionFetchResult> => {
-        const metadata = await readVersionDocument({ name, version, registryUrl, deadline, log })
+    // Fetches exactly `name@version` from the registry into `store`. For an official pin this
+    // always verifies npmjs's signature first and refuses to store anything it did not sign; for a
+    // custom pin (`requireSignature: false`, the default when a caller supplies it) the same check
+    // still runs and a verified signature is still persisted, but an unsigned result is not refused
+    // — there is nothing npmjs-signed about most private registries. Never throws: every failure is
+    // a typed outcome, because a fetch that cannot complete is not this release's problem to crash
+    // over — the existing unavailable-version fallback (#808) is what a caller falls through to.
+    fetchFromRegistry: async ({ store, ledger, name, version, log, registryUrl = DEFAULT_QADAM_REGISTRY_URL, registryToken = null, platformId = null, requireSignature = true, deadline = Date.now() + DEFAULT_FETCH_BUDGET_MS }: FetchFromRegistryParams): Promise<QadamVersionFetchResult> => {
+        // Checked before the version-document read, not just before the tarball download
+        // (`isTrustedTarballUrl` below): that read sends `registryToken` too, and by the time a
+        // caller could inspect the tarball URL the token — and, over plain http, the custom
+        // package's own name and version, the exposure ADR-0005 §2 exists to avoid — would
+        // already have gone out in cleartext. Required unconditionally, not only when a token is
+        // set: a tokenless http registry still leaks the name/version with no way to prove the
+        // integrity document that follows was not tampered with in transit.
+        if (!isHttpsUrl({ url: registryUrl })) {
+            return { outcome: QadamVersionFetchOutcome.MALFORMED_METADATA, reason: 'registryUrl must be https' }
+        }
+        const metadata = await readVersionDocument({ name, version, registryUrl, registryToken, deadline, log })
         if (!metadata.ok) {
             return { outcome: metadata.outcome, reason: metadata.reason }
         }
@@ -84,10 +107,10 @@ export const qadamVersionStoreFetch = {
         // apart from a second, narrower filter that actually does something.
         const signatures = npmPackageSignature.readSignatures({ versionDocument: metadata.data })
         const verifying = npmPackageSignature.verifying({ name, version, integrity: dist.integrity, signatures })
-        if (verifying.length === 0) {
+        if (requireSignature && verifying.length === 0) {
             return { outcome: QadamVersionFetchOutcome.UNSIGNED, reason: signatures.length === 0 ? 'the registry returned no publisher signature for it' : 'no signature from a key this image pins verifies the name, version and integrity together' }
         }
-        const downloaded = await downloadTarball({ store, url: dist.tarball, deadline, log, qadam: `${name}@${version}` })
+        const downloaded = await downloadTarball({ store, url: dist.tarball, registryToken, deadline, log, qadam: `${name}@${version}` })
         if (!downloaded.ok) {
             return { outcome: QadamVersionFetchOutcome.DOWNLOAD_FAILED, reason: downloaded.reason }
         }
@@ -97,7 +120,7 @@ export const qadamVersionStoreFetch = {
             // than returning `REFUSED` for them — exactly the kind of failure this function's own
             // "never throws" contract exists to absorb, so it is not left to escape uncaught.
             const put = await tryCatch(() => store.putTarball({
-                coordinates: { platformId: null, name, version },
+                coordinates: { platformId, name, version },
                 tarballPath: downloaded.tarballPath,
                 expectedIntegrity: dist.integrity,
                 origin: { kind: QadamVersionOrigin.REGISTRY },
@@ -108,6 +131,10 @@ export const qadamVersionStoreFetch = {
             if (put.data.status === QadamVersionPutStatus.REFUSED) {
                 return { outcome: QadamVersionFetchOutcome.STORE_REFUSED, reason: put.data.reason }
             }
+            // Called whether or not this fetch required a signature: a custom package that happens
+            // to be signed by a pinned key (a verbatim npmjs mirror) is worth remembering the same
+            // way an official one is, and `record` itself drops a proof with no verifying signature
+            // (an unsigned custom fetch), so this is never a write of nothing worth keeping.
             await persistProof({ ledger, name, version, integrity: dist.integrity, signatures: verifying, log })
             return { outcome: QadamVersionFetchOutcome.FETCHED, version: put.data.version }
         }
@@ -142,15 +169,20 @@ const HTTP_TOO_MANY_REQUESTS = 429
 // store's own `qadamVersionStoreTarball.extract` applies its own, larger, byte-accurate limit.
 const MAX_DOWNLOAD_BYTES = 256 * 1024 * 1024
 
-async function readVersionDocument({ name, version, registryUrl, deadline, log }: ReadVersionDocumentParams): Promise<VersionDocumentResult> {
-    const url = `${registryUrl}/${encodeURIComponent(name)}/${encodeURIComponent(version)}`
+async function readVersionDocument({ name, version, registryUrl, registryToken, deadline, log }: ReadVersionDocumentParams): Promise<VersionDocumentResult> {
+    // `AppSystemProp.QADAM_REGISTRY_URL`'s own validator accepts a trailing slash (and
+    // `qadamRegistryConfig.isDefault` already strips one before comparing), so an admin-set
+    // `https://registry.example/` must not be allowed to turn into a double-slash path here —
+    // a double slash answers 404 on several npm-compatible registries, which this would
+    // otherwise report as `NOT_PUBLISHED` instead of the misconfiguration it actually is.
+    const url = `${registryUrl.replace(/\/+$/, '')}/${encodeURIComponent(name)}/${encodeURIComponent(version)}`
     let attempt = 1
     for (;;) {
         const remaining = deadline - Date.now()
         if (remaining <= 0) {
             return { ok: false, outcome: QadamVersionFetchOutcome.NETWORK_ERROR, reason: 'the registry did not answer within this fetch\'s time budget' }
         }
-        const { data: response, error } = await tryCatch(async () => safeHttp.retryingAxios.get<unknown>(url, { timeout: Math.min(REGISTRY_TIMEOUT_MS, remaining) }))
+        const { data: response, error } = await tryCatch(async () => safeHttp.retryingAxios.get<unknown>(url, { timeout: Math.min(REGISTRY_TIMEOUT_MS, remaining), headers: authHeaders({ registryToken }) }))
         if (!isNil(response) && isNil(error)) {
             return { ok: true, data: response.data }
         }
@@ -170,7 +202,7 @@ async function readVersionDocument({ name, version, registryUrl, deadline, log }
 // renames out of), not a bare OS temp directory: a cross-device rename inside `putTarball` would
 // otherwise turn its atomic `rename` into a copy. The caller discards this directory once
 // `putTarball` has read the file out of it.
-async function downloadTarball({ store, url, deadline, log, qadam }: DownloadTarballParams): Promise<DownloadResult> {
+async function downloadTarball({ store, url, registryToken, deadline, log, qadam }: DownloadTarballParams): Promise<DownloadResult> {
     const staging = await tryCatch(() => store.createStaging())
     if (staging.error !== null) {
         log.warn({ qadam, error: describeError({ error: staging.error }) }, '[qadamVersionStoreFetch] could not create a staging directory for the download')
@@ -187,6 +219,7 @@ async function downloadTarball({ store, url, deadline, log, qadam }: DownloadTar
         timeout: Math.min(REGISTRY_TIMEOUT_MS * 2, remaining),
         maxContentLength: MAX_DOWNLOAD_BYTES,
         maxBodyLength: MAX_DOWNLOAD_BYTES,
+        headers: authHeaders({ registryToken }),
     }))
     if (isNil(response) || !isNil(error)) {
         log.warn({ qadam, url, error: describeError({ error }) }, '[qadamVersionStoreFetch] could not download the tarball')
@@ -202,6 +235,13 @@ async function downloadTarball({ store, url, deadline, log, qadam }: DownloadTar
     return { ok: true, tarballPath, stagingDir }
 }
 
+// A custom registry's bearer token (#478), the same header shape `qadamRegistryConfig.checkReachability`
+// uses. `undefined`, not an empty object, when there is none: axios merges `undefined` away, while an
+// empty `headers: {}` would still be a value this function's tests would need to account for.
+function authHeaders({ registryToken }: { registryToken: string | null }): Record<string, string> | undefined {
+    return isNil(registryToken) ? undefined : { Authorization: `Bearer ${registryToken}` }
+}
+
 // `https:` and the registry's own origin only — same-origin because `safeHttp` already keeps the
 // request off a private/loopback/metadata address regardless of host, so this is about not trusting
 // a tarball URL the signed version document did not actually need to name a different host.
@@ -212,6 +252,14 @@ function isTrustedTarballUrl({ tarball, registryUrl }: { tarball: string, regist
         return false
     }
     return parsedTarball.data.protocol === 'https:' && parsedTarball.data.origin === parsedRegistry.data.origin
+}
+
+// A custom registry's own URL validator (`urlValidator` in `system-validator.ts`) accepts any
+// scheme, not just `https:` — so a misconfigured `AP_QADAM_REGISTRY_URL` naming a plain `http://`
+// endpoint is reachable config, not a thing this function can assume away.
+function isHttpsUrl({ url }: { url: string }): boolean {
+    const parsed = tryCatchSync(() => new URL(url))
+    return parsed.error === null && parsed.data.protocol === 'https:'
 }
 
 async function persistProof({ ledger, name, version, integrity, signatures, log }: PersistProofParams): Promise<void> {
@@ -260,6 +308,14 @@ type FetchFromRegistryParams = {
     version: string
     log: FetchLogger
     registryUrl?: string
+    // Bearer token for `registryUrl` (#478's custom registry); never set for an official fetch.
+    registryToken?: string | null
+    // Store namespace for the fetched version: `null` is the official namespace, a platform id puts
+    // it under that platform's own (`_platform/<platformId>/…`, `qadam-version-store-layout.ts`).
+    platformId?: string | null
+    // Whether an unverified signature refuses the fetch. `true` (an official fetch, mandatory,
+    // ADR-0005) by default; a custom fetch passes the platform setting (off by default, #1056).
+    requireSignature?: boolean
     // Wall-clock deadline for the whole fetch (one registry read and one download, each with their
     // own retries); defaults to `DEFAULT_FETCH_BUDGET_MS` from now.
     deadline?: number
@@ -269,6 +325,7 @@ type ReadVersionDocumentParams = {
     name: string
     version: string
     registryUrl: string
+    registryToken: string | null
     deadline: number
     log: FetchLogger
 }
@@ -280,6 +337,7 @@ type VersionDocumentResult =
 type DownloadTarballParams = {
     store: QadamVersionStore
     url: string
+    registryToken: string | null
     deadline: number
     log: FetchLogger
     qadam: string
