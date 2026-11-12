@@ -25,12 +25,12 @@ export function UnavailablePinLabel({
   flowVersionUpdated,
 }: UnavailablePinLabelProps) {
   const { t } = useTranslation();
-  const { pinStays } = qadamsHooks.useUnavailablePinStays({
+  const stay = qadamsHooks.usePinStayForStep({
     flowId,
     flowVersionId,
     flowVersionUpdated,
+    stepName: step.name,
   });
-  const stay = (pinStays ?? []).find((s) => s.stepName === step.name);
   if (!stay) {
     return null;
   }

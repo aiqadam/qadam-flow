@@ -25,6 +25,9 @@ const RESOLVABLE_PROP_TYPES = new Set<PropertyType>([
     PropertyType.DYNAMIC,
 ])
 
+// Shared verbatim by `qadamPinIssue` and `pinStayIssue` (ADR-0003, #808) so a destructive-remedy
+// sentence quoted in two places can't drift into two different instructions for the same action.
+const DESTRUCTIVE_PIN_REMEDY = 'ap_update_step cannot change a step\'s pinned version — delete and re-add the step with ap_add_step at an available version, or re-create the trigger with ap_update_trigger.'
 const LOG_INPUT_HINT = 'Whether this step\'s input is written to the run log. Defaults to true. Set false when the input carries personal or secret data: the persisted log shows **REDACTED** while the step still runs on the real value.'
 const LOG_OUTPUT_HINT = 'Whether this step\'s output is written to the run log. Defaults to true. Set false when the output carries personal or secret data (e.g. tables-update-record returns the whole row): the persisted log shows **REDACTED** while the value still flows to the next step.'
 // Mirrors the engine's FILE processor (#388): anything else fails the step at run time.
@@ -593,7 +596,7 @@ function qadamPinIssue({ pin, resolvable, subject = 'step' }: { pin: string, res
             severity: 'unavailable',
             message: subject === 'agent_tool'
                 ? `is pinned to ${wrapUntrustedValue(pin)}, which this installation does not have. Update the tool to an available version with ap_update_step. A run fails only where the pinned version is not already cached on the worker; removing and re-adding the tool is not required.`
-                : `is pinned to ${wrapUntrustedValue(pin)}, which this installation does not have. ap_update_step cannot change a step's pinned version — delete and re-add the step with ap_add_step at an available version, or re-create the trigger with ap_update_trigger. The flow is not disabled; a run fails only where the pinned version is not already cached on the worker.`,
+                : `is pinned to ${wrapUntrustedValue(pin)}, which this installation does not have. ${DESTRUCTIVE_PIN_REMEDY} The flow is not disabled; a run fails only where the pinned version is not already cached on the worker.`,
         }
     }
     return {
@@ -648,7 +651,7 @@ function followHoldIssue({ fromVersion, toVersion }: { fromVersion: string, toVe
 // this message (only `.label`), so the field exists for `ap_validate_flow` alone.
 function pinStayIssue({ detail, confirmedMissing }: { detail: string, confirmedMissing: boolean }): PinStayIssue {
     const action = confirmedMissing
-        ? 'ap_update_step cannot change a step\'s pinned version — delete and re-add the step with ap_add_step at an available version, or re-create the trigger with ap_update_trigger.'
+        ? DESTRUCTIVE_PIN_REMEDY
         : 'Update this step.'
     return {
         label: 'VERSION UNAVAILABLE',

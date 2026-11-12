@@ -31,6 +31,7 @@ import {
   FlowVersionFrameworkCensus,
   FlowVersionPinStayCheck,
   HeldQadamPinMove,
+  QadamPinStay,
 } from '@/features/qadams/types';
 import { flagsHooks } from '@/hooks/flags-hooks';
 import { platformHooks } from '@/hooks/platform-hooks';
@@ -420,6 +421,27 @@ export const qadamsHooks = {
       pinStays: query.data?.pinStays,
       isLoading: query.isLoading,
     };
+  },
+  // The canvas node mark and the step-sidebar label both need just "is this one step marked, and
+  // if so with what" — sharing this instead of each re-deriving it from `useUnavailablePinStays`
+  // keeps the lookup (and a future change to it) in one place.
+  usePinStayForStep: ({
+    flowId,
+    flowVersionId,
+    flowVersionUpdated,
+    stepName,
+  }: {
+    flowId: string;
+    flowVersionId: string;
+    flowVersionUpdated: string;
+    stepName: string;
+  }): QadamPinStay | undefined => {
+    const { pinStays } = qadamsHooks.useUnavailablePinStays({
+      flowId,
+      flowVersionId,
+      flowVersionUpdated,
+    });
+    return (pinStays ?? []).find((stay) => stay.stepName === stepName);
   },
   // ADR-0002 (#803): the open flow version's steps whose framework version this release no longer
   // runs. Auxiliary, like the hold: when the read fails the steps stay editable and only the mark is

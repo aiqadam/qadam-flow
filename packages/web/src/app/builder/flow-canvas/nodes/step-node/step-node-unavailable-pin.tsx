@@ -22,12 +22,13 @@ export function ApStepNodeUnavailablePin({ stepName }: { stepName: string }) {
       state.flowVersion.updated,
     ],
   );
-  const { pinStays } = qadamsHooks.useUnavailablePinStays({
+  const stay = qadamsHooks.usePinStayForStep({
     flowId,
     flowVersionId,
     flowVersionUpdated,
+    stepName,
   });
-  if (!(pinStays ?? []).some((stay) => stay.stepName === stepName)) {
+  if (!stay) {
     return null;
   }
   return (

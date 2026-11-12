@@ -58,8 +58,7 @@ export const qadamPinMoveService = ({ log, seams = qadamPinFallbackSeams({ log }
         // Before anything reads or writes on the flow's behalf, and only when there is something to do:
         // most publishes have no unavailable pin and cost no extra query.
         await assertFlowBelongsTo({ flowId: flowVersion.flowId, projectId, platformId, log })
-        const held = await findHeldRewrites({ flowId: flowVersion.flowId, platformId })
-        const plan = await planMoves({ steps: steps.filter((step) => unavailable.has(qadamPinUtil.pinOf({ step }))), held, platformId, seams })
+        const plan = await planMovesForUnavailablePins({ steps, unavailable, flowId: flowVersion.flowId, platformId, seams })
         if (plan.moves.length === 0) {
             return { flowVersion, moved: [], stayed: plan.stayed }
         }
@@ -135,8 +134,20 @@ export const qadamPinMoveService = ({ log, seams = qadamPinFallbackSeams({ log }
     // same step stays silently unmarked indefinitely: it is unavailable today and nothing is
     // auditing or fixing it, but this read says nothing is wrong. Not yet fixed.
     async checkUnavailablePins({ flowId, flowVersionId, projectId, platformId }: CheckUnavailablePinsParams): Promise<PinStay[]> {
+        // Only the documented "flow not owned" miss is swallowed here. Every other failure
+        // (`projectService.getPlatformId` erroring, a DB hiccup) must propagate: the MCP callers
+        // already wrap this call in their own `tryCatch` and log it (`[apFlowStructure] ... check
+        // failed`), and the REST route lets it become a normal 500 — both expect a transient
+        // failure to be visible, not silently reported as "no unavailable pins" (a false negative
+        // the ADR-0003 marking exists to avoid).
         const { error: notOwned } = await tryCatch(() => assertFlowBelongsTo({ flowId, projectId, platformId, log }))
-        const flowVersion = isNil(notOwned) ? await flowVersionRepo().findOneBy({ id: flowVersionId, flowId }) : null
+        if (!isNil(notOwned)) {
+            if (notOwned instanceof QadamFlowError && notOwned.error.code === ErrorCode.ENTITY_NOT_FOUND) {
+                return []
+            }
+            throw notOwned
+        }
+        const flowVersion = await flowVersionRepo().findOneBy({ id: flowVersionId, flowId })
         if (isNil(flowVersion)) {
             return []
         }
@@ -148,8 +159,7 @@ export const qadamPinMoveService = ({ log, seams = qadamPinFallbackSeams({ log }
         if (unavailable.size === 0) {
             return []
         }
-        const held = await findHeldRewrites({ flowId, platformId })
-        const plan = await planMoves({ steps: steps.filter((step) => unavailable.has(qadamPinUtil.pinOf({ step }))), held, platformId, seams })
+        const plan = await planMovesForUnavailablePins({ steps, unavailable, flowId, platformId, seams })
         // `pin-is-image-version` means the pin *is* the image's build — the one version an
         // unavailable pin can reliably run — so it is not "version unavailable" and must not be
         // marked. Every other stay is a step that could not be moved, which is the mark.
@@ -234,6 +244,13 @@ async function findUnavailablePins({ steps, platformId, log }: { steps: QadamPin
 async function findHeldRewrites({ flowId, platformId, manager }: { flowId: FlowId, platformId: PlatformId, manager?: EntityManager }): Promise<Set<string>> {
     const reverted = await qadamPinMoveRepo(manager).findBy({ flowId, platformId, status: 'REVERTED' })
     return new Set(reverted.map((record) => heldKey({ stepName: record.stepName, qadamName: record.qadamName, version: record.fromVersion })))
+}
+
+// Shared by `moveUnavailablePins` and `checkUnavailablePins`: both narrow the same `steps` to the
+// ones `findUnavailablePins` actually flagged before asking `planMoves` what to do about them.
+async function planMovesForUnavailablePins({ steps, unavailable, flowId, platformId, seams }: { steps: QadamPinnedStep[], unavailable: Set<string>, flowId: FlowId, platformId: PlatformId, seams: PinFallbackSeams }): Promise<MovePlan> {
+    const held = await findHeldRewrites({ flowId, platformId })
+    return planMoves({ steps: steps.filter((step) => unavailable.has(qadamPinUtil.pinOf({ step }))), held, platformId, seams })
 }
 
 async function planMoves({ steps, held, platformId, seams }: { steps: QadamPinnedStep[], held: Set<string>, platformId: PlatformId, seams: PinFallbackSeams }): Promise<MovePlan> {
