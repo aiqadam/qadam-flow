@@ -6,6 +6,7 @@ import {
     FlowVersion,
     isNil,
 } from '@aiqadam/shared'
+import { system } from '../../../helper/system/system'
 import { Migration } from '.'
 
 // v7 and v8 wrote agent PIECE tool metadata under `qadamMetadata` (migrate-v7-agents-to-flow-version.ts,
@@ -46,6 +47,13 @@ export const migrateV26AgentToolMetadataRename: Migration = {
             const input = step.settings.input as Record<string, unknown>
             const tools = input[AgentQadamProps.AGENT_TOOLS] as AgentToolInput[] | undefined
             if (isNil(tools)) {
+                return step
+            }
+            // `isNil` alone does not defend against a non-array `agentTools` — `input` is
+            // `z.record(z.string(), z.unknown())`, so a string or object here would throw on
+            // `.map` below. Treat it as nothing to migrate instead (#1028).
+            if (!Array.isArray(tools)) {
+                system.globalLogger().warn({ flowVersionId: flowVersion.id, stepName: step.name }, '[migrateV26AgentToolMetadataRename] skipping step with a non-array agentTools input')
                 return step
             }
 

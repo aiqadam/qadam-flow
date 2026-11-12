@@ -4,8 +4,10 @@ import {
     FlowActionType,
     flowStructureUtil,
     FlowVersion,
+    isNil,
     mcpToolNameUtils,
 } from '@aiqadam/shared'
+import { system } from '../../../helper/system/system'
 import { Migration } from '.'
 
 // v16 was supposed to rename agent PIECE tool names. It read `tool.qadamMetadata`, a field no
@@ -29,7 +31,16 @@ export const migrateV23AgentQadamToolNamesRedo: Migration = {
                 return step
             }
 
-            const tools = (step.settings.input?.[AgentQadamProps.AGENT_TOOLS] as AgentToolInput[] | undefined) ?? []
+            const rawTools = step.settings.input?.[AgentQadamProps.AGENT_TOOLS]
+            // `input` is `z.record(z.string(), z.unknown())` — nothing upstream guarantees
+            // `agentTools` is an array. A non-array here would throw on `.map` below, which
+            // `flowVersionMigrationService.migrate` rethrows and pages on-call for, 500ing every
+            // read of that one flow version. Treat it as nothing to migrate instead (#1028).
+            if (!isNil(rawTools) && !Array.isArray(rawTools)) {
+                system.globalLogger().warn({ flowVersionId: flowVersion.id, stepName: step.name }, '[migrateV23AgentQadamToolNamesRedo] skipping step with a non-array agentTools input')
+                return step
+            }
+            const tools = (rawTools as AgentToolInput[] | undefined) ?? []
             const newTools = tools.map((tool) => {
                 if (tool.type !== AgentToolType.PIECE) {
                     return tool
