@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 import { readPackageJson } from './files'
 import { packagePrePublishChecks } from './package-pre-publish-checks'
+import { isBundleFormatQadam, packQadamBundleArtifact } from './publish-qadam-bundle'
 import { stagePackageForPublish } from './stage-package-for-publish'
 import { prepareQadamDistForPublish } from '../../../packages/cli/src/lib/utils/prepare-qadam-utils'
 import { isExactVersion } from '../../../packages/cli/src/lib/utils/workspace-utils'
@@ -122,13 +123,18 @@ export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag, pack
     throw new Error('[publishPackage] skipRegistryCheck is only valid with packDestination or dryRun — refusing to publish with the already-published guard disabled.')
   }
 
+  // ADR-0003 "Qadams at `1.0.0`" (#804): decided before the legacy `dist`-output check below,
+  // which a bundle artifact never satisfies — it is built straight from `src` by qadamArtifact,
+  // never from a qadam's own `dist`.
+  const bundleFormat = await isBundleFormatQadam({ path })
+
   const outputPath = `${path}/dist`
 
   // A missing build output used to be a silent skip (console.info + return 0). Now that a CI job
   // depends on this succeeding for a specific, known set of packages, a build-output path that
   // moved (a turbo config change, a renamed `dist`) must fail loudly rather than report the job
   // green while publishing nothing.
-  if (!existsSync(`${outputPath}/package.json`)) {
+  if (!bundleFormat && !existsSync(`${outputPath}/package.json`)) {
     throw new Error(`[publishPackage] no build output at ${outputPath} for ${path} — refusing to silently skip`)
   }
 
@@ -142,6 +148,19 @@ export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag, pack
     }
   }
   const { version } = await readPackageJson(path)
+
+  if (bundleFormat) {
+    // Same shape as the skipRegistryCheck guard above: a bundle-format qadam only ever ships
+    // through the pack → tools/ci/publish-packed-tarballs.sh split (#486), the same as every
+    // other official qadam — there is no direct-publish code path for either format.
+    if (!packDestination && !dryRun) {
+      throw new Error(`[publishPackage] ${path}@${version} is an ADR-0003 bundle-format qadam — it only ever publishes through packDestination or dryRun, never a direct publish.`)
+    }
+    const destination = packDestination ?? mkdtempSync(join(tmpdir(), 'qadam-flow-npm-pack-'))
+    const packed = await packQadamBundleArtifact({ path, version, packDestination: destination })
+    console.info(`[publishPackage] packed bundle artifact, path=${path}, version=${packed.version}, filename=${packed.filename}, destination=${destination}`)
+    return { status: 'packed', filename: packed.filename, version: packed.version }
+  }
 
   // Runs on the SOURCE manifest, before prepareQadamDistForPublish ever touches it: stripSemverRanges
   // (called from inside prepareQadamDistForPublish) silently collapses a "^x.y.z"/"~x.y.z" dependency

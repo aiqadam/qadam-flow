@@ -333,6 +333,88 @@ jobs:
           NPM_PUBLISH_INTERVAL_SECONDS: '3'
         run: tools/ci/publish-packed-tarballs.sh "${{ runner.temp }}/npm-packages"
 
+  # ADR-0003's consequence "Release artifacts are archived when built and never rebuilt from git"
+  # (#804): the prototype could not rebuild `csv@0.4.14` from its own commit — its `xlsx`
+  # dependency had already left the tree — and #476 found no per-version tag to pin a rebuild to
+  # anyway. Nothing wrote this archive before now; tools/scripts/qadams/snapshot/release-archive.mjs
+  # has carried the read side (`releaseArchive.fromDirectory`) and its own header has said since
+  # #851 that whether an archive exists at release time was this ticket's remaining work.
+  #
+  # Builds and packs EVERY official qadam as the ADR-0003 bundle artifact at this tag's own commit,
+  # not only the ones already at `1.0.0`+ (the only ones that publish this bundle as their real npm
+  # artifact today, see tools/scripts/utils/publish-qadam-bundle.ts): a `main` build's snapshot plan
+  # (ADR-0004, #851, #854) takes an unchanged-since-the-last-release qadam from this same archive
+  # regardless of which format it publishes in, so the archive has to cover the whole catalogue to
+  # be useful for that.
+  #
+  # Cheap relative to pack-framework-packages above: the bundler compiles each qadam straight from
+  # its own `src` with esbuild, so this needs the three platform packages built and nothing per-qadam
+  # — no `turbo run build --filter=@aiqadam/qadam-*` here.
+  #
+  # Same prerelease guard as pack-framework-packages, and for the same reason: an RC's bundle is not
+  # a release artifact, and the archive a `main` build's snapshot plan resolves against must stay
+  # pinned to stable releases only.
+  archive-qadam-artifacts:
+    name: Archive qadam artifacts for this release
+    needs: [verify, breaking-change-gate, version-tag-gate]
+    if: ${{ success() && !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        id: node
+        with:
+          node-version: 24
+
+      - uses: oven-sh/setup-bun@v2
+        id: bun
+        with:
+          bun-version: 1.3.14
+
+      # Restore-only, same key _pack-framework-packages.yml's own pack job restores — see that
+      # job's own comment for what each key component is for.
+      - name: Restore built node_modules
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            packages/*/*/node_modules
+            packages/*/*/*/node_modules
+          key: node-modules-${{ vars.NODE_MODULES_CACHE_EPOCH || 'v1' }}-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-bun${{ steps.bun.outputs.bun-version }}-${{ hashFiles('bun.lock', 'bunfig.toml', 'package.json', '.npmrc', 'tools/ci/install-deps.sh') }}
+
+      - name: Install dependencies
+        run: tools/ci/install-deps.sh
+
+      # Only what qadamArtifact.provisionHost resolves `@aiqadam/*` and zod from — the qadams
+      # themselves are bundled from `src` by esbuild, not from a built `dist`.
+      - name: Build shared, qadams-framework and qadams-common
+        run: npx turbo run build --filter=@aiqadam/shared --filter=@aiqadam/qadams-common --filter=@aiqadam/qadams-framework
+
+      - name: Build every official qadam as the ADR-0003 artifact and pack it
+        run: |
+          out="${{ runner.temp }}/qadam-artifacts"
+          node tools/scripts/qadams/bundle/build-qadam-artifacts.mjs --out "$out" --all --concurrency 4 --pack
+          mkdir -p "${{ runner.temp }}/release-archive"
+          tar -czf "${{ runner.temp }}/release-archive/qadam-artifacts-archive-${GITHUB_REF_NAME#v}.tar.gz" -C "$out/archive" .
+
+      # Kept as long as Actions allows (same reasoning as the npm-framework-packages artifact
+      # above): the `release` job below reattaches this to the GitHub Release it creates, which is
+      # the permanent copy — this artifact only has to survive the few minutes between the two jobs.
+      - name: Upload the archived qadam artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: qadam-artifacts-archive
+          path: ${{ runner.temp }}/release-archive/*.tar.gz
+          if-no-files-found: error
+          retention-days: 90
+
   # KNOWN COUPLING (#807, reviewed, not fixed): `build` is one job with a 4-leg matrix
   # (2 platforms × 2 flavours) and `fail-fast: false`, so a failing leg never cancels the
   # other three — but the job's own conclusion is still a single `failure` if any leg
@@ -568,7 +650,18 @@ jobs:
   # — rather than created with a false claim — if either one is not.
   release:
     name: Create GitHub Release
-    needs: publish
+    # archive-qadam-artifacts is in `needs:` for ordering (so its artifact exists before the
+    # download step below runs) but deliberately NOT for gating: unlike `publish`, it skips on a
+    # prerelease tag (the archive stays pinned to stable releases only — see its own comment), and
+    # a job skipped rather than failed must not also skip the image release. The `if:` below checks
+    # only `needs.publish.result`, and the archive-download step is itself conditioned on
+    # `needs.archive-qadam-artifacts.result` — so a prerelease tag, or a real release where
+    # archiving failed for its own reasons, still gets its GitHub Release, just without the asset.
+    # That mirrors this file's own stated philosophy for the npm publish above: the image, the npm
+    # packages and the qadam archive are independent artifacts, and a problem in one must not hold
+    # back the other two.
+    needs: [publish, archive-qadam-artifacts]
+    if: ${{ always() && needs.publish.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -585,11 +678,26 @@ jobs:
             echo "stable=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # `mkdir -p` unconditionally, so the glob below always resolves against a real (possibly
+      # empty) directory rather than one that may or may not exist depending on whether the
+      # download ran — action-gh-release's `files:` glob tolerates matching nothing, it does not
+      # tolerate the directory itself being absent in the same way.
+      - name: Make room for the archived qadam artifacts
+        run: mkdir -p "${{ runner.temp }}/release-archive"
+
+      - name: Download the archived qadam artifacts
+        if: needs.archive-qadam-artifacts.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: qadam-artifacts-archive
+          path: ${{ runner.temp }}/release-archive
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           prerelease: ${{ steps.release.outputs.stable == 'false' }}
+          files: ${{ runner.temp }}/release-archive/*.tar.gz
           body: |
             Docker images: `ghcr.io/aiqadam/qadam-flow:${{ steps.release.outputs.version }}-fat` and
             `ghcr.io/aiqadam/qadam-flow:${{ steps.release.outputs.version }}-slim`.

@@ -36,6 +36,10 @@
 # of cwd, which is why axios-needing code elsewhere in tools/ is fine invoked as `npx ts-node`
 # from the repo root — only `npx`'s OWN bin resolution is cwd-sensitive.
 #
+# The ADR-0003 bundle-format section near the end additionally needs the three platform packages
+# built (`npx turbo run build --filter='@aiqadam/qadams-common...'`) — same precondition as
+# tools/ci/test-qadam-artifacts.sh, which _verify.yml already satisfies before this suite runs.
+#
 #   tools/ci/test-publish-workspace-invariants.sh
 
 set -uo pipefail
@@ -554,6 +558,88 @@ check_probe "packages/qadams/custom does not leak into the qadam sweep" \
 # manifests that differ only by shuffling — which makes diffing two publish artifacts useless.
 check_probe "the returned paths are sorted, so the manifest is stable between runs" \
   "$(read_probe sorted)" "true"
+
+# ADR-0003 "Qadams at `1.0.0`" (#804): isBundleFormatQadam is the one place that decides which
+# format an official qadam path+version publishes as — publishNpmPackage branches on it before
+# the legacy dist-output check. Exercised against synthetic fixtures so this suite never has to
+# bump a real qadam's version (and remember to revert it) to prove the gate.
+echo
+echo "== isBundleFormatQadam gates the ADR-0003 bundle format on an official qadam's own version =="
+new_workspace_fixture
+write_json "$root/packages/qadams/community/fixture-legacy/package.json" '{ "name": "@aiqadam/qadam-fixture-legacy", "version": "0.9.9" }'
+write_json "$root/packages/qadams/community/fixture-bundle/package.json" '{ "name": "@aiqadam/qadam-fixture-bundle", "version": "1.0.0" }'
+write_json "$root/packages/qadams/framework/package.json" '{ "name": "@aiqadam/qadams-framework", "version": "5.0.0" }'
+write_json "$root/packages/qadams/community/fixture-invalid/package.json" '{ "name": "@aiqadam/qadam-fixture-invalid", "version": "not-a-version" }'
+
+run_harness is-bundle-format-qadam packages/qadams/community/fixture-legacy
+expect_status 0 "a 0.x official qadam stays the legacy format"
+expect_contains "RESULT false" "a 0.x official qadam stays the legacy format"
+
+run_harness is-bundle-format-qadam packages/qadams/community/fixture-bundle
+expect_status 0 "a qadam at 1.0.0+ is the bundle format"
+expect_contains "RESULT true" "a qadam at 1.0.0+ is the bundle format"
+
+run_harness is-bundle-format-qadam packages/qadams/framework
+expect_status 0 "the framework package is never a bundle itself, whatever its own version"
+expect_contains "RESULT false" "the framework package is never a bundle itself, whatever its own version"
+
+run_harness is-bundle-format-qadam packages/qadams/community/fixture-invalid
+expect_status 1 "an unparseable version refuses rather than silently picking a format"
+expect_contains "has an invalid version" "an unparseable version refuses rather than silently picking a format"
+
+# The full publishNpmPackage integration, not just the format decision above: a 1.0.0+ official
+# qadam really builds and packs as the ADR-0003 bundle (peerDependencies, the format marker, no
+# legacy dist/ needed) rather than falling into the legacy branch. packQadamBundleArtifact
+# resolves its qadam directory against the real repo root, not a fixture root, so this bumps one
+# real qadam's own package.json for the duration of the run — `crypto` has no node_modules/native
+# exception and builds in well under a second — and restores it from the EXIT trap no matter how
+# the run ends, including a failure partway through.
+echo
+echo "== publishNpmPackage really builds and packs a 1.0.0+ official qadam as the ADR-0003 bundle =="
+bundle_fixture_qadam="$repo_root/packages/qadams/core/crypto/package.json"
+bundle_fixture_backup="$(mktemp)"
+cp "$bundle_fixture_qadam" "$bundle_fixture_backup"
+restore_bundle_fixture() {
+  [ -n "${bundle_fixture_backup:-}" ] && [ -e "$bundle_fixture_backup" ] && cp "$bundle_fixture_backup" "$bundle_fixture_qadam" && rm -f "$bundle_fixture_backup"
+  return 0
+}
+trap 'restore_bundle_fixture; cleanup' EXIT
+node -e "
+const fs = require('fs')
+const path = '$bundle_fixture_qadam'
+const json = JSON.parse(fs.readFileSync(path, 'utf8'))
+json.version = '1.0.0'
+fs.writeFileSync(path, JSON.stringify(json, null, 2) + '\n')
+"
+
+bundle_pack_dir="$(mktemp -d)"
+bundle_probe_out="$(cd "$repo_root" && timeout 120 "$ts_node_bin" --project "$ts_project" -e "
+const { publishNpmPackage } = require('./tools/scripts/utils/publish-npm-package')
+publishNpmPackage({ path: 'packages/qadams/core/crypto', packDestination: '$bundle_pack_dir', skipRegistryCheck: true }).then((result) => {
+  console.log(JSON.stringify(result))
+}).catch((err) => { console.log(JSON.stringify({ error: String((err && err.message) || err) })); process.exitCode = 1 })" 2>&1 | tail -1)"
+
+case "$bundle_probe_out" in
+  *'"status":"packed"'*) pass=$((pass + 1)); echo "ok: packed, not published directly" ;;
+  *) fail=$((fail + 1)); echo "FAIL: expected a packed result — ${bundle_probe_out}" ;;
+esac
+
+bundle_tarball="$(find "$bundle_pack_dir" -name '*.tgz' | head -1)"
+if [ -z "$bundle_tarball" ]; then
+  fail=$((fail + 1)); echo "FAIL: no tarball written to ${bundle_pack_dir}"
+else
+  pass=$((pass + 1)); echo "ok: a tarball was packed"
+  bundle_manifest="$(tar -xzO -f "$bundle_tarball" package/package.json)"
+  case "$bundle_manifest" in
+    *'"@aiqadam/qadams-framework": "^'*) pass=$((pass + 1)); echo "ok: qadams-framework is a peerDependency in the packed manifest" ;;
+    *) fail=$((fail + 1)); echo "FAIL: qadams-framework is not a peerDependency — ${bundle_manifest}" ;;
+  esac
+  case "$bundle_manifest" in
+    *'"formatVersion": 1'*) pass=$((pass + 1)); echo "ok: the ADR-0003 format marker is set" ;;
+    *) fail=$((fail + 1)); echo "FAIL: no ADR-0003 format marker — ${bundle_manifest}" ;;
+  esac
+fi
+rm -rf "$bundle_pack_dir"
 
 echo
 echo "passed: ${pass}   failed: ${fail}"
