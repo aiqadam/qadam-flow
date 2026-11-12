@@ -590,24 +590,30 @@ expect_contains "has an invalid version" "an unparseable version refuses rather 
 # The full publishNpmPackage integration, not just the format decision above: a 1.0.0+ official
 # qadam really builds and packs as the ADR-0003 bundle (peerDependencies, the format marker, no
 # legacy dist/ needed) rather than falling into the legacy branch. packQadamBundleArtifact
-# resolves its qadam directory against the real repo root, not a fixture root, so this bumps one
-# real qadam's own package.json for the duration of the run — `crypto` has no node_modules/native
-# exception and builds in well under a second — and restores it from the EXIT trap no matter how
-# the run ends, including a failure partway through.
+# resolves its qadam directory against the real repo root, not a fixture root — so this needs a
+# real directory under one of the official roots, but NOT one of the committed qadams: `crypto`'s
+# whole directory (source, tsconfigs, and its own node_modules — symlinks into the shared bun
+# store at a relative depth this copy preserves exactly, since packages/qadams/community/<name>
+# sits as deep as packages/qadams/core/crypto) is copied to a fixture name and rebumped there. No
+# committed file is ever written to, so there is nothing for an interrupted run to leave dirty —
+# the EXIT/INT/TERM trap below only ever has a directory of its own to remove.
 echo
 echo "== publishNpmPackage really builds and packs a 1.0.0+ official qadam as the ADR-0003 bundle =="
-bundle_fixture_qadam="$repo_root/packages/qadams/core/crypto/package.json"
-bundle_fixture_backup="$(mktemp)"
-cp "$bundle_fixture_qadam" "$bundle_fixture_backup"
-restore_bundle_fixture() {
-  [ -n "${bundle_fixture_backup:-}" ] && [ -e "$bundle_fixture_backup" ] && cp "$bundle_fixture_backup" "$bundle_fixture_qadam" && rm -f "$bundle_fixture_backup"
+bundle_fixture_name="__test_fixture_bundle_format__"
+bundle_fixture_path="packages/qadams/community/${bundle_fixture_name}"
+bundle_fixture_dir="$repo_root/${bundle_fixture_path}"
+rm -rf "$bundle_fixture_dir"
+cp -r "$repo_root/packages/qadams/core/crypto" "$bundle_fixture_dir"
+remove_bundle_fixture() {
+  rm -rf "${bundle_fixture_dir:-}"
   return 0
 }
-trap 'restore_bundle_fixture; cleanup' EXIT
+trap 'remove_bundle_fixture; cleanup' EXIT INT TERM
 node -e "
 const fs = require('fs')
-const path = '$bundle_fixture_qadam'
+const path = '$bundle_fixture_dir/package.json'
 const json = JSON.parse(fs.readFileSync(path, 'utf8'))
+json.name = '@aiqadam/qadam-test-fixture-bundle'
 json.version = '1.0.0'
 fs.writeFileSync(path, JSON.stringify(json, null, 2) + '\n')
 "
@@ -615,7 +621,7 @@ fs.writeFileSync(path, JSON.stringify(json, null, 2) + '\n')
 bundle_pack_dir="$(mktemp -d)"
 bundle_probe_out="$(cd "$repo_root" && timeout 120 "$ts_node_bin" --project "$ts_project" -e "
 const { publishNpmPackage } = require('./tools/scripts/utils/publish-npm-package')
-publishNpmPackage({ path: 'packages/qadams/core/crypto', packDestination: '$bundle_pack_dir', skipRegistryCheck: true }).then((result) => {
+publishNpmPackage({ path: '${bundle_fixture_path}', packDestination: '$bundle_pack_dir', skipRegistryCheck: true }).then((result) => {
   console.log(JSON.stringify(result))
 }).catch((err) => { console.log(JSON.stringify({ error: String((err && err.message) || err) })); process.exitCode = 1 })" 2>&1 | tail -1)"
 

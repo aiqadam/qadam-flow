@@ -38,7 +38,7 @@ export const isBundleFormatQadam = async ({ path }: IsBundleFormatQadamParams): 
 // to call this without one.
 export const packQadamBundleArtifact = async ({ path, version, packDestination }: PackQadamBundleArtifactParams): Promise<{ filename: string, version: string }> => {
   const { qadamArtifact, ARTIFACT_STATUS } = await importQadamArtifact()
-  const [outRoot, config, builtAgainst] = await Promise.all([getHost(), readConfig(), getBuiltAgainst()])
+  const [outRoot, config, builtAgainst] = await Promise.all([getHost(), getConfig(), getBuiltAgainst()])
   mkdirSync(packDestination, { recursive: true })
   const result = await qadamArtifact.build({
     qadamDir: join(REPO_ROOT, path),
@@ -96,7 +96,23 @@ const getBuiltAgainst = async (): ReturnType<typeof readBuiltAgainstOnce> => {
   return builtAgainstPromise
 }
 
-const readConfig = async (): Promise<unknown> => JSON.parse(readFileSync(CONFIG_PATH, 'utf8'))
+// The same exceptions file for every qadam this run packs — memoized for the same reason
+// getHost/getBuiltAgainst are: re-reading and re-parsing it per qadam would mean up to 238 reads
+// of one invariant file across a full catalogue pack.
+let configPromise: Promise<unknown> | null = null
+const getConfig = async (): Promise<unknown> => {
+  if (configPromise === null) {
+    configPromise = (async () => {
+      try {
+        return JSON.parse(readFileSync(CONFIG_PATH, 'utf8'))
+      }
+      catch (e) {
+        throw new Error(`[packQadamBundleArtifact] cannot read ${CONFIG_PATH}: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    })()
+  }
+  return configPromise
+}
 
 type IsBundleFormatQadamParams = {
   path: string
