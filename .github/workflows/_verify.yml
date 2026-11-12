@@ -60,6 +60,27 @@ jobs:
       - name: Test run.sh env reconciliation
         run: tools/ci/test-run-sh.sh
 
+      # The image store seed (#807, ADR-0003): `:slim` must keep only the core qadams while `:fat`
+      # keeps every official qadam. Fixtures only, so it also runs before the install.
+      - name: Test the image store seed
+        run: tools/ci/test-image-seed.sh
+
+      # check-image-flavour.sh is the pure-shell helper ci.yml's `image`/`image_publish` and
+      # release.yml's `publish` all depend on to smoke a built/published image (#807). Stubs
+      # `docker`, so it runs here too, before any real docker build exists.
+      - name: Test check-image-flavour.sh
+        run: tools/ci/check-image-flavour.test.sh
+
+      # Keeps the Dockerfile's slim-prune step, check-image-flavour.sh's ALWAYS_BUNDLED_COMMUNITY
+      # and the server/worker's actual community-qadam imports from drifting apart (#807, advisory
+      # review) — the exact drift that made an earlier version of this PR's slim image fail to boot
+      # with `Cannot find module '@aiqadam/qadam-facebook-leads'`. Pure text, so this and its own
+      # fixture test both run here too, before any real docker build exists.
+      - name: Test check-slim-community-deps.sh
+        run: tools/ci/check-slim-community-deps.test.sh
+      - name: Check slim keeps every community qadam the server imports
+        run: tools/ci/check-slim-community-deps.sh
+
       # docker-entrypoint.sh is the other pure-shell entry point with no image
       # build behind it. #51 was a supervision regression nothing would have
       # caught; this suite runs against a stub `node` in seconds.

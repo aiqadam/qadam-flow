@@ -7,7 +7,7 @@
 # What it does (no git, no source build):
 #   1. Verifies docker + docker compose are available.
 #   2. Downloads docker-compose.yml into ./qadam-flow.
-#   3. Generates a fresh .env with random secrets.
+#   3. Generates a fresh .env with random secrets, the image and the qadam registry settings.
 #   4. docker compose pull.
 #   5. Upgrades the bundled PostgreSQL's data if it was written by an older major
 #      (dump with the old image, restore into a new volume, keep the old one).
@@ -19,8 +19,15 @@
 # Environment overrides:
 #   QADAM_FLOW_DIR   — install directory (default: ./qadam-flow)
 #   QADAM_FLOW_PORT  — host port the app is published on (default: 8080)
-#   QADAM_FLOW_IMAGE — docker image (default: ghcr.io/aiqadam/qadam-flow:latest)
+#   QADAM_FLOW_IMAGE — docker image (default: ghcr.io/aiqadam/qadam-flow:slim). Use
+#                      ghcr.io/aiqadam/qadam-flow:fat to bundle community qadams in the image instead
+#                      of fetching them from the registry.
 #   QADAM_FLOW_REF   — git ref for the compose file (default: main)
+#   QADAM_REGISTRY_URL   — registry for a custom (non-@aiqadam) qadam version the store does not
+#                          already hold (ADR-0003 "Registry at install"); official qadams always
+#                          come from npmjs regardless of this setting, and custom fetching is not
+#                          yet consumed by the server (default: https://registry.npmjs.org)
+#   QADAM_REGISTRY_TOKEN — bearer token for that registry (default: none; never printed)
 #   QADAM_FLOW_SANDBOXED — `yes` lets the worker run an isolate execution mode
 #                          (SANDBOX_PROCESS / SANDBOX_CODE_AND_PROCESS): fetches
 #                          docker-compose.sandboxed.yml and selects it via COMPOSE_FILE in .env.
@@ -53,8 +60,32 @@ die()  { err "$1"; exit 1; }
 # ---------- defaults ---------------------------------------------------------
 
 QADAM_FLOW_DIR=${QADAM_FLOW_DIR:-qadam-flow}
-QADAM_FLOW_IMAGE=${QADAM_FLOW_IMAGE:-ghcr.io/aiqadam/qadam-flow:latest}
 QADAM_FLOW_REF=${QADAM_FLOW_REF:-main}
+
+# The slim image is the default install: it carries the platform and the 27 core qadams, then fetches
+# community qadams from the registry on demand (ADR-0003, #807). `:fat` still exists for offline or
+# registry-restricted installs and remains the `:latest` alias.
+DEFAULT_IMAGE=ghcr.io/aiqadam/qadam-flow:slim
+if [ -n "${QADAM_FLOW_IMAGE:-}" ]; then
+  IMAGE_EXPLICIT=yes
+else
+  IMAGE_EXPLICIT=no
+  QADAM_FLOW_IMAGE=$DEFAULT_IMAGE
+fi
+
+DEFAULT_REGISTRY_URL=https://registry.npmjs.org
+if [ -n "${QADAM_REGISTRY_URL:-}" ]; then
+  REGISTRY_URL_EXPLICIT=yes
+else
+  REGISTRY_URL_EXPLICIT=no
+  QADAM_REGISTRY_URL=$DEFAULT_REGISTRY_URL
+fi
+if [ "${QADAM_REGISTRY_TOKEN+x}" = x ]; then
+  REGISTRY_TOKEN_EXPLICIT=yes
+else
+  REGISTRY_TOKEN_EXPLICIT=no
+  QADAM_REGISTRY_TOKEN=''
+fi
 
 DEFAULT_PORT=8080
 # Whether the operator asked for a specific port matters: an explicit override must be pushed into an
@@ -266,9 +297,19 @@ env_value() {
 
 set_env_value() {
   if grep -q "^$1=" .env; then
+    # Every caller used to pass an installer-generated value (port, path, image tag); #807 is the
+    # first to pass an arbitrary operator-supplied secret (QADAM_REGISTRY_TOKEN) through here. An
+    # earlier version interpolated the value straight into a sed replacement string, which put the
+    # secret on sed's own command line — readable by any other local user via `ps` / `/proc/<pid>/
+    # cmdline` for as long as the process ran. Delete the old line with `grep
+    # -v` (only the fixed key name ever appears in that argv, never the value) and append the new one
+    # with `printf`, exactly like the no-existing-line branch below — the value only ever reaches a
+    # file descriptor, never a command line.
     # cp -p seeds the temp file with .env's own mode before `>` truncates it, so renaming over a
     # hand-hardened .env can't widen AP_JWT_SECRET / AP_ENCRYPTION_KEY / the DB password to 0644.
-    cp -p .env .env.tmp && sed "s|^$1=.*|$1=$2|" .env > .env.tmp && mv .env.tmp .env
+    # `grep -v` exits 1 (not an error here) when the line being replaced was the file's only line —
+    # `|| true` keeps that from aborting the `&&` chain before the new line is appended.
+    cp -p .env .env.tmp && { grep -v "^$1=" .env > .env.tmp || true; } && printf '%s=%s\n' "$1" "$2" >> .env.tmp && mv .env.tmp .env
   else
     # Hand-written .env files often lack a trailing newline (VS Code's insertFinalNewline is off by
     # default); appending blind would glue the assignment onto the last line and destroy both.
@@ -340,10 +381,12 @@ reconcile_port() {
 
 generate_env() {
   if [ -f .env ]; then
+    ENV_EXISTED=yes
     log "reusing existing .env (delete it to regenerate secrets)"
     reconcile_port
     return 0
   fi
+  ENV_EXISTED=no
   log "generating .env with fresh random secrets"
   enc_key=$(openssl rand -hex 16)
   jwt_secret=$(openssl rand -hex 32)
@@ -398,13 +441,228 @@ AP_TELEMETRY_ENABLED=false
 
 # Engine
 AP_EXECUTION_MODE=UNSANDBOXED
+
+# Qadam registry — where a custom (non-@aiqadam) qadam version would be fetched from; not yet
+# consumed by the server (official qadams always come from npmjs regardless of this setting).
+AP_QADAM_REGISTRY_URL=${QADAM_REGISTRY_URL}
 EOF
+}
+
+# ---------- image and registry (#807) ----------------------------------------
+
+# ADR-0003 makes `:slim` the installer default. An existing install keeps whatever its .env already
+# pins, so an upgrade does not silently swap a fat image for a slim one; an explicit
+# QADAM_FLOW_IMAGE overrides both and is written back to .env.
+configure_image() {
+  existing_image=$(env_value QADAM_FLOW_IMAGE)
+  if [ "$IMAGE_EXPLICIT" = yes ]; then
+    if [ "$existing_image" != "$QADAM_FLOW_IMAGE" ]; then
+      log "using image ${QADAM_FLOW_IMAGE}"
+      set_env_value QADAM_FLOW_IMAGE "$QADAM_FLOW_IMAGE"
+    fi
+    return 0
+  fi
+  if [ -n "$existing_image" ]; then
+    QADAM_FLOW_IMAGE=$existing_image
+    if [ "$ENV_EXISTED" = yes ]; then
+      log "existing install uses ${QADAM_FLOW_IMAGE} — keeping it (set QADAM_FLOW_IMAGE to change)"
+    fi
+    return 0
+  fi
+  if [ "$ENV_EXISTED" = yes ]; then
+    # Installs predating #807 have no QADAM_FLOW_IMAGE line, so compose falls back to its own default.
+    QADAM_FLOW_IMAGE='ghcr.io/aiqadam/qadam-flow:latest'
+    log "existing install has no pinned image — keeping ${QADAM_FLOW_IMAGE}"
+  fi
+}
+
+# Strips a `user:pass@` userinfo part before a URL reaches `log`/`warn`/`die`, so credentials an
+# operator put in the URL itself (rather than QADAM_REGISTRY_TOKEN, which the docs point at) don't
+# land in terminal output or CI logs. Pure parameter expansion, not sed —
+# portable to dash without a `-E`/`-r` extended-regex flag. Only rewrites a `scheme://...@...`
+# shape; a URL with no `://` (already invalid, caught by validate_registry_url) is echoed as-is.
+#
+# Cuts at the LAST `@` within the authority (host[:port]) specifically, not the first `@` in the
+# whole string: a URL parser (and a browser/curl) reads everything up to the last `@` before the
+# next `/` as userinfo, so an unencoded `@` inside the password itself (`user:p@ss@host`) would
+# otherwise leave part of the password in the redacted output. Splitting the
+# authority off by its own terminating `/` first, then cutting that piece at its last `@`, keeps an
+# `@` that legitimately appears later in the path (`host/a@b`) untouched.
+redact_registry_url() {
+  case "$1" in
+    *://*@*)
+      registry_url_scheme=${1%%://*}
+      registry_url_after_scheme=${1#*://}
+      registry_url_authority=${registry_url_after_scheme%%/*}
+      registry_url_rest=${registry_url_after_scheme#"$registry_url_authority"}
+      printf '%s://%s%s\n' "$registry_url_scheme" "${registry_url_authority##*@}" "$registry_url_rest"
+      ;;
+    *)
+      printf '%s\n' "$1"
+      ;;
+  esac
+}
+
+validate_registry_url() {
+  case "$QADAM_REGISTRY_URL" in
+    http://?*|https://?*) ;;
+    *) die "QADAM_REGISTRY_URL must start with http:// or https:// (got '$(redact_registry_url "$QADAM_REGISTRY_URL")')" ;;
+  esac
+  case "$QADAM_REGISTRY_URL" in
+    *[[:space:]]*) die "QADAM_REGISTRY_URL must not contain whitespace" ;;
+  esac
+}
+
+validate_registry_token() {
+  case "$QADAM_REGISTRY_TOKEN" in
+    *[[:cntrl:]]*) die "QADAM_REGISTRY_TOKEN must be a single line without control characters" ;;
+  esac
+  # docker-compose.yml loads .env via `env_file:`, and Compose interpolates `$VAR`/`${VAR}` in
+  # env_file values the same way it does in the compose file itself — a `$` not meant as a
+  # reference needs `$$` there. set_env_value writes the token as-is, so a token containing `$`
+  # would reach the server silently truncated or altered rather than rejected (verified against a
+  # live `docker compose run`, #807). Reject it here instead of letting it corrupt quietly.
+  case "$QADAM_REGISTRY_TOKEN" in
+    *'$'*) die "QADAM_REGISTRY_TOKEN must not contain '\$' — docker compose would alter it when loading .env" ;;
+  esac
+}
+
+# The installer's unprefixed QADAM_REGISTRY_* overrides are written to .env prefixed with AP_, which
+# is the name the server reads. Without an override whatever .env already holds wins, so a hand-edited
+# registry or token survives an upgrade. Both are validated on the value this run actually ends up
+# with — an explicit override, the default, or one adopted from an existing .env — not only on the
+# override, since an adopted value has never been checked by anything before it reaches `curl` in
+# registry_reachable().
+configure_registry() {
+  existing_url=$(env_value AP_QADAM_REGISTRY_URL)
+  if [ "$REGISTRY_URL_EXPLICIT" = yes ]; then
+    if [ "$existing_url" != "$QADAM_REGISTRY_URL" ]; then
+      log "using qadam registry $(redact_registry_url "$QADAM_REGISTRY_URL")"
+      set_env_value AP_QADAM_REGISTRY_URL "$QADAM_REGISTRY_URL"
+    fi
+  elif [ -n "$existing_url" ]; then
+    QADAM_REGISTRY_URL=$existing_url
+  elif [ "$ENV_EXISTED" = yes ]; then
+    set_env_value AP_QADAM_REGISTRY_URL "$QADAM_REGISTRY_URL"
+  fi
+  validate_registry_url
+
+  if [ "$REGISTRY_TOKEN_EXPLICIT" = yes ]; then
+    if [ -n "$QADAM_REGISTRY_TOKEN" ]; then
+      log "using the registry token from QADAM_REGISTRY_TOKEN"
+      set_env_value AP_QADAM_REGISTRY_TOKEN "$QADAM_REGISTRY_TOKEN"
+    else
+      remove_env_value AP_QADAM_REGISTRY_TOKEN
+      log "removed AP_QADAM_REGISTRY_TOKEN from .env"
+    fi
+  else
+    QADAM_REGISTRY_TOKEN=$(env_value AP_QADAM_REGISTRY_TOKEN)
+  fi
+  validate_registry_token
+
+  # A non-TLS registry sends the bearer token in plaintext over the network: validate_registry_url
+  # accepts http:// for an air-gapped/internal registry with no TLS termination, but a token on top
+  # of that is a real exposure worth flagging, not silently accepting.
+  case "$QADAM_REGISTRY_URL" in
+    http://*)
+      if [ -n "$QADAM_REGISTRY_TOKEN" ]; then
+        warn "QADAM_REGISTRY_URL uses http:// with a registry token set — the token will be sent unencrypted. Use https:// for a private registry if possible."
+      fi
+      ;;
+  esac
+}
+
+# A tag-based guess, not a resolved answer: a digest-pinned image (`@sha256:...`) is always treated
+# as "not slim" below, even when that digest happens to point at a slim build. Resolving it properly
+# would mean an extra registry/manifest-inspect call before every pull, for a pin style most installs
+# don't use — not worth it for the cost of one operator skipping a check that only ever produces a
+# warning (check_qadam_registry's probe gates nothing; a reachability miss still lets the install
+# continue). A digest-pinned slim image that can't reach its registry fails later, at qadam-fetch
+# time, with a less specific error instead of this installer's upfront warning.
+image_is_slim() {
+  case "$1" in
+    *@sha256:*) return 1 ;;
+  esac
+  image_tag=${1##*:}
+  case "$image_tag" in
+    slim|*-slim) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Any HTTP response counts as reachable — a 401 or 404 still proves DNS, TCP and TLS work, which is
+# all the installer can know without the registry's qadam protocol. Only a curl failure means the
+# registry is unreachable. The token AND the URL both travel through curl's stdin config (`-K -`),
+# never as a command-line argument: an operator-supplied token never belongs on argv, and an
+# operator can also write credentials directly into the URL itself (`https://user:pass@host`) even
+# though the docs point at QADAM_REGISTRY_TOKEN for that — either way it must not be readable by
+# another local user via `ps` / `/proc/<pid>/cmdline` for the life of the probe. Takes an optional
+# URL/token pair so check_qadam_registry below can also probe npmjs on its own, regardless of what
+# QADAM_REGISTRY_URL/QADAM_REGISTRY_TOKEN hold — every other caller passes neither and gets the
+# globals.
+registry_reachable() {
+  probe_registry_url=${1:-$QADAM_REGISTRY_URL}
+  probe_registry_token=${2-$QADAM_REGISTRY_TOKEN}
+  probe_url="${probe_registry_url%/}/-/ping"
+  escaped_probe_url=$(printf '%s' "$probe_url" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  {
+    printf 'url = "%s"\n' "$escaped_probe_url"
+    if [ -n "$probe_registry_token" ]; then
+      escaped_token=$(printf '%s' "$probe_registry_token" | sed 's/\\/\\\\/g; s/"/\\"/g')
+      printf 'header = "Authorization: Bearer %s"\n' "$escaped_token"
+    fi
+  } | curl -sS -o /dev/null -m 5 -K - >/dev/null 2>&1
+}
+
+# The isolate execution modes (SANDBOX_PROCESS, SANDBOX_CODE_AND_PROCESS) do not read the qadam
+# version store yet (#779) — they only run the qadams the image itself bundles. That has not
+# mattered while every install ran the fat image, which bundles everything; on slim, a community
+# qadam fetched into the store on demand still cannot run under an isolate mode (#807). Checked
+# after configure_image, so $QADAM_FLOW_IMAGE already reflects what this run
+# actually ends up with — an explicit override or one adopted from an existing .env, not only the
+# early default.
+warn_if_sandboxed_slim() {
+  image_is_slim "$QADAM_FLOW_IMAGE" || return 0
+  if is_sandboxed_requested || sandboxed_compose_selected_in_env; then
+    warn "QADAM_FLOW_SANDBOXED is on with the slim image: the sandboxed execution modes do not read the qadam version store yet, so only the qadams this image bundles (the core set) run there — a community qadam fetched on demand will not work in sandboxed mode. Use the fat image for sandboxed execution with community qadams."
+  fi
+}
+
+check_qadam_registry() {
+  image_is_slim "$QADAM_FLOW_IMAGE" || return 0
+  registry_ok=yes
+
+  log "checking the qadam registry at $(redact_registry_url "$QADAM_REGISTRY_URL")"
+  if registry_reachable; then
+    log "qadam registry is reachable"
+  else
+    registry_ok=no
+    warn "cannot reach the qadam registry at $(redact_registry_url "$QADAM_REGISTRY_URL") — a custom (non-@aiqadam) qadam that must be fetched will not be installable"
+  fi
+
+  # Official @aiqadam/* community qadams are always fetched from npmjs, whatever
+  # QADAM_REGISTRY_URL says (docs/install/options/image-flavours.mdx) — probe it too whenever it
+  # differs from the configured registry, so a host that reaches a custom registry but not npmjs
+  # itself still gets the warning here, not a confusing failure deep inside qadam fetch later.
+  if [ "${QADAM_REGISTRY_URL%/}" != "$DEFAULT_REGISTRY_URL" ]; then
+    log "checking npmjs (official qadams always fetch from there)"
+    if registry_reachable "$DEFAULT_REGISTRY_URL" ''; then
+      log "npmjs is reachable"
+    else
+      registry_ok=no
+      warn "cannot reach ${DEFAULT_REGISTRY_URL} — official qadams that must be fetched will not be installable"
+    fi
+  fi
+
+  [ "$registry_ok" = yes ] && return 0
+  warn "if this machine cannot reach the registry (or npmjs), use the fat image, which bundles every community qadam:"
+  warn "  curl -fsSL https://flow.aiqadam.org/run.sh | QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:fat sh"
 }
 
 # ---------- run --------------------------------------------------------------
 
 pull_images() {
-  log "pulling ${QADAM_FLOW_IMAGE} (≈400 MB, one-time)"
+  log "pulling ${QADAM_FLOW_IMAGE} (one-time)"
   compose pull
 }
 
@@ -828,6 +1086,12 @@ main() {
   log "platform: $PLATFORM"
   check_prereqs
   validate_port
+  # Validate installer overrides before generate_env writes them into a fresh .env. The values an
+  # existing .env supplies are validated again in configure_registry.
+  validate_registry_url
+  if [ "$REGISTRY_TOKEN_EXPLICIT" = yes ]; then
+    validate_registry_token
+  fi
   prepare_dir
   fetch_compose
   generate_env
@@ -838,6 +1102,10 @@ main() {
   # After generate_env has produced .env, and before pull_images/up so every compose command in this
   # run already selects the override.
   configure_sandboxed_compose
+  configure_image
+  warn_if_sandboxed_slim
+  configure_registry
+  check_qadam_registry
   pull_images
   # Between the pull and the start: it needs the new postgres image, and PostgreSQL 18 must not be
   # started before its data has been restored.

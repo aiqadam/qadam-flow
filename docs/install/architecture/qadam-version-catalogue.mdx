@@ -7,14 +7,14 @@ icon: "book-open"
 The qadam version catalogue is a set of static JSON files that describe every released version of every official qadam: the integrity of the artifact that was released, and that version's metadata (its actions, triggers and props). [ADR-0003](https://github.com/aiqadam/qadam-flow/blob/main/adr/0003-official-qadams-run-from-a-versioned-local-store.md) uses it so that your server knows about qadam versions its image does not ship. For example, it can show and validate a flow step pinned to an older version, or decide whether a pinned version that cannot be fetched may move to a compatible one.
 
 <Warning>
-Nothing is published at the default address yet, so on a real instance the catalogue reads as unavailable and every release-era pin is treated as unknown rather than moved. Flow export and the unavailable-version fallback already read the catalogue (fail closed); fetching missing versions ([#806](https://github.com/aiqadam/qadam-flow/issues/806)) and the slim image ([#807](https://github.com/aiqadam/qadam-flow/issues/807)) are still to come. This page describes the format, where it will be published, and how to point the server at a mirror.
+Nothing is published at the default address yet, so on a real instance the catalogue reads as unavailable and every release-era pin is treated as unknown rather than moved. Flow export and the unavailable-version fallback already read the catalogue (fail closed), and fetching missing versions ([#806](https://github.com/aiqadam/qadam-flow/issues/806)) is done. A slim or fat image does not carry a build-time snapshot either: producing one inside a Docker build, with no release step that first checks out the already-published catalogue, would hold only that tree's current version of each qadam — which the pin-fallback logic could mistake for a complete history and wrongly call an older, real release "never published". That is deferred until a release step publishes the catalogue and an image build can start from a checkout of it. This page describes the format, where it will be published, and how to point the server at a mirror.
 </Warning>
 
 ## Where it is published
 
 The catalogue is published on GitHub Pages at `https://flow.aiqadam.org/catalog/v1/`. Every release appends the versions it releases, and nothing is ever removed or changed. A version is never republished, so an entry stays valid for good.
 
-The slim image will carry a snapshot of the catalogue taken when the image was built. A server that cannot reach the published catalogue still knows every version up to its own release.
+Neither image carries a snapshot of the catalogue yet (see the warning above).
 
 ## What it contains
 
@@ -68,7 +68,7 @@ The server reads the published address by default. To use a mirror instead, set 
 | Variable | Meaning |
 | --- | --- |
 | `AP_QADAM_VERSION_CATALOGUE_URL` | Base URL of the `catalog/v1/` directory, ending in `/`. Use it for a mirror served over HTTP(S). |
-| `AP_QADAM_VERSION_CATALOGUE_DIRECTORY` | Path to a local copy of `catalog/v1/`. Takes precedence over the URL, and sends no request at all — for an air-gapped mirror or the snapshot a slim image carries. |
+| `AP_QADAM_VERSION_CATALOGUE_DIRECTORY` | Path to a local copy of `catalog/v1/`. Takes precedence over the URL, and sends no request at all — for an air-gapped mirror. |
 
 <Note>
 The server reads the catalogue through the same outbound-request filter as every other configured URL. A mirror on a private or loopback address needs that address in `AP_SSRF_ALLOW_LIST`. See [Network security](/install/architecture/network-security).

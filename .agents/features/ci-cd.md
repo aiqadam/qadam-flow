@@ -112,11 +112,15 @@ between branches (only the application source layer churns).
 - `:X.Y.Z` — immutable release tag (the `vX.Y.Z` git tag without its `v`)
 - `:X.Y`, `:latest` — moving pointers to the latest release (not moved by a prerelease tag)
 
-The qadam half of ADR-0004 (#851) is computed in the same job and not yet applied: `tools/scripts/qadams/snapshot/compute-snapshot-plan.mjs` plans a `<next>-main.<n>` snapshot version for each qadam with its own pending changeset (same `<n>`), logs a warning when the changesets plan or the release archive is unavailable and builds more snapshots instead, and `platform-version` writes the plan's summary to the run. The image keeps released numbers until `follow` and the store seed (#807) can serve a snapshot to the flows pinned to its release. The image's labels already carry the `<n>` -> commit record: `org.opencontainers.image.version` (`<next>-main.<n>`) and `org.opencontainers.image.revision`, and two explicit labels name the counter and commit for ADR-0004.
+The qadam half of ADR-0004 (#851) is computed in the same job and not yet applied: `tools/scripts/qadams/snapshot/compute-snapshot-plan.mjs` plans a `<next>-main.<n>` snapshot version for each qadam with its own pending changeset (same `<n>`), logs a warning when the changesets plan or the release archive is unavailable and builds more snapshots instead, and `platform-version` writes the plan's summary to the run. The image keeps released numbers until `follow` and an image's store seed can serve a snapshot to the flows pinned to its release — #807 built the flavours and the seeding tool but deliberately does not wire the seed into the image yet (the issue's own gate: "seed only after #851 lands"), since the store never overwrites an already-stored version and a `:main` build's changed-but-unbumped qadam code would otherwise be masked by whichever `:main` image seeded first. The image's labels already carry the `<n>` -> commit record: `org.opencontainers.image.version` (`<next>-main.<n>`) and `org.opencontainers.image.revision`, and two explicit labels name the counter and commit for ADR-0004.
 
-Flavours (`:fat` / `:slim`, ADR-0003, #807) will add a `-<flavour>` suffix to each of these. No
-`:edge`, no `:nightly`, no `:canary`. Self-hosters pin to `:X.Y.Z` or `:latest`; CI/CD internals and
-the canary (#116) use `:main` / `:sha-...`.
+Flavours (`:fat` / `:slim`, ADR-0003, #807) add a `-<flavour>` suffix to each of these:
+`:<next>-main.<n>-<flavour>`, `:main-<flavour>`, `:sha-<short>-<flavour>`. `image_publish` adds the
+unsuffixed `:main` and `:sha-<short>` aliases on fat for consumers that predate flavours. Release tags
+are `:<version>-<flavour>`, with `:fat` / `:slim` moving only on a stable release, `:latest` moving
+only for fat, and bare `:<version>` / `:<major.minor>` kept on fat for compatibility. No `:edge`, no
+`:nightly`, no `:canary`. Self-hosters pin to `:<version>-slim` or `:<version>-fat`; CI/CD internals
+and the canary (#116) use `:main` / `:sha-...`.
 
 ### 6. Single-arch only (linux/amd64)
 **Decision**: No `linux/arm64` builds in CI yet.

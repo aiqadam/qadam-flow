@@ -74,10 +74,20 @@ size as a metric with an operator warning above a configurable threshold.
   revert reaches back into, kept even past the retention window.
 
 ## Not done yet
-- **Registry fetch (#806) and image seeding (#807)** do not exist yet. `qadamRegistryConfig` only
-  records where a fetch would go; nothing calls `checkReachability` automatically (it is exposed for
-  #806/#807 to call), and `run.sh` does not prompt for or pass these variables (#807's job per the
-  issue's own scoping).
+- **Custom-registry fetch** is still not implemented. `qadamRegistryConfig.checkReachability` has no
+  production caller — only its own test exercises it, left for the fetch path (#806) to call. `run.sh`
+  does its own, separate reachability probe in shell (`registry_reachable()`, same semantics: any HTTP
+  response counts, only a connection failure does not) before pulling the slim image, and passes
+  `QADAM_REGISTRY_URL` / `QADAM_REGISTRY_TOKEN` into `.env` as `AP_QADAM_REGISTRY_URL` /
+  `AP_QADAM_REGISTRY_TOKEN` — it does not call `checkReachability` itself, since the installer runs
+  before any server process exists to call it from.
+  Image seeding still does not run: #807 built the flavours and the seeding tool
+  (`build-image-seed.mjs`) but deliberately left the Dockerfile unwired until #851 lands (the issue's
+  own gate — the store never overwrites an already-stored version, so a `:main` build's
+  changed-but-unbumped qadam code would otherwise be masked forever by whichever `:main` image seeded
+  first). GC's rule ("not shipped by the current image") already reads the seed index through
+  `qadamVersionStoreSeed.listImageVersions`, which returns an empty set when the image carries no
+  seed — so today GC treats every stored version as not image-shipped, same as before #807.
 - **Framework version in audit records and the census** (ADR-0004: "record each snapshot's exact
   framework version... and show it in audit records and the framework census"). The version-store's
   `integrity.json` already carries `builtAgainst` (#851), but surfacing it in `qadam_pin_move` or in

@@ -17,15 +17,23 @@ curl -fsSL https://flow.aiqadam.org/run.sh | sh
 ```
 
 The script writes a fresh `.env` next to `docker-compose.yml`, pulls
-`ghcr.io/aiqadam/qadam-flow:latest`, brings up the stack, and waits for
-the API. Re-running it is idempotent.
+`ghcr.io/aiqadam/qadam-flow:slim` (ADR-0003, #807 — the 27 core qadams; a
+flow that already pins another community qadam fetches it from npmjs, but
+the builder's "add a step" list only offers qadams the instance already
+knows about. `QADAM_REGISTRY_URL` / `QADAM_REGISTRY_TOKEN` configure a
+*different* registry, for custom non-`@aiqadam/*` qadams only), brings up
+the stack, and waits for the API.
+Re-running it is idempotent, and keeps whatever image an existing `.env`
+already pins — see
+[Image flavours](../../../docs/install/options/image-flavours.mdx).
 
 Build from local source instead of pulling:
 
 ```bash
 docker build --build-arg SKIP_SSL_VERIFY=true \
   --build-arg PLATFORM_VERSION="$(node tools/ci/compute-main-version.mjs --counter 0)" \
-  -t ghcr.io/aiqadam/qadam-flow:latest .
+  --build-arg QADAM_FLAVOUR=slim \
+  -t ghcr.io/aiqadam/qadam-flow:slim .
 docker compose up -d
 ```
 
@@ -33,9 +41,13 @@ docker compose up -d
 every CI build of the same line) instead of the last release it is not (ADR-0001, #798). Leave it
 out and the image reports the root `package.json`, the last release.
 
-`docker-compose.yml` reads the image name from `$QADAM_FLOW_IMAGE`
-(default `ghcr.io/aiqadam/qadam-flow:latest`). Tag a local build with
-that name (or override the env var) so the registry pull is skipped.
+`QADAM_FLAVOUR` (default `fat`) picks which qadams the image's bundled build tree carries — `slim`
+for the 27 core qadams (plus four community qadams the server itself imports), `fat` for every
+official qadam. Neither flavour seeds the qadam version store yet: #807 built the flavours and the
+seeding tool (`build-image-seed.mjs`) but deliberately leaves the Dockerfile unwired to it until
+#851 lands. Tag the build to match what you intend to
+run (`:slim` or `:fat`) and pass the same tag in `QADAM_FLOW_IMAGE` if it is not the default
+`docker-compose.yml` reads, so the registry pull is skipped.
 
 ## Stack
 - **app** (port 8080:80) — API + frontend, a single Node process under `tini`
@@ -46,7 +58,9 @@ that name (or override the env var) so the registry pull is skipped.
 ## Key ENV vars
 - `AP_ENVIRONMENT=prod` (use `dev` only to opt into dev seeds)
 - `SKIP_SSL_VERIFY=true` build arg — for VPN/proxy environments with SSL interception
-- `QADAM_FLOW_IMAGE` — override the image tag picked up by `docker-compose.yml`
+- `QADAM_FLAVOUR=slim|fat` build arg — which qadams the image's bundled build tree carries (default `fat`); neither flavour seeds the qadam version store yet (deferred past #851)
+- `QADAM_FLOW_IMAGE` — override the image tag picked up by `docker-compose.yml` (its own fallback, used only when `.env` has no `QADAM_FLOW_IMAGE` line, is `:latest`)
+- `QADAM_REGISTRY_URL` / `QADAM_REGISTRY_TOKEN` — registry for a custom (non-`@aiqadam/*`) qadam version; official qadams always fetch from npmjs regardless of this setting (default `https://registry.npmjs.org`, no token)
 
 ## Reset
 ```bash

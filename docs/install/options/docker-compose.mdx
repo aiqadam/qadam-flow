@@ -8,7 +8,7 @@ The Docker Compose stack is the recommended way to run Qadam Flow: separate app 
 
 ## Quick install (recommended)
 
-The one-line installer sets this stack up for you — it downloads `docker-compose.yml`, generates a `.env` with random secrets, pulls `ghcr.io/aiqadam/qadam-flow:latest`, and brings everything up:
+The one-line installer sets this stack up for you — it downloads `docker-compose.yml`, generates a `.env` with random secrets, pulls `ghcr.io/aiqadam/qadam-flow:slim`, and brings everything up:
 
 ```bash
 curl -fsSL https://flow.aiqadam.org/run.sh | sh
@@ -16,7 +16,7 @@ curl -fsSL https://flow.aiqadam.org/run.sh | sh
 
 Then open [http://localhost:8080/sign-up](http://localhost:8080/sign-up). The first account to sign up owns the platform.
 
-See [Docker](./docker) for the full breakdown of what the installer does and the variables it accepts (`QADAM_FLOW_DIR`, `QADAM_FLOW_IMAGE`, `QADAM_FLOW_REF`, `QADAM_FLOW_PORT`).
+See [Docker](./docker) for the full breakdown of what the installer does and the variables it accepts (`QADAM_FLOW_DIR`, `QADAM_FLOW_IMAGE`, `QADAM_FLOW_REF`, `QADAM_FLOW_PORT`, `QADAM_REGISTRY_URL`, `QADAM_REGISTRY_TOKEN`). See [Image flavours](./image-flavours) to choose between the slim and fat images.
 
 ## Manual setup
 
@@ -57,7 +57,7 @@ Use this if you want the stack under version control, or you intend to modify `d
     Then write `.env`:
 
     ```dotenv
-    QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:latest
+    QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:slim
 
     AP_ENVIRONMENT=prod
     AP_FRONTEND_URL=http://localhost:8080
@@ -85,6 +85,10 @@ Use this if you want the stack under version control, or you intend to modify `d
     AP_EXECUTION_MODE=UNSANDBOXED
     AP_WEBHOOK_TIMEOUT_SECONDS=30
     AP_TRIGGER_DEFAULT_POLL_INTERVAL=5
+
+    # Registry for custom (non-@aiqadam) qadams; official qadams always come from npm
+    AP_QADAM_REGISTRY_URL=https://registry.npmjs.org
+    # AP_QADAM_REGISTRY_TOKEN=replace-with-a-private-registry-token
     ```
 
     <Note>
@@ -165,7 +169,7 @@ If your install was created before the bundled PostgreSQL moved to version 18, i
   </Step>
 </Steps>
 
-To pin a specific version instead of tracking `latest`, set `QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:<version>` in `.env`. See [Rollback](../guides/rollback) for going back to an earlier version.
+To pin a specific version, set `QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:<version>-<flavour>` in `.env`, for example `:1.2.3-slim`. The unsuffixed `:latest` and `:<version>` tags still point at the fat image but are deprecated for new installs. See [Image flavours](./image-flavours) and [Rollback](../guides/rollback).
 
 ## Stop and delete
 

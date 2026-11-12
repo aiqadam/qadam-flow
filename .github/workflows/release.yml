@@ -25,12 +25,15 @@ jobs:
   # docs/install/configuration/breaking-changes.mdx, but only because a person
   # noticed. Nothing in CI would have stopped the release otherwise.
   #
-  # WHY HERE AND NOT IN ci.yml. `:latest` — the tag every installer and every
-  # `docker pull` without a version resolves to — is published in exactly one
-  # place: the `publish` job below, on a tag push. ci.yml's `image` job pushes
-  # only `:main`, `:sha-…` and the `-main` prerelease version (`:2.0.0-main.<n>`). So a merge
-  # to `main` cannot reach a user, and the tag is the last point where a check
-  # can still stop one from doing so.
+  # WHY HERE AND NOT IN ci.yml. `:latest` — the fat-image tag any `docker pull`
+  # without a version or flavour resolves to, and the tag an install predating
+  # #807 still runs — is published in exactly one place: the `publish` job
+  # below, on a tag push. ci.yml's `image` job pushes only the per-flavour
+  # `:main-<flavour>`, `:sha-…-<flavour>` and `-main` prerelease version
+  # (`:2.0.0-main.<n>-<flavour>`), plus the unsuffixed `:main`/`:sha-…` aliases
+  # on fat for back-compat — never `:latest`. So a merge to `main` cannot reach
+  # a user, and the tag is the last point where a check can still stop one from
+  # doing so.
   #
   # WHY IT IS NOT JUST A REVIEW HABIT. The person cutting a release is often not
   # the person who wrote the breaking commit, and is reading dozens of commits
@@ -166,8 +169,9 @@ jobs:
   #
   # Packing lives in _pack-framework-packages.yml, not here, because a `v*` tag is no
   # longer the only way to reach them (#496): that tag IS the engine release — it moves the
-  # Docker `:latest` every `run.sh` install resolves to and cuts a GitHub Release — and
-  # requiring one in order to publish a `0.x` library was backwards. publish-packages.yml
+  # Docker `:slim`/`:fat` (and, for back-compat, `:latest`) tags `run.sh` and every pinned
+  # install resolve to, and cuts a GitHub Release — and requiring one in order to publish a
+  # `0.x` library was backwards. publish-packages.yml
   # calls the same workflow on `workflow_dispatch`. Read that file for what packing and
   # publishing do, why they are two jobs, and what a caller has to supply. What stays here is
   # only what is true of the TAG path.
@@ -329,11 +333,25 @@ jobs:
           NPM_PUBLISH_INTERVAL_SECONDS: '3'
         run: tools/ci/publish-packed-tarballs.sh "${{ runner.temp }}/npm-packages"
 
+  # KNOWN COUPLING (#807, reviewed, not fixed): `build` is one job with a 4-leg matrix
+  # (2 platforms × 2 flavours) and `fail-fast: false`, so a failing leg never cancels the
+  # other three — but the job's own conclusion is still a single `failure` if any leg
+  # fails. `publish` below `needs: build`, so one flavour's build failure blocks `publish`
+  # for BOTH flavours, not just the broken one, even though the other flavour's images
+  # built fine and sit in the upload-artifact cache waiting. Decoupling this for real means
+  # two separately-named jobs (`build-fat` / `build-slim`) instead of one matrixed job —
+  # GitHub Actions `needs:` resolves per job id, never per matrix leg — which was judged
+  # not worth the duplication (or the reusable-workflow indirection to avoid it) for a
+  # failure mode with cheap, well-known recovery: re-run failed jobs from the Actions UI on
+  # the same tag run, no new tag needed, and `publish` then runs for both flavours. No
+  # image is ever published half-built or mismatched by this; it only delays a healthy
+  # flavour's publish until the broken one's build is retried. Revisit if that recovery
+  # step turns out to happen often enough to be worth the split.
   build:
-    name: Build ${{ matrix.platform }}
+    name: Build ${{ matrix.platform }} (${{ matrix.flavour }})
     needs: [verify, breaking-change-gate, version-tag-gate]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: read
       packages: write
@@ -343,12 +361,24 @@ jobs:
         include:
           - platform: linux/amd64
             runner: ubuntu-latest
-            cacheScope: monolith-linux-amd64
-            artifactSuffix: linux-amd64
+            cacheScope: monolith-linux-amd64-fat
+            artifactSuffix: linux-amd64-fat
+            flavour: fat
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
-            cacheScope: monolith-linux-arm64
-            artifactSuffix: linux-arm64
+            cacheScope: monolith-linux-arm64-fat
+            artifactSuffix: linux-arm64-fat
+            flavour: fat
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            cacheScope: monolith-linux-amd64-slim
+            artifactSuffix: linux-amd64-slim
+            flavour: slim
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            cacheScope: monolith-linux-arm64-slim
+            artifactSuffix: linux-arm64-slim
+            flavour: slim
     steps:
       - uses: actions/checkout@v7
 
@@ -412,6 +442,7 @@ jobs:
             TURBO_TEAM=${{ env.TURBO_TEAM }}
             COMMIT_SHA=${{ github.sha }}
             BUILD_TIMESTAMP=${{ steps.build_meta.outputs.timestamp }}
+            QADAM_FLAVOUR=${{ matrix.flavour }}
           outputs: type=image,name=ghcr.io/aiqadam/qadam-flow,push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest
@@ -429,19 +460,31 @@ jobs:
           retention-days: 1
 
   publish:
-    name: Push manifest & GitHub Release
+    name: Push ${{ matrix.flavour }} manifest
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # `contents: write` moved with GitHub Release creation to the `release` job below when this job
+    # was split into a fat/slim matrix (#807) — this job only checks out the repo (for the smoke
+    # step) and pushes to GHCR now, neither of which needs it.
     permissions:
-      contents: write
+      contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        flavour: [fat, slim]
     steps:
-      - name: Download digests
+      # Needed for the "Smoke the released manifest" step below, which runs
+      # tools/ci/check-image-flavour.sh from the checkout — this job otherwise never touches the
+      # repo (same gap ci.yml's image_publish had, #807).
+      - uses: actions/checkout@v7
+
+      - name: Download ${{ matrix.flavour }} digests
         uses: actions/download-artifact@v4
         with:
           path: /tmp/digests
-          pattern: digests-*
+          pattern: digests-*-${{ matrix.flavour }}
           merge-multiple: true
 
       - uses: docker/setup-buildx-action@v3
@@ -453,14 +496,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Tag scheme (ADR-0001 "The platform version"): the exact version (`:2.0.0`, the tag without
-      # its `v`, which version-tag-gate keeps equal to the version the image reports) plus the
-      # moving `:2.0` and `:latest`, the moving ones only for a release, never a prerelease tag.
-      # Builds of `main` get `:<next>-main.<n>`, `:main` and `:sha-<short>` from ci.yml instead.
-      #
-      # Flavours (#807, ADR-0003) are not built yet. When they are, every tag here takes a
-      # `-<flavour>` suffix (`:2.0.0-fat`, `:2.0.0-slim`), and `:latest` stays an alias of the fat
-      # image.
+      - name: Compute the release coordinates
+        id: release
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          base="${version%%-*}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "major_minor=${base%.*}" >> "$GITHUB_OUTPUT"
+          if [[ "$version" == *-* ]]; then
+            echo "stable=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "stable=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Tag scheme (ADR-0001 "The platform version"): the exact version with its flavour suffix
+      # (`:2.0.0-fat`, `:2.0.0-slim`) plus the moving `:2.0`/`:latest` (fat only) and `:fat`/`:slim`,
+      # the moving ones only for a release, never a prerelease tag. The unsuffixed exact tags stay
+      # on the fat image for installs and scripts that predate flavours; `:latest` is also fat.
+      # Builds of `main` get `:<next>-main.<n>-<flavour>`, `:main-<flavour>` and `:sha-<short>-<flavour>`
+      # from ci.yml instead.
       - name: Compute image tags
         id: meta
         uses: docker/metadata-action@v5
@@ -469,9 +523,12 @@ jobs:
           flavor: |
             latest=false
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(github.ref_name, '-') }}
-            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+            type=raw,value=${{ steps.release.outputs.version }}-${{ matrix.flavour }},priority=1000
+            type=raw,value=${{ steps.release.outputs.major_minor }}-${{ matrix.flavour }},enable=${{ steps.release.outputs.stable == 'true' }}
+            type=raw,value=${{ matrix.flavour }},enable=${{ steps.release.outputs.stable == 'true' }}
+            type=raw,value=latest,enable=${{ matrix.flavour == 'fat' && steps.release.outputs.stable == 'true' }}
+            type=raw,value=${{ steps.release.outputs.version }},enable=${{ matrix.flavour == 'fat' }}
+            type=raw,value=${{ steps.release.outputs.major_minor }},enable=${{ matrix.flavour == 'fat' && steps.release.outputs.stable == 'true' }}
 
       - name: Create multi-arch manifest and push
         working-directory: /tmp/digests
@@ -481,22 +538,75 @@ jobs:
             $(printf 'ghcr.io/aiqadam/qadam-flow@sha256:%s ' *)
 
       - name: Inspect manifest
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          FLAVOUR: ${{ matrix.flavour }}
         run: |
           docker buildx imagetools inspect \
-            ghcr.io/aiqadam/qadam-flow:${{ steps.meta.outputs.version }}
+            "ghcr.io/aiqadam/qadam-flow:${VERSION}-${FLAVOUR}"
+
+      # The tagged release images are what run.sh and every operator actually pull — ci.yml's
+      # `image`/`image_publish` jobs smoke-check `main` builds, but nothing here did the same for a
+      # real release until this step (#807): a flavour-composition bug could ship undetected in a
+      # tagged release even though CI had already caught it on `main`.
+      - name: Smoke the released ${{ matrix.flavour }} manifest
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          FLAVOUR: ${{ matrix.flavour }}
+        run: |
+          tools/ci/check-image-flavour.sh \
+            "ghcr.io/aiqadam/qadam-flow:${VERSION}-${FLAVOUR}" \
+            "${FLAVOUR}"
+
+  # Split from `publish` (reviewed, #807): `publish` is a 2-leg matrix (`fat`, `slim`) with
+  # `fail-fast: false`, so one flavour can fail while the other's manifest push succeeds. A GitHub
+  # Release step inside that matrix, gated `if: matrix.flavour == 'fat'`, would create the release
+  # the moment the fat leg finishes regardless of whether slim's own leg had failed — the release
+  # body unconditionally names both images and hands out a `docker pull ...-slim` command that would
+  # 404. Needing the whole `publish` job here (its default implicit success() checks every matrix
+  # leg) means the release is only created once both flavours are actually live, and never created
+  # — rather than created with a false claim — if either one is not.
+  release:
+    name: Create GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Compute the release coordinates
+        id: release
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          if [[ "$version" == *-* ]]; then
+            echo "stable=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "stable=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ steps.release.outputs.stable == 'false' }}
           body: |
-            Docker image: `ghcr.io/aiqadam/qadam-flow:${{ steps.meta.outputs.version }}`
+            Docker images: `ghcr.io/aiqadam/qadam-flow:${{ steps.release.outputs.version }}-fat` and
+            `ghcr.io/aiqadam/qadam-flow:${{ steps.release.outputs.version }}-slim`.
+
+            `:slim` is what the installer uses and ships the 27 core qadams; `:fat` also bundles every
+            community qadam. `:latest` remains an alias of `:fat`.
 
             Supported platforms: `linux/amd64`, `linux/arm64`.
 
             ## Install
 
             ```bash
-            docker pull ghcr.io/aiqadam/qadam-flow:${{ steps.meta.outputs.version }}
+            curl -fsSL https://flow.aiqadam.org/run.sh | sh
+            ```
+
+            Or pull an image directly:
+
+            ```bash
+            docker pull ghcr.io/aiqadam/qadam-flow:${{ steps.release.outputs.version }}-slim
             ```

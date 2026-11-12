@@ -163,7 +163,8 @@
                   "pages": [
                      "install/overview",
                      "install/options/docker",
-                     "install/options/docker-compose"
+                     "install/options/docker-compose",
+                     "install/options/image-flavours"
                   ]
                },
                {

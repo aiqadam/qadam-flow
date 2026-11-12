@@ -4,12 +4,12 @@
 ADR-0003's catalogue (#778): static JSON describing **every released version of every official
 qadam**, each with the integrity of the artifact that was released and the version's own
 `metadata.json` from #804. It gives an instance metadata for versions its image does not ship, which
-#806 (fetch, merged — PR #969), #807 (`:slim` carries a snapshot) and #808 (the unavailable-version
-fallback's props check, merged — PR #882) read already. Published as static files on GitHub Pages
-under `https://flow.aiqadam.org/catalog/v1/`,
+#806 (fetch, merged — PR #969) and #808 (the unavailable-version fallback's props check, merged —
+PR #882) read already. Published as static files on GitHub Pages under
+`https://flow.aiqadam.org/catalog/v1/`,
 appended to by releases, never rewritten. Where the API reads it is configurable, for mirroring
-(`AP_QADAM_VERSION_CATALOGUE_URL`) and for a local copy (`AP_QADAM_VERSION_CATALOGUE_DIRECTORY`, which
-wins over the URL — the knob a `:slim` snapshot in #807 will use).
+(`AP_QADAM_VERSION_CATALOGUE_URL`) and for a local copy (`AP_QADAM_VERSION_CATALOGUE_DIRECTORY`,
+which wins over the URL — for an air-gapped mirror).
 
 **Format and reader done; hosting not done.** The format, the release-time writer and the API
 reader exist, with tests (#830). Two consumers now call the reader at run time: flow export's
@@ -19,7 +19,17 @@ props-compatibility check a caret-range pin move needs). Both read through the s
 source (the published URL by default) and treat an unreadable catalogue as *unknown*, never as a reason to act — the fail-closed
 design ADR-0003 asks for. What is still missing is the other half: **no release workflow calls the
 writer, and nothing is published at the default URL**, so on a real instance both consumers read a
-404 today and every release-era pin is "unknown" (stays put). See
+404 today and every release-era pin is "unknown" (stays put). #807 (images/registry at install)
+deliberately does **not** bake a catalogue snapshot into either image, despite "carries a snapshot"
+being in that issue's original scope: the only way to produce one inside a Docker build — with no
+release step anywhere that first checks out the already-published catalogue — is from scratch, and
+a from-scratch snapshot can only ever hold this tree's current version of each qadam, never "every
+released version". `qadamPinFallbackSeams`'s `readPinMetadata` (below) treats an older pinned
+version that is merely absent from a catalogue with zero skipped entries as proof the version was
+"never published" — exactly the wrong call against such a snapshot, for any qadam with more than one
+released version. #807's own issue thread said as much: "Seed only after #851 lands (or ships in the
+same change)" — #851's snapshot-plan computation exists but, per `.agents/rules/versioning.md`, "the
+image does not apply it yet", so that gate was not met. See
 [`docs/research/778-qadam-version-catalogue-status.md`](../../docs/research/778-qadam-version-catalogue-status.md)
 for the full picture of what else is, and is not, safe to build before that lands.
 
@@ -27,6 +37,22 @@ The ticket's original options (persist each bundled version on API boot; extract
 registry artifact) are replaced by ADR-0003 (maintainer comment on #778, 2026-10-08): the catalogue
 plus each stored version's `metadata.json` (#805) are the source of truth, and the metadata is the
 artifact's own (#804), never re-derived.
+
+**What this means for `:slim` today.** `list()` (below, "the builder's 'add a step' picker") does
+not read the catalogue at all — it never has, with or without a snapshot baked into an image. So a
+published catalogue would not by itself make a never-before-used community qadam appear in a slim
+instance's builder; `list()` would need its own change to consult it, which is not this file's
+"hosting not done" gap and not #807's scope. Until then, slim's builder offers only the core set
+plus whatever community qadam a flow has already pinned (`registry()` already merges every stored
+release — see the "`list()` 'latest'" bullet below for the split). This rhymes with, but is
+narrower than, the "Harder / risks" line in ADR-0003 ("slim instances depend on the registry and
+the catalogue host for anything not yet in their store") — **not the same risk**: that line, and
+the ADR's own "Catalogue" decision ("slim images carry a snapshot"), describe a slim instance that
+*has* a catalogue snapshot still depending on reachability for anything not yet fetched. It does
+not say the builder's own picker stays blind to the catalogue even when one is reachable — `list()`
+never having read the catalogue, with or without a snapshot, is a fact about this codebase the ADR
+did not weigh, not a risk it already accepted: a fresh slim builder offers ~31 qadams, not 238.
+`docs/install/options/image-flavours.mdx` states the actual limitation plainly.
 
 ## Key Files
 - `packages/server/api/src/app/qadams/catalogue/qadam-version-catalogue-format.ts` — the format, shared by writer and reader: layout, zod schemas (lenient for readers, strict for the writer), `integrityOf`, deterministic `serializeIndex`, `QADAM_VERSION_CATALOGUE_DEFAULT_URL`, size bounds
@@ -130,8 +156,9 @@ npm signature check is mandatory for them (ADR-0003 "Fetching").
   `append` into `catalog/v1/` → `verify` → commit and push. Two concurrent releases are serialised by
   the push (a rejected push re-checks-out and re-runs; the writer is idempotent). Pages caches for
   10 minutes, so a new version is visible within that.
-- **`:slim` snapshot (#807).** The image copies a `catalog/v1/` tree in and the API reads it with the
-  `directory` source.
+- **Image snapshot — deliberately not built (#807).** See the Summary above for why a from-scratch,
+  build-time-only snapshot is unsafe before a release step publishes the real catalogue. Neither
+  flavour sets `AP_QADAM_VERSION_CATALOGUE_DIRECTORY`.
 - **Mirroring.** Copy the whole tree; any static server works. The API reads the published URL by
   default; `AP_QADAM_VERSION_CATALOGUE_URL` points it at a mirror and
   `AP_QADAM_VERSION_CATALOGUE_DIRECTORY` at a local copy (which takes precedence and makes no
@@ -193,4 +220,5 @@ npm signature check is mandatory for them (ADR-0003 "Fetching").
   `qadamVersionCatalogue`): "catalogue" alone already means the list of qadams the builder shows
   (`fetchLatestQadams`, the bundled manifest's comments).
 - **Catalogue entry** — one `name@version` in `index.json`.
-- **Catalogue snapshot** — a copy of `catalog/v1/` inside an image (#807).
+- **Catalogue snapshot** — a copy of `catalog/v1/` inside an image. Deliberately not built by
+  #807 — see the Summary.

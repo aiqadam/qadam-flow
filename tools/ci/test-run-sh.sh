@@ -1035,6 +1035,496 @@ else
   fail_case 'sandboxed: no on a hand-managed COMPOSE_FILE must warn and leave it' "$(cat "$custom_revoke_work/.env") / $(cat "$custom_revoke_work/.stderr")"
 fi
 
+echo "== image flavours and the qadam registry (#807) =="
+
+# A fresh install gets the slim image and the public registry written into .env.
+new_work="$tmp/image-new"
+mkdir -p "$new_work"
+"$sut" -c '
+  unset QADAM_FLOW_IMAGE QADAM_REGISTRY_URL QADAM_REGISTRY_TOKEN
+  . "$1"
+  cd "$2" || exit 1
+  generate_env
+  configure_image
+  configure_registry
+' _ "$runsh" "$new_work" >"$new_work/.stdout" 2>"$new_work/.stderr"
+if grep -qxF 'QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:slim' "$new_work/.env" \
+  && grep -qxF 'AP_QADAM_REGISTRY_URL=https://registry.npmjs.org' "$new_work/.env"; then
+  pass=$((pass + 1))
+else
+  fail_case 'new install: slim image and default registry in .env' "$(cat "$new_work/.env")"
+fi
+if grep -q '^AP_QADAM_REGISTRY_TOKEN=' "$new_work/.env"; then
+  fail_case 'new install: no token line without QADAM_REGISTRY_TOKEN' "$(cat "$new_work/.env")"
+else
+  pass=$((pass + 1))
+fi
+
+# An existing install keeps its pinned image.
+keep_work="$tmp/image-keep"
+mkdir -p "$keep_work"
+printf 'QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:latest\n' > "$keep_work/.env"
+"$sut" -c '
+  unset QADAM_FLOW_IMAGE
+  . "$1"
+  cd "$2" || exit 1
+  generate_env
+  configure_image
+  printf "EFFECTIVE_IMAGE=%s\n" "$QADAM_FLOW_IMAGE"
+' _ "$runsh" "$keep_work" >"$keep_work/.stdout" 2>"$keep_work/.stderr"
+if grep -qxF 'QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:latest' "$keep_work/.env" \
+  && grep -qF 'existing install uses ghcr.io/aiqadam/qadam-flow:latest' "$keep_work/.stdout"; then
+  pass=$((pass + 1))
+else
+  fail_case 'existing install keeps its pinned image' "$(cat "$keep_work/.env") / $(cat "$keep_work/.stdout")"
+fi
+
+# An install predating #807 has no image line; compose's own default is the fat `:latest`.
+legacy_work="$tmp/image-legacy"
+mkdir -p "$legacy_work"
+printf 'AP_ENVIRONMENT=prod\n' > "$legacy_work/.env"
+"$sut" -c '
+  unset QADAM_FLOW_IMAGE
+  . "$1"
+  cd "$2" || exit 1
+  generate_env
+  configure_image
+  printf "EFFECTIVE_IMAGE=%s\n" "$QADAM_FLOW_IMAGE"
+' _ "$runsh" "$legacy_work" >"$legacy_work/.stdout" 2>"$legacy_work/.stderr"
+if grep -qF 'EFFECTIVE_IMAGE=ghcr.io/aiqadam/qadam-flow:latest' "$legacy_work/.stdout" \
+  && ! grep -q '^QADAM_FLOW_IMAGE=' "$legacy_work/.env"; then
+  pass=$((pass + 1))
+else
+  fail_case 'legacy install keeps compose default latest' "$(cat "$legacy_work/.stdout") / $(cat "$legacy_work/.env")"
+fi
+
+# An explicit image overrides an existing one and is written back.
+explicit_work="$tmp/image-explicit"
+mkdir -p "$explicit_work"
+printf 'QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:latest\n' > "$explicit_work/.env"
+QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:slim "$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  generate_env
+  configure_image
+' _ "$runsh" "$explicit_work" >"$explicit_work/.stdout" 2>"$explicit_work/.stderr"
+if grep -qxF 'QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:slim' "$explicit_work/.env"; then
+  pass=$((pass + 1))
+else
+  fail_case 'explicit image overrides and is written back' "$(cat "$explicit_work/.env")"
+fi
+
+# image_is_slim understands the tags CI publishes.
+"$sut" -c '. "$1"; image_is_slim "$2"' _ "$runsh" 'ghcr.io/aiqadam/qadam-flow:slim' && slim_tag=yes || slim_tag=no
+"$sut" -c '. "$1"; image_is_slim "$2"' _ "$runsh" 'ghcr.io/aiqadam/qadam-flow:1.2.3-slim' && slim_versioned=yes || slim_versioned=no
+"$sut" -c '. "$1"; image_is_slim "$2"' _ "$runsh" 'ghcr.io/aiqadam/qadam-flow:fat' && fat_tag=yes || fat_tag=no
+"$sut" -c '. "$1"; image_is_slim "$2"' _ "$runsh" 'ghcr.io/aiqadam/qadam-flow:latest' && latest_tag=yes || latest_tag=no
+"$sut" -c '. "$1"; image_is_slim "$2"' _ "$runsh" 'ghcr.io/aiqadam/qadam-flow@sha256:abc' && digest_tag=yes || digest_tag=no
+if [ "$slim_tag" = yes ] && [ "$slim_versioned" = yes ] && [ "$fat_tag" = no ] && [ "$latest_tag" = no ] && [ "$digest_tag" = no ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'image_is_slim recognises slim tags only' "slim=$slim_tag versioned=$slim_versioned fat=$fat_tag latest=$latest_tag digest=$digest_tag"
+fi
+
+# Overrides are written with the AP_ prefix the server reads; without one, .env wins.
+registry_work="$tmp/registry-override"
+mkdir -p "$registry_work"
+printf 'AP_QADAM_REGISTRY_URL=https://old.example.com\nAP_QADAM_REGISTRY_TOKEN=old-token\n' > "$registry_work/.env"
+QADAM_REGISTRY_URL=https://registry.example.com QADAM_REGISTRY_TOKEN=new-token "$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  generate_env
+  configure_registry
+' _ "$runsh" "$registry_work" >"$registry_work/.stdout" 2>"$registry_work/.stderr"
+if grep -qxF 'AP_QADAM_REGISTRY_URL=https://registry.example.com' "$registry_work/.env" \
+  && grep -qxF 'AP_QADAM_REGISTRY_TOKEN=new-token' "$registry_work/.env"; then
+  pass=$((pass + 1))
+else
+  fail_case 'registry overrides are written as AP_ values' "$(cat "$registry_work/.env")"
+fi
+if grep -qF 'new-token' "$registry_work/.stdout" || grep -qF 'new-token' "$registry_work/.stderr"; then
+  fail_case 'the registry token is never printed' "$(cat "$registry_work/.stdout") / $(cat "$registry_work/.stderr")"
+else
+  pass=$((pass + 1))
+fi
+
+# No override: an existing token survives, and an explicit empty one removes it.
+preserve_work="$tmp/registry-preserve"
+mkdir -p "$preserve_work"
+printf 'AP_QADAM_REGISTRY_TOKEN=kept-token\n' > "$preserve_work/.env"
+"$sut" -c '
+  unset QADAM_REGISTRY_URL QADAM_REGISTRY_TOKEN
+  . "$1"
+  cd "$2" || exit 1
+  generate_env
+  configure_registry
+' _ "$runsh" "$preserve_work" >/dev/null 2>&1
+remove_work="$tmp/registry-remove"
+mkdir -p "$remove_work"
+printf 'AP_QADAM_REGISTRY_TOKEN=kept-token\n' > "$remove_work/.env"
+QADAM_REGISTRY_TOKEN= "$sut" -c '
+  unset QADAM_REGISTRY_URL
+  . "$1"
+  cd "$2" || exit 1
+  generate_env
+  configure_registry
+' _ "$runsh" "$remove_work" >/dev/null 2>&1
+if grep -qxF 'AP_QADAM_REGISTRY_TOKEN=kept-token' "$preserve_work/.env" \
+  && ! grep -q '^AP_QADAM_REGISTRY_TOKEN=' "$remove_work/.env"; then
+  pass=$((pass + 1))
+else
+  fail_case 'registry token is preserved unless explicitly cleared' "$(cat "$preserve_work/.env") / $(cat "$remove_work/.env")"
+fi
+
+# A malformed registry URL aborts before writing anything.
+bad_url_work="$tmp/registry-bad-url"
+mkdir -p "$bad_url_work"
+printf 'AP_QADAM_REGISTRY_TOKEN=keep\n' > "$bad_url_work/.env"
+if QADAM_REGISTRY_URL=registry.example.com "$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  configure_registry
+' _ "$runsh" "$bad_url_work" >/dev/null 2>"$bad_url_work/.stderr"; then
+  fail_case 'a registry URL without a scheme must abort'
+else
+  if grep -qF 'must start with http:// or https://' "$bad_url_work/.stderr"; then
+    pass=$((pass + 1))
+  else
+    fail_case 'bad registry URL reports the shape it wants' "$(cat "$bad_url_work/.stderr")"
+  fi
+fi
+
+# A malformed registry URL already sitting in .env (no override) must abort too, not only an
+# explicitly-passed one — configure_registry validates the value it ends up adopting, not only the
+# one main() saw before generate_env ran.
+bad_adopted_work="$tmp/registry-bad-adopted-url"
+mkdir -p "$bad_adopted_work"
+printf 'AP_QADAM_REGISTRY_URL=registry.example.com\n' > "$bad_adopted_work/.env"
+if "$sut" -c '
+  unset QADAM_REGISTRY_URL
+  . "$1"
+  cd "$2" || exit 1
+  configure_registry
+' _ "$runsh" "$bad_adopted_work" >/dev/null 2>"$bad_adopted_work/.stderr"; then
+  fail_case 'a malformed URL adopted from .env must abort'
+else
+  if grep -qF 'must start with http:// or https://' "$bad_adopted_work/.stderr"; then
+    pass=$((pass + 1))
+  else
+    fail_case 'adopted bad registry URL reports the shape it wants' "$(cat "$bad_adopted_work/.stderr")"
+  fi
+fi
+
+# A token containing '$' must abort before docker compose ever starts — compose's own env_file
+# interpolation would silently alter it at container start (verified against a live
+# `docker compose run`, #807).
+dollar_token_work="$tmp/registry-dollar-token"
+mkdir -p "$dollar_token_work"
+if QADAM_REGISTRY_URL=https://registry.example.com QADAM_REGISTRY_TOKEN='tok$en' "$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  configure_registry
+' _ "$runsh" "$dollar_token_work" >/dev/null 2>"$dollar_token_work/.stderr"; then
+  fail_case 'a registry token containing $ must abort'
+else
+  if grep -qF "QADAM_REGISTRY_TOKEN must not contain" "$dollar_token_work/.stderr"; then
+    pass=$((pass + 1))
+  else
+    fail_case 'bad registry token reports the shape it wants' "$(cat "$dollar_token_work/.stderr")"
+  fi
+fi
+
+# set_env_value must round-trip a value containing sed's own delimiter and replacement-escape
+# characters (&, |, \) — the first real caller to pass an arbitrary secret through it (the registry
+# token), where every earlier caller only ever passed an installer-generated value.
+special_chars_work="$tmp/set-env-value-special-chars"
+mkdir -p "$special_chars_work"
+printf 'AP_QADAM_REGISTRY_TOKEN=old\n' > "$special_chars_work/.env"
+"$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  set_env_value AP_QADAM_REGISTRY_TOKEN "tok&en|with\\backslash"
+' _ "$runsh" "$special_chars_work" >/dev/null 2>"$special_chars_work/.stderr"
+if grep -qxF 'AP_QADAM_REGISTRY_TOKEN=tok&en|with\backslash' "$special_chars_work/.env"; then
+  pass=$((pass + 1))
+else
+  fail_case 'set_env_value round-trips &, | and \ unchanged' "$(cat "$special_chars_work/.env")"
+fi
+
+# Reachability accepts any HTTP response and sends the token on stdin, not argv. The stub records the
+# URL and the config it received.
+curlbin="$tmp/registry-curlbin"
+mkdir -p "$curlbin"
+cat > "$curlbin/curl" <<'CURL'
+#!/bin/sh
+: "${CURL_LOG:?}"
+printf '%s\n' "$*" >> "$CURL_LOG"
+for arg in "$@"; do
+  if [ "$arg" = -K ]; then
+    cat > "${CURL_STDIN_LOG:?}"
+  fi
+done
+exit "${CURL_EXIT:-0}"
+CURL
+chmod +x "$curlbin/curl"
+
+reach_work="$tmp/registry-reach"
+mkdir -p "$reach_work"
+if PATH="$curlbin:$PATH" CURL_LOG="$reach_work/.args" CURL_STDIN_LOG="$reach_work/.stdin" CURL_EXIT=0 \
+  QADAM_REGISTRY_URL=https://registry.example.com/ QADAM_REGISTRY_TOKEN=secret-token "$sut" -c '
+    . "$1"
+    cd "$2" || exit 1
+    registry_reachable
+  ' _ "$runsh" "$reach_work" >/dev/null 2>&1; then
+  if grep -qF 'url = "https://registry.example.com/-/ping"' "$reach_work/.stdin" \
+    && grep -qF 'Authorization: Bearer secret-token' "$reach_work/.stdin" \
+    && ! grep -qF 'secret-token' "$reach_work/.args" \
+    && ! grep -qF 'registry.example.com' "$reach_work/.args"; then
+    pass=$((pass + 1))
+  else
+    fail_case 'reachability probes /-/ping with the URL and token off argv' "$(cat "$reach_work/.args") / $(cat "$reach_work/.stdin" 2>/dev/null)"
+  fi
+else
+  fail_case 'reachability accepts a successful probe' 'registry_reachable returned non-zero'
+fi
+
+# A token containing curl config's own special characters (", \) must still reach curl unchanged —
+# registry_reachable's escaping (run.sh: sed 's/\\/\\\\/g; s/"/\\"/g') exists exactly for this case.
+reach_special="$tmp/registry-reach-special"
+mkdir -p "$reach_special"
+if PATH="$curlbin:$PATH" CURL_LOG="$reach_special/.args" CURL_STDIN_LOG="$reach_special/.stdin" CURL_EXIT=0 \
+  QADAM_REGISTRY_URL=https://registry.example.com/ QADAM_REGISTRY_TOKEN='tok"en\with' "$sut" -c '
+    . "$1"
+    cd "$2" || exit 1
+    registry_reachable
+  ' _ "$runsh" "$reach_special" >/dev/null 2>&1; then
+  if grep -qF 'header = "Authorization: Bearer tok\"en\\with"' "$reach_special/.stdin" \
+    && ! grep -qF 'tok"en\with' "$reach_special/.args"; then
+    pass=$((pass + 1))
+  else
+    fail_case 'reachability escapes " and \ in the token for curl -K' "$(cat "$reach_special/.stdin" 2>/dev/null)"
+  fi
+else
+  fail_case 'reachability accepts a successful probe with a special-character token' 'registry_reachable returned non-zero'
+fi
+
+reach_fail="$tmp/registry-unreachable"
+mkdir -p "$reach_fail"
+PATH="$curlbin:$PATH" CURL_LOG="$reach_fail/.args" CURL_STDIN_LOG="$reach_fail/.stdin" CURL_EXIT=7 \
+  QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:slim QADAM_REGISTRY_URL=https://registry.example.com "$sut" -c '
+    . "$1"
+    cd "$2" || exit 1
+    check_qadam_registry
+  ' _ "$runsh" "$reach_fail" >"$reach_fail/.stdout" 2>"$reach_fail/.stderr"
+if grep -qF 'use the fat image' "$reach_fail/.stderr" \
+  && grep -qF 'QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:fat' "$reach_fail/.stderr"; then
+  pass=$((pass + 1))
+else
+  fail_case 'an unreachable registry warns and suggests the fat image' "$(cat "$reach_fail/.stderr")"
+fi
+
+# The fat image does not need the registry, so it must not probe.
+fat_reach="$tmp/registry-fat"
+mkdir -p "$fat_reach"
+PATH="$curlbin:$PATH" CURL_LOG="$fat_reach/.args" CURL_STDIN_LOG="$fat_reach/.stdin" CURL_EXIT=7 \
+  QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:fat "$sut" -c '
+    . "$1"
+    cd "$2" || exit 1
+    check_qadam_registry
+  ' _ "$runsh" "$fat_reach" >/dev/null 2>"$fat_reach/.stderr"
+if [ ! -e "$fat_reach/.args" ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'the fat image does not probe the registry' "$(cat "$fat_reach/.args")"
+fi
+
+# Official @aiqadam/* community qadams always fetch from npmjs, whatever QADAM_REGISTRY_URL says —
+# the default registry case must not probe twice.
+default_reach="$tmp/registry-default"
+mkdir -p "$default_reach"
+PATH="$curlbin:$PATH" CURL_LOG="$default_reach/.args" CURL_STDIN_LOG="$default_reach/.stdin" CURL_EXIT=0 \
+  QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:slim "$sut" -c '
+    . "$1"
+    cd "$2" || exit 1
+    check_qadam_registry
+  ' _ "$runsh" "$default_reach" >/dev/null 2>"$default_reach/.stderr"
+if [ "$(wc -l < "$default_reach/.args")" = 1 ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'the default (npmjs) registry is probed exactly once' "$(cat "$default_reach/.args")"
+fi
+
+# A stub that answers per-host: the custom registry succeeds, npmjs does not — the installer must
+# still warn, specifically about npmjs, since official qadams fetch from there regardless of
+# QADAM_REGISTRY_URL.
+perhost_curlbin="$tmp/registry-perhost-curlbin"
+mkdir -p "$perhost_curlbin"
+cat > "$perhost_curlbin/curl" <<'CURL'
+#!/bin/sh
+: "${CURL_LOG:?}"
+printf '%s\n' "$*" >> "$CURL_LOG"
+# The URL now travels on stdin (`-K -`), not argv, so decide which host this probe targets by
+# reading the config curl would have read.
+stdin_content=$(cat)
+case "$stdin_content" in
+  *registry.npmjs.org*) exit "${NPMJS_EXIT:-0}" ;;
+esac
+exit "${CUSTOM_EXIT:-0}"
+CURL
+chmod +x "$perhost_curlbin/curl"
+
+custom_ok_npmjs_down="$tmp/registry-custom-ok-npmjs-down"
+mkdir -p "$custom_ok_npmjs_down"
+PATH="$perhost_curlbin:$PATH" CURL_LOG="$custom_ok_npmjs_down/.args" CUSTOM_EXIT=0 NPMJS_EXIT=7 \
+  QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:slim QADAM_REGISTRY_URL=https://registry.example.com "$sut" -c '
+    . "$1"
+    cd "$2" || exit 1
+    check_qadam_registry
+  ' _ "$runsh" "$custom_ok_npmjs_down" >/dev/null 2>"$custom_ok_npmjs_down/.stderr"
+if grep -qF 'cannot reach https://registry.npmjs.org' "$custom_ok_npmjs_down/.stderr" \
+  && grep -qF 'use the fat image' "$custom_ok_npmjs_down/.stderr" \
+  && [ "$(wc -l < "$custom_ok_npmjs_down/.args")" = 2 ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'a reachable custom registry still warns when npmjs itself is unreachable' "$(cat "$custom_ok_npmjs_down/.stderr")"
+fi
+
+# The mirror image: the custom registry is down, npmjs is up — warn about the custom registry.
+custom_down_npmjs_ok="$tmp/registry-custom-down-npmjs-ok"
+mkdir -p "$custom_down_npmjs_ok"
+PATH="$perhost_curlbin:$PATH" CURL_LOG="$custom_down_npmjs_ok/.args" CUSTOM_EXIT=7 NPMJS_EXIT=0 \
+  QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:slim QADAM_REGISTRY_URL=https://registry.example.com "$sut" -c '
+    . "$1"
+    cd "$2" || exit 1
+    check_qadam_registry
+  ' _ "$runsh" "$custom_down_npmjs_ok" >/dev/null 2>"$custom_down_npmjs_ok/.stderr"
+if grep -qF 'cannot reach the qadam registry at https://registry.example.com' "$custom_down_npmjs_ok/.stderr" \
+  && grep -qF 'use the fat image' "$custom_down_npmjs_ok/.stderr"; then
+  pass=$((pass + 1))
+else
+  fail_case 'an unreachable custom registry warns even when npmjs itself is fine' "$(cat "$custom_down_npmjs_ok/.stderr")"
+fi
+
+# A URL with embedded credentials must never reach log/warn/die output in cleartext (#807) — only
+# the host after the `user:pass@` part.
+redact_work="$tmp/registry-redact"
+mkdir -p "$redact_work"
+QADAM_REGISTRY_URL='https://deploy:s3cr3t@registry.example.com/npm' "$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  configure_registry
+' _ "$runsh" "$redact_work" >"$redact_work/.stdout" 2>"$redact_work/.stderr"
+if grep -qF 's3cr3t' "$redact_work/.stdout" "$redact_work/.stderr"; then
+  fail_case 'URL credentials never reach log output' "$(cat "$redact_work/.stdout") / $(cat "$redact_work/.stderr")"
+else
+  pass=$((pass + 1))
+fi
+if grep -qF 'using qadam registry https://registry.example.com/npm' "$redact_work/.stdout"; then
+  pass=$((pass + 1))
+else
+  fail_case 'the log message keeps the host, minus credentials' "$(cat "$redact_work/.stdout")"
+fi
+
+# An unencoded `@` inside the password itself must not leave part of the password visible — cut at
+# the LAST `@` in the authority, not the first.
+redact_at_in_password="$("$sut" -c '. "$1"; redact_registry_url "$2"' _ "$runsh" 'https://u:p@ss@reg.example/')"
+if [ "$redact_at_in_password" = 'https://reg.example/' ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'an unencoded @ in the password is fully redacted' "$redact_at_in_password"
+fi
+
+# An `@` that legitimately appears in the path (not the authority), such as a scoped npm package
+# name, must survive unredacted — only an `@` before the first `/` after the scheme is credentials.
+redact_at_in_path="$("$sut" -c '. "$1"; redact_registry_url "$2"' _ "$runsh" 'https://npm.pkg.github.com/@aiqadam')"
+if [ "$redact_at_in_path" = 'https://npm.pkg.github.com/@aiqadam' ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'an @ in the path (no credentials) is left alone' "$redact_at_in_path"
+fi
+
+# A plaintext registry with a token set warns that the token travels unencrypted.
+cleartext_token_work="$tmp/registry-cleartext-token"
+mkdir -p "$cleartext_token_work"
+QADAM_REGISTRY_URL=http://registry.example.com QADAM_REGISTRY_TOKEN=a-token "$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  configure_registry
+' _ "$runsh" "$cleartext_token_work" >/dev/null 2>"$cleartext_token_work/.stderr"
+if grep -qF 'will be sent unencrypted' "$cleartext_token_work/.stderr"; then
+  pass=$((pass + 1))
+else
+  fail_case 'http:// with a token warns about cleartext transmission' "$(cat "$cleartext_token_work/.stderr")"
+fi
+
+# The same plaintext registry with no token set must not warn — there is nothing to leak.
+cleartext_no_token_work="$tmp/registry-cleartext-no-token"
+mkdir -p "$cleartext_no_token_work"
+QADAM_REGISTRY_URL=http://registry.example.com QADAM_REGISTRY_TOKEN= "$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  configure_registry
+' _ "$runsh" "$cleartext_no_token_work" >/dev/null 2>"$cleartext_no_token_work/.stderr"
+if grep -qF 'will be sent unencrypted' "$cleartext_no_token_work/.stderr"; then
+  fail_case 'http:// with no token does not warn' "$(cat "$cleartext_no_token_work/.stderr")"
+else
+  pass=$((pass + 1))
+fi
+
+# Sandboxed mode plus the slim image must warn: the isolate execution modes don't read the version
+# store (#779), so a community qadam fetched into it still can't run there.
+sandboxed_slim_work="$tmp/sandboxed-slim"
+mkdir -p "$sandboxed_slim_work"
+QADAM_FLOW_SANDBOXED=yes QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:slim "$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  generate_env
+  configure_sandboxed_compose
+  configure_image
+  warn_if_sandboxed_slim
+' _ "$runsh" "$sandboxed_slim_work" >/dev/null 2>"$sandboxed_slim_work/.stderr"
+if grep -qF 'do not read the qadam version store yet' "$sandboxed_slim_work/.stderr"; then
+  pass=$((pass + 1))
+else
+  fail_case 'sandboxed mode on the slim image warns' "$(cat "$sandboxed_slim_work/.stderr")"
+fi
+
+# The same combo on the fat image must not warn — fat bundles every community qadam, so the isolate
+# modes not reading the store doesn't lose anything.
+sandboxed_fat_work="$tmp/sandboxed-fat"
+mkdir -p "$sandboxed_fat_work"
+QADAM_FLOW_SANDBOXED=yes QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:fat "$sut" -c '
+  . "$1"
+  cd "$2" || exit 1
+  generate_env
+  configure_sandboxed_compose
+  configure_image
+  warn_if_sandboxed_slim
+' _ "$runsh" "$sandboxed_fat_work" >/dev/null 2>"$sandboxed_fat_work/.stderr"
+if grep -qF 'do not read the qadam version store yet' "$sandboxed_fat_work/.stderr"; then
+  fail_case 'sandboxed mode on the fat image does not warn' "$(cat "$sandboxed_fat_work/.stderr")"
+else
+  pass=$((pass + 1))
+fi
+
+# Slim with no sandboxed mode requested must not warn either.
+slim_unsandboxed_work="$tmp/slim-unsandboxed"
+mkdir -p "$slim_unsandboxed_work"
+QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:slim "$sut" -c '
+  unset QADAM_FLOW_SANDBOXED
+  . "$1"
+  cd "$2" || exit 1
+  generate_env
+  configure_sandboxed_compose
+  configure_image
+  warn_if_sandboxed_slim
+' _ "$runsh" "$slim_unsandboxed_work" >/dev/null 2>"$slim_unsandboxed_work/.stderr"
+if grep -qF 'do not read the qadam version store yet' "$slim_unsandboxed_work/.stderr"; then
+  fail_case 'slim with no sandboxed mode does not warn' "$(cat "$slim_unsandboxed_work/.stderr")"
+else
+  pass=$((pass + 1))
+fi
+
 # Structural: the override must be resolved after generate_env (it writes COMPOSE_FILE into .env) and
 # before the stack is pulled and started, or the override would not apply to this run.
 sandboxed_line="$(line_of configure_sandboxed_compose)"
@@ -1044,6 +1534,18 @@ if [ -n "$sandboxed_line" ] && [ "$gen_line" -lt "$sandboxed_line" ] && [ "$sand
 else
   fail_case 'main(): generate_env < configure_sandboxed_compose < pull_images' \
     "gen=$gen_line sandboxed=$sandboxed_line pull=$pull_line_sandboxed"
+fi
+
+image_line="$(line_of configure_image)"
+registry_line="$(line_of configure_registry)"
+registry_check_line="$(line_of check_qadam_registry)"
+if [ -n "$image_line" ] && [ -n "$registry_line" ] && [ -n "$registry_check_line" ] \
+  && [ "$gen_line" -lt "$image_line" ] && [ "$image_line" -lt "$registry_line" ] \
+  && [ "$registry_line" -lt "$registry_check_line" ] && [ "$registry_check_line" -lt "$pull_line_sandboxed" ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'main(): generate_env < configure_image < configure_registry < check_qadam_registry < pull_images' \
+    "gen=$gen_line image=$image_line registry=$registry_line check=$registry_check_line pull=$pull_line_sandboxed"
 fi
 
 echo

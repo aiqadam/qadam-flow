@@ -1096,7 +1096,7 @@ jobs:
   # On a PR/dispatch neither leg pushes anything; arm64 here is a build-only Dockerfile check
   # (native runner, so no slower than amd64's leg — matrix legs run in parallel).
   image:
-    name: Docker Image (${{ matrix.platform }})
+    name: Docker Image (${{ matrix.platform }}, ${{ matrix.flavour }})
     needs: [changes, verify, platform-version]
     # Status-aware on purpose (#831). A bare expression is wrapped in an implicit success(), which
     # checks every upstream job, not just `needs:` — and `semver-override` (upstream via `verify` →
@@ -1108,7 +1108,7 @@ jobs:
       && needs.platform-version.result == 'success'
       && needs.changes.outputs.docs_only != 'true'
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
@@ -1118,12 +1118,24 @@ jobs:
         include:
           - platform: linux/amd64
             runner: ubuntu-latest
-            cacheScope: monolith-linux-amd64
-            artifactSuffix: linux-amd64
+            cacheScope: monolith-linux-amd64-fat
+            artifactSuffix: linux-amd64-fat
+            flavour: fat
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
-            cacheScope: monolith-linux-arm64
-            artifactSuffix: linux-arm64
+            cacheScope: monolith-linux-arm64-fat
+            artifactSuffix: linux-arm64-fat
+            flavour: fat
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            cacheScope: monolith-linux-amd64-slim
+            artifactSuffix: linux-amd64-slim
+            flavour: slim
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            cacheScope: monolith-linux-arm64-slim
+            artifactSuffix: linux-arm64-slim
+            flavour: slim
     steps:
       - uses: actions/checkout@v7
 
@@ -1159,9 +1171,10 @@ jobs:
         id: build_meta
         run: echo "timestamp=$(git show -s --format=%cI ${{ github.sha }})" >> "$GITHUB_OUTPUT"
 
-      # Tag scheme (ADR-0001): the exact version this image reports (`:2.0.0-main.1234`) plus the
-      # moving `:main` and the per-commit `:sha-<short>`. The version tag has the highest priority, so
-      # metadata-action also writes it to the `org.opencontainers.image.version` label, next to
+      # Tag scheme (ADR-0001): the exact version this image reports (`:2.0.0-main.1234-<flavour>`)
+      # plus the moving `:main-<flavour>` and the per-commit `:sha-<short>-<flavour>`. The version tag
+      # has the highest priority, so metadata-action also writes it to the
+      # `org.opencontainers.image.version` label, next to
       # `org.opencontainers.image.revision` (the commit) — the `<n>` -> commit record ADR-0004 asks
       # for. Two explicit labels say the same pair outright (`org.aiqadam.main-build.counter` /
       # `.commit`, #851), so reading `<n>` does not depend on parsing a version or on which tag
@@ -1169,14 +1182,16 @@ jobs:
       # need to match `image_publish`'s list. That list, which is what actually gets pushed, must
       # match the tags here.
       #
-      # Flavours (#807, ADR-0003) are not built yet. When they are, each tag here takes a
-      # `-<flavour>` suffix (`:<version>-<flavour>`, `:main-<flavour>`), e.g. via metadata-action's
-      # `flavor: suffix=-<flavour>` on a matrix over flavours.
+      # Flavours (#807, ADR-0003) suffix every tag here: `:<version>-<flavour>`,
+      # `:main-<flavour>` and `:sha-<short>-<flavour>`. `image_publish` adds the unsuffixed
+      # `:main` / `:sha-<short>` aliases on the fat image for consumers that predate flavours.
       - name: Compute image tags and labels
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/aiqadam/qadam-flow
+          flavor: |
+            suffix=-${{ matrix.flavour }}
           tags: |
             type=raw,value=${{ needs.platform-version.outputs.version }},priority=1000
             type=ref,event=branch
@@ -1197,6 +1212,7 @@ jobs:
           context: .
           platforms: ${{ matrix.platform }}
           push: false
+          load: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.cacheScope }}
@@ -1210,6 +1226,21 @@ jobs:
             COMMIT_SHA=${{ github.sha }}
             BUILD_TIMESTAMP=${{ steps.build_meta.outputs.timestamp }}
             PLATFORM_VERSION=${{ needs.platform-version.outputs.version }}
+            QADAM_FLAVOUR=${{ matrix.flavour }}
+
+      # `steps.meta.outputs.version` is metadata-action's own priority-resolved primary tag (the
+      # `priority=1000` line above, flavour suffix included) — read that output directly rather than
+      # assuming it is first in `steps.meta.outputs.tags`, which would silently break if a future
+      # edit reordered or added a line to the `tags:` block above.
+      - name: Smoke the built ${{ matrix.flavour }} image
+        if: github.event_name != 'push'
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          FLAVOUR: ${{ matrix.flavour }}
+        run: |
+          tools/ci/check-image-flavour.sh \
+            "ghcr.io/aiqadam/qadam-flow:${VERSION}" \
+            "${FLAVOUR}"
 
       - name: Build and push by digest (main)
         id: build
@@ -1230,6 +1261,7 @@ jobs:
             COMMIT_SHA=${{ github.sha }}
             BUILD_TIMESTAMP=${{ steps.build_meta.outputs.timestamp }}
             PLATFORM_VERSION=${{ needs.platform-version.outputs.version }}
+            QADAM_FLAVOUR=${{ matrix.flavour }}
           outputs: type=image,name=ghcr.io/aiqadam/qadam-flow,push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest
@@ -1248,15 +1280,23 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Merges the two per-arch digests `image` pushed above into the one multi-arch manifest under
-  # `:main` / `:sha-<short>` that run.sh, docker-compose.yml and `e2e` below actually pull. Split
-  # out for the same reason release.yml splits `build` from `publish`: a manifest-list push needs
-  # both platforms' digests to exist first, and a matrix job has no way to wait for its own other
-  # legs. Skipped entirely off a push event — `needs.image` then reads 'skipped' rather than
-  # 'success', which is why `e2e` below tolerates that result explicitly instead of relying on the
-  # default all-needs-succeeded gate.
+  # Merges the two per-arch digests `image` pushed above into one multi-arch manifest per flavour
+  # under `:<version>-<flavour>`, `:main-<flavour>` and `:sha-<short>-<flavour>`. The unsuffixed
+  # `:main` / `:sha-<short>` aliases are created on fat only, for consumers that predate flavours
+  # and for `e2e` below. Split out for the same reason release.yml splits `build` from `publish`: a
+  # manifest-list push needs both platforms' digests to exist first, and a matrix job has no way to
+  # wait for its own other legs. Skipped entirely off a push event — `needs.image` then reads
+  # 'skipped' rather than 'success', which is why `e2e` below tolerates that result explicitly
+  # instead of relying on the default all-needs-succeeded gate.
+  #
+  # KNOWN COUPLING (#807, reviewed, not fixed), same shape as release.yml's `build`/`publish`:
+  # `image` is one job with a 4-leg matrix and `fail-fast: false`, but its conclusion is a
+  # single `failure` if any leg fails, so one flavour's build failure blocks `image_publish`
+  # for both flavours even though the other flavour built fine. See release.yml's comment on
+  # its `build` job for the full reasoning on why this is left as-is (cheap, well-known
+  # recovery via re-running failed jobs; no image is ever published half-built).
   image_publish:
-    name: Publish multi-arch manifest
+    name: Publish multi-arch manifest (${{ matrix.flavour }})
     needs: [image, platform-version]
     # Status-aware for the same reason as `image` (#831): the implicit success() would see the
     # skipped `semver-override` upstream and skip the publish on every push to main.
@@ -1270,12 +1310,22 @@ jobs:
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        flavour: [fat, slim]
     steps:
-      - name: Download digests
+      # Needed for the "Smoke the published manifest" step below, which runs
+      # tools/ci/check-image-flavour.sh from the checkout — this job otherwise never touches the
+      # repo (#807: without it that step failed on every push to main with the script missing,
+      # after both manifests had already been pushed).
+      - uses: actions/checkout@v7
+
+      - name: Download ${{ matrix.flavour }} digests
         uses: actions/download-artifact@v4
         with:
           path: /tmp/digests
-          pattern: digests-*
+          pattern: digests-*-${{ matrix.flavour }}
           merge-multiple: true
 
       - uses: docker/setup-buildx-action@v3
@@ -1287,16 +1337,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Same list as `image` above: `:<version>`, `:main`, `:sha-<short>`.
+      - name: Compute the short commit
+        id: short
+        run: echo "sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      # Same list as `image` above, with the fat aliases `:main` / `:sha-<short>` added for
+      # backward compatibility.
       - name: Compute image tags
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/aiqadam/qadam-flow
           tags: |
-            type=raw,value=${{ needs.platform-version.outputs.version }},priority=1000
-            type=ref,event=branch
-            type=sha,format=short,prefix=sha-
+            type=raw,value=${{ needs.platform-version.outputs.version }}-${{ matrix.flavour }},priority=1000
+            type=raw,value=main-${{ matrix.flavour }}
+            type=raw,value=sha-${{ steps.short.outputs.sha }}-${{ matrix.flavour }}
+            type=raw,value=main,enable=${{ matrix.flavour == 'fat' }}
+            type=raw,value=sha-${{ steps.short.outputs.sha }},enable=${{ matrix.flavour == 'fat' }}
 
       - name: Create multi-arch manifest and push
         working-directory: /tmp/digests
@@ -1305,7 +1362,16 @@ jobs:
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf 'ghcr.io/aiqadam/qadam-flow@sha256:%s ' *)
 
-  # Required status check (#832): the always-reporting front for `image` (both matrix legs) and
+      - name: Smoke the published ${{ matrix.flavour }} manifest
+        env:
+          VERSION: ${{ needs.platform-version.outputs.version }}
+          FLAVOUR: ${{ matrix.flavour }}
+        run: |
+          tools/ci/check-image-flavour.sh \
+            "ghcr.io/aiqadam/qadam-flow:${VERSION}-${FLAVOUR}" \
+            "${FLAVOUR}"
+
+  # Required status check (#832): the always-reporting front for `image` (all matrix legs) and
   # `sandbox-e2e`. Neither can be required itself — `image` is skipped on a docs-only diff and
   # `sandbox-e2e` on a PR that touches no sandbox path, and a skipped required context reports
   # nothing and wedges the PR. So this job is unconditional and carries the required name.
@@ -1322,7 +1388,7 @@ jobs:
   # irrelevant, and nothing else. An unjustified skip fails — #831 skipped `image` on every push to
   # main without anyone noticing, and a gate that read every skip as a pass would have hidden it
   # here too. `failure` and `cancelled` always fail. `needs.image.result` aggregates the matrix: it
-  # is `failure` if either architecture failed.
+  # is `failure` if any platform/flavour leg failed.
   image-sandbox-gate:
     name: Image + Sandbox Gate
     needs: [changes, image, sandbox-e2e]
@@ -1484,8 +1550,11 @@ jobs:
       # point of the PR trigger — but it does NOT test the PR's own code: read a green E2E on a
       # PR as "the job works", never as "these changes pass e2e".
       #
-      # The tag shape must match docker/metadata-action's `type=sha,format=short,prefix=sha-`
-      # in `image` above, which is the 7-character short SHA.
+      # e2e only ever tests fat (#807 did not extend this job to a flavour matrix), so this must
+      # match the unsuffixed `sha-<short>` alias `image_publish` computes for fat below
+      # (`type=raw,value=sha-${{ steps.short.outputs.sha }}`, from a plain `${GITHUB_SHA::7}`
+      # bash substring) — not `image`'s own flavour-suffixed `sha-<short>-<flavour>` tag from
+      # docker/metadata-action's `type=sha,format=short,prefix=sha-`, which this never pulls.
       - name: Resolve the image to test
         id: target
         env:
@@ -1827,8 +1896,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Same tag shape as `e2e`, and it must stay in step with docker/metadata-action's
-      # `type=sha,format=short,prefix=sha-` in the `image` job.
+      # Same tag shape as `e2e` — see that job's comment on this same step for which tag this
+      # must actually stay in step with (image_publish's fat alias, not image's own tag).
       - name: Resolve the image to test
         id: target
         env:

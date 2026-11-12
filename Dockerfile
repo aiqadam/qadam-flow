@@ -117,9 +117,25 @@ ENV TURBO_API=$TURBO_API \
 # in standalone mode (no cloud registry).
 RUN --network=host npx turbo run build --filter=web --filter=@aiqadam/engine --filter=api --filter=worker --filter='@aiqadam/qadam-*'
 
-# Index of the bundled qadams' dist folders (packages/qadams/dist-index.json). Without it every
-# fresh engine process walks the whole qadam tree before its first step can load (#419).
-RUN bun packages/server/engine/src/scripts/write-qadam-dist-index.ts packages/qadams
+# NOT wired up here (deliberately, #807): ADR-0003's version-store seed (#804, `build-image-seed.mjs`)
+# and #778's catalogue snapshot. The issue thread gated the store seed explicitly: "Seed only after
+# #851 lands (or ships in the same change)" — ADR-0004's "store-first vs changed code under an
+# unchanged version" (#840) is exactly the qadam-loader's STORE-before-BUNDLED resolution order
+# (packages/server/engine/src/lib/helper/qadam-loader.ts) plus qadamVersionStoreSeed.seedFromImage's
+# "a version already stored is left as it is" (packages/server/utils/src/qadam-version-store/
+# qadam-version-store-seed.ts): on a `:main` build, where a changed qadam ships with no version bump
+# yet (#851 not landed, so `tools/scripts/qadams/snapshot/` computes what version a build would get
+# but, per .agents/rules/versioning.md, "the image does not apply it yet"), seeding would let the
+# FIRST `:main` image's code for that version win forever on any persisted store volume, silently
+# masking every later `:main` image's changes under the same unchanged version (#807). The
+# catalogue snapshot has its own, separate reason not to ship yet — see
+# .agents/features/qadam-version-catalogue.md. Both tools (`build-image-seed.mjs` here,
+# `compute-snapshot-plan.mjs` already wired into ci.yml's platform-version job) stay built and
+# tested for whichever change applies snapshot versions to the image and re-enables this.
+#
+# Until then, `:fat` and `:slim` differ only in which qadams the run stage's slim-prune step below
+# keeps in the bundled tree — every qadam still resolves via the engine's BUNDLED fallback, exactly
+# as every image did before this store existed (#779).
 
 # Generate migration manifest (ordered list of migration names) for image-tag-based rollback
 RUN node -e "\
@@ -130,6 +146,15 @@ RUN node -e "\
 
 ### STAGE 2: Run ###
 FROM base AS run
+
+ARG QADAM_FLAVOUR=fat
+# Anything other than `fat`/`slim` would otherwise silently skip the slim-prune check below (its
+# `[ "$QADAM_FLAVOUR" = slim ]` guard) and ship a fat tree under a mislabelled
+# `org.aiqadam.qadam-flavour` — fail the build instead.
+RUN case "$QADAM_FLAVOUR" in \
+      fat|slim) ;; \
+      *) echo "QADAM_FLAVOUR must be 'fat' or 'slim', got '$QADAM_FLAVOUR'" >&2; exit 1 ;; \
+    esac
 
 WORKDIR /usr/src/app
 
@@ -150,11 +175,13 @@ COPY --from=build /usr/src/app/bunfig.toml ./
 COPY --from=build /usr/src/app/LICENSE .
 COPY --from=build /usr/src/app/NOTICE .
 
-# Copy workspace package.json files (needed for bun workspace resolution)
+# Copy workspace package.json files (needed for bun workspace resolution). Still the *full*
+# tree here, every flavour — the slim prune happens further below, after `bun install
+# --production`, not before it: `bun.lock` was resolved against every `packages/qadams/community/*`
+# workspace member, and pruning the ones slim does not keep before that install made bun see the
+# workspace set disagree with the lockfile and refuse with "lockfile had changes, but lockfile is
+# frozen" (#807 — found by actually running this Dockerfile, which nothing had done before that).
 COPY --from=build /usr/src/app/packages ./packages
-# The engine falls back to a tree walk without it, so a manifest lost on the way here would slow
-# every fresh engine without failing anything (#419).
-RUN test -s packages/qadams/dist-index.json
 
 # Copy built engine
 COPY --from=build /usr/src/app/dist/packages/engine/ ./dist/packages/engine/
@@ -165,9 +192,42 @@ RUN --mount=type=cache,target=/root/.bun/install/cache \
 # Reset TLS check for runtime — SSL skip was build-time only
 ENV NODE_TLS_REJECT_UNAUTHORIZED=
 
+# `:slim` does not ship most community code, but four community qadams are the server's own direct
+# dependencies, not something a flow merely happens to use: `app-event-routing.module.ts` statically
+# imports slack / facebook-leads / intercom to parse their app-webhook payloads in-process, and
+# `event-puller-registry.ts` lazily imports telegram-bot for its long-polling trigger — both run
+# inside the server itself, never through the qadam version store a flow step's qadam is fetched
+# from (#807: deleting them unconditionally broke every slim boot with `Cannot find module
+# '@aiqadam/qadam-facebook-leads'`, since `app.ts` registers that module unconditionally). Keeping
+# these four here is unrelated to the 27 "core" qadams `:slim` otherwise keeps — whether a flow
+# using one of them as an action still has to fetch it on demand is unaffected; this is a separate,
+# smaller list of what the server process itself can't start without.
+#
+# After `bun install --production` (see the COPY above for why), and before the dist index and the
+# bundled metadata manifest are written, so both describe exactly what the runtime can load. `rm -rf`
+# does not fail on a missing/mismatched path, so a slim image whose removal silently no-op'd would
+# otherwise ship the full community tree under a `org.aiqadam.qadam-flavour=slim` label with nothing
+# in the build log to say so — check each kept directory survived and nothing unexpected did.
+RUN if [ "$QADAM_FLAVOUR" = slim ]; then \
+      find packages/qadams/community -mindepth 1 -maxdepth 1 -type d \
+        ! -name facebook-leads ! -name intercom ! -name slack ! -name telegram-bot \
+        -exec rm -rf {} + \
+      && for kept in facebook-leads intercom slack telegram-bot; do \
+        test -d "packages/qadams/community/$kept" || { echo "slim pruning lost packages/qadams/community/$kept, which the server itself depends on" >&2; exit 1; }; \
+      done \
+      && [ "$(find packages/qadams/community -mindepth 1 -maxdepth 1 -type d | wc -l)" = 4 ]; \
+    fi
+
+# Index of the bundled qadams' dist folders (packages/qadams/dist-index.json). Without it every
+# fresh engine process walks the whole qadam tree before its first step can load (#419). Generated
+# here, after the slim prune above, for the same reason the bundled metadata manifest below is: a
+# manifest from before the prune would list dist folders a slim image no longer carries.
+RUN bun packages/server/engine/src/scripts/write-qadam-dist-index.ts packages/qadams \
+    && test -s packages/qadams/dist-index.json
+
 # Serialized metadata of every bundled qadam (packages/qadams/bundled-qadams-metadata.json). Without
-# it the app's first catalogue read require()s all 238 qadams on its event loop, which blocked every
-# request for 30–63 s on QA after each start (#598). Written here, after the production install and
+# it the app's first catalogue read require()s every bundled qadam on its event loop, which blocked
+# every request for 30–63 s on QA after each start (#598). Written here, after the production install and
 # not in the build stage, so the app's own scan code builds it against the exact tree and
 # node_modules it would scan at run time. Nothing under packages/ (qadam dists, node_modules) may
 # change after this step, or the manifest no longer describes the image. The writer fails the build
@@ -199,6 +259,7 @@ RUN node /tmp/stamp-platform-version.mjs "$PLATFORM_VERSION" package.json \
     && rm /tmp/stamp-platform-version.mjs
 
 LABEL service=qadam-flow
+LABEL org.aiqadam.qadam-flavour=$QADAM_FLAVOUR
 
 # PID 1 has to reap orphans, and Node does not reap processes it did not spawn.
 # Measured in this image: with `exec node` as PID 1 an orphaned child is left as

@@ -44,10 +44,14 @@ curl -fsSL https://flow.aiqadam.org/run.sh | sh
 ```
 
 This drops a fresh `./qadam-flow/` next to your shell, pulls
-`ghcr.io/aiqadam/qadam-flow:latest`, generates random secrets in `.env`,
-brings up postgres + redis + app + workers, and prints the URL when the
-API is ready. Works on macOS (Docker Desktop), Linux (dockerd), and
-Windows via WSL2.
+`ghcr.io/aiqadam/qadam-flow:slim` (the platform plus the 27 core qadams;
+a flow that already pins another community qadam fetches it from npm,
+but the builder's "add a step" list only offers qadams the instance
+already knows about — see
+[Image flavours](docs/install/options/image-flavours.mdx)), generates
+random secrets in `.env`, brings up postgres + redis + app + workers, and
+prints the URL when the API is ready. Works on macOS (Docker Desktop),
+Linux (dockerd), and Windows via WSL2.
 
 Then open **http://localhost:8080/sign-up** — the first signup owns the
 platform.
@@ -58,8 +62,10 @@ Env knobs (export before piping into `sh`):
 | --- | --- | --- |
 | `QADAM_FLOW_DIR` | `./qadam-flow` | install directory |
 | `QADAM_FLOW_PORT` | `8080` | host port for the app |
-| `QADAM_FLOW_IMAGE` | `ghcr.io/aiqadam/qadam-flow:latest` | image / tag to run |
+| `QADAM_FLOW_IMAGE` | `ghcr.io/aiqadam/qadam-flow:slim` | image / tag to run (`:fat` bundles every community qadam) |
 | `QADAM_FLOW_REF` | `main` | git ref for the compose file |
+| `QADAM_REGISTRY_URL` | `https://registry.npmjs.org` | registry for custom (non-`@aiqadam/*`) qadams |
+| `QADAM_REGISTRY_TOKEN` | *(none)* | bearer token for a private registry |
 
 Prefer cloning? `git clone … && cd qadam-flow && docker compose up -d`
 does the same thing — the public `docker-compose.yml` already points at
