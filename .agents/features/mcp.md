@@ -56,7 +56,14 @@ Exposes a Qadam Flow project as a Model Context Protocol (MCP) server so that AI
   Since #808 a step whose pin is unavailable and was not moved to the image's build carries
   `pinStay: { reason, detail }` and is labelled `⚠️ [VERSION UNAVAILABLE]` — a fault, unlike the
   ADR-0004 pre-release and follow-hold facts: there is no audited move behind what the step runs
-  (see [qadam-pin-moves.md](./qadam-pin-moves.md)).
+  (see [qadam-pin-moves.md](./qadam-pin-moves.md)). Also since #808, a step an import (or export
+  round trip) could not move to a release — its own pin, or one of its agent tools' — carries
+  `updateThisStep: { hasSnapshotTool }` and is labelled `[UPDATE THIS STEP]`, without a warning
+  glyph: unlike `pinStay` this names no installation-side fact (the pin may well resolve), only
+  the importer's own `settings.exportedUnresolvedPin` note (ADR-0004, `import-flow.ts`). It is
+  computed from the flow's own step settings — no extra read, unlike `pinStay`/`followHeld` — and
+  mirrors the web's `update-this-step-label.tsx` exactly, so the two surfaces never disagree about
+  which steps carry the note.
 - `ap_read_step_code` — read full source code of a CODE step, plus its `logInput`/`logOutput`
 - `ap_validate_flow`, `ap_validate_step_config` — validation helpers. `ap_validate_flow` reports
   issue categories: `step_validity`, `qadam_version` (a pinned qadam version this installation
@@ -68,6 +75,8 @@ Exposes a Qadam Flow project as a Model Context Protocol (MCP) server so that AI
   move time usually still serves it — but not always: an image upgrade since the revert can leave
   `qadam_version` confirming it missing too, and then a held step gets the error and the
   destructive remedy the same as any other confirmed-missing pin),
+  `update_this_step` (an import could not move the step's own pin, or one of its agent tools', to
+  a release — informational, #808, matching the web's `update-this-step-label.tsx`),
   `framework_version` (a pinned qadam built against a framework context
   version this release no longer runs, #803; a pin that does not resolve gets `qadam_version` only, #838), `template_reference`, `empty_branch`, and — since
   #391 — `subflow_payload`

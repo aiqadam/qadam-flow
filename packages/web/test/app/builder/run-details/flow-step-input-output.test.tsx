@@ -100,6 +100,11 @@ vi.mock('@/app/builder/step-settings/unavailable-pin-label', () => ({
   UnavailablePinLabel: () => null,
 }));
 
+vi.mock('@/app/builder/step-settings/update-this-step-label', () => ({
+  UpdateThisStepLabel: ({ step }: { step: { settings: { exportedUnresolvedPin?: string } } }) =>
+    step.settings.exportedUnresolvedPin ? <div>update this step for {step.settings.exportedUnresolvedPin}</div> : null,
+}));
+
 let container: HTMLDivElement | undefined;
 let root: Root | undefined;
 
@@ -138,5 +143,18 @@ describe('FlowStepInputOutput', () => {
 
     expect(text).toContain('This step didn\'t run');
     expect(text).toContain('framework mark for trigger');
+  });
+
+  // ADR-0004 (#808): the "update this step" import mark is read-only in the run view — there is
+  // no `UpdatePieceVersionDialog` here, only the same label the builder shows.
+  it('shows the update-this-step mark in the run step detail too', async () => {
+    (harness.trigger.settings as { exportedUnresolvedPin?: string }).exportedUnresolvedPin = '1.0.0';
+    try {
+      const text = await render();
+
+      expect(text).toContain('update this step for 1.0.0');
+    } finally {
+      delete (harness.trigger.settings as { exportedUnresolvedPin?: string }).exportedUnresolvedPin;
+    }
   });
 });
