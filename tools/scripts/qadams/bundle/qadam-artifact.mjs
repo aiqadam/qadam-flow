@@ -73,8 +73,15 @@ export const qadamArtifact = {
         const artifactDir = join(outRoot, name, version)
         // The directory is removed and rebuilt below, so it must be exactly `<out>/<name>/<version>`.
         // Both come from files (a manifest, a plan) and both become path segments: a name or a
-        // version such as `..` or `../../x` would point that `rm` anywhere. Checked on the values
-        // and again on the resulting path, so neither check has to be right alone.
+        // version such as `..` or `../../x` would point that `rm` anywhere. The validators called
+        // below (`PLAN_VERSION` / `PACKAGE_NAME` in `snapshot-plan.mjs`) already make that impossible
+        // on their own: `PLAN_VERSION` has no `/` or `\` at all and is never the
+        // literal string `..` (it is three dot-separated numbers, optionally `-main.<n>`), and
+        // `PACKAGE_NAME` allows at most the one fixed `/` after an `@scope`, with every segment on
+        // either side of it starting with a letter or digit, so a `..` segment never appears — an
+        // ordinary dotted version like `1.2.3` or a dotted name is fine, `..` as a whole segment is
+        // not. The path check after is a second line of defense, not an equally load-bearing one: it
+        // catches a future loosening of either regex, not a gap either one leaves open today.
         if (!snapshotPlan.isPackageName({ name }) || !snapshotPlan.isVersion({ version })) {
             throw new Error(`'${name}@${version}' is not a package name and a version that can name a directory`)
         }

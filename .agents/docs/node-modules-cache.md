@@ -1,5 +1,15 @@
 # Controlling the CI node_modules cache
 
+**Only a push to `main` saves this cache (#811).** Every job — PRs, release tags, dispatches —
+still restores from the same key `_verify.yml`'s `verify` job writes; nothing changed about
+*reading* it. What changed is the write: `_verify.yml`'s "Save built node_modules" step now also
+requires `github.event_name == 'push' && github.ref == 'refs/heads/main'`. Before this, every PR
+whose lockfile changed (every Renovate PR does) minted its own ~314 MiB entry that only a re-push
+to that same PR could ever read — 15 of 23 entries at the time of measurement, none surviving a
+day, 72% of a 9.97/10 GB quota. A PR that leaves `bun.lock` untouched already computes `main`'s
+key and still hits it; one that changes it now cold-installs on that PR and warms the shared
+entry only once the change reaches `main`.
+
 A cache hit and a cold install are different runs, and conflating them has already cost a session.
 On a hit, bun does **not** re-run install scripts for a package it sees at the right version — so a
 green check on a cache hit is not evidence that anything install-related works. `redis-memory-server`'s

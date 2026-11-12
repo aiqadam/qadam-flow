@@ -316,6 +316,7 @@ plan_parse() { # <entries JSON> -> ok | the reason
 good='{ "name": "@aiqadam/qadam-a", "version": "0.1.1-main.5", "released": "0.1.0", "origin": "tree", "directory": "packages/qadams/core/a" }'
 check 'a good entry' "$(plan_parse "[$good]")" 'ok'
 check 'a version that is a path is refused' "$(plan_parse '[{ "name": "n", "version": "../../../../tmp/x", "released": "0.1.0", "origin": "tree", "directory": "d" }]' | grep -c 'version is not a release or a main snapshot')" '1'
+check 'a name that is a path is refused' "$(plan_parse '[{ "name": "../../../../tmp/x", "version": "0.1.1-main.5", "released": "0.1.0", "origin": "tree", "directory": "d" }]' | grep -c 'name is not a package name')" '1'
 check 'a tree entry needs a directory' "$(plan_parse '[{ "name": "n", "version": "0.1.1-main.5", "released": "0.1.0", "origin": "tree" }]' | grep -c 'no directory')" '1'
 check 'released must be a release' "$(plan_parse '[{ "name": "n", "version": "0.1.1-main.5", "released": "0.1.0-main.1", "origin": "tree", "directory": "d" }]' | grep -c 'released is not')" '1'
 check 'a name twice is refused' "$(plan_parse "[$good, $good]" | grep -c 'twice')" '1'

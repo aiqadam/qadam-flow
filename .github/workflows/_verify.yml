@@ -340,7 +340,20 @@ jobs:
         # step's own condition passes — but `cache-primary-key` is empty too, so the save would fail
         # key validation rather than write anything. Skipping it is the correct outcome either way:
         # a run that deliberately bypassed the cache has not earned the right to publish to it.
-        if: ${{ steps.node-modules.outputs.cache-hit != 'true' && !contains(github.event.pull_request.labels.*.name, 'refresh-cache') }}
+        #
+        # `github.event_name == 'push' && github.ref == 'refs/heads/main'` (#811, measured): the
+        # Actions cache quota sat at 9.97 of 10 GB, 72% of it `node-modules-*` entries, 15 of 23
+        # minted from PR refs that evict within a day because every Renovate PR changes `bun.lock`.
+        # A PR's own lockfile hash is reachable only from a push to main anyway — nothing ever reads
+        # a PR-ref entry back except a re-push to that same PR — so a PR saving bought nothing but
+        # quota pressure on everyone else's turbo and Docker entries. `release.yml` (tag push) and
+        # `publish-packages.yml` (dispatch) call this same reusable workflow and now restore-only too;
+        # they are rare enough that a cold install there is not worth the quota either.
+        if: >-
+          steps.node-modules.outputs.cache-hit != 'true'
+          && !contains(github.event.pull_request.labels.*.name, 'refresh-cache')
+          && github.event_name == 'push'
+          && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v6
         with:
           path: |

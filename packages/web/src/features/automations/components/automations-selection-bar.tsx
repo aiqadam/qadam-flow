@@ -6,6 +6,12 @@ import { ConfirmationDeleteDialog } from '@/components/custom/delete-dialog';
 import { LoadingSpinner } from '@/components/custom/spinner';
 import { useEmbedding } from '@/components/providers/embed-provider';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 type AutomationsSelectionBarProps = {
   selectedCount: number;
@@ -13,9 +19,10 @@ type AutomationsSelectionBarProps = {
   isMoving: boolean;
   isExporting: boolean;
   hasMovableOrExportableItems: boolean;
+  canKeepSnapshots?: boolean;
   onMoveClick: () => void;
   onDeleteClick: () => void;
-  onExportClick: () => void;
+  onExportClick: (keepSnapshots?: boolean) => void;
   onClearSelection: () => void;
 };
 
@@ -25,6 +32,7 @@ export const AutomationsSelectionBar = ({
   isMoving,
   isExporting,
   hasMovableOrExportableItems,
+  canKeepSnapshots = false,
   onMoveClick,
   onDeleteClick,
   onExportClick,
@@ -54,11 +62,39 @@ export const AutomationsSelectionBar = ({
                 {t('Move to')}
               </Button>
             )}
-            {!embedState.hideExportAndImportFlow && (
+            {!embedState.hideExportAndImportFlow && canKeepSnapshots && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={isExporting || !hasMovableOrExportableItems}
+                  >
+                    {isExporting ? (
+                      <LoadingSpinner className="size-4 mr-2" />
+                    ) : (
+                      <Download className="size-4 mr-2" />
+                    )}
+                    {isExporting ? t('Exporting') : t('Export')}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="center">
+                  <DropdownMenuItem onClick={() => onExportClick()}>
+                    <Download className="h-4 w-4 mr-2" />
+                    {t('Export')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => onExportClick(true)}>
+                    <Download className="h-4 w-4 mr-2" />
+                    {t('exportKeepingPrereleasePins')}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+            {!embedState.hideExportAndImportFlow && !canKeepSnapshots && (
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={onExportClick}
+                onClick={() => onExportClick()}
                 disabled={isExporting || !hasMovableOrExportableItems}
               >
                 {isExporting ? (
