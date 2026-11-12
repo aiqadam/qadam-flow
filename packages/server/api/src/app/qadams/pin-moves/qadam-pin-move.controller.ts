@@ -91,24 +91,27 @@ const RevertQadamPinMoveRequest = {
     },
 }
 
-// The hold is a property of the step, so any member of the flow's project with read access can read
-// it, not only a platform admin (that is exactly the read #808 deferred here). The flow entity
-// resolves the project from `flowId` in the query, and the service asserts the flow is in that
-// project, so a flow in another project is neither resolved nor read.
+// Shared by `/held` and `/check`: both marks are a property of the flow version, so any member of
+// the flow's project with read access can read them, not only a platform admin. The flow entity
+// resolves the project from `flowId` in the query, and the service asserts the flow (and, for
+// `/check`, the version) belongs to that project, so another project's flow is neither resolved nor
+// read.
+const flowProjectReadSecurity = securityAccess.project(
+    [PrincipalType.USER, PrincipalType.SERVICE],
+    Permission.READ_FLOW,
+    {
+        type: ProjectResourceType.TABLE,
+        tableName: FlowEntity,
+        entitySourceType: EntitySourceType.QUERY,
+        lookup: {
+            paramKey: 'flowId',
+            entityField: 'id',
+        },
+    })
+
 const ListHeldQadamPinMovesRequest = {
     config: {
-        security: securityAccess.project(
-            [PrincipalType.USER, PrincipalType.SERVICE],
-            Permission.READ_FLOW,
-            {
-                type: ProjectResourceType.TABLE,
-                tableName: FlowEntity,
-                entitySourceType: EntitySourceType.QUERY,
-                lookup: {
-                    paramKey: 'flowId',
-                    entityField: 'id',
-                },
-            }),
+        security: flowProjectReadSecurity,
     },
     schema: {
         tags: ['qadam-pin-moves'],
@@ -119,24 +122,9 @@ const ListHeldQadamPinMovesRequest = {
     },
 }
 
-// The mark is a property of the flow version, so any member of the flow's project with read
-// access can read it, not only a platform admin — the same read #808 deferred for the hold. The
-// flow entity resolves the project from `flowId`; the service checks the version belongs to that
-// flow and the flow to the project, so another project's flow version is neither resolved nor read.
 const CheckQadamPinStaysRequest = {
     config: {
-        security: securityAccess.project(
-            [PrincipalType.USER, PrincipalType.SERVICE],
-            Permission.READ_FLOW,
-            {
-                type: ProjectResourceType.TABLE,
-                tableName: FlowEntity,
-                entitySourceType: EntitySourceType.QUERY,
-                lookup: {
-                    paramKey: 'flowId',
-                    entityField: 'id',
-                },
-            }),
+        security: flowProjectReadSecurity,
     },
     schema: {
         tags: ['qadam-pin-moves'],

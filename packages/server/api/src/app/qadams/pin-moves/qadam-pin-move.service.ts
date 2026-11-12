@@ -128,9 +128,8 @@ export const qadamPinMoveService = ({ log, seams = qadamPinFallbackSeams({ log }
     // cannot resolve answers no stays, not an error, since this is advisory state a missing read
     // must not block editing or viewing a run over.
     async checkUnavailablePins({ flowId, flowVersionId, projectId, platformId }: CheckUnavailablePinsParams): Promise<PinStay[]> {
-        const flow = await flowRepo().findOneBy({ id: flowId, projectId })
-        const flowPlatformId = isNil(flow) ? null : await projectService(log).getPlatformId(projectId)
-        const flowVersion = isNil(flow) || flowPlatformId !== platformId ? null : await flowVersionRepo().findOneBy({ id: flowVersionId, flowId })
+        const { error: notOwned } = await tryCatch(() => assertFlowBelongsTo({ flowId, projectId, platformId, log }))
+        const flowVersion = isNil(notOwned) ? await flowVersionRepo().findOneBy({ id: flowVersionId, flowId }) : null
         if (isNil(flowVersion)) {
             return []
         }

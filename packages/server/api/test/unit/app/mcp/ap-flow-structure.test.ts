@@ -629,10 +629,9 @@ describe('ap_flow_structure — version unavailable, update this step (ADR-0003,
 
         const result = await callTool()
 
-        const text = (result.content?.[0] as { text: string }).text
+        const text = result.content?.[0]?.text
         expect(text).toContain('[VERSION UNAVAILABLE]')
-        const steps = result.structuredContent?.steps as { name: string, pinStay?: { reason: string, detail: string } }[]
-        expect(steps.find(step => step.name === 'step_1')?.pinStay).toMatchObject({ reason: 'outside-caret' })
+        expect(JSON.stringify(result.structuredContent?.steps)).toContain('"pinStay":{"reason":"outside-caret"')
     })
 
     it('does not repeat the generic pin warning beside the specific mark', async () => {
@@ -640,7 +639,7 @@ describe('ap_flow_structure — version unavailable, update this step (ADR-0003,
 
         const result = await callTool()
 
-        const text = (result.content?.[0] as { text: string }).text
+        const text = result.content?.[0]?.text
         expect(text).toContain('[VERSION UNAVAILABLE]')
         expect(text).not.toContain('PINNED VERSION UNAVAILABLE')
     })
@@ -659,7 +658,7 @@ describe('ap_flow_structure — version unavailable, update this step (ADR-0003,
 
         const result = await callTool()
 
-        const text = (result.content?.[0] as { text: string }).text
+        const text = result.content?.[0]?.text
         expect(text).not.toContain('[VERSION UNAVAILABLE]')
         expect(JSON.stringify(result.structuredContent?.steps)).not.toContain('pinStay')
     })
@@ -670,7 +669,7 @@ describe('ap_flow_structure — version unavailable, update this step (ADR-0003,
 
         const result = await callTool()
 
-        const text = (result.content?.[0] as { text: string }).text
+        const text = result.content?.[0]?.text
         expect(text).toContain('step_1')
         expect(text).not.toContain('[VERSION UNAVAILABLE]')
         expect(log.warn).toHaveBeenCalled()

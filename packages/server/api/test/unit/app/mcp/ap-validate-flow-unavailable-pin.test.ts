@@ -175,6 +175,9 @@ describe('ap_validate_flow — version unavailable, update this step (ADR-0003, 
         expect(text).not.toContain('Version Unavailable — Update This Step:')
         expect((structuredContent.warnings as { category: string }[]).map(i => i.category)).not.toContain('version_unavailable')
         expect(structuredContent.issues).toBeDefined()
-        expect(log.warn).toHaveBeenCalled()
+        expect(log.warn).toHaveBeenCalledWith(
+            expect.objectContaining({ flowId: 'flow-1' }),
+            '[apValidateFlow] Unavailable-pin check failed; the report omits the version-unavailable warning',
+        )
     })
 })
