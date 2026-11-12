@@ -173,7 +173,9 @@ function pinStayWarning(step: StepInfo): string {
     if (isNil(step.pinStay)) {
         return ''
     }
-    return ` ⚠️ [${mcpUtils.pinStayIssue({ detail: step.pinStay.detail }).label}]`
+    // Only `.label` is read here, so `confirmedMissing` never affects this line — passed as
+    // `false` since this is never the destructive-remedy text `ap_validate_flow` builds.
+    return ` ⚠️ [${mcpUtils.pinStayIssue({ detail: step.pinStay.detail, confirmedMissing: false }).label}]`
 }
 
 // Wording is shared with `ap_validate_flow` via `mcpUtils.qadamPinIssue`, so the two tools cannot

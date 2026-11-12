@@ -674,4 +674,21 @@ describe('ap_flow_structure — version unavailable, update this step (ADR-0003,
         expect(text).not.toContain('[VERSION UNAVAILABLE]')
         expect(log.warn).toHaveBeenCalled()
     })
+
+    // #474, regression: the generic pin lookup erroring (`qadamVersionResolvable === undefined`)
+    // is a DIFFERENT, independent read from `checkUnavailablePins`'s own per-pin availability check
+    // — a held step marked here must still carry the "do not delete or re-add" caution when the
+    // generic lookup could not confirm anything, not just when it confirmed the pin missing.
+    it('keeps the generic "unverified" caution beside the mark when the pin lookup errored', async () => {
+        mockGet.mockRejectedValue(new Error('ECONNRESET'))
+        mockCheckPinStays.mockResolvedValue([pinStay({ overrides: { reason: 'reverted-by-user', detail: 'a person reverted a move of this step', version: '0.9.9' } })])
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: '0.9.9' }) }))
+
+        const result = await callTool()
+
+        const text = result.content?.[0]?.text
+        expect(text).toContain('[VERSION UNAVAILABLE]')
+        expect(text).toContain('PINNED VERSION UNVERIFIED')
+        expect(text).not.toContain('delete and re-add')
+    })
 })

@@ -134,6 +134,24 @@ describe('ap_validate_flow — version unavailable, update this step (ADR-0003, 
         expect(issues.map(i => i.category)).not.toContain('version_unavailable')
     })
 
+    // #474, regression: `checkUnavailablePins` (`isPinAvailable`, per-pin) and `qadam_version`
+    // (`resolvePins`, one batched `resolveVersions` call) are two independent reads. A held step
+    // whose `resolveVersions` call fails transiently must not inherit the destructive remedy —
+    // only a `qadam_version` lookup that actually CONFIRMS a pin missing (not one that merely
+    // errored) may ever suggest deleting and re-adding the step.
+    it('does not advise a destructive edit for a held step when the generic lookup merely errored', async () => {
+        mockGet.mockRejectedValue(new Error('ECONNRESET'))
+        mockCheckPinStays.mockResolvedValue([pinStay({ overrides: { reason: 'reverted-by-user', detail: 'a person reverted a move of this step' } })])
+
+        const { text, structuredContent } = await validate()
+
+        expect(text).not.toContain('delete and re-add')
+        expect(text).toContain('Re-run before acting')
+
+        const warnings = structuredContent.warnings as { category: string, stepName: string }[]
+        expect(warnings).toContainEqual(expect.objectContaining({ category: 'version_unavailable', stepName: 'step_1' }))
+    })
+
     it('reports a confirmed-missing step as a blocking issue, with the working remedy', async () => {
         mockGet.mockResolvedValue(undefined)
 
