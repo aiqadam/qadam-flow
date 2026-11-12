@@ -94,11 +94,18 @@ volume exceeds free-tier budget.
 **Reason**: PR runs are throwaway. Pushing every PR would flood GHCR with one-shot tags,
 add traffic costs (on private repos), and provide no operational value.
 
-### 4. Cache strategy: GHA `type=gha`
-**Decision**: `cache-from: type=gha,scope=monolith` + `cache-to: type=gha,mode=max,scope=monolith`.
-**Reason**: Built into GitHub Actions, free, no external infra. Warm-cache build is ~7–10 min
-vs ~25 min cold. Single shared scope works because the Dockerfile layers are layer-stable
-between branches (only the application source layer churns).
+### 4. Cache strategy: GHA `type=gha`, asymmetric by event (#811, measured)
+**Decision**: Every leg reads `cache-from: type=gha,scope=<matrix.cacheScope>`. Only a push to
+`main` writes `cache-to`, and it writes `mode=min`, not `mode=max`. A PR build (and a manual
+`workflow_dispatch`) writes no `cache-to` at all.
+**Reason**: Measured on 20 legs across 10 runs: `cache-to,mode=max` cost ~150 s of a ~6.4 min
+median leg, and the cache it wrote from `refs/pull/N/merge` is unreadable by any other PR — only
+a re-push to the SAME PR benefits, and that re-push already gets the turbo remote cache's full
+hit rate. `mode=max` also exports the intermediate `build`-stage layers, which nothing downstream
+ever targets, so even `main`'s own write does not need it. What the layer cache actually buys
+(10-13 of ~49 steps coming back `CACHED`) never includes the expensive steps — `bun install`,
+`turbo run build` — because `COPY` invalidates them on every commit; the turbo remote cache is
+what makes a warm build fast (246/246 tasks cached), not this layer cache.
 
 ### 5. Image tagging convention (ADR-0001 "The platform version", #798)
 - `:<next>-main.<n>` — the exact version a `main` image reports, e.g. `:2.0.0-main.1234`. `<next>` is
@@ -137,6 +144,31 @@ and lets the changelog skill stay simple.
 **Decision**: No external secrets needed. GHCR push uses the workflow's built-in token with
 `permissions: { packages: write }`.
 **Reason**: Simpler ops, no token rotation, no leakage risk via misconfigured secrets.
+
+### 9. CE integration suite: sharded 3 ways (#811, measured)
+**Decision**: `integration-run` is a 3-way `matrix: shard: [1, 2, 3]`, each leg its own `services:`
+Postgres + Valkey, running `vitest --shard=<i>/<N>` via `QF_VITEST_SHARD`
+(`packages/server/api/package.json`'s `test-ce-command`). `check-migrations` runs in shard 1 only.
+**Reason**: vitest's own breakdown put `import` (a fresh process per file under
+`pool: 'forks'`/`--no-file-parallelism`) at roughly half of the 542 s median step. Sharding by
+file cuts both `import` and `tests` per shard; running `check-migrations` in every shard would
+just repeat an identical schema-drift check against N identical fresh databases. vitest shards by
+file count, not duration, so the 3 shards are not perfectly balanced — a duration-aware rebalance
+is a follow-up once this has run for real. The required context stays "CE Integration Tests": the
+`integration` gate job reads `needs.integration-run.result`, which already aggregates a matrix
+(`failure` if any leg failed).
+
+### 10. node_modules cache: saved from `push: main` only (#811, measured)
+**Decision**: `_verify.yml`'s "Save built node_modules" step now also requires
+`github.event_name == 'push' && github.ref == 'refs/heads/main'`. Every job restores from the
+same key as before; only the write is restricted.
+**Reason**: The Actions cache sat at 9.97 of 10 GB, and `node-modules-*` entries were 72% of it —
+23 entries at ~314 MiB each, 15 minted from PR refs, none surviving a day. Every Renovate PR
+changes `bun.lock`, so every one minted a fresh key that only that PR's own re-pushes could ever
+read, while crowding out the turbo and Docker entries everyone shares. A PR with an unchanged
+lockfile already computes `main`'s key and hits it. Measured over 324 samples, a hit now saves
+only ~14 s (`install-deps.sh`'s own install step is ~29 s cold); see
+[`node-modules-cache.md`](../docs/node-modules-cache.md).
 
 ## What This Replaces
 

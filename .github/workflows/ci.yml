@@ -704,11 +704,22 @@ jobs:
   # The heavy suite. NOT a required status check — the `integration` gate job
   # below carries the required "CE Integration Tests" context and always reports.
   integration-run:
-    name: CE integration suite
+    name: CE integration suite (shard ${{ matrix.shard }}/${{ strategy.job-total }})
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # 3 shards (#811, measured): vitest's own `import` phase (148-276 s across 100 files, each a
+    # fresh `pool: 'forks'` process) is roughly half of the 542 s median step, so splitting by
+    # file cuts both `import` and `tests` per shard. `fail-fast: false` — one shard's failure must
+    # not hide whether the others pass; the repo is public, so the extra runner time this costs on
+    # a red run is not billed. vitest shards by FILE COUNT, not duration, so the 3 shards are not
+    # perfectly balanced (e.g. `execute-flow-e2e.test.ts` alone was 35 s of a 203 s run) — a
+    # per-shard duration retune is left for follow-up once this has real numbers.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     services:
       postgres:
         image: pgvector/pgvector:0.8.7-pg18
@@ -841,7 +852,18 @@ jobs:
           # by the suite itself, not only by this comment. `QF_` is the canonical (and only) name —
           # the `AP_RUN_LDAP_OPENLDAP_TESTS` fallback was dropped in #339 Phase 2 round 3.
           QF_RUN_LDAP_OPENLDAP_TESTS: 'true'
-        run: npx turbo run check-migrations test-ce --filter=api --concurrency=1
+          # Also `QF_`-prefixed for the same reason — read by `test-ce-command` in
+          # packages/server/api/package.json and turned into vitest's own `--shard=i/N`.
+          QF_VITEST_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
+        # check-migrations runs migrations against this job's live Postgres and diffs the schema;
+        # running it in every shard would just repeat the same check N times against N identical
+        # fresh databases, so it is pinned to shard 1 only (#811).
+        run: |
+          if [ "${{ matrix.shard }}" = "1" ]; then
+            npx turbo run check-migrations test-ce --filter=api --concurrency=1
+          else
+            npx turbo run test-ce --filter=api --concurrency=1
+          fi
 
       - name: Stop OpenLDAP test directory (M5)
         if: always()
@@ -1097,14 +1119,20 @@ jobs:
   # (native runner, so no slower than amd64's leg — matrix legs run in parallel).
   image:
     name: Docker Image (${{ matrix.platform }}, ${{ matrix.flavour }})
-    needs: [changes, verify, platform-version]
+    # Deliberately NOT `verify` (#811, measured): the build step itself proves the Dockerfile
+    # path, including the vite bundle and the engine's esbuild, which `verify` does not exercise
+    # either way — it type-checks but does not bundle. Serializing after `verify` cost the PR's
+    # fully-green time its own 5.5 min median for no correctness benefit; `image`'s result is
+    # still required (via `image-sandbox-gate`), and `verify`'s is required separately (as
+    # "Lint + Unit Tests") — a lint failure no longer blocks the build from starting, it just
+    # also fails its own required check.
+    needs: [changes, platform-version]
     # Status-aware on purpose (#831). A bare expression is wrapped in an implicit success(), which
-    # checks every upstream job, not just `needs:` — and `semver-override` (upstream via `verify` →
-    # `verify-run`) is skipped outside pull requests, so every push to main skipped this job.
+    # checks every upstream job, not just `needs:` — and `platform-version` is skipped on a
+    # docs-only diff.
     if: >-
       !cancelled()
       && needs.changes.result == 'success'
-      && needs.verify.result == 'success'
       && needs.platform-version.result == 'success'
       && needs.changes.outputs.docs_only != 'true'
     runs-on: ${{ matrix.runner }}
@@ -1143,6 +1171,11 @@ jobs:
         with:
           driver-opts: network=host
           buildkitd-flags: --allow-insecure-entitlement network.host
+          # The runner is ephemeral (#811, measured): the post-step builder removal cost 32-146 s
+          # per leg and gated `image_publish` and every `e2e`/`e2e-execution-modes` job behind it
+          # for nothing — there is nothing downstream in the runner's lifetime that needs the
+          # builder gone.
+          cleanup: false
 
       - name: Set up turbo remote cache (GHA-backed)
         uses: rharkor/caching-for-turbo@v2.3.12
@@ -1205,6 +1238,13 @@ jobs:
 
       # PR / manual dispatch: build-only, exactly as before this became a matrix — just now
       # exercising both platforms' Dockerfile path instead of only amd64's.
+      #
+      # No `cache-to` (#811, measured): this build runs from `refs/pull/N/merge`, a ref no other
+      # PR's build can ever read, and a re-push to the SAME PR already gets the turbo remote
+      # cache's 246/246 hit — the layer cache's own 10-13 `CACHED` steps are never the expensive
+      # ones (`bun install`, `turbo run build`), which `COPY` invalidates on every commit anyway.
+      # Writing a cache nothing reads was ~150 s of the ~6.4 min median leg for exactly that:
+      # `cache-from` (read `main`'s cache) is kept because warm base-stage steps still help.
       - name: Build (no push)
         if: github.event_name != 'push'
         uses: docker/build-push-action@v6
@@ -1216,7 +1256,6 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.cacheScope }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.cacheScope }}
           allow: |
             network.host
           build-args: |
@@ -1242,6 +1281,10 @@ jobs:
             "ghcr.io/aiqadam/qadam-flow:${VERSION}" \
             "${FLAVOUR}"
 
+      # `mode=min` (#811, measured), not `mode=max`: `mode=max` also exports the `build` stage's
+      # intermediate layers, which a later build can never hit (nothing downstream ever targets
+      # that stage), so the extra export time bought nothing. `mode=min` still caches the final
+      # stage's own layers for `main`'s next build to warm-start from.
       - name: Build and push by digest (main)
         id: build
         if: github.event_name == 'push'
@@ -1251,7 +1294,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.cacheScope }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.cacheScope }}
+          cache-to: type=gha,mode=min,scope=${{ matrix.cacheScope }}
           allow: |
             network.host
           build-args: |
@@ -1328,7 +1371,12 @@ jobs:
           pattern: digests-*-${{ matrix.flavour }}
           merge-multiple: true
 
+      # cleanup: false — same reasoning as the `image` job's own setup-buildx-action step (#811):
+      # the runner is ephemeral and the removal only delays the `e2e`/`e2e-execution-modes` jobs
+      # that wait behind this one.
       - uses: docker/setup-buildx-action@v3
+        with:
+          cleanup: false
 
       - name: Login to GHCR
         uses: docker/login-action@v3
