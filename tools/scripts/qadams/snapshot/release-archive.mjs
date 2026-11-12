@@ -2,9 +2,12 @@
 //
 // A release archives the artifacts it built and never rebuilds them from git (#476). Its shape is
 // what `build-qadam-artifacts.mjs --pack` writes: `archive-index.json` plus the `npm pack` tarballs.
-// Whether such an archive exists at release time is #804's remaining work, so today nothing passes
-// one and `unavailable` is what every caller gets; the plan then takes ADR-0004's fallback. When the
-// release pipeline archives, pointing `--archive` at the directory is the whole switch.
+// release.yml's `archive-qadam-artifacts` job writes one at every non-prerelease tag and attaches
+// it to the GitHub Release the tag cuts (#804); nothing downloads it back into a later build yet
+// (ADR-0004's `--archive`/`--release-archive` consumption is still wiring, not a main build calling
+// it), so `unavailable` is still what every caller gets today and the plan takes ADR-0004's
+// fallback. Downloading that Release asset and pointing `--archive` at the extracted directory is
+// the whole remaining switch.
 //
 // Node builtins only.
 import fs from 'node:fs'

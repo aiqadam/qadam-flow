@@ -343,9 +343,19 @@ jobs:
   # Builds and packs EVERY official qadam as the ADR-0003 bundle artifact at this tag's own commit,
   # not only the ones already at `1.0.0`+ (the only ones that publish this bundle as their real npm
   # artifact today, see tools/scripts/utils/publish-qadam-bundle.ts): a `main` build's snapshot plan
-  # (ADR-0004, #851, #854) takes an unchanged-since-the-last-release qadam from this same archive
-  # regardless of which format it publishes in, so the archive has to cover the whole catalogue to
-  # be useful for that.
+  # (ADR-0004, #851, #854) is meant to take an unchanged-since-the-last-release qadam from this same
+  # archive regardless of which format it publishes in, so the archive has to cover the whole
+  # catalogue to be useful for that — but nothing downloads this Release asset into a later build
+  # yet (see release-archive.mjs's own header); this job only writes the archive and attaches it.
+  #
+  # KNOWN GAP, not fixed here: for a `1.0.0`+ qadam, this job's build and `pack-framework-packages`'s
+  # build (which is what actually reaches npm) are two independent esbuild runs from the same commit
+  # and the same locked dependency tree, not one build archived and published from a single set of
+  # bytes. ADR-0003's "never rebuilt from git" is about a LATER rebuild, after dependencies may have
+  # drifted — which this still prevents, since both runs here read the one dependency tree this tag
+  # was built against — but the two are not asserted byte-identical. Revisit if that ever needs to be
+  # a guarantee rather than an expectation; until then, reusing pack-framework-packages's own tarball
+  # for a bundle-format qadam (rather than building it a second time here) is the natural fix.
   #
   # Cheap relative to pack-framework-packages above: the bundler compiles each qadam straight from
   # its own `src` with esbuild, so this needs the three platform packages built and nothing per-qadam
@@ -391,6 +401,14 @@ jobs:
 
       - name: Install dependencies
         run: tools/ci/install-deps.sh
+
+      # The only step that can observe a cache restore that is corrupt at the expected version
+      # (see _pack-framework-packages.yml's own comment on this same step for why) — load-bearing
+      # here specifically because `bundle-with-node-modules` artifacts copy native addons straight
+      # out of this restored tree, and what this job produces is archived permanently and never
+      # rebuilt (ADR-0003).
+      - name: Verify native addons load
+        run: tools/ci/verify-native-modules.sh
 
       # Only what qadamArtifact.provisionHost resolves `@aiqadam/*` and zod from — the qadams
       # themselves are bundled from `src` by esbuild, not from a built `dist`.

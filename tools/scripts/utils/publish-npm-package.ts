@@ -158,6 +158,16 @@ export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag, pack
     }
     const destination = packDestination ?? mkdtempSync(join(tmpdir(), 'qadam-flow-npm-pack-'))
     const packed = await packQadamBundleArtifact({ path, version, packDestination: destination })
+    // Same marker, same reason, as the legacy branch below: without it, a bundle packed with the
+    // already-published guard disabled would be structurally indistinguishable from a real one by
+    // the time it reaches tools/ci/publish-packed-tarballs.sh, which refuses any directory entry
+    // its manifest does not declare.
+    if (skipRegistryCheck) {
+      writeFileSync(
+        join(destination, SKIP_REGISTRY_CHECK_MARKER),
+        'Packed with --skip-registry-check: the already-published guard was disabled, so these\ntarballs are a build smoke test and must never be published.\n',
+      )
+    }
     console.info(`[publishPackage] packed bundle artifact, path=${path}, version=${packed.version}, filename=${packed.filename}, destination=${destination}`)
     return { status: 'packed', filename: packed.filename, version: packed.version }
   }

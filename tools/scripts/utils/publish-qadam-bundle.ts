@@ -1,12 +1,29 @@
 import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative, resolve, sep } from 'node:path'
 import * as semver from 'semver'
 import { readPackageJson } from './files'
 import { OFFICIAL_QADAM_ROOTS } from './qadam-publish-paths'
 
 const REPO_ROOT = join(__dirname, '..', '..', '..')
 const CONFIG_PATH = join(REPO_ROOT, 'tools', 'scripts', 'qadams', 'bundle', 'qadam-artifact-config.json')
+
+// Every caller in this file resolves `path` the same way `node:fs` already does implicitly
+// elsewhere in publish-npm-package.ts (`readPackageJson(path)`, `${path}/dist`) — relative to the
+// current working directory, which every real caller runs from the repo root, OR absolute. The
+// absolute-path case is what `join(REPO_ROOT, path)` used to get wrong: `path.join` treats a
+// leading `/` on its second argument as an ordinary segment rather than re-rooting, so an absolute
+// `path` produced a qadam directory nested under the repo root instead of the one actually named.
+// `resolve` is the one Node primitive both call sites need to agree on.
+//
+// `canonicalPath` is relative to `process.cwd()`, not the hardcoded `REPO_ROOT` constant: a plain
+// relative `path` has to compare against OFFICIAL_QADAM_ROOTS exactly as given, the same way it
+// always has, and every real caller's cwd already IS the repo root — cwd is also what
+// `readPackageJson(path)` resolves a plain relative `path` against, so the two stay in agreement.
+const resolveQadamPath = (path: string): { absolutePath: string, canonicalPath: string } => {
+  const absolutePath = resolve(path)
+  return { absolutePath, canonicalPath: relative(process.cwd(), absolutePath).split(sep).join('/') }
+}
 
 // ADR-0003 "Qadams at `1.0.0`": a qadam's 1.0.0 is the release that switches it to the bundle
 // artifact format (`@aiqadam/*` and `zod` as `peerDependencies`); every `0.x` version stays the
@@ -15,14 +32,14 @@ const CONFIG_PATH = join(REPO_ROOT, 'tools', 'scripts', 'qadams', 'bundle', 'qad
 // it before the legacy `dist`-output check, which a bundle artifact (built straight from `src`,
 // never from a qadam's own `dist`) does not satisfy.
 export const isBundleFormatQadam = async ({ path }: IsBundleFormatQadamParams): Promise<boolean> => {
-  const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '')
-  const isOfficialQadam = OFFICIAL_QADAM_ROOTS.some((root) => normalized === root || normalized.startsWith(`${root}/`))
+  const { absolutePath, canonicalPath } = resolveQadamPath(path)
+  const isOfficialQadam = OFFICIAL_QADAM_ROOTS.some((root) => canonicalPath === root || canonicalPath.startsWith(`${root}/`))
   if (!isOfficialQadam) {
     // packages/qadams/framework and packages/qadams/common sit beside the two official roots —
     // they are the platform `@aiqadam/*` peers a bundle declares, never a bundle themselves.
     return false
   }
-  const { version } = await readPackageJson(path)
+  const { version } = await readPackageJson(absolutePath)
   const parsed = semver.valid(version)
   if (parsed === null) {
     throw new Error(`[isBundleFormatQadam] ${path}/package.json has an invalid version: "${version}"`)
@@ -41,7 +58,7 @@ export const packQadamBundleArtifact = async ({ path, version, packDestination }
   const [outRoot, config, builtAgainst] = await Promise.all([getHost(), getConfig(), getBuiltAgainst()])
   mkdirSync(packDestination, { recursive: true })
   const result = await qadamArtifact.build({
-    qadamDir: join(REPO_ROOT, path),
+    qadamDir: resolveQadamPath(path).absolutePath,
     outRoot,
     repoRoot: REPO_ROOT,
     config,
@@ -61,9 +78,12 @@ export const packQadamBundleArtifact = async ({ path, version, packDestination }
 
 // `import()`, not a static import: the builder (tools/scripts/qadams/bundle/) is ESM and this
 // file's own project (tools/tsconfig.tools.json) compiles to CommonJS under ts-node, which cannot
-// `require()` an ESM module. TypeScript leaves a dynamic `import()` call untouched under
-// `module: commonjs` rather than downleveling it to `require`, so it still resolves through
-// Node's real ESM loader at run time.
+// `require()` an ESM module directly. Under `module: commonjs` TypeScript compiles this to
+// `Promise.resolve().then(() => require(...))` rather than a bare `require`, and what actually
+// resolves that promise at run time is Node 22.12+/24 being able to `require()` an ES module in
+// the first place — which stops working the moment anything in qadam-artifact.mjs's own import
+// graph (today: only snapshot-plan.mjs, checked for this) gains a top-level `await`
+// (`ERR_REQUIRE_ASYNC_MODULE`). Re-check that import graph before adding one.
 const importQadamArtifact = () => import('../qadams/bundle/qadam-artifact.mjs')
 
 const readBuiltAgainstOnce = async () => {

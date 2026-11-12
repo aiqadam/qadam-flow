@@ -608,7 +608,11 @@ remove_bundle_fixture() {
   rm -rf "${bundle_fixture_dir:-}"
   return 0
 }
-trap 'remove_bundle_fixture; cleanup' EXIT INT TERM
+trap 'remove_bundle_fixture; cleanup' EXIT
+# Separate from the EXIT trap above: a handler that does not itself `exit` leaves bash running the
+# rest of the script after an interrupt, which would then report the remaining assertions as real
+# failures against a fixture the handler just deleted, rather than stopping the run.
+trap 'remove_bundle_fixture; cleanup; exit 130' INT TERM
 node -e "
 const fs = require('fs')
 const path = '$bundle_fixture_dir/package.json'
@@ -617,6 +621,23 @@ json.name = '@aiqadam/qadam-test-fixture-bundle'
 json.version = '1.0.0'
 fs.writeFileSync(path, JSON.stringify(json, null, 2) + '\n')
 "
+
+# The same direct-publish refusal the legacy branch has always had (skipRegistryCheck without a
+# pack destination or dryRun, tested above): a bundle-format qadam must refuse it too, not fall
+# through to a real `npm publish` of a locally-built artifact outside the pack → publish-packed-
+# tarballs.sh split (#486).
+# No `skipRegistryCheck` here, deliberately: that flag has its own, earlier, pre-existing guard
+# against the same shape of call (tested above), and this assertion is specifically about the NEW
+# bundle-format guard, which has to fire on its own once a 1.0.0+ qadam reaches it.
+bundle_direct_publish_out="$(cd "$repo_root" && timeout 120 "$ts_node_bin" --project "$ts_project" -e "
+const { publishNpmPackage } = require('./tools/scripts/utils/publish-npm-package')
+publishNpmPackage({ path: '${bundle_fixture_path}' }).then((result) => {
+  console.log(JSON.stringify(result))
+}).catch((err) => { console.log(JSON.stringify({ error: String((err && err.message) || err) })); process.exitCode = 1 })" 2>&1 | tail -1)"
+case "$bundle_direct_publish_out" in
+  *'never a direct publish'*) pass=$((pass + 1)); echo "ok: a bundle-format qadam refuses a direct publish (no packDestination, no dryRun)" ;;
+  *) fail=$((fail + 1)); echo "FAIL: expected the direct-publish refusal — ${bundle_direct_publish_out}" ;;
+esac
 
 bundle_pack_dir="$(mktemp -d)"
 bundle_probe_out="$(cd "$repo_root" && timeout 120 "$ts_node_bin" --project "$ts_project" -e "
@@ -644,6 +665,33 @@ else
     *'"formatVersion": 1'*) pass=$((pass + 1)); echo "ok: the ADR-0003 format marker is set" ;;
     *) fail=$((fail + 1)); echo "FAIL: no ADR-0003 format marker — ${bundle_manifest}" ;;
   esac
+  # No official qadam's own manifest declares `repository` or `license`, so without a default the
+  # packed tarball is missing the field `npm publish --provenance` records its attestation against.
+  case "$bundle_manifest" in
+    *'"repository"'*'github.com/aiqadam/qadam-flow'*) pass=$((pass + 1)); echo "ok: repository is set, for --provenance" ;;
+    *) fail=$((fail + 1)); echo "FAIL: no repository in the packed manifest — ${bundle_manifest}" ;;
+  esac
+  case "$bundle_manifest" in
+    *'"license": "MIT"'*) pass=$((pass + 1)); echo "ok: license is set" ;;
+    *) fail=$((fail + 1)); echo "FAIL: no license in the packed manifest — ${bundle_manifest}" ;;
+  esac
+  # A variable, not `tar ... | grep -q`: under this script's `pipefail`, `grep -q` exits the moment
+  # it finds a match, SIGPIPEs `tar` while it is still writing later entries, and pipefail then
+  # reports tar's SIGPIPE exit code for the whole pipeline even though grep matched — reproduced
+  # directly against this exact tarball before landing on this shape. No other entry's name
+  # contains "package/LICENSE" as a substring, so a plain glob needs no line-boundary anchoring.
+  bundle_tarball_entries="$(tar -tzf "$bundle_tarball")"
+  case "$bundle_tarball_entries" in
+    *'package/LICENSE'*) pass=$((pass + 1)); echo "ok: LICENSE is in the tarball" ;;
+    *) fail=$((fail + 1)); echo "FAIL: no LICENSE in the tarball — ${bundle_tarball_entries}" ;;
+  esac
+fi
+# skipRegistryCheck: true above means this pack must carry the marker that makes it structurally
+# unpublishable — the same one the legacy branch writes, now also written by the bundle branch.
+if [ -f "$bundle_pack_dir/PACKED-WITH-SKIP-REGISTRY-CHECK" ]; then
+  pass=$((pass + 1)); echo "ok: the skip-registry-check marker is written for a bundle-format pack too"
+else
+  fail=$((fail + 1)); echo "FAIL: no skip-registry-check marker in ${bundle_pack_dir}"
 fi
 rm -rf "$bundle_pack_dir"
 

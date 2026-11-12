@@ -50,6 +50,10 @@ export const ARTIFACT_STATUS = {
     FROM_ARCHIVE: 'from-archive',
 }
 
+// Spelled exactly as tools/scripts/utils/publish-npm-package.ts spells it for the legacy format, so
+// a bundle-format and a legacy-format tarball report the same `repository.url`.
+const REPOSITORY_URL = 'https://github.com/aiqadam/qadam-flow.git'
+
 // The packages the platform provides. A bundle that inlined any of them would carry its own copy,
 // which is the cost ADR-0003 exists to remove (~41 MiB of heap per extra `shared`).
 export const PLATFORM_PROVIDED_PACKAGES = {
@@ -149,14 +153,27 @@ export const qadamArtifact = {
                 ? await copyNodeModulesClosure({ roots: qadamConfig.nodeModules, fromDir: qadamDir, artifactDir })
                 : {}
             const peerDependencies = await computePeerDependencies({ peers: analysis.peers, repoRoot })
-            await writeFile(join(artifactDir, 'package.json'), JSON.stringify(buildArtifactPackageJson({
+            const packageJson = buildArtifactPackageJson({
                 sourcePackageJson,
                 version,
                 kind,
                 peerDependencies,
                 nodeModules,
                 builtAgainst,
-            }), null, 2) + '\n')
+                directory: base.source,
+            })
+            // No official qadam's own package.json declares `license` or `repository` (checked across
+            // the catalogue): without a default here, every artifact npm receives is missing the field
+            // `npm publish --provenance` records its attestation against, and the publish fails exactly
+            // where the legacy branch (tools/scripts/utils/publish-npm-package.ts) already defaults both
+            // and ships `LICENSE`/`NOTICE` alongside — this mirrors that, so a 1.0.0+ qadam's tarball is
+            // the same kind of standalone MIT package a 0.x one already is.
+            await Promise.all([
+                writeFile(join(artifactDir, 'package.json'), JSON.stringify(packageJson, null, 2) + '\n'),
+                cp(join(repoRoot, 'LICENSE'), join(artifactDir, 'LICENSE')),
+                cp(join(repoRoot, 'NOTICE'), join(artifactDir, 'NOTICE')),
+                writeFile(join(artifactDir, 'README.md'), `# ${packageJson.name}\n\n${packageJson.description ?? ''}\n\nPart of the [Qadam Flow](https://github.com/aiqadam/qadam-flow) monorepo. See the repository for documentation. Licensed under MIT.\n`),
+            ])
 
             const withFiles = { ...common, i18nLocales, peerDependencies, nodeModules: Object.keys(nodeModules).length }
             if (!loadCheck) {
@@ -467,8 +484,8 @@ const computePeerDependencies = async ({ peers, repoRoot }) => {
     return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)))
 }
 
-const buildArtifactPackageJson = ({ sourcePackageJson, version, kind, peerDependencies, nodeModules, builtAgainst }) => {
-    const optional = Object.fromEntries(['description', 'license', 'keywords', 'repository', 'homepage', 'author']
+const buildArtifactPackageJson = ({ sourcePackageJson, version, kind, peerDependencies, nodeModules, builtAgainst, directory }) => {
+    const optional = Object.fromEntries(['description', 'keywords', 'homepage', 'author']
         .filter((field) => sourcePackageJson[field] !== undefined)
         .map((field) => [field, sourcePackageJson[field]]))
     const withNodeModules = kind === ARTIFACT_KIND.BUNDLE_WITH_NODE_MODULES
@@ -476,6 +493,11 @@ const buildArtifactPackageJson = ({ sourcePackageJson, version, kind, peerDepend
         name: sourcePackageJson.name,
         version,
         ...optional,
+        // Same defaults and the same spelling as publish-npm-package.ts's legacy branch: `repository`
+        // is what `npm publish --provenance` records its attestation against, and `license` is what npm
+        // and every license scanner read — neither is declared by any official qadam's own manifest.
+        license: sourcePackageJson.license ?? 'MIT',
+        repository: sourcePackageJson.repository ?? { type: 'git', url: REPOSITORY_URL, directory },
         main: './src/index.js',
         peerDependencies,
         ...(withNodeModules ? { dependencies: nodeModules, bundleDependencies: Object.keys(nodeModules) } : {}),
