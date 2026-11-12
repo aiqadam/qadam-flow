@@ -573,9 +573,9 @@ function readFlowToolReference(tool: unknown): string | null {
 // Single source of the wording for a qadam pin's resolvability, shared by `ap_validate_flow` and
 // `ap_flow_structure` so the two tools cannot tell an agent contradictory things about the same
 // fact. `qadamPinUtil.resolvePins` is tri-state; `false` is a confirmed miss, and only there is the
-// destructive remedy (delete-and-re-add) warranted. `undefined` means the check itself failed —
-// this must never claim the pin definitely does not exist, and must never advise destroying the
-// step's sample data based on a reading that was never actually verified (#474).
+// assertive "update this step" wording warranted. `undefined` means the check itself failed —
+// this must never claim the pin definitely does not exist, and must never advise a destructive
+// edit based on a reading that was never actually verified (#474).
 function qadamPinIssue({ pin, resolvable, subject = 'step' }: { pin: string, resolvable: boolean | undefined, subject?: 'step' | 'agent_tool' }): QadamPinIssue | null {
     if (resolvable === true) {
         return null
@@ -592,8 +592,8 @@ function qadamPinIssue({ pin, resolvable, subject = 'step' }: { pin: string, res
         return {
             severity: 'unavailable',
             message: subject === 'agent_tool'
-                ? `is pinned to ${wrapUntrustedValue(pin)}, which this installation does not have. Every run and every trigger provisioning attempt of the flow fails on it. Remove that tool from the agent step and add it again at an available version with ap_update_step.`
-                : `is pinned to ${wrapUntrustedValue(pin)}, which this installation does not have. Every run and every trigger provisioning attempt fails on it. Re-point it at an available version — delete and re-add the step with ap_add_step, or re-create the trigger with ap_update_trigger.`,
+                ? `is pinned to ${wrapUntrustedValue(pin)}, which this installation does not have. Update the tool to an available version with ap_update_step. A run fails only where the pinned version is not already cached on the worker; removing and re-adding the tool is not required.`
+                : `is pinned to ${wrapUntrustedValue(pin)}, which this installation does not have. Update this step to an available version with ap_update_step, or re-create the trigger with ap_update_trigger. The flow is not disabled; a run fails only where the pinned version is not already cached on the worker.`,
         }
     }
     return {
@@ -640,7 +640,7 @@ function followHoldIssue({ fromVersion, toVersion }: { fromVersion: string, toVe
 function pinStayIssue({ detail }: { detail: string }): PinStayIssue {
     return {
         label: 'VERSION UNAVAILABLE',
-        message: `is pinned to a version that is unavailable and was not moved to the image's build automatically: ${detail}. Update this step.`,
+        message: `is pinned to a version that is unavailable and was not moved to the image's build automatically: ${wrapUntrustedValue(detail)}. Update this step.`,
     }
 }
 

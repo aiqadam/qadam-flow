@@ -4,7 +4,7 @@ import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { qadamCache } from '../../../../src/app/qadams/metadata/qadam-cache'
 import { PinFallbackSeams } from '../../../../src/app/qadams/pin-moves/qadam-pin-fallback-seams'
-import { QadamPinMove } from '../../../../src/app/qadams/pin-moves/qadam-pin-move.dto'
+import { QadamPinMove, QadamPinStayCheck } from '../../../../src/app/qadams/pin-moves/qadam-pin-move.dto'
 import { qadamPinMoveService } from '../../../../src/app/qadams/pin-moves/qadam-pin-move.service'
 import { generateMockToken } from '../../../helpers/auth'
 import { db } from '../../../helpers/db'
@@ -260,6 +260,63 @@ describe('qadamPinMoveService.moveUnavailablePins', () => {
         expect(second.moved).toEqual([])
         expect(second.stayed).toEqual([expect.objectContaining({ reason: 'reverted-by-user' })])
         expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: flowVersion.id }) })).toEqual(['0.4.2'])
+    })
+})
+
+// ADR-0003 "Unavailable version" / "Versions that were never published" (#808): the read the
+// builder, MCP and runs use to mark a step "version unavailable — update this step". It is a dry
+// run of `moveUnavailablePins`'s decision — no rewrite, no audit record — and it reads a published
+// version too, which the move never rewrites.
+describe('qadamPinMoveService.checkUnavailablePins', () => {
+    it('reports the step and its reason without writing anything', async () => {
+        const ctx = await createTestContext(app)
+        const { flow, flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
+
+        const stays = await checkWith({ ctx, flowVersion, seams: fakeSeams({ imageVersion: '0.5.0' }) })
+
+        expect(stays).toEqual([expect.objectContaining({ stepName: 'step_1', qadamName: QADAM, version: '0.4.2', reason: 'outside-caret' })])
+        expect(await db.find('qadam_pin_move', { platformId: ctx.platform.id })).toEqual([])
+        expect(pinsOf({ flowVersion: await db.findOneByOrFail<FlowVersion>('flow_version', { id: flowVersion.id }) })).toEqual(['0.4.2'])
+        expect((await db.findOneByOrFail<{ id: string }>('flow', { id: flow.id })).id).toBe(flow.id)
+    })
+
+    it('reports no stay when the pin is available at the image build', async () => {
+        const ctx = await createTestContext(app)
+        const { flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
+
+        const stays = await checkWith({ ctx, flowVersion, seams: fakeSeams({ imageVersion: '0.4.2' }) })
+
+        expect(stays).toEqual([])
+    })
+
+    it('reports a reverted move as the reason, the same as a publish would leave it', async () => {
+        const ctx = await createTestContext(app)
+        const { flow, flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
+        await saveHeldMove({ platformId: ctx.platform.id, projectId: ctx.project.id, flowId: flow.id, flowVersionId: flowVersion.id })
+
+        const stays = await checkWith({ ctx, flowVersion, seams: fakeSeams({ imageVersion: '0.4.5' }) })
+
+        expect(stays).toEqual([expect.objectContaining({ reason: 'reverted-by-user' })])
+    })
+
+    it('reads a published version too, since a move never rewrites one', async () => {
+        const ctx = await createTestContext(app)
+        const { flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
+        await db.update('flow_version', flowVersion.id, { state: FlowVersionState.LOCKED })
+
+        const stays = await checkWith({ ctx, flowVersion, seams: fakeSeams({ imageVersion: '0.5.0' }) })
+
+        expect(stays).toEqual([expect.objectContaining({ stepName: 'step_1', reason: 'outside-caret' })])
+    })
+
+    it('answers no stays for a flow that is not in the caller\'s project', async () => {
+        const ctx = await createTestContext(app)
+        const other = await createTestContext(app)
+        const { flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
+
+        const stays = await checkWith({ ctx: other, flowVersion, seams: fakeSeams({ imageVersion: '0.5.0' }) })
+
+        expect(stays).toEqual([])
     })
 })
 
@@ -554,6 +611,52 @@ describe('/v1/qadam-pin-moves/held', () => {
     })
 })
 
+describe('/v1/qadam-pin-moves/check', () => {
+    it('returns the version-unavailable marks of one flow version to a member of its project', async () => {
+        const ctx = await createTestContext(app)
+        const { flow, flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
+
+        const response = await ctx.get('/v1/qadam-pin-moves/check', { flowId: flow.id, flowVersionId: flowVersion.id })
+
+        expect(response.statusCode).toBe(StatusCodes.OK)
+        const { pinStays } = response.json<QadamPinStayCheck>()
+        expect(pinStays).toHaveLength(1)
+        expect(pinStays[0]).toMatchObject({ stepName: 'step_1', qadamName: QADAM, version: '0.4.2' })
+    })
+
+    it('answers no marks when the pinned version is installed', async () => {
+        const ctx = await createTestContext(app)
+        const { flow, flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
+        await saveQadamVersion({ version: '0.4.2' })
+
+        const response = await ctx.get('/v1/qadam-pin-moves/check', { flowId: flow.id, flowVersionId: flowVersion.id })
+
+        expect(response.statusCode).toBe(StatusCodes.OK)
+        expect(response.json<QadamPinStayCheck>().pinStays).toEqual([])
+    })
+
+    it('lets a project member with read access read the mark', async () => {
+        const ctx = await createTestContext(app)
+        const viewer = await createMemberContext(app, ctx, { projectRole: DefaultProjectRole.VIEWER })
+        const { flow, flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
+
+        const response = await viewer.get('/v1/qadam-pin-moves/check', { flowId: flow.id, flowVersionId: flowVersion.id })
+
+        expect(response.statusCode).toBe(StatusCodes.OK)
+    })
+
+    it('refuses a platform member who is not in the flow\'s project', async () => {
+        const ctx = await createTestContext(app)
+        const { flow, flowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
+        const { mockUser } = await mockBasicUser({ user: { platformId: ctx.platform.id, platformRole: PlatformRole.MEMBER } })
+        const token = await generateMockToken({ id: mockUser.id, type: PrincipalType.USER, platform: { id: ctx.platform.id } })
+
+        const response = await app.inject({ method: 'GET', url: `/api/v1/qadam-pin-moves/check?flowId=${flow.id}&flowVersionId=${flowVersion.id}`, headers: { authorization: `Bearer ${token}` } })
+
+        expect(response.statusCode).toBe(StatusCodes.FORBIDDEN)
+    })
+})
+
 // A reverted record seeded directly, for the reads that do not need a move first.
 async function saveHeldMove({ platformId, projectId, flowId, flowVersionId }: { platformId: string, projectId: string, flowId: string, flowVersionId: string }): Promise<QadamPinMove> {
     const now = new Date().toISOString()
@@ -581,6 +684,10 @@ async function saveHeldMove({ platformId, projectId, flowId, flowVersionId }: { 
 }
 
 // A call as `qadamPinMoveService` makes it from a publish, against the fixture qadam's fake image.
+function checkWith({ ctx, flowVersion, seams }: { ctx: TestContext, flowVersion: FlowVersion, seams: FakeSeams }) {
+    return qadamPinMoveService({ log: app.log, seams }).checkUnavailablePins({ flowId: flowVersion.flowId, flowVersionId: flowVersion.id, projectId: ctx.project.id, platformId: ctx.platform.id })
+}
+
 function moveWith({ ctx, flowVersion, seams, actorUserId }: { ctx: TestContext, flowVersion: FlowVersion, seams: FakeSeams, actorUserId?: string }) {
     return qadamPinMoveService({ log: app.log, seams }).moveUnavailablePins(moveParams({ ctx, flowVersion, actorUserId }))
 }

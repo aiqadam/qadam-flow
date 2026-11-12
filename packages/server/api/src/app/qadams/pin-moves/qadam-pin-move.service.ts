@@ -128,7 +128,7 @@ export const qadamPinMoveService = ({ log, seams = qadamPinFallbackSeams({ log }
     // cannot resolve answers no stays, not an error, since this is advisory state a missing read
     // must not block editing or viewing a run over.
     async checkUnavailablePins({ flowId, flowVersionId, projectId, platformId }: CheckUnavailablePinsParams): Promise<PinStay[]> {
-        const flow = await flowRepo().findOneBy({ id: flowId, projectId })
+        const flow = await flowRepo().findOneBy({ id: flowId, projectId, platformId })
         const flowVersion = isNil(flow) ? null : await flowVersionRepo().findOneBy({ id: flowVersionId, flowId })
         if (isNil(flowVersion)) {
             return []
@@ -143,7 +143,10 @@ export const qadamPinMoveService = ({ log, seams = qadamPinFallbackSeams({ log }
         }
         const held = await findHeldRewrites({ flowId, platformId })
         const plan = await planMoves({ steps: steps.filter((step) => unavailable.has(qadamPinUtil.pinOf({ step }))), held, platformId, seams })
-        return plan.stayed
+        // `pin-is-image-version` means the pin *is* the image's build — the one version an
+        // unavailable pin can reliably run — so it is not "version unavailable" and must not be
+        // marked. Every other stay is a step that could not be moved, which is the mark.
+        return plan.stayed.filter((stay) => stay.reason !== 'pin-is-image-version')
     },
 
     async list({ platformId, query }: { platformId: PlatformId, query: ListQadamPinMovesRequestQuery }): Promise<SeekPage<QadamPinMove>> {

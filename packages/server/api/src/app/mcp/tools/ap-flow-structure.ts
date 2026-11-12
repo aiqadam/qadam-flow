@@ -188,7 +188,10 @@ function qadamPinWarning(step: StepInfo): string {
 }
 
 function stepPinWarning(step: StepInfo): string {
-    if (isNil(step.qadamPin)) {
+    // The specific mark says more than the generic one, and says it for the same pin: when the
+    // version-unavailable check explains this step, showing "pinned version unavailable" beside it
+    // would be the same fact twice, in two different actionable wordings.
+    if (isNil(step.qadamPin) || !isNil(step.pinStay)) {
         return ''
     }
     const issue = mcpUtils.qadamPinIssue({ pin: step.qadamPin, resolvable: step.qadamVersionResolvable })

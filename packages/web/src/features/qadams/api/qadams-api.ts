@@ -55,7 +55,10 @@ export const qadamsApi = {
     flowId: string;
     flowVersionId: string;
   }): Promise<FlowVersionPinStayCheck> {
-    return api.get<FlowVersionPinStayCheck>('/v1/qadam-pin-moves/check', request);
+    return api.get<FlowVersionPinStayCheck>(
+      '/v1/qadam-pin-moves/check',
+      request,
+    );
   },
   get(
     request: GetQadamRequestParams & GetQadamRequestQuery,

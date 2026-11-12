@@ -27,6 +27,7 @@ import { StepNodeLogo } from './step-node-logo';
 import { ApStepNodeSkippedStatus } from './step-node-skipped-status';
 import { ApStepNodeStatusInDraft } from './step-node-status-in-draft';
 import { ApStepNodeStatusInRun } from './step-node-status-in-run';
+import { ApStepNodeUnavailablePin } from './step-node-unavailable-pin';
 import { TriggerWidget } from './trigger-widget';
 
 const ApStepCanvasNode = React.memo(
@@ -159,6 +160,10 @@ const ApStepCanvasNode = React.memo(
         {step.type === FlowActionType.PIECE ||
         step.type === FlowTriggerType.PIECE ? (
           <ApStepNodeFrameworkUnsupported stepName={step.name} />
+        ) : null}
+        {step.type === FlowActionType.PIECE ||
+        step.type === FlowTriggerType.PIECE ? (
+          <ApStepNodeUnavailablePin stepName={step.name} />
         ) : null}
         <div
           className={cn('h-full w-full', {

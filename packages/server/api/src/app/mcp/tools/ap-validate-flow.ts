@@ -89,7 +89,15 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                     hasQadamSteps ? findHeldPinMoves({ flowId: flow.id, projectId: mcp.projectId, platformId, log }) : [],
                     hasQadamSteps ? findPinStays({ flowId: flow.id, flowVersionId: flow.version.id, projectId: mcp.projectId, platformId, log }) : [],
                 ])
-                const allIssues = [...structural.issues, ...qadamVersionIssues, ...frameworkVersionIssues, ...validatePreReleaseBuilds({ trigger: flow.version.trigger }), ...validateFollowHeld({ trigger: flow.version.trigger, heldMoves }), ...validateUnavailablePinStays({ trigger: flow.version.trigger, pinStays }), ...validateAgentToolCounts({ trigger: flow.version.trigger }), ...callFlowIssues, ...concurrentLoopIssues, ...translationIssues]
+                // The version-unavailable mark is a more specific statement about the same pin
+                // than `qadam_version`'s generic "cannot resolve" (ADR-0003, #808), so the step is
+                // reported once: under `version_unavailable`, with its reason, when the check
+                // explains why it was not moved.
+                const pinStayStepNames = new Set(pinStays.map((stay) => stay.stepName))
+                // Only the step's OWN pin (not an agent tool's, which shares `stepName`) is
+                // replaced by the more specific mark.
+                const qadamVersionIssuesWithoutMarked = qadamVersionIssues.stepIssues.filter((issue) => !pinStayStepNames.has(issue.stepName))
+                const allIssues = [...structural.issues, ...qadamVersionIssuesWithoutMarked, ...qadamVersionIssues.toolIssues, ...frameworkVersionIssues, ...validatePreReleaseBuilds({ trigger: flow.version.trigger }), ...validateFollowHeld({ trigger: flow.version.trigger, heldMoves }), ...validateUnavailablePinStays({ trigger: flow.version.trigger, pinStays }), ...validateAgentToolCounts({ trigger: flow.version.trigger }), ...callFlowIssues, ...concurrentLoopIssues, ...translationIssues]
                 const result = { ...structural, issues: allIssues }
                 // A warning is reported in the output but never blocks `valid` or counts toward
                 // "invalid" in the summary — today that is exactly (and only) the translation
@@ -220,7 +228,7 @@ async function validatePinnedQadamVersions({ trigger, platformId, log }: {
     trigger: Step
     platformId: string
     log: FastifyBaseLogger
-}): Promise<ValidationIssue[]> {
+}): Promise<{ stepIssues: ValidationIssue[], toolIssues: ValidationIssue[] }> {
     // No `skip` filter, unlike every other check here: `extractQadamPackages` in the worker
     // provisions every PIECE step in the version, and every PIECE tool of an agent step, regardless
     // of `skip`, so a dead pin on a skipped step still fails provisioning on every trigger tick and
@@ -238,8 +246,8 @@ async function validatePinnedQadamVersions({ trigger, platformId, log }: {
         const pin = qadamPinUtil.pinOf({ step })
         // Shared with `ap_flow_structure` via `mcpUtils.qadamPinIssue`, so the two tools cannot
         // give an agent contradictory accounts of the same pin — a confirmed miss (`false`) gets
-        // the assertive wording and the delete-and-re-add remedy; a lookup that merely errored
-        // (`undefined`) must not (#474).
+        // the assertive "update this step" wording; a lookup that merely errored (`undefined`)
+        // must not (#474).
         const issue = mcpUtils.qadamPinIssue({ pin, resolvable: resolutions.get(pin) })
         if (isNil(issue)) {
             return []
@@ -262,7 +270,7 @@ async function validatePinnedQadamVersions({ trigger, platformId, log }: {
             message: `${mcpUtils.wrapUntrustedValue(tool.stepDisplayName)} has an agent tool (${mcpUtils.wrapUntrustedValue(tool.toolName)}) that ${issue.message}`,
         }]
     })
-    return [...stepIssues, ...toolIssues]
+    return { stepIssues, toolIssues }
 }
 
 // The per-agent-step cap the write path and the publish gate enforce (#879), reported here for a

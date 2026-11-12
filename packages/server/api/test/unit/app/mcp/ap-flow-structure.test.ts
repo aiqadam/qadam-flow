@@ -15,6 +15,7 @@ const mockGetMany = vi.fn()
 const mockResolveVersions = vi.fn()
 const mockUnsupportedPins = vi.fn()
 const mockListHeld = vi.fn()
+const mockCheckPinStays = vi.fn()
 
 vi.mock('../../../../src/app/flows/flow/flow.service', () => ({
     flowService: vi.fn(() => ({
@@ -58,6 +59,7 @@ vi.mock('../../../../src/app/qadams/census/framework-census-marking', () => ({
 vi.mock('../../../../src/app/qadams/pin-moves/qadam-pin-move.service', () => ({
     qadamPinMoveService: vi.fn(() => ({
         listHeld: mockListHeld,
+        checkUnavailablePins: mockCheckPinStays,
     })),
 }))
 
@@ -65,6 +67,7 @@ mockListHeld.mockResolvedValue({ data: [], next: null, previous: null })
 
 beforeEach(() => {
     mockListHeld.mockResolvedValue({ data: [], next: null, previous: null })
+    mockCheckPinStays.mockResolvedValue([])
 })
 
 import { apFlowStructureTool } from '../../../../src/app/mcp/tools/ap-flow-structure'
@@ -102,6 +105,7 @@ function flowWith({ firstAction }: { firstAction?: unknown }): Record<string, un
     return {
         id: 'flow-1',
         version: {
+            id: 'version-1',
             displayName: 'Structure Flow',
             notes: [],
             trigger: {
@@ -592,6 +596,83 @@ describe('ap_flow_structure — snapshot follow hold (ADR-0004, #854)', () => {
         const text = (result.content?.[0] as { text: string }).text
         expect(text).toContain('step_1')
         expect(text).not.toContain('[FOLLOW HELD]')
+        expect(log.warn).toHaveBeenCalled()
+    })
+})
+
+// ADR-0003 "Unavailable version" / "Versions that were never published" (#808): a step whose pin
+// is unavailable and was not moved to the image's build is marked "version unavailable — update
+// this step" — a fault, unlike the pre-release and follow-hold facts.
+describe('ap_flow_structure — version unavailable, update this step (ADR-0003, #808)', () => {
+    function pinStay({ overrides }: { overrides?: Record<string, unknown> } = {}): Record<string, unknown> {
+        return {
+            stepName: 'step_1',
+            qadamName: '@aiqadam/qadam-test-email',
+            version: DEAD_VERSION,
+            reason: 'outside-caret',
+            detail: 'the image\'s version is outside the pin\'s caret range',
+            ...overrides,
+        }
+    }
+
+    beforeEach(() => {
+        vi.clearAllMocks()
+        mockUnsupportedPins.mockResolvedValue(new Map())
+        mockGetPlatformId.mockResolvedValue('platform-1')
+        mockGet.mockResolvedValue(null)
+        mockListHeld.mockResolvedValue({ data: [], next: null, previous: null })
+        mockCheckPinStays.mockResolvedValue([pinStay()])
+    })
+
+    it('marks the step in the text and the structured content', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: DEAD_VERSION }) }))
+
+        const result = await callTool()
+
+        const text = (result.content?.[0] as { text: string }).text
+        expect(text).toContain('[VERSION UNAVAILABLE]')
+        const steps = result.structuredContent?.steps as { name: string, pinStay?: { reason: string, detail: string } }[]
+        expect(steps.find(step => step.name === 'step_1')?.pinStay).toMatchObject({ reason: 'outside-caret' })
+    })
+
+    it('does not repeat the generic pin warning beside the specific mark', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: DEAD_VERSION }) }))
+
+        const result = await callTool()
+
+        const text = (result.content?.[0] as { text: string }).text
+        expect(text).toContain('[VERSION UNAVAILABLE]')
+        expect(text).not.toContain('PINNED VERSION UNAVAILABLE')
+    })
+
+    it('reads the mark for the flow and its version in the caller\'s project', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: DEAD_VERSION }) }))
+
+        await callTool()
+
+        expect(mockCheckPinStays).toHaveBeenCalledWith({ flowId: 'flow-1', flowVersionId: 'version-1', projectId: 'project-1', platformId: 'platform-1' })
+    })
+
+    it('carries no mark when the step is not unavailable', async () => {
+        mockCheckPinStays.mockResolvedValue([])
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: HEALTHY_VERSION }) }))
+
+        const result = await callTool()
+
+        const text = (result.content?.[0] as { text: string }).text
+        expect(text).not.toContain('[VERSION UNAVAILABLE]')
+        expect(JSON.stringify(result.structuredContent?.steps)).not.toContain('pinStay')
+    })
+
+    it('still returns the structure, without the mark, when the check fails', async () => {
+        mockCheckPinStays.mockRejectedValue(new Error('connection terminated unexpectedly'))
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: DEAD_VERSION }) }))
+
+        const result = await callTool()
+
+        const text = (result.content?.[0] as { text: string }).text
+        expect(text).toContain('step_1')
+        expect(text).not.toContain('[VERSION UNAVAILABLE]')
         expect(log.warn).toHaveBeenCalled()
     })
 })

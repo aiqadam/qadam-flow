@@ -44,6 +44,7 @@ vi.mock('../../../../src/app/qadams/metadata/qadam-metadata-service', () => ({
 vi.mock('../../../../src/app/qadams/pin-moves/qadam-pin-move.service', () => ({
     qadamPinMoveService: vi.fn(() => ({
         listHeld: mockListHeld,
+        checkUnavailablePins: async () => [],
     })),
 }))
 

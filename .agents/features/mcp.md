@@ -53,10 +53,16 @@ Exposes a Qadam Flow project as a Model Context Protocol (MCP) server so that AI
   #803, a step whose pinned qadam needs a framework context version this release has retired is
   labelled `⚠️ FRAMEWORK VERSION NO LONGER SUPPORTED: update this step` and carries
   `frameworkVersionSupported: false` (ADR-0002; see [framework-census.md](./framework-census.md)).
+  Since #808 a step whose pin is unavailable and was not moved to the image's build carries
+  `pinStay: { reason, detail }` and is labelled `⚠️ [VERSION UNAVAILABLE]` — a fault, unlike the
+  ADR-0004 pre-release and follow-hold facts: there is no audited move behind what the step runs
+  (see [qadam-pin-moves.md](./qadam-pin-moves.md)).
 - `ap_read_step_code` — read full source code of a CODE step, plus its `logInput`/`logOutput`
 - `ap_validate_flow`, `ap_validate_step_config` — validation helpers. `ap_validate_flow` reports
   issue categories: `step_validity`, `qadam_version` (a pinned qadam version this installation
-  cannot resolve, #432), `framework_version` (a pinned qadam built against a framework context
+  cannot resolve, #432), `version_unavailable` (a `warning`: the pin is unavailable and was not
+  moved automatically — "update this step", never blocking publishing, #808),
+  `framework_version` (a pinned qadam built against a framework context
   version this release no longer runs, #803; a pin that does not resolve gets `qadam_version` only, #838), `template_reference`, `empty_branch`, and — since
   #391 — `subflow_payload`
   (a `callFlow` step calling a child with no arguments) and `inline_pause` (an

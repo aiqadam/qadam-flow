@@ -48,6 +48,7 @@ import { PreReleaseBuildLabel } from './pre-release-build-label';
 import { RouterSettings } from './router-settings';
 import { StepNavigationButtons } from './step-navigation-buttons';
 import { useStepSettingsContext } from './step-settings-context';
+import { UnavailablePinLabel } from './unavailable-pin-label';
 import { UpdateAvailableLabel } from './update-available-label';
 import { UpdatePieceVersionDialog } from './update-qadam-version-dialog/update-qadam-version-dialog';
 import { UpdateThisStepLabel } from './update-this-step-label';
@@ -207,6 +208,15 @@ const StepSettingsContainer = () => {
         {(modifiedStep.type === FlowActionType.PIECE ||
           modifiedStep.type === FlowTriggerType.PIECE) && (
           <HeldStepLabel step={modifiedStep} flowId={flowVersion.flowId} />
+        )}
+        {(modifiedStep.type === FlowActionType.PIECE ||
+          modifiedStep.type === FlowTriggerType.PIECE) && (
+          <UnavailablePinLabel
+            step={modifiedStep}
+            flowId={flowVersion.flowId}
+            flowVersionId={flowVersion.id}
+            flowVersionUpdated={flowVersion.updated}
+          />
         )}
         {(modifiedStep.type === FlowActionType.PIECE ||
           modifiedStep.type === FlowTriggerType.PIECE) && (

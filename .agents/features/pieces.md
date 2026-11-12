@@ -82,7 +82,7 @@ Unique index on `(name, version, platformId)`.
 
 ### `pieceMetadataService`
 - `list(params)` — returns sorted + searched `PieceMetadataModelSummary[]` from cache. `qadamListUtils.filterPieces` (`qadams/metadata/utils/index.ts`) only sorts and applies the search/category/suggestion filter — the platform's `filteredQadamNames` / `filteredQadamBehavior` columns exist on the entity but nothing reads them when listing.
-- `getOrThrow({ platformId, name, version, locale? })` — returns full `PieceMetadataModel` for exact piece; prefers platform-specific over official; applies i18n translation
+- `getOrThrow({ platformId, name, version, locale?, fallbackToInstalledVersion? })` — returns full `PieceMetadataModel` for exact piece; prefers platform-specific over official; applies i18n translation. `fallbackToInstalledVersion` is the #843 stopgap: when the pinned version is not installed it borrows another installed version of the same qadam for validation only (never moves the pin), and throws `qadam_not_installed` when none is installed.
 - `listVersions({ name, platformId, projectId })` — returns all available semver versions from registry cache
 - `create({ pieceMetadata, packageType, platformId, pieceType, archiveId? })` — inserts metadata record and invalidates cache
 - `registry({ release? })` — returns lightweight name+version list for all pieces

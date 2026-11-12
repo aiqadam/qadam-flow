@@ -49,6 +49,7 @@ import { StepDataPanelViewToggle } from '../step-data/step-data-panel-view-toggl
 import { FrameworkUnsupportedLabel } from '../step-settings/framework-unsupported-label';
 import { HeldStepLabel } from '../step-settings/held-step-label';
 import { PreReleaseBuildLabel } from '../step-settings/pre-release-build-label';
+import { UnavailablePinLabel } from '../step-settings/unavailable-pin-label';
 import { UpdateAvailableLabel } from '../step-settings/update-available-label';
 import { isRunAgent } from '../test-step/agent-test-step';
 
@@ -352,6 +353,12 @@ const RunPinLabels = ({
     <PreReleaseBuildLabel step={step} />
     <UpdateAvailableLabel step={step} readonly />
     <HeldStepLabel step={step} flowId={flowVersion.flowId} />
+    <UnavailablePinLabel
+      step={step}
+      flowId={flowVersion.flowId}
+      flowVersionId={flowVersion.id}
+      flowVersionUpdated={flowVersion.updated}
+    />
   </div>
 );
 
