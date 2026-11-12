@@ -100,9 +100,13 @@ async function validate(flow: Record<string, unknown> = flowWithPieceStep()): Pr
 }
 
 // ADR-0003 "Unavailable version" / "Versions that were never published" (#808): a step whose pin
-// is unavailable and was not moved to the image's build is reported in place of the generic
-// `qadam_version` issue for the same confirmed-missing pin, keeping the same (error) severity —
-// ADR-0003's "the flow is never disabled" (#435) is about the REST publish gate, not this report.
+// `checkUnavailablePins` reports as a stay. `checkUnavailablePins` resolves a pin exact-match only
+// (`isPinAvailable`), stricter than `qadam_version`'s own check (`resolvePins`, which also accepts
+// the image's bundled build as a stand-in inside the pin's caret range) — so a step can be marked
+// here while still resolving, and still running, under the generic check (`reverted-by-user` is
+// the clearest case: someone deliberately kept it there). Only a step `qadam_version` ALSO confirms
+// missing keeps its (error) severity here; every other stay is a warning. ADR-0003's "the flow is
+// never disabled" (#435) is about the REST publish gate, not this report.
 describe('ap_validate_flow — version unavailable, update this step (ADR-0003, #808)', () => {
     beforeEach(() => {
         vi.clearAllMocks()
@@ -112,11 +116,30 @@ describe('ap_validate_flow — version unavailable, update this step (ADR-0003, 
         mockCheckPinStays.mockResolvedValue([pinStay()])
     })
 
-    it('reports the step as a blocking issue with its reason', async () => {
+    it('reports a resolvable but held step as a warning, not a blocking issue', async () => {
+        mockCheckPinStays.mockResolvedValue([pinStay({ overrides: { reason: 'reverted-by-user', detail: 'a person reverted a move of this step' } })])
+
         const { text, structuredContent } = await validate()
 
         expect(text).toContain('Version Unavailable — Update This Step:')
         expect(text).toContain('is pinned to a version that is unavailable')
+        expect(text).not.toContain('delete and re-add')
+
+        // The fixture's EMPTY trigger is structurally invalid on its own (step_validity, unrelated
+        // to this pin), so `valid` alone cannot isolate this issue's severity — the category's
+        // placement in `warnings`, never `issues`, is what proves it does not block.
+        const warnings = structuredContent.warnings as { category: string, stepName: string, message: string }[]
+        const issues = structuredContent.issues as { category: string }[]
+        expect(warnings).toContainEqual(expect.objectContaining({ category: 'version_unavailable', stepName: 'step_1' }))
+        expect(issues.map(i => i.category)).not.toContain('version_unavailable')
+    })
+
+    it('reports a confirmed-missing step as a blocking issue, with the working remedy', async () => {
+        mockGet.mockResolvedValue(undefined)
+
+        const { text, structuredContent } = await validate()
+
+        expect(text).toContain('delete and re-add the step')
         expect(structuredContent.valid).toBe(false)
 
         const issues = structuredContent.issues as { category: string, stepName: string, message: string }[]
@@ -179,7 +202,7 @@ describe('ap_validate_flow — version unavailable, update this step (ADR-0003, 
         expect(structuredContent.issues).toBeDefined()
         expect(log.warn).toHaveBeenCalledWith(
             expect.objectContaining({ flowId: 'flow-1' }),
-            '[apValidateFlow] Unavailable-pin check failed; the report omits the version-unavailable warning',
+            '[apValidateFlow] Unavailable-pin check failed; the report omits the version-unavailable mark',
         )
     })
 })

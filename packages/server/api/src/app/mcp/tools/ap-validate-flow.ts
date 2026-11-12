@@ -97,7 +97,18 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                 // Only the step's OWN pin (not an agent tool's, which shares `stepName`) is
                 // replaced by the more specific mark.
                 const qadamVersionIssuesWithoutMarked = qadamVersionIssues.stepIssues.filter((issue) => !pinStayStepNames.has(issue.stepName))
-                const allIssues = [...structural.issues, ...qadamVersionIssuesWithoutMarked, ...qadamVersionIssues.toolIssues, ...frameworkVersionIssues, ...validatePreReleaseBuilds({ trigger: flow.version.trigger }), ...validateFollowHeld({ trigger: flow.version.trigger, heldMoves }), ...validateUnavailablePinStays({ trigger: flow.version.trigger, pinStays }), ...validateAgentToolCounts({ trigger: flow.version.trigger }), ...callFlowIssues, ...concurrentLoopIssues, ...translationIssues]
+                // `checkUnavailablePins` resolves a pin exact-match only (`isPinAvailable`,
+                // `allowBundledFallback: false`), stricter than `qadam_version`'s own check
+                // (`resolvePins`, `allowBundledFallback: true` — the image's bundled build can
+                // stand in for an exact pin inside its caret range). So a step can be marked here
+                // (exact version missing) while `qadam_version` still finds it resolvable (served
+                // by the bundled fallback) — `reverted-by-user`, `props-incompatible`,
+                // `props-unverifiable` and `target-not-loaded` are exactly those cases: the
+                // run-time fallback still serves the step, publishing still goes ahead, and this
+                // report must not call it invalid. Only a step this ALSO confirmed missing under
+                // the generic check keeps `qadam_version`'s blocking (error) severity here.
+                const confirmedMissingStepNames = new Set(qadamVersionIssues.stepIssues.map((issue) => issue.stepName))
+                const allIssues = [...structural.issues, ...qadamVersionIssuesWithoutMarked, ...qadamVersionIssues.toolIssues, ...frameworkVersionIssues, ...validatePreReleaseBuilds({ trigger: flow.version.trigger }), ...validateFollowHeld({ trigger: flow.version.trigger, heldMoves }), ...validateUnavailablePinStays({ trigger: flow.version.trigger, pinStays, confirmedMissingStepNames }), ...validateAgentToolCounts({ trigger: flow.version.trigger }), ...callFlowIssues, ...concurrentLoopIssues, ...translationIssues]
                 const result = { ...structural, issues: allIssues }
                 // A warning is reported in the output but never blocks `valid` or counts toward
                 // "invalid" in the summary — today that is exactly (and only) the translation
@@ -246,7 +257,7 @@ async function validatePinnedQadamVersions({ trigger, platformId, log }: {
         const pin = qadamPinUtil.pinOf({ step })
         // Shared with `ap_flow_structure` via `mcpUtils.qadamPinIssue`, so the two tools cannot
         // give an agent contradictory accounts of the same pin — a confirmed miss (`false`) gets
-        // the assertive "update this step" wording; a lookup that merely errored (`undefined`)
+        // the assertive, destructive-remedy wording; a lookup that merely errored (`undefined`)
         // must not (#474).
         const issue = mcpUtils.qadamPinIssue({ pin, resolvable: resolutions.get(pin) })
         if (isNil(issue)) {
@@ -351,14 +362,19 @@ function validateFollowHeld({ trigger, heldMoves }: { trigger: Step, heldMoves: 
 
 // ADR-0003 "Unavailable version" / "Versions that were never published" (#808): a step whose pin
 // is unavailable and a publish or the snapshot follow pass did not move it. `checkUnavailablePins`
-// only ever reports a step whose pin `isPinAvailable` already confirmed missing (`findUnavailablePins`
-// prefilters to that), so this is always the same confirmed-miss case `qadam_version` (#432) blocks
-// on — it replaces that issue (see the filter in the caller), not softens it. Unlike the pre-release
-// and follow-hold notes above it keeps the default (error) severity, same as `qadam_version`: ADR-0003
-// says publishing is never blocked and the flow is never disabled (#435) — that is the REST publish
-// gate's and the worker's concern, not this advisory report's, and `ap_validate_flow`'s whole purpose
-// is to catch exactly this before an agent calls `ap_lock_and_publish`. A read that fails drops the
-// issue and leaves the rest of the report intact, the same as the hold read.
+// resolves a pin exact-match only (`isPinAvailable`), stricter than `qadam_version`'s own check
+// (`resolvePins`, which also accepts the image's bundled build as a stand-in inside the pin's
+// caret range) — so a step reported here is not always a step `qadam_version` also calls a
+// confirmed miss: `reverted-by-user`, `props-incompatible`, `props-unverifiable` and
+// `target-not-loaded` are exactly the cases where the bundled fallback still serves the step, so
+// publishing still goes ahead and the run-time net still runs it. The caller (`confirmedMissingStepNames`)
+// decides severity per step: `error`, the same as `qadam_version`, only for a step that check ALSO
+// confirmed missing — never softening THAT case, since ADR-0003's "the flow is never disabled"
+// (#435) is the REST publish gate's and the worker's concern, not this advisory report's, and
+// `ap_validate_flow`'s whole purpose is to catch exactly this before an agent calls
+// `ap_lock_and_publish`. Every other stay is `warning`: it calls for action, but the flow runs.
+// A read that fails drops the issue and leaves the rest of the report intact, the same as the hold
+// read.
 async function findPinStays({ flowId, flowVersionId, projectId, platformId, log }: {
     flowId: string
     flowVersionId: string
@@ -368,13 +384,13 @@ async function findPinStays({ flowId, flowVersionId, projectId, platformId, log 
 }): Promise<PinStay[]> {
     const { data, error } = await tryCatch(() => qadamPinMoveService({ log }).checkUnavailablePins({ flowId, flowVersionId, projectId, platformId }))
     if (!isNil(error)) {
-        log.warn({ error, flowId }, '[apValidateFlow] Unavailable-pin check failed; the report omits the version-unavailable warning')
+        log.warn({ error, flowId }, '[apValidateFlow] Unavailable-pin check failed; the report omits the version-unavailable mark')
         return []
     }
     return data ?? []
 }
 
-function validateUnavailablePinStays({ trigger, pinStays }: { trigger: Step, pinStays: PinStay[] }): ValidationIssue[] {
+function validateUnavailablePinStays({ trigger, pinStays, confirmedMissingStepNames }: { trigger: Step, pinStays: PinStay[], confirmedMissingStepNames: Set<string> }): ValidationIssue[] {
     const byStepName = new Map(pinStays.map((stay) => [stay.stepName, stay]))
     return qadamPinUtil.getQadamSteps({ trigger }).flatMap((step): ValidationIssue[] => {
         const stay = byStepName.get(step.name)
@@ -382,10 +398,19 @@ function validateUnavailablePinStays({ trigger, pinStays }: { trigger: Step, pin
             return []
         }
         const issue = mcpUtils.pinStayIssue({ detail: stay.detail })
+        const confirmedMissing = confirmedMissingStepNames.has(step.name)
+        // Only a step `qadam_version` also confirms has nothing serving it gets the destructive
+        // remedy — every other stay reason (`reverted-by-user` chief among them) still has the
+        // run-time fallback running it, so telling an agent to delete and re-add it would be bad
+        // advice, not a fix.
+        const remedy = confirmedMissing
+            ? ' ap_update_step cannot change a step\'s pinned version — delete and re-add the step with ap_add_step at an available version, or re-create the trigger with ap_update_trigger.'
+            : ''
         return [{
             category: 'version_unavailable' as const,
             stepName: step.name,
-            message: `${mcpUtils.wrapUntrustedValue(step.displayName)} ${issue.message}`,
+            message: `${mcpUtils.wrapUntrustedValue(step.displayName)} ${issue.message}${remedy}`,
+            ...(confirmedMissing ? {} : { severity: 'warning' as const }),
         }]
     })
 }

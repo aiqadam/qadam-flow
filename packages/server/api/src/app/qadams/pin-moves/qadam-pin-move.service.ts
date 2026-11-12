@@ -127,6 +127,13 @@ export const qadamPinMoveService = ({ log, seams = qadamPinFallbackSeams({ log }
     // (`frameworkCensusMarking.unsupportedStepsOfFlowVersion`): a flow or version the caller
     // cannot resolve answers no stays, not an error, since this is advisory state a missing read
     // must not block editing or viewing a run over.
+    //
+    // Known gap: only `plan.stayed` is returned, never `plan.moves`. On a draft that is exactly
+    // what `moveUnavailablePins` would also commit on the next publish, so a step `decide` would
+    // move is correctly left unmarked — it is about to stop being unavailable. On a **published**
+    // version nothing ever commits that move (see "Not done yet" in qadam-pin-moves.md), so the
+    // same step stays silently unmarked indefinitely: it is unavailable today and nothing is
+    // auditing or fixing it, but this read says nothing is wrong. Not yet fixed.
     async checkUnavailablePins({ flowId, flowVersionId, projectId, platformId }: CheckUnavailablePinsParams): Promise<PinStay[]> {
         const { error: notOwned } = await tryCatch(() => assertFlowBelongsTo({ flowId, projectId, platformId, log }))
         const flowVersion = isNil(notOwned) ? await flowVersionRepo().findOneBy({ id: flowVersionId, flowId }) : null

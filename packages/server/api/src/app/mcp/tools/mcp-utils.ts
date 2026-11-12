@@ -573,7 +573,7 @@ function readFlowToolReference(tool: unknown): string | null {
 // Single source of the wording for a qadam pin's resolvability, shared by `ap_validate_flow` and
 // `ap_flow_structure` so the two tools cannot tell an agent contradictory things about the same
 // fact. `qadamPinUtil.resolvePins` is tri-state; `false` is a confirmed miss, and only there is the
-// assertive "update this step" wording warranted. `undefined` means the check itself failed —
+// assertive, destructive-remedy wording warranted. `undefined` means the check itself failed —
 // this must never claim the pin definitely does not exist, and must never advise a destructive
 // edit based on a reading that was never actually verified (#474).
 function qadamPinIssue({ pin, resolvable, subject = 'step' }: { pin: string, resolvable: boolean | undefined, subject?: 'step' | 'agent_tool' }): QadamPinIssue | null {
@@ -637,6 +637,12 @@ function followHoldIssue({ fromVersion, toVersion }: { fromVersion: string, toVe
 // fact to state at the lowest severity: there is no audited move behind whatever the step runs
 // today, so it is exactly the mark "version unavailable — update this step" names. The step still
 // runs (the run-time net stands in), and the flow is never disabled over it (#435).
+// The remedy is deliberately left out of this message: for a step that was deliberately held
+// (`reverted-by-user`) suggesting "delete and re-add" would push an agent to undo exactly the
+// hold a person chose, and the run-time fallback is still serving every one of these reasons —
+// unlike a confirmed-missing pin (`qadamPinIssue`'s `resolvable === false` case), there is always
+// something running this step today. `ap_validate_flow` appends the destructive remedy itself,
+// only for a step it also confirms has nothing serving it.
 function pinStayIssue({ detail }: { detail: string }): PinStayIssue {
     return {
         label: 'VERSION UNAVAILABLE',
