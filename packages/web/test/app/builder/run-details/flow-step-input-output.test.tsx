@@ -96,6 +96,10 @@ vi.mock('@/app/builder/step-settings/held-step-label', () => ({
   HeldStepLabel: () => null,
 }));
 
+vi.mock('@/app/builder/step-settings/unavailable-pin-label', () => ({
+  UnavailablePinLabel: () => null,
+}));
+
 let container: HTMLDivElement | undefined;
 let root: Root | undefined;
 
