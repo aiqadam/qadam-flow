@@ -301,6 +301,43 @@ describe('qadamVersionStoreFetch.fetchFromRegistry', () => {
             expect(await store.has({ coordinates: { ...CUSTOM, platformId: null } })).toBe(false)
         })
 
+        it('refuses a non-https registryUrl before reading the version document, whether or not a token is set', async () => {
+            const { store, ledger } = await openStoreAndLedger()
+            const result = await qadamVersionStoreFetch.fetchFromRegistry({
+                store, ledger, name: CUSTOM.name, version: CUSTOM.version, log,
+                registryUrl: 'http://npm.example.internal', platformId: PLATFORM_ID, requireSignature: false,
+            })
+
+            expect(result.outcome).toBe(QadamVersionFetchOutcome.MALFORMED_METADATA)
+            expect(mockGet).not.toHaveBeenCalled()
+        })
+
+        it('also refuses a non-https registryUrl when a token is set, before the token could ever be sent', async () => {
+            const { store, ledger } = await openStoreAndLedger()
+            const result = await qadamVersionStoreFetch.fetchFromRegistry({
+                store, ledger, name: CUSTOM.name, version: CUSTOM.version, log,
+                registryUrl: 'http://npm.example.internal', registryToken: 'secret-token', platformId: PLATFORM_ID, requireSignature: false,
+            })
+
+            expect(result.outcome).toBe(QadamVersionFetchOutcome.MALFORMED_METADATA)
+            expect(mockGet).not.toHaveBeenCalled()
+        })
+
+        it('does not build a double-slash version-document URL from a registryUrl with a trailing slash', async () => {
+            mockGet.mockImplementation(async (_url: string, config?: { responseType?: string }) => config?.responseType === 'arraybuffer'
+                ? { data: customBundle.data }
+                : { data: registryDoc({ name: CUSTOM.name, version: CUSTOM.version, integrity: customBundle.integrity, tarball: CUSTOM_TARBALL_URL }) })
+
+            const { store, ledger } = await openStoreAndLedger()
+            const result = await qadamVersionStoreFetch.fetchFromRegistry({
+                store, ledger, name: CUSTOM.name, version: CUSTOM.version, log,
+                registryUrl: `${CUSTOM_REGISTRY_URL}/`, platformId: PLATFORM_ID, requireSignature: false,
+            })
+
+            expect(result.outcome).toBe(QadamVersionFetchOutcome.FETCHED)
+            expect(mockGet).toHaveBeenCalledWith(`${CUSTOM_REGISTRY_URL}/my-custom-qadam/1.0.0`, expect.anything())
+        })
+
         it('does not refuse an unsigned custom pin when requireSignature is false, the default for a custom fetch', async () => {
             mockReadSignatures.mockReturnValue([])
             mockVerifying.mockReturnValue([])

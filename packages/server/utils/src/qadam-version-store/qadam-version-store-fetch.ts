@@ -73,6 +73,16 @@ export const qadamVersionStoreFetch = {
     // a typed outcome, because a fetch that cannot complete is not this release's problem to crash
     // over — the existing unavailable-version fallback (#808) is what a caller falls through to.
     fetchFromRegistry: async ({ store, ledger, name, version, log, registryUrl = DEFAULT_QADAM_REGISTRY_URL, registryToken = null, platformId = null, requireSignature = true, deadline = Date.now() + DEFAULT_FETCH_BUDGET_MS }: FetchFromRegistryParams): Promise<QadamVersionFetchResult> => {
+        // Checked before the version-document read, not just before the tarball download
+        // (`isTrustedTarballUrl` below): that read sends `registryToken` too, and by the time a
+        // caller could inspect the tarball URL the token — and, over plain http, the custom
+        // package's own name and version, the exposure ADR-0005 §2 exists to avoid — would
+        // already have gone out in cleartext. Required unconditionally, not only when a token is
+        // set: a tokenless http registry still leaks the name/version with no way to prove the
+        // integrity document that follows was not tampered with in transit.
+        if (!isHttpsUrl({ url: registryUrl })) {
+            return { outcome: QadamVersionFetchOutcome.MALFORMED_METADATA, reason: 'registryUrl must be https' }
+        }
         const metadata = await readVersionDocument({ name, version, registryUrl, registryToken, deadline, log })
         if (!metadata.ok) {
             return { outcome: metadata.outcome, reason: metadata.reason }
@@ -160,7 +170,12 @@ const HTTP_TOO_MANY_REQUESTS = 429
 const MAX_DOWNLOAD_BYTES = 256 * 1024 * 1024
 
 async function readVersionDocument({ name, version, registryUrl, registryToken, deadline, log }: ReadVersionDocumentParams): Promise<VersionDocumentResult> {
-    const url = `${registryUrl}/${encodeURIComponent(name)}/${encodeURIComponent(version)}`
+    // `AppSystemProp.QADAM_REGISTRY_URL`'s own validator accepts a trailing slash (and
+    // `qadamRegistryConfig.isDefault` already strips one before comparing), so an admin-set
+    // `https://registry.example/` must not be allowed to turn into a double-slash path here —
+    // a double slash answers 404 on several npm-compatible registries, which this would
+    // otherwise report as `NOT_PUBLISHED` instead of the misconfiguration it actually is.
+    const url = `${registryUrl.replace(/\/+$/, '')}/${encodeURIComponent(name)}/${encodeURIComponent(version)}`
     let attempt = 1
     for (;;) {
         const remaining = deadline - Date.now()
@@ -237,6 +252,14 @@ function isTrustedTarballUrl({ tarball, registryUrl }: { tarball: string, regist
         return false
     }
     return parsedTarball.data.protocol === 'https:' && parsedTarball.data.origin === parsedRegistry.data.origin
+}
+
+// A custom registry's own URL validator (`urlValidator` in `system-validator.ts`) accepts any
+// scheme, not just `https:` — so a misconfigured `AP_QADAM_REGISTRY_URL` naming a plain `http://`
+// endpoint is reachable config, not a thing this function can assume away.
+function isHttpsUrl({ url }: { url: string }): boolean {
+    const parsed = tryCatchSync(() => new URL(url))
+    return parsed.error === null && parsed.data.protocol === 'https:'
 }
 
 async function persistProof({ ledger, name, version, integrity, signatures, log }: PersistProofParams): Promise<void> {
