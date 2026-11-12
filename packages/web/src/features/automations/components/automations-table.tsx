@@ -30,8 +30,12 @@ type AutomationsTableProps = {
   onDeleteItem: (item: TreeItem) => void;
   onDuplicateFlow: (flow: PopulatedFlow) => void;
   onMoveItem: (item: TreeItem, folderId: string) => void;
-  onExportFlow: (flow: PopulatedFlow) => void;
+  onExportFlow: (params: {
+    flow: PopulatedFlow;
+    keepSnapshots?: boolean;
+  }) => void;
   onExportTable: (table: Table) => void;
+  canKeepSnapshots?: boolean;
   onCreateInFolder?: (folderId: string, kind: CreateInFolderKind) => void;
   userHasPermissionToWriteFlow?: boolean;
   userHasPermissionToWriteTable?: boolean;
@@ -100,6 +104,7 @@ export const AutomationsTable = ({
   onMoveItem,
   onExportFlow,
   onExportTable,
+  canKeepSnapshots,
   onCreateInFolder,
   userHasPermissionToWriteFlow,
   userHasPermissionToWriteTable,
@@ -194,6 +199,7 @@ export const AutomationsTable = ({
                         onMoveTo={onMoveItem}
                         onExportFlow={onExportFlow}
                         onExportTable={onExportTable}
+                        canKeepSnapshots={canKeepSnapshots}
                         onCreateInFolder={onCreateInFolder}
                         userHasPermissionToWriteFlow={
                           userHasPermissionToWriteFlow
@@ -234,6 +240,7 @@ export const AutomationsTable = ({
                             onMoveTo={onMoveItem}
                             onExportFlow={onExportFlow}
                             onExportTable={onExportTable}
+                            canKeepSnapshots={canKeepSnapshots}
                             isMoving={isMoving}
                             isDuplicating={isDuplicating}
                             onLoadMore={
@@ -272,6 +279,7 @@ export const AutomationsTable = ({
                     onMoveTo={onMoveItem}
                     onExportFlow={onExportFlow}
                     onExportTable={onExportTable}
+                    canKeepSnapshots={canKeepSnapshots}
                     isMoving={isMoving}
                     isDuplicating={isDuplicating}
                     onLoadMore={undefined}

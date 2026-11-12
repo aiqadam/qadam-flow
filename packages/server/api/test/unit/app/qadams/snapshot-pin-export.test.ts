@@ -225,12 +225,19 @@ describe('snapshotPinExport.apply, the cost of one export', () => {
         })
         const version = flowVersion({ steps: qadams.map((qadamName, index) => ({ name: `step_${index + 1}`, qadamName, qadamVersion: SNAPSHOT, actionName: 'insert' })) })
 
+        const warn = vi.spyOn(log, 'warn')
+
         const exported = await snapshotPinExport.apply({ flowVersion: version, mode: SnapshotExportMode.REWRITE, sources, log })
 
         expect(sources.releaseMetadata.mock.calls.length).toBeLessThanOrEqual(MAX_RELEASE_FETCHES_PER_EXPORT)
         expect(exported.exportedUnresolved).toHaveLength(3)
         expect(exported.exportedUnresolved?.map((step) => step.reason)).toContain('metadata-unavailable')
         expect(['step_1', 'step_2', 'step_3'].map((name) => pinOf({ version: exported, name }))).toEqual(['^1.3.0', '^1.3.0', '^1.3.0'])
+        expect(warn).toHaveBeenCalledWith(
+            expect.objectContaining({ exhausted: ['release-metadata-fetches'], maxReleaseFetches: MAX_RELEASE_FETCHES_PER_EXPORT, maxSnapshotReads: MAX_SNAPSHOT_READS_PER_EXPORT }),
+            expect.stringContaining('budget'),
+        )
+        warn.mockRestore()
     })
 })
 
