@@ -1286,10 +1286,13 @@ jobs:
             "ghcr.io/aiqadam/qadam-flow:${VERSION}" \
             "${FLAVOUR}"
 
-      # `mode=min` (#811, measured), not `mode=max`: `mode=max` also exports the `build` stage's
-      # intermediate layers, which a later build can never hit (nothing downstream ever targets
-      # that stage), so the extra export time bought nothing. `mode=min` still caches the final
-      # stage's own layers for `main`'s next build to warm-start from.
+      # `mode=min` (#811, measured), not `mode=max`: `run` is `FROM base`, not `FROM build`, so no
+      # later build ever starts from the `build` stage's own final layer — only a commit that
+      # touches neither the root manifests nor `packages/` (CI-only, docs-adjacent) can still land
+      # on its cached `bun install` layer (Dockerfile:89-97), and that is the exception, not the
+      # rule. Exporting the whole `build` stage under `mode=max` paid for that rare hit on every
+      # run. `mode=min` still caches the final `run` stage's own layers for `main`'s next build to
+      # warm-start from.
       - name: Build and push by digest (main)
         id: build
         if: github.event_name == 'push'

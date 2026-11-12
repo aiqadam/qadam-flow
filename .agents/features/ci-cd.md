@@ -101,8 +101,10 @@ add traffic costs (on private repos), and provide no operational value.
 **Reason**: Measured on 20 legs across 10 runs: `cache-to,mode=max` cost ~150 s of a ~6.4 min
 median leg, and the cache it wrote from `refs/pull/N/merge` is unreadable by any other PR — only
 a re-push to the SAME PR benefits, and that re-push already gets the turbo remote cache's full
-hit rate. `mode=max` also exports the intermediate `build`-stage layers, which nothing downstream
-ever targets, so even `main`'s own write does not need it. What the layer cache actually buys
+hit rate. `mode=max` also exports the intermediate `build`-stage layers; `run` is `FROM base`, not
+`FROM build`, so only a commit that touches neither the root manifests nor `packages/` can reuse
+that stage's cached `bun install` layer on its next build — the common case gets no benefit from
+exporting it, so even `main`'s own write does not need `mode=max`. What the layer cache actually buys
 (10-13 of ~49 steps coming back `CACHED`) never includes the expensive steps — `bun install`,
 `turbo run build` — because `COPY` invalidates them on every commit; the turbo remote cache is
 what makes a warm build fast (246/246 tasks cached), not this layer cache.
@@ -169,6 +171,23 @@ read, while crowding out the turbo and Docker entries everyone shares. A PR with
 lockfile already computes `main`'s key and hits it. Measured over 324 samples, a hit now saves
 only ~14 s (`install-deps.sh`'s own install step is ~29 s cold); see
 [`node-modules-cache.md`](../docs/node-modules-cache.md).
+
+### 11. `image` no longer waits on `verify`; `image_publish` still does (#811, measured + reviewed)
+**Decision**: `image`'s `needs:` dropped `verify` (kept `changes`, `platform-version`), so the
+Docker build now runs in parallel with `verify`'s lint/unit-test gate instead of after it.
+`image_publish` — the job that actually pushes the public `:main`/`:sha-<short>`/`:<version>`
+manifest — added `verify` to its own `needs:` to compensate.
+**Reason**: `verify`'s 5.5 min median was pure serialization in front of the PR's fully-green
+time for no correctness check the build itself doesn't also make (`verify` type-checks, it does
+not bundle; the build step proves the Dockerfile path including the vite bundle and the engine's
+esbuild). `image` has no external side effect — a PR build never pushes — so unblocking it is
+free. `image_publish` does have one: it is the one place a broken `main` commit could still reach
+a public tag if `verify` had failed, since no required check re-verifies the commit before this
+push-time step. Gating publish rather than build keeps the parallelism win and keeps that one
+guarantee. One consequence: `image_publish` can now report `skipped` on a push to `main` for a
+reason other than "not a push event" (namely `verify` failed) — `e2e` and `e2e-execution-modes`
+tolerate an `image_publish` skip but now only when `github.event_name != 'push'`, so a push-time
+skip no longer falls back to silently testing an unrelated previous `:main` build.
 
 ## What This Replaces
 
