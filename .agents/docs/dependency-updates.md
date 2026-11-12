@@ -88,13 +88,17 @@ justified: `image` skipped on a docs-only diff, `sandbox-e2e` skipped on a pull 
 `sandbox_relevant` classifier output is not `true`. Any other skip fails, because an unexplained
 skip is how #831 silently stopped every image build on `main`. Consequences worth knowing:
 
-- A pull request whose `Lint + Unit Tests` is red also shows this gate red, because `image` is
-  skipped behind `verify`. It is already unmergeable; the second red context is expected.
+- A pull request whose `Lint + Unit Tests` is red does **not** turn this gate red by itself
+  (#811): `image`'s `needs:` dropped `verify`, so the Docker build now runs in parallel with lint
+  and unit tests rather than behind them. A lint-red PR can still show a green `Image + Sandbox
+  Gate` — it is still unmergeable on the separate `Lint + Unit Tests` context.
 - The gate finishes only once the image build and (when relevant) the sandbox e2e have finished,
   so a Renovate patch PR now waits for the Docker build before it can automerge.
 - It does not cover `Publish multi-arch manifest`, `E2E Suite` or `E2E execution mode`: those run
   against the published `:main` on PRs and only gate what happens after a merge. A red `image`
-  already skips them on `main`.
+  already skips them on `main`. Since #811, `image_publish` also needs `verify` directly (`image`
+  itself does not), so a red `verify` on a push to `main` skips `image_publish` and, behind it,
+  both e2e jobs — even though `image` itself still built successfully.
 
 **It is required.** `Image + Sandbox Gate` was added to the required status checks of the
 `main protect` ruleset on 2026-11-08 (#832), so a PR, a Renovate automerge included, cannot merge
