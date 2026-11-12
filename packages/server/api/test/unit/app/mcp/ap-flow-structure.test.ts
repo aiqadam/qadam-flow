@@ -703,4 +703,20 @@ describe('ap_flow_structure — version unavailable, update this step (ADR-0003,
         expect(text).toContain('PINNED VERSION UNVERIFIED')
         expect(text).not.toContain('delete and re-add')
     })
+
+    // code-quality review (session 4): a held step is USUALLY still resolvable via the bundled
+    // fallback, but not guaranteed to be — an image upgrade since the revert can leave the generic
+    // check confirming it missing too. `reverted-by-user` carries no special case here: a step
+    // nothing can serve gets the destructive remedy whether or not a person chose to hold it.
+    it('carries the destructive remedy for a held step the generic check also confirms missing', async () => {
+        mockGet.mockResolvedValue(null)
+        mockCheckPinStays.mockResolvedValue([pinStay({ overrides: { reason: 'reverted-by-user', detail: 'a person reverted a move of this step' } })])
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: DEAD_VERSION }) }))
+
+        const result = await callTool()
+
+        const text = result.content?.[0]?.text
+        expect(text).toContain('[VERSION UNAVAILABLE]')
+        expect(text).toContain('delete and re-add the step with ap_add_step')
+    })
 })

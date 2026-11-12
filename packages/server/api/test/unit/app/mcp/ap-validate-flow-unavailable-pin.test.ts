@@ -165,6 +165,24 @@ describe('ap_validate_flow — version unavailable, update this step (ADR-0003, 
         expect((structuredContent.warnings as unknown[]).length).toBe(0)
     })
 
+    // code-quality review (session 4): a held step is USUALLY still resolvable via the bundled
+    // fallback, but not guaranteed to be — an image upgrade since the revert can leave the generic
+    // check confirming it missing too. `reverted-by-user` carries no special case here: a step
+    // nothing can serve gets the blocking issue and the destructive remedy whether or not a person
+    // chose to hold it.
+    it('reports a held step as a blocking issue when the generic check also confirms it missing', async () => {
+        mockGet.mockResolvedValue(undefined)
+        mockCheckPinStays.mockResolvedValue([pinStay({ overrides: { reason: 'reverted-by-user', detail: 'a person reverted a move of this step' } })])
+
+        const { text, structuredContent } = await validate()
+
+        expect(text).toContain('delete and re-add the step')
+        expect(structuredContent.valid).toBe(false)
+
+        const issues = structuredContent.issues as { category: string, stepName: string }[]
+        expect(issues).toContainEqual(expect.objectContaining({ category: 'version_unavailable', stepName: 'step_1' }))
+    })
+
     it('reports the step once, under version_unavailable rather than the generic qadam_version, and still blocks publishing', async () => {
         mockGet.mockResolvedValue(undefined)
 

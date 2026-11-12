@@ -318,6 +318,24 @@ describe('qadamPinMoveService.checkUnavailablePins', () => {
 
         expect(stays).toEqual([])
     })
+
+    // A `flowVersionId` must belong to the `flowId` it is read with, not just to the caller's
+    // project: the version lookup filters on both (`{ id: flowVersionId, flowId }`), so pairing one
+    // flow's own id with a sibling flow's version answers no stays rather than reading across flows.
+    it('answers no stays when flowId and flowVersionId belong to different flows', async () => {
+        const ctx = await createTestContext(app)
+        const { flow: ownFlow } = await seedFlow({ ctx, pins: ['0.4.2'] })
+        const { flowVersion: otherFlowVersion } = await seedFlow({ ctx, pins: ['0.4.2'] })
+
+        const stays = await qadamPinMoveService({ log: app.log, seams: fakeSeams({ imageVersion: '0.5.0' }) }).checkUnavailablePins({
+            flowId: ownFlow.id,
+            flowVersionId: otherFlowVersion.id,
+            projectId: ctx.project.id,
+            platformId: ctx.platform.id,
+        })
+
+        expect(stays).toEqual([])
+    })
 })
 
 describe('qadamPinMoveService.revert', () => {

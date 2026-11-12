@@ -63,7 +63,11 @@ Exposes a Qadam Flow project as a Model Context Protocol (MCP) server so that AI
   cannot resolve, #432), `version_unavailable` (the pin is unavailable and was not moved
   automatically — "update this step", #808; keeps `qadam_version`'s error severity, and its
   destructive delete-and-re-add remedy, only for a step `qadam_version`'s own — more lenient —
-  check ALSO confirms has no fallback; every other stay, e.g. `reverted-by-user`, is a warning),
+  check ALSO confirms has no fallback; every other stay is a warning. `reverted-by-user` (a
+  deliberately held step) is USUALLY one of the warnings — the fallback that served the step at
+  move time usually still serves it — but not always: an image upgrade since the revert can leave
+  `qadam_version` confirming it missing too, and then a held step gets the error and the
+  destructive remedy the same as any other confirmed-missing pin),
   `framework_version` (a pinned qadam built against a framework context
   version this release no longer runs, #803; a pin that does not resolve gets `qadam_version` only, #838), `template_reference`, `empty_branch`, and — since
   #391 — `subflow_payload`

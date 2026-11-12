@@ -193,6 +193,20 @@ describe('ap_validate_flow — agent tool pins (#779)', () => {
         expect(text).not.toContain('delete and re-add the step')
     })
 
+    // The remedy is non-destructive for a tool (unlike a step's pin): `ap_update_step` can re-pin
+    // an agent tool without removing it, and a run only fails where the dead version is not
+    // already cached on the worker — so the message neither advises removing the tool nor claims
+    // every run fails on it.
+    it('advises updating, not removing, the tool — and does not overstate every run as failing', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWithAgentTool({ qadamVersion: '0.3.1' }))
+
+        const text = await validate()
+
+        expect(text).toContain('Update the tool to an available version with ap_update_step')
+        expect(text).toContain('removing and re-adding the tool is not required')
+        expect(text).not.toContain('Every run and every trigger provisioning attempt')
+    })
+
     it('flags a dead tool pin on a skipped agent step too', async () => {
         mockGetOnePopulated.mockResolvedValue(flowWithAgentTool({ qadamVersion: '0.3.1', skip: true }))
 

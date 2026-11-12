@@ -29,7 +29,7 @@ import { PinFrameworkSupport } from '../../qadams/census/framework-census-servic
 import { AgentToolPinOfStep, QadamPinnedStep, qadamPinUtil } from '../../qadams/metadata/qadam-pin-util'
 import { qadamPinHold } from '../../qadams/pin-moves/qadam-pin-hold'
 import { QadamPinMove } from '../../qadams/pin-moves/qadam-pin-move.dto'
-import { PinStay, qadamPinMoveService } from '../../qadams/pin-moves/qadam-pin-move.service'
+import { PinStay, PinStayReason, qadamPinMoveService } from '../../qadams/pin-moves/qadam-pin-move.service'
 import { mcpUtils } from './mcp-utils'
 
 type StepInfo = {
@@ -178,7 +178,11 @@ function pinStayWarning(step: StepInfo): string {
     // is then the ONLY place the destructive, but correct, remedy is said in the text output, so
     // it must carry the full message here, not just the label. Every other marked step (still
     // resolvable, or unverified) keeps the label-only line: `stepPinWarning`'s own warning already
-    // says the remedy (or the "do not delete" caution) for those.
+    // says the remedy (or the "do not delete" caution) for those. This includes a held
+    // (`reverted-by-user`) step: it is USUALLY still resolvable (the bundled fallback and the
+    // original move decision share the same caret-range/loaded test), but not always — an image
+    // upgrade since the revert can still confirm it missing, and the destructive remedy is shown
+    // for that case too (`mcpUtils.pinStayIssue`'s own comment has the detail).
     const confirmedMissing = step.qadamVersionResolvable === false
     const issue = mcpUtils.pinStayIssue({ detail: step.pinStay.detail, confirmedMissing })
     return confirmedMissing ? ` ⚠️ [${issue.label}]: this step ${issue.message}` : ` ⚠️ [${issue.label}]`
@@ -713,6 +717,6 @@ type FollowHeldInfo = {
 }
 
 type PinStayInfo = {
-    reason: string
+    reason: PinStayReason
     detail: string
 }

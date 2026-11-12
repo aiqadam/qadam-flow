@@ -234,7 +234,11 @@ function validateFlow({ trigger }: { trigger: Step }): ValidationResult {
 // image upgrade drops that version and #424's bundled fallback cannot reach the replacement — a
 // caret range does not cross a minor for a 0.x package, so a `0.3.1` pin never resolves to a
 // bundled `0.4.5` — the flow stays LOCKED, valid and ENABLED and fails only when something next
-// provisions it, with the cause visible in worker logs and nowhere a flow owner looks (#432).
+// provisions it, with the cause visible in worker logs and nowhere a flow owner looks (#432). A
+// worker that already has the dead version cached locally skips re-provisioning and keeps running
+// it regardless (`mcpUtils.qadamPinIssue`'s own comment has the detail) — this category exists for
+// the opposite, more common case: a cold worker, or the first one to need this pin after the cache
+// that served it is gone.
 async function validatePinnedQadamVersions({ trigger, platformId, log }: {
     trigger: Step
     platformId: string

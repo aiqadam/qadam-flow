@@ -639,16 +639,18 @@ function followHoldIssue({ fromVersion, toVersion }: { fromVersion: string, toVe
 // adds for a held or edited step). Unlike `preReleaseBuildIssue`/`followHoldIssue` this is not a
 // fact to state at the lowest severity: there is no audited move behind whatever the step runs
 // today, so it is exactly the mark "version unavailable — update this step" names. The flow is
-// never disabled over it (#435), but unlike `reverted-by-user` (always still resolvable — the
-// bundled fallback serves a held step by construction) a reason like `props-incompatible` or
-// `target-not-loaded` is not guaranteed to still be served: on a `-main` instance `checkNet`'s
-// run-time rule is stricter than `decide`'s, so the same reason can also be a confirmed miss there.
-// `confirmedMissing` is the caller's own, more lenient check (`qadam_version`'s `resolvePins`)
+// never disabled over it (#435). `confirmedMissing` is the caller's own, more lenient check
+// (`qadam_version`'s `resolvePins`, which also accepts the image's bundled build as a stand-in)
 // ALSO confirming nothing serves the step — only then is the destructive delete-and-re-add remedy
-// warranted, the same rule `qadamPinIssue` applies to its own `resolvable === false` case; a step
-// that was deliberately held (`reverted-by-user`) must never get it, since it would push an agent
-// to undo exactly the hold a person chose. `ap_flow_structure` passes `false` here: it never shows
-// this message (only `.label`), so the field exists for `ap_validate_flow` alone.
+// warranted, the same rule `qadamPinIssue` applies to its own `resolvable === false` case.
+// `reverted-by-user` is USUALLY still resolvable this way — the step was move-eligible once (the
+// bundled fallback and the original `decide` share the same caret-range/loaded test) — but that is
+// not a guarantee: an image upgrade since the revert, a stored version that turned `unusable`, or
+// (on a `-main` instance) `checkNet`'s stricter run-time rule can still confirm it missing, and
+// this function does not special-case the reason away from the destructive remedy when that
+// happens — a step nothing can serve needs re-pointing whether or not a person chose to hold it.
+// `ap_flow_structure`'s `pinStayWarning` passes the real `confirmedMissing` here too (not always
+// `false`) and shows `.message`, not just `.label`, for a held step this check also confirms dead.
 function pinStayIssue({ detail, confirmedMissing }: { detail: string, confirmedMissing: boolean }): PinStayIssue {
     const action = confirmedMissing
         ? DESTRUCTIVE_PIN_REMEDY
