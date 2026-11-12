@@ -11,7 +11,7 @@
 //
 // This file holds the comparison. Two CLIs call it:
 //   tools/ci/measure-qadam-divergence.mjs   step 1 of #852: lists every divergent `0.x` qadam
-//   tools/ci/check-qadam-divergence.mjs     gate 9 (advisory): the same list minus the qadams a
+//   tools/ci/check-qadam-divergence.mjs     gate 9 (required): the same list minus the qadams a
 //                                           pending changeset already turns into a `-main.<n>` build
 // Both are tested offline by tools/ci/test-qadam-divergence.sh against a stub registry.
 //
@@ -61,8 +61,9 @@
 // parse) has status `unknown`; neither CLI turns that into "identical".
 //
 // UNTRUSTED INPUT: a tarball's member names and a registry's error text reach the log, the
-// `::warning::` annotations and the step summary. `sanitize` strips control characters and `::` from
-// everything taken from there, so a file named `x\n::error::...` cannot inject a workflow command.
+// `::warning::` annotations and the step summary. `sanitize` strips control characters, `::` and the
+// legacy `##[` prefix from everything taken from there, so a file named `x\n::error::...` cannot
+// inject a workflow command.
 // The tarball is listed before it is extracted and refused if it holds anything but regular files and
 // directories: a symlink or hardlink would be followed out of the scratch directory, a FIFO would
 // block the read for good.
@@ -92,8 +93,10 @@ const PLATFORM_CHAIN = new Set(['@aiqadam/qadams-framework', '@aiqadam/qadams-co
 const DEPENDENCY_SECTIONS = ['dependencies', 'peerDependencies', 'optionalDependencies']
 const REQUEST_TIMEOUT_MS = 30_000
 // A registry that asks to be left alone for longer than this is treated as down for this run: the
-// request fails at once (status unknown) instead of waiting, because 30 waves of workers waiting
-// that long would outlast the CI job.
+// request fails at once (status unknown) instead of waiting. A single read can wait this long more
+// than once — up to maxAttempts - 1 times, once per retry, not once per request — so the ~30 waves
+// of the default 8-way worker pool reading all 0.x qadams could each cost several such waits, not
+// one; that total still has to fit inside the job's timeout-minutes.
 const MAX_RETRY_AFTER_MS = 20_000
 
 // Every official qadam under packages/qadams/{core,community}, read from its package.json.

@@ -5,14 +5,17 @@
 // same version, or the qadam has a pending changeset, which makes the next `main` build give it
 // its own `-main.<n>` version instead of the released number.
 //
-// ADVISORY until the divergences reach zero. ADR-0004: "a measurement script first, then the gate
-// runs advisory while the changesets land in batches and the releases are spread under the cap. It
-// turns required when the divergences reach zero, and before `2.0.0`." Advisory means this exits 0
-// on a finding (and on a failure to measure) and says so loudly: `::warning::` annotations, a step
-// summary, and a first line that says ADVISORY. `--required` is the switch for the day the
-// list is empty: a finding then exits 1 and a failure to measure exits 2. Wiring it as a required
-// check is a separate change — that needs the always-reporting gate-job pattern
-// (.agents/docs/verification-pitfalls.md), which an advisory job does not.
+// REQUIRED since the divergences reached zero (2026-10-10 measurement: 205 divergent, all covered
+// by #892 and this change's own changeset batches, verified byte-for-byte against npm). ADR-0004:
+// "a measurement script first, then the gate runs advisory while the changesets land in batches and
+// the releases are spread under the cap. It turns required when the divergences reach zero, and
+// before `2.0.0`." Without `--required` this exits 0 on a finding (and on a failure to measure) and
+// says so loudly: `::warning::` annotations, a step summary, and a first line that says ADVISORY —
+// that mode stays for ad hoc/local runs. `--required` is what ci.yml's `qadam-divergence` job now
+// passes: a finding exits 1 and a failure to measure exits 2. The always-reporting gate-job pattern
+// (.agents/docs/verification-pitfalls.md) that a required check needs is `qadam-divergence-gate`
+// below `qadam-divergence` in ci.yml. Wiring `Qadam Divergence Gate` into the `main protect`
+// ruleset's required contexts is a separate, maintainer-only step.
 //
 // The comparison itself — what "differs" means, what is not compared — is
 // tools/ci/qadam-divergence.mjs; tools/ci/measure-qadam-divergence.mjs lists every divergence
@@ -109,8 +112,8 @@ const summarize = ({ differences }) => {
 }
 
 // The one place a workflow command is written. Everything that reaches it came, at some remove, from
-// a tarball, a registry or a package.json: control characters and `::` are stripped, so no line of it
-// can start another command.
+// a tarball, a registry or a package.json: control characters, `::` and the legacy `##[` prefix are
+// stripped, so no line of it can start another command.
 const annotate = ({ level: annotationLevel, message }) => {
   console.log(`::${annotationLevel} title=${TITLE}::${qadamDivergence.sanitize({ text: message })}`)
 }
