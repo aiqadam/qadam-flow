@@ -115,7 +115,7 @@ describe('ap_validate_flow — update this step note (ADR-0004 import mark, #808
         const { text, structuredContent } = await validate({ qadamVersion: HEALTHY_VERSION, exportedUnresolvedPin: HEALTHY_VERSION })
 
         expect(text).toContain('Notes (informational):')
-        expect(text).toContain('Imported Steps Not Moved To A Release:')
+        expect(text).toContain('Imported Pins Without A Confirmed Release:')
         expect(text).toContain('could not be moved to a released version')
 
         const informational = structuredContent.informational as { category: string, stepName: string, message: string }[]
@@ -134,14 +134,14 @@ describe('ap_validate_flow — update this step note (ADR-0004 import mark, #808
     it('says nothing once the step\'s own pin has moved on and no agent tool is a snapshot', async () => {
         const { text, structuredContent } = await validate({ qadamVersion: HEALTHY_VERSION, exportedUnresolvedPin: DEAD_VERSION })
 
-        expect(text).not.toContain('Imported Steps Not Moved To A Release:')
+        expect(text).not.toContain('Imported Pins Without A Confirmed Release:')
         expect(structuredContent.informational).toEqual([])
     })
 
     it('says nothing for a step that was never stamped', async () => {
         const { text, structuredContent } = await validate({ qadamVersion: HEALTHY_VERSION })
 
-        expect(text).not.toContain('Imported Steps Not Moved To A Release:')
+        expect(text).not.toContain('Imported Pins Without A Confirmed Release:')
         expect(structuredContent.informational).toEqual([])
     })
 
@@ -152,7 +152,7 @@ describe('ap_validate_flow — update this step note (ADR-0004 import mark, #808
             agentTools: [{ type: 'PIECE', toolName: 'lookup', qadamMetadata: { qadamName: '@aiqadam/qadam-test-tool', qadamVersion: SNAPSHOT_TOOL_VERSION, actionName: 'go' } }],
         })
 
-        expect(text).toContain('Imported Steps Not Moved To A Release:')
+        expect(text).toContain('Imported Pins Without A Confirmed Release:')
         expect(text).toContain('agent tool pinned to a pre-release build')
     })
 })

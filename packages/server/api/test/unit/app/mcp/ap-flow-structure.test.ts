@@ -759,7 +759,8 @@ describe('ap_flow_structure — update this step (ADR-0004 import mark, #808)', 
 
         const text = result.content?.[0]?.text
         expect(text).toContain('[UPDATE THIS STEP]')
-        expect(JSON.stringify(result.structuredContent?.steps)).toContain('"updateThisStep":{"hasSnapshotTool":false}')
+        const steps = result.structuredContent?.steps as Record<string, unknown>[]
+        expect(steps.find(s => s.name === 'step_1')).toMatchObject({ updateThisStep: { hasSnapshotTool: false } })
     })
 
     it('carries no mark once the step\'s own pin has moved on and no agent tool is a snapshot', async () => {
@@ -785,7 +786,8 @@ describe('ap_flow_structure — update this step (ADR-0004 import mark, #808)', 
 
         const text = result.content?.[0]?.text
         expect(text).toContain('[UPDATE THIS STEP]')
-        expect(JSON.stringify(result.structuredContent?.steps)).toContain('"updateThisStep":{"hasSnapshotTool":true}')
+        const steps = result.structuredContent?.steps as Record<string, unknown>[]
+        expect(steps.find(s => s.name === 'step_1')).toMatchObject({ updateThisStep: { hasSnapshotTool: true } })
     })
 
     it('carries no mark at all for a step that was never stamped', async () => {

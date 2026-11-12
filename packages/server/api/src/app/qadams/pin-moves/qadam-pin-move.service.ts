@@ -5,6 +5,7 @@ import {
     FlowId,
     FlowTriggerType,
     FlowVersion,
+    FlowVersionId,
     FlowVersionState,
     isNil,
     PlatformId,
@@ -448,7 +449,7 @@ type MoveUnavailablePinsParams = {
 
 type CheckUnavailablePinsParams = {
     flowId: FlowId
-    flowVersionId: string
+    flowVersionId: FlowVersionId
     projectId: ProjectId
     platformId: PlatformId
 }

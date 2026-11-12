@@ -613,7 +613,7 @@ function qadamPinIssue({ pin, resolvable, subject = 'step' }: { pin: string, res
 // the two pin-reporting tools state the same way: `ap_flow_structure` labels the step line with
 // `label`, and `ap_validate_flow` reports `message` at its lowest severity, informational, which
 // never blocks publishing. "Update available" remains a later slice.
-function preReleaseBuildIssue({ pin }: { pin: string }): PreReleaseBuildIssue {
+function preReleaseBuildIssue({ pin }: { pin: string }): LabeledIssue {
     return {
         label: 'PRE-RELEASE BUILD',
         message: `is pinned to ${wrapUntrustedValue(pin)}, a pre-release build from main that no released version names yet. It runs exactly that build.`,
@@ -626,7 +626,7 @@ function preReleaseBuildIssue({ pin }: { pin: string }): PreReleaseBuildIssue {
 // pre-release label this is a fact, not a fault — the step runs the version it names — so both
 // pin-reporting tools state it at their lowest severity and never block publishing. "Update
 // available" and the runs surface remain later slices.
-function followHoldIssue({ fromVersion, toVersion }: { fromVersion: string, toVersion: string }): FollowHoldIssue {
+function followHoldIssue({ fromVersion, toVersion }: { fromVersion: string, toVersion: string }): LabeledIssue {
     return {
         label: 'FOLLOW HELD',
         message: `is held at ${wrapUntrustedValue(fromVersion)} after a person reverted its automatic move to ${wrapUntrustedValue(toVersion)}. It will not be moved automatically again until its version changes.`,
@@ -651,7 +651,7 @@ function followHoldIssue({ fromVersion, toVersion }: { fromVersion: string, toVe
 // happens — a step nothing can serve needs re-pointing whether or not a person chose to hold it.
 // `ap_flow_structure`'s `pinStayWarning` passes the real `confirmedMissing` here too (not always
 // `false`) and shows `.message`, not just `.label`, for a held step this check also confirms dead.
-function pinStayIssue({ detail, confirmedMissing }: { detail: string, confirmedMissing: boolean }): PinStayIssue {
+function pinStayIssue({ detail, confirmedMissing }: { detail: string, confirmedMissing: boolean }): LabeledIssue {
     const action = confirmedMissing
         ? DESTRUCTIVE_PIN_REMEDY
         : 'Update this step.'
@@ -670,7 +670,7 @@ function pinStayIssue({ detail, confirmedMissing }: { detail: string, confirmedM
 // `update-this-step-label.tsx`, never blocks either). `hasSnapshotTool` distinguishes the two
 // wordings the web label already uses: the mark can describe the step's own pin, or — since a
 // tool is not a step and so cannot carry its own mark — an agent tool still pinned to a snapshot.
-function updateThisStepIssue({ hasSnapshotTool }: { hasSnapshotTool: boolean }): UpdateThisStepIssue {
+function updateThisStepIssue({ hasSnapshotTool }: { hasSnapshotTool: boolean }): LabeledIssue {
     return {
         label: 'UPDATE THIS STEP',
         message: hasSnapshotTool
@@ -735,7 +735,7 @@ export const mcpUtils = {
     BRANCH_CONDITIONS_INPUT_SCHEMA,
 }
 
-export type { PropSummary, QadamPinIssue, PreReleaseBuildIssue, FollowHoldIssue, PinStayIssue }
+export type { PropSummary, QadamPinIssue, LabeledIssue }
 
 type ExtractQadamFlowErrorDetailParams = {
     err: unknown
@@ -804,22 +804,11 @@ type QadamPinIssue = {
     message: string
 }
 
-type PreReleaseBuildIssue = {
-    label: string
-    message: string
-}
-
-type FollowHoldIssue = {
-    label: string
-    message: string
-}
-
-type PinStayIssue = {
-    label: string
-    message: string
-}
-
-type UpdateThisStepIssue = {
+// Shared shape for every pin-reporting issue whose severity is "a fact, not a fault" or whose
+// wording a caller composes around a bracket label (`preReleaseBuildIssue`, `followHoldIssue`,
+// `pinStayIssue`, `updateThisStepIssue`) — unlike `QadamPinIssue`, which carries its own two-value
+// severity instead of a label.
+type LabeledIssue = {
     label: string
     message: string
 }

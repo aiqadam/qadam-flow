@@ -1188,7 +1188,7 @@ const CATEGORY_LABELS: Record<ValidationIssue['category'], string> = {
     agent_tool_limit: 'Agent Tool Limits',
     pre_release_build: 'Pre-Release Builds',
     follow_hold: 'Held Snapshot Follow Steps',
-    update_this_step: 'Imported Steps Not Moved To A Release',
+    update_this_step: 'Imported Pins Without A Confirmed Release',
     framework_version: 'Unsupported Framework Versions',
     template_reference: 'Template References',
     translation_key: 'Unknown Translation Keys',

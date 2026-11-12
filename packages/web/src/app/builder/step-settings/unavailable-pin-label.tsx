@@ -3,7 +3,6 @@ import { TriangleAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { qadamsHooks } from '@/features/qadams';
-import { cn } from '@/lib/utils';
 
 type UnavailablePinLabelProps = {
   step: QadamAction | QadamTrigger;
@@ -35,9 +34,7 @@ export function UnavailablePinLabel({
     return null;
   }
   return (
-    <div
-      className={cn('flex flex-col gap-3 rounded-md border border-dashed p-4')}
-    >
+    <div className="flex flex-col gap-3 rounded-md border border-dashed p-4">
       <div className="flex items-center gap-2">
         <TriangleAlert className="size-4 shrink-0 text-destructive" />
         <p className="text-sm font-medium">
