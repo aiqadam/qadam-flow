@@ -107,6 +107,7 @@ const systemPropValidators: {
     [AppSystemProp.QADAM_SNAPSHOT_POLICY]: enumValidator([...qadamSnapshotPolicy.values]),
     [AppSystemProp.QADAM_REGISTRY_URL]: urlValidator,
     [AppSystemProp.QADAM_REGISTRY_TOKEN]: stringValidator,
+    [AppSystemProp.QADAM_CUSTOM_SIGNATURE_CHECK_ENABLED]: booleanValidator,
     [AppSystemProp.QADAM_VERSION_STORE_GC_CRON]: stringValidator,
     [AppSystemProp.QADAM_VERSION_STORE_GC_RETENTION_DAYS]: positiveIntegerValidator,
     [AppSystemProp.QADAM_VERSION_STORE_GC_KEEP_LAST_N_VERSIONS]: positiveIntegerValidator,
