@@ -128,7 +128,7 @@ function qadamPinInfo({ step, qadamResolutions, unsupportedPins, heldMoves, pinS
     const pin = qadamPinUtil.pinOf({ step })
     const hold = qadamPinHold.findForStep({ step, moves: heldMoves })
     const stay = pinStays.get(step.name)
-    const updateThisStep = exportedUnresolvedInfo({ step, rawAgentTools })
+    const updateThisStep = qadamPinUtil.updateThisStepMarkOf({ step })
     return {
         qadamPin: pin,
         qadamVersionResolvable: qadamResolutions.get(pin),
@@ -142,26 +142,6 @@ function qadamPinInfo({ step, qadamResolutions, unsupportedPins, heldMoves, pinS
         // nothing, so the default case adds no noise (the `logFlags` pattern).
         ...(unsupportedPins.has(pin) ? { frameworkVersionSupported: false as const } : {}),
     }
-}
-
-// ADR-0004: `markExportedUnresolved` (`import-flow.ts`) stamps a step's own exact pin onto
-// `settings.exportedUnresolvedPin` when the importer could not confirm a released equivalent for
-// it, OR for one of its agent tools (a tool cannot carry its own mark, so the step's own version
-// stands in for the tool case too). The mark is unconditionally cleared by changing the step's own
-// pin — matching the web counterpart (`update-this-step-label.tsx`) exactly, so the two surfaces
-// never disagree about which steps carry the note.
-function exportedUnresolvedInfo({ step, rawAgentTools }: { step: QadamPinnedStep, rawAgentTools: AgentToolPinOfStep[] }): UpdateThisStepInfo | undefined {
-    const mark = step.settings.exportedUnresolvedPin
-    if (isNil(mark)) {
-        return undefined
-    }
-    const exactVersion = flowQadamUtil.getExactVersion(step.settings.qadamVersion)
-    const isOwnPinMarked = mark === exactVersion
-    const hasSnapshotTool = rawAgentTools.some((tool) => qadamVersionParser.isSnapshot({ version: flowQadamUtil.getExactVersion(tool.qadamVersion) }))
-    if (!isOwnPinMarked && !hasSnapshotTool) {
-        return undefined
-    }
-    return { hasSnapshotTool }
 }
 
 // The ticket's own wording (ADR-0002, #803). `ap_validate_flow`'s `framework_version` message and

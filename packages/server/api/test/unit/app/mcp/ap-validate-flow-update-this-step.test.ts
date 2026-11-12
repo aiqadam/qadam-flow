@@ -155,4 +155,24 @@ describe('ap_validate_flow — update this step note (ADR-0004 import mark, #808
         expect(text).toContain('Imported Pins Without A Confirmed Release:')
         expect(text).toContain('agent tool pinned to a pre-release build')
     })
+
+    // The tool wording must win when both are true at once: the step's own pin still matches the
+    // mark AND a tool is a snapshot.
+    it('reports the agent-tool wording even when the step\'s own pin still matches the mark too', async () => {
+        const { text } = await validate({
+            qadamVersion: HEALTHY_VERSION,
+            exportedUnresolvedPin: HEALTHY_VERSION,
+            agentTools: [{ type: 'PIECE', toolName: 'lookup', qadamMetadata: { qadamName: '@aiqadam/qadam-test-tool', qadamVersion: SNAPSHOT_TOOL_VERSION, actionName: 'go' } }],
+        })
+
+        expect(text).toContain('agent tool pinned to a pre-release build')
+    })
+
+    // `getExactVersion` is there precisely so a caret/tilde own pin still matches a bare mark.
+    it('reports a step whose own pin is a caret range around the marked exact version', async () => {
+        const { text } = await validate({ qadamVersion: `^${HEALTHY_VERSION}`, exportedUnresolvedPin: HEALTHY_VERSION })
+
+        expect(text).toContain('Imported Pins Without A Confirmed Release:')
+        expect(text).toContain('could not be moved to a released version')
+    })
 })

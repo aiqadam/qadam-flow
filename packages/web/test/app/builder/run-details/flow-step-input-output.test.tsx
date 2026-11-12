@@ -8,19 +8,27 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { FlowStepInputOutput } from '@/app/builder/run-details/flow-step-input-output';
 
 const harness = vi.hoisted(() => {
+  const settings: {
+    qadamName: string;
+    qadamVersion: string;
+    triggerName: string;
+    input: Record<string, unknown>;
+    propertySettings: Record<string, unknown>;
+    exportedUnresolvedPin?: string;
+  } = {
+    qadamName: '@aiqadam/qadam-census',
+    qadamVersion: '1.0.0',
+    triggerName: 'new_item',
+    input: {},
+    propertySettings: {},
+  };
   const trigger = {
     type: 'PIECE',
     name: 'trigger',
     displayName: 'Census Trigger',
     valid: true,
     lastUpdatedDate: '2026-01-01T00:00:00.000Z',
-    settings: {
-      qadamName: '@aiqadam/qadam-census',
-      qadamVersion: '1.0.0',
-      triggerName: 'new_item',
-      input: {},
-      propertySettings: {},
-    },
+    settings,
   };
   return {
     trigger,
@@ -101,8 +109,19 @@ vi.mock('@/app/builder/step-settings/unavailable-pin-label', () => ({
 }));
 
 vi.mock('@/app/builder/step-settings/update-this-step-label', () => ({
-  UpdateThisStepLabel: ({ step }: { step: { settings: { exportedUnresolvedPin?: string } } }) =>
-    step.settings.exportedUnresolvedPin ? <div>update this step for {step.settings.exportedUnresolvedPin}</div> : null,
+  UpdateThisStepLabel: ({
+    step,
+    readonly,
+  }: {
+    step: { settings: { exportedUnresolvedPin?: string } };
+    readonly: boolean;
+  }) =>
+    step.settings.exportedUnresolvedPin ? (
+      <div>
+        update this step for {step.settings.exportedUnresolvedPin} (readonly:{' '}
+        {String(readonly)})
+      </div>
+    ) : null,
 }));
 
 let container: HTMLDivElement | undefined;
@@ -147,14 +166,18 @@ describe('FlowStepInputOutput', () => {
 
   // ADR-0004 (#808): the "update this step" import mark is read-only in the run view — there is
   // no `UpdatePieceVersionDialog` here, only the same label the builder shows.
-  it('shows the update-this-step mark in the run step detail too', async () => {
-    (harness.trigger.settings as { exportedUnresolvedPin?: string }).exportedUnresolvedPin = '1.0.0';
+  it('shows the update-this-step mark, read-only, in the run step detail too', async () => {
+    const originalTrigger = harness.state.flowVersion.trigger;
+    harness.state.flowVersion.trigger = {
+      ...originalTrigger,
+      settings: { ...originalTrigger.settings, exportedUnresolvedPin: '1.0.0' },
+    };
     try {
       const text = await render();
 
-      expect(text).toContain('update this step for 1.0.0');
+      expect(text).toContain('update this step for 1.0.0 (readonly: true)');
     } finally {
-      delete (harness.trigger.settings as { exportedUnresolvedPin?: string }).exportedUnresolvedPin;
+      harness.state.flowVersion.trigger = originalTrigger;
     }
   });
 });

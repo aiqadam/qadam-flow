@@ -1,6 +1,7 @@
 import { agentToolPins, apVersionUtil, NPM_PACKAGE_NAME_MAX_LENGTH } from '@aiqadam/server-utils'
 import {
     FlowActionType,
+    flowQadamUtil,
     flowStructureUtil,
     FlowTriggerType,
     isNil,
@@ -60,6 +61,34 @@ export const qadamPinUtil = {
 
     pinOf({ step }: { step: QadamPinnedStep }): string {
         return `${step.settings.qadamName}@${step.settings.qadamVersion}`
+    },
+
+    // ADR-0004: `markExportedUnresolved` (`import-flow.ts`) stamps a step's own exact pin onto
+    // `settings.exportedUnresolvedPin` when an import (or export round trip) could not confirm a
+    // released equivalent for it, or for one of its agent tools' (a tool cannot carry its own
+    // mark, so the step's own version stands in for that case too). The mark is shown while the
+    // step's own exact pin still equals it, OR while any agent tool is still pinned to a snapshot
+    // — nothing clears the field itself, it just stops being displayed once neither holds. Shared
+    // by `ap_flow_structure` and `ap_validate_flow` so the two can never drift on which steps this
+    // marks, matching the web's `update-this-step-label.tsx` (`isOwnPinMarked` / `hasSnapshotTool`)
+    // exactly — with one known gap: `getAgentToolPinsOfStep` below bounds its scan to
+    // `MAX_AGENT_TOOL_PINS` (#879, to keep a stored array larger than the cap from fanning out one
+    // lookup per entry), while the web's own `hasSnapshotToolPin` checks every tool. A stored list
+    // longer than the cap, whose only snapshot tool sits past it — reachable exactly here, since
+    // import is what creates this mark — is marked in the builder and run view but not here.
+    updateThisStepMarkOf({ step }: { step: QadamPinnedStep }): { hasSnapshotTool: boolean } | undefined {
+        const mark = step.settings.exportedUnresolvedPin
+        if (isNil(mark)) {
+            return undefined
+        }
+        const exactVersion = flowQadamUtil.getExactVersion(step.settings.qadamVersion)
+        const isOwnPinMarked = mark === exactVersion
+        const hasSnapshotTool = qadamPinUtil.getAgentToolPinsOfStep({ step }).some((tool) =>
+            qadamVersionParser.isSnapshot({ version: flowQadamUtil.getExactVersion(tool.qadamVersion) }))
+        if (!isOwnPinMarked && !hasSnapshotTool) {
+            return undefined
+        }
+        return { hasSnapshotTool }
     },
 
     // A tool's name and version are not validated when stored. A well-formed pair is `name@version`,

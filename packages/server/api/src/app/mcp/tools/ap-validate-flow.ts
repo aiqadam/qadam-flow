@@ -335,29 +335,21 @@ function validatePreReleaseBuilds({ trigger }: { trigger: Step }): ValidationIss
     })
 }
 
-// ADR-0004: `markExportedUnresolved` (`import-flow.ts`) stamps a step's own exact pin onto
-// `settings.exportedUnresolvedPin` when an import (or export round trip) could not confirm a
-// released equivalent for it, or for one of its agent tools (a tool cannot carry its own mark, so
-// the step's own version stands in for that case too). Unlike `validateUnavailablePinStays` this
-// names no installation-side fact about whether the pin resolves, only the importer's own note
-// that nobody has confirmed a release for it, so it never escalates past `info` — no `ap_lock_and_
+// ADR-0004: `qadamPinUtil.updateThisStepMarkOf` reads `settings.exportedUnresolvedPin`, the mark
+// an import (or export round trip) leaves when it could not confirm a released equivalent for a
+// step's own pin, or for one of its agent tools'. Unlike `validateUnavailablePinStays` this names
+// no installation-side fact about whether the pin resolves, only the importer's own note that
+// nobody has confirmed a release for it, so it never escalates past `info` — no `ap_lock_and_
 // publish` gate is warranted, matching the web counterpart (`update-this-step-label.tsx`), which
-// also never blocks. Clearing the mark is purely by changing the step's own pin, mirroring the
-// web's own `isOwnPinMarked` check exactly, so the two surfaces never disagree about which steps
-// carry the note.
+// also never blocks. The shared helper is what keeps `ap_flow_structure` and this tool from
+// disagreeing on which steps carry the note.
 function validateUpdateThisStep({ trigger }: { trigger: Step }): ValidationIssue[] {
     return qadamPinUtil.getQadamSteps({ trigger }).flatMap((step): ValidationIssue[] => {
-        const mark = step.settings.exportedUnresolvedPin
+        const mark = qadamPinUtil.updateThisStepMarkOf({ step })
         if (isNil(mark)) {
             return []
         }
-        const exactVersion = flowQadamUtil.getExactVersion(step.settings.qadamVersion)
-        const isOwnPinMarked = mark === exactVersion
-        const hasSnapshotTool = qadamPinUtil.getAgentToolPinsOfStep({ step }).some((tool) =>
-            qadamVersionParser.isSnapshot({ version: flowQadamUtil.getExactVersion(tool.qadamVersion) }))
-        if (!isOwnPinMarked && !hasSnapshotTool) {
-            return []
-        }
+        const { hasSnapshotTool } = mark
         const issue = mcpUtils.updateThisStepIssue({ hasSnapshotTool })
         return [{
             category: 'update_this_step' as const,

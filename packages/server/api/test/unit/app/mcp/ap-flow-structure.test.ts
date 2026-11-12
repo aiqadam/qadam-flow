@@ -797,4 +797,32 @@ describe('ap_flow_structure — update this step (ADR-0004 import mark, #808)', 
 
         expect(result.content?.[0]?.text).not.toContain('UPDATE THIS STEP')
     })
+
+    // The tool wording must win when both are true at once: the step's own pin still matches the
+    // mark AND a tool is a snapshot.
+    it('reports hasSnapshotTool true when the step\'s own pin still matches the mark AND a tool is a snapshot', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({
+            firstAction: markedStep({
+                qadamVersion: HEALTHY_VERSION,
+                exportedUnresolvedPin: HEALTHY_VERSION,
+                agentTools: [{ type: 'PIECE', toolName: 'lookup', qadamMetadata: { qadamName: '@aiqadam/qadam-test-tool', qadamVersion: '1.2.3-main.4', actionName: 'go' } }],
+            }),
+        }))
+
+        const result = await callTool()
+
+        expect(result.content?.[0]?.text).toContain('[UPDATE THIS STEP]')
+        expect(JSON.stringify(result.structuredContent?.steps)).toContain('"updateThisStep":{"hasSnapshotTool":true}')
+    })
+
+    // `getExactVersion` is there precisely so a caret/tilde own pin still matches a bare mark.
+    it('marks a step whose own pin is a caret range around the marked exact version', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: markedStep({ qadamVersion: `^${HEALTHY_VERSION}`, exportedUnresolvedPin: HEALTHY_VERSION }) }))
+
+        const result = await callTool()
+
+        expect(result.content?.[0]?.text).toContain('[UPDATE THIS STEP]')
+        const steps = result.structuredContent?.steps as Record<string, unknown>[]
+        expect(steps.find(s => s.name === 'step_1')).toMatchObject({ updateThisStep: { hasSnapshotTool: false } })
+    })
 })
