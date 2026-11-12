@@ -293,11 +293,12 @@ jobs:
           echo "Diff touches none of the release or packaging paths."
           emit false
 
-      # Same shape and the same fail-open reasoning as the E2E gate above, for the advisory
+      # Same shape and the same fail-open reasoning as the E2E gate above, for the required
       # `qadam-divergence` job (ADR-0004 gate 9, #852): its answer can only change when an official
       # qadam's source, a changeset (a pending release is what makes a divergent qadam a `-main.<n>`
       # build), the check itself or this workflow changes. Whole trees, not a file list. A wrong
-      # `true` costs one advisory job; a wrong `false` leaves a divergence unreported on that PR.
+      # `true` costs one run of the job; a wrong `false` makes `qadam-divergence-gate` pass on this
+      # PR regardless, and any divergence it missed only surfaces on the next push-to-main run.
       - name: Detect changes the qadam divergence check reads
         id: divergence
         if: github.event_name == 'pull_request'
@@ -595,9 +596,10 @@ jobs:
   # build give it its own `-main.<n>` version). ADR-0004 rolls the gate out in steps: measure
   # (tools/ci/measure-qadam-divergence.mjs), advisory while the changesets land in batches under the
   # npm publish cap, required when the divergences reach zero. The 2026-10-10 measurement found 205
-  # divergent `0.x` qadams (204 without a pending changeset); #892 and this change's own batch cover
-  # every one of them, verified byte-for-byte against npm with only the #813 import rewrite
-  # remaining in each (artifact-only, no behaviour change), so `--required` below is added now that
+  # divergent `0.x` qadams (204 without a pending changeset); #892 (27 core qadams), this change's
+  # own batch (145 community qadams) and other pending changesets together cover every one of them,
+  # verified byte-for-byte against npm with only the #813 import rewrite remaining in each
+  # (artifact-only, no behaviour change), so `--required` below is added now that
   # `node tools/ci/check-qadam-divergence.mjs` (no flag) reports the list empty. Gate 1, already
   # required, keeps it empty going forward: a future `src/` change needs its own changeset in the
   # same PR, which is exactly what makes that qadam a `-main.<n>` build instead of a divergent
