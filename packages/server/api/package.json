@@ -111,7 +111,7 @@
     "tslib": "2.6.2",
     "typeorm": "0.3.31",
     "unpdf": "1.4.0",
-    "zod": "4.6.6"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@aiqadam/qadam-facebook-leads": "workspace:*",
