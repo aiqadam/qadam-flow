@@ -83,10 +83,16 @@ is [ADR-0004](../../adr/0004-main-builds-give-changed-packages-their-own-prerele
 accepted on 2026-10-10 and binding (snapshot `-main.<n>` versions, the `follow`/`pin` snapshot policy, export rewriting, gate 9). `tools/scripts/qadams/snapshot/` computes which version each qadam would get in a `main` build (#851); the image does not apply it yet. `@aiqadam/shared` is private and bundled
 into `qadams-framework` (#799). Gates 1–7 (#797) and gate 8 (#801, landed) are required; the maintainer-only
 `semver-override` label bypasses gate 2 alone, when CI over-estimates the level.
-Gate 9 (ADR-0004, #852) is **advisory** until the `0.x` clean-up is done: ci.yml's `qadam-divergence` job
-runs `tools/ci/check-qadam-divergence.mjs`, which warns when a `0.x` qadam's tree build differs from its
-npm tarball under the same version and no pending changeset covers it. `tools/ci/measure-qadam-divergence.mjs`
-prints the full list (it needs a built tree and the registry). It becomes required when that list is empty,
-before `v2.0.0` is tagged. Until then a PR is not blocked by it. A changeset for a divergent qadam
-shrinks the gate's list at once; the measurement's list shrinks once the release publishes that qadam.
+Gate 9 (ADR-0004, #852): ci.yml's `qadam-divergence` job runs `tools/ci/check-qadam-divergence.mjs
+--required`, which fails when a `0.x` qadam's tree build differs from its npm tarball under the same
+version and no pending changeset covers it. `tools/ci/measure-qadam-divergence.mjs` prints the full
+list regardless of changesets (it needs a built tree and the registry). The clean-up batches (#892
+and this change) brought the uncovered list to zero, verified byte-for-byte against npm with only
+the #813 import rewrite remaining in every divergence (artifact-only), so the check now runs with
+`--required` and `qadam-divergence-gate` is its always-reporting required front, the same pattern as
+`image-sandbox-gate`. Wiring `Qadam Divergence Gate` into the `main protect` ruleset's required
+contexts is a separate, maintainer-only step (same as how `Image + Sandbox Gate` was added, recorded
+in `.agents/docs/dependency-updates.md`) — until that happens the job can fail without blocking a
+merge. A changeset for a divergent qadam keeps the gate's list empty going forward; gate 1 already
+requires one for any `src/` change to a qadam.
 

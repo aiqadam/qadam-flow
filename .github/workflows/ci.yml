@@ -293,11 +293,12 @@ jobs:
           echo "Diff touches none of the release or packaging paths."
           emit false
 
-      # Same shape and the same fail-open reasoning as the E2E gate above, for the advisory
+      # Same shape and the same fail-open reasoning as the E2E gate above, for the required
       # `qadam-divergence` job (ADR-0004 gate 9, #852): its answer can only change when an official
       # qadam's source, a changeset (a pending release is what makes a divergent qadam a `-main.<n>`
       # build), the check itself or this workflow changes. Whole trees, not a file list. A wrong
-      # `true` costs one advisory job; a wrong `false` leaves a divergence unreported on that PR.
+      # `true` costs one run of the job; a wrong `false` makes `qadam-divergence-gate` pass on this
+      # PR regardless, and any divergence it missed only surfaces on the next push-to-main run.
       - name: Detect changes the qadam divergence check reads
         id: divergence
         if: github.event_name == 'pull_request'
@@ -590,26 +591,37 @@ jobs:
 
           echo "Packed ${actual} framework package(s), marked unpublishable. ✅"
 
-  # ADR-0004 gate 9 (#852), ADVISORY: every `0.x` official qadam either builds from the tree to the
+  # ADR-0004 gate 9 (#852), REQUIRED: every `0.x` official qadam either builds from the tree to the
   # tarball npm serves for the same version, or has a pending changeset (which makes the next `main`
-  # build give it its own `-main.<n>` version). A divergence with no changeset is reported as a
-  # `::warning::` annotation and in the run summary; the script exits 0 on it. ADR-0004 rolls the
-  # gate out in steps: measure (tools/ci/measure-qadam-divergence.mjs), advisory while the changesets
-  # land in batches under the npm publish cap, required when the divergences reach zero, which
-  # `v2.0.0` waits for. Making it required is a different change: add `--required` below and put an
-  # always-reporting gate job in front of it, the way `verify` and `integration` are built, because
-  # a skipped required context wedges every PR (.agents/docs/verification-pitfalls.md).
+  # build give it its own `-main.<n>` version). ADR-0004 rolls the gate out in steps: measure
+  # (tools/ci/measure-qadam-divergence.mjs), advisory while the changesets land in batches under the
+  # npm publish cap, required when the divergences reach zero. The 2026-10-10 measurement found 205
+  # divergent `0.x` qadams (204 without a pending changeset); #892 (27 core qadams), this change's
+  # own batch (145 community qadams) and other pending changesets together cover every one of them,
+  # verified byte-for-byte against npm with only the #813 import rewrite remaining in each
+  # (artifact-only, no behaviour change), so `--required` below is added now that
+  # `node tools/ci/check-qadam-divergence.mjs` (no flag) reports the list empty. Gate 1, already
+  # required, keeps it empty going forward: a future `src/` change needs its own changeset in the
+  # same PR, which is exactly what makes that qadam a `-main.<n>` build instead of a divergent
+  # release number.
   #
-  # `continue-on-error` on top of the script's own exit 0: this job also installs and builds the
-  # whole catalogue, and an infrastructure failure there must not read as a verdict on the PR, the
-  # same reason `osv-scan` carries it. NOT a context the `main protect` ruleset requires.
+  # A divergence with no changeset, or a qadam that cannot be measured, now fails the job (exit 1 or
+  # 2 — see check-qadam-divergence.mjs). This job is NOT itself the required status check: it is
+  # skipped on a PR the classifier finds irrelevant, and a skipped required context reports no
+  # conclusion and wedges every PR (.agents/docs/verification-pitfalls.md). `qadam-divergence-gate`
+  # below is the always-reporting front, the same pattern as `verify` and `image-sandbox-gate`.
+  # Wiring `Qadam Divergence Gate` into the `main protect` ruleset's required contexts is a separate,
+  # maintainer-only step (.agents/docs/dependency-updates.md records how `Image + Sandbox Gate` was
+  # added the same way).
   #
   # Runs on every push to main (the running count) and on PRs where `changes` says the answer can
   # have moved. It reads the registry, so it is the one job here whose result depends on a service
   # outside the repository; the check retries transient errors and reports "could not be measured"
-  # rather than guessing.
+  # rather than guessing — which is why an infrastructure failure here is now a real gate failure
+  # rather than swallowed by `continue-on-error`, the same tradeoff `image` and `sandbox-e2e` already
+  # accept behind `image-sandbox-gate`.
   qadam-divergence:
-    name: Qadam divergence (ADR-0004 gate 9, advisory)
+    name: Qadam divergence (ADR-0004 gate 9)
     needs: changes
     # No `docs_only` condition, deliberately: classify-changed-paths.sh files `.changeset/*.md` as docs,
     # and a changeset-only PR (the batches that shrink the list, or one that deletes a changeset) is
@@ -618,7 +630,6 @@ jobs:
     if: github.event_name != 'pull_request' || needs.changes.outputs.qadam_divergence_relevant == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    continue-on-error: true
     permissions:
       contents: read
     steps:
@@ -660,8 +671,59 @@ jobs:
       - name: Build the official qadams
         run: npx turbo run build --filter='@aiqadam/qadam-*'
 
-      - name: Compare 0.x qadams with npm (ADR-0004 gate 9, advisory)
-        run: node tools/ci/check-qadam-divergence.mjs
+      - name: Compare 0.x qadams with npm (ADR-0004 gate 9)
+        run: node tools/ci/check-qadam-divergence.mjs --required
+
+  # Required status check (ADR-0004 gate 9, #852): the always-reporting front for `qadam-divergence`,
+  # the same pattern and the same reason as `verify` and `image-sandbox-gate` above — `qadam-divergence`
+  # is skipped on a PR the classifier finds irrelevant, and a skipped required context reports no
+  # conclusion and wedges every PR. A skip passes only when it is justified: on a push or a dispatch
+  # there is no diff to narrow by, so the job always runs there; on a pull request it may be skipped
+  # only when `qadam_divergence_relevant` was false. `failure` and `cancelled` always fail.
+  #
+  # The name "Qadam Divergence Gate" is what a maintainer adds to the `main protect` ruleset's
+  # required contexts to make this gate 9's required phase real — that wiring is outside this repo
+  # (.agents/docs/dependency-updates.md records how "Image + Sandbox Gate" was added the same way)
+  # and is not done by this change.
+  qadam-divergence-gate:
+    name: Qadam Divergence Gate
+    needs: [changes, qadam-divergence]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Resolve qadam divergence status
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          QADAM_DIVERGENCE_RELEVANT: ${{ needs.changes.outputs.qadam_divergence_relevant }}
+          DIVERGENCE_RESULT: ${{ needs.qadam-divergence.result }}
+        run: |
+          set -uo pipefail
+          echo "classifier=${CHANGES_RESULT} qadam_divergence_relevant=${QADAM_DIVERGENCE_RELEVANT:-<unset>} event=${EVENT_NAME}"
+          echo "qadam-divergence=${DIVERGENCE_RESULT}"
+
+          if [ "$CHANGES_RESULT" != success ]; then
+            echo "::error::Path classifier did not succeed (${CHANGES_RESULT}); refusing to pass the required check."
+            exit 1
+          fi
+
+          case "$DIVERGENCE_RESULT" in
+            success) ;;
+            skipped)
+              if [ "$EVENT_NAME" = pull_request ] && [ "${QADAM_DIVERGENCE_RELEVANT:-}" != true ]; then
+                : # legitimate skip — the classifier found no official qadam, changeset or divergence-check change
+              else
+                echo "::error::Qadam divergence check was skipped but this run should have executed it."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::Qadam divergence check result: ${DIVERGENCE_RESULT}."
+              exit 1
+              ;;
+          esac
+          echo "Qadam divergence check passed or was legitimately skipped. ✅"
 
   # Advisory OSV scan of the text `bun.lock`. osv-scanner lists `bun.lock` under JavaScript
   # (<https://google.github.io/osv-scanner/supported-languages-and-lockfiles/>), so the lockfile

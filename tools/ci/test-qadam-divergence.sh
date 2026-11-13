@@ -2,7 +2,8 @@
 #
 # Fixture tests for ADR-0004's gate 9 (#852): tools/ci/qadam-divergence.mjs (the comparison),
 # tools/ci/measure-qadam-divergence.mjs (step 1, the measurement) and
-# tools/ci/check-qadam-divergence.mjs (the advisory gate).
+# tools/ci/check-qadam-divergence.mjs (the gate, required since the divergence list reached zero;
+# still runnable advisory without --required for an ad hoc/local check).
 #
 # Offline. A stub registry (node's http module, 127.0.0.1, random port) serves packuments and real
 # gzip tarballs built with `tar`; the "tree" is a miniature repository with a built `dist/` per
