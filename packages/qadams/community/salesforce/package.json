@@ -11,7 +11,7 @@
     "@aiqadam/qadams-common": "workspace:*",
     "@aiqadam/qadams-framework": "workspace:*",
     "dayjs": "1.11.9",
-    "fast-xml-parser": "5.7.0",
+    "fast-xml-parser": "5.12.0",
     "tslib": "2.6.2"
   }
 }

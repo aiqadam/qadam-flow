@@ -6,7 +6,7 @@
   "dependencies": {
     "@aiqadam/qadams-common": "workspace:*",
     "@aiqadam/qadams-framework": "workspace:*",
-    "fast-xml-parser": "5.7.0",
+    "fast-xml-parser": "5.12.0",
     "json2xml": "0.1.3",
     "tslib": "2.6.2"
   },
