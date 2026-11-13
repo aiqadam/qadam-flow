@@ -20,7 +20,11 @@ import { t } from 'i18next';
 import { internalErrorToast } from '@/components/ui/sonner';
 import { api } from '@/lib/api';
 
-import { FlowVersionFrameworkCensus, HeldQadamPinMove } from '../types';
+import {
+  FlowVersionFrameworkCensus,
+  FlowVersionPinStayCheck,
+  HeldQadamPinMove,
+} from '../types';
 
 export const qadamsApi = {
   list(request: ListQadamsRequestQuery): Promise<QadamMetadataModelSummary[]> {
@@ -41,6 +45,18 @@ export const qadamsApi = {
   }): Promise<FlowVersionFrameworkCensus> {
     return api.get<FlowVersionFrameworkCensus>(
       '/v1/framework-census/flow-version',
+      request,
+    );
+  },
+  // ADR-0003 "Unavailable version" (#808): the steps of one flow version whose pin is unavailable
+  // and was not moved to the image's build automatically. Project scoped; the builder's and runs'
+  // per-flow-version "version unavailable — update this step" read.
+  checkPinStays(request: {
+    flowId: string;
+    flowVersionId: string;
+  }): Promise<FlowVersionPinStayCheck> {
+    return api.get<FlowVersionPinStayCheck>(
+      '/v1/qadam-pin-moves/check',
       request,
     );
   },

@@ -6,7 +6,7 @@ import { entitiesMustBeOwnedByCurrentProject } from '../../authentication/author
 import { EntitySourceType, ProjectResourceType } from '../../core/security/authorization/common'
 import { securityAccess } from '../../core/security/authorization/fastify-security'
 import { FlowEntity } from '../../flows/flow/flow.entity'
-import { ListHeldQadamPinMovesRequestQuery, ListQadamPinMovesRequestQuery, QadamPinMove, QadamPinMovePage, RevertedQadamPinMove } from './qadam-pin-move.dto'
+import { CheckQadamPinStaysRequestQuery, ListHeldQadamPinMovesRequestQuery, ListQadamPinMovesRequestQuery, QadamPinMove, QadamPinMovePage, QadamPinStayCheck, RevertedQadamPinMove } from './qadam-pin-move.dto'
 import { qadamPinMoveService } from './qadam-pin-move.service'
 
 export const qadamPinMoveController: FastifyPluginAsyncZod = async (app) => {
@@ -24,6 +24,20 @@ export const qadamPinMoveController: FastifyPluginAsyncZod = async (app) => {
             projectId: req.projectId,
             platformId: req.principal.platform.id,
         })
+    })
+
+    // The builder's, MCP's and runs' project-scoped read of "version unavailable — update this
+    // step" (ADR-0003) for one flow version. `/check` is a static segment of the same collection,
+    // so it outranks `/:id` and can never be read as a record id, the same as `/held`.
+    app.get('/check', CheckQadamPinStaysRequest, async (req): Promise<QadamPinStayCheck> => {
+        return {
+            pinStays: await qadamPinMoveService({ log: req.log }).checkUnavailablePins({
+                flowId: req.query.flowId,
+                flowVersionId: req.query.flowVersionId,
+                projectId: req.projectId,
+                platformId: req.principal.platform.id,
+            }),
+        }
     })
 
     app.get('/:id', GetQadamPinMoveRequest, async (req) => {
@@ -77,30 +91,46 @@ const RevertQadamPinMoveRequest = {
     },
 }
 
-// The hold is a property of the step, so any member of the flow's project with read access can read
-// it, not only a platform admin (that is exactly the read #808 deferred here). The flow entity
-// resolves the project from `flowId` in the query, and the service asserts the flow is in that
-// project, so a flow in another project is neither resolved nor read.
+// Shared by `/held` and `/check`: both marks are a property of the flow version, so any member of
+// the flow's project with read access can read them, not only a platform admin. The flow entity
+// resolves the project from `flowId` in the query, and the service asserts the flow (and, for
+// `/check`, the version) belongs to that project, so another project's flow is neither resolved nor
+// read.
+const flowProjectReadSecurity = securityAccess.project(
+    [PrincipalType.USER, PrincipalType.SERVICE],
+    Permission.READ_FLOW,
+    {
+        type: ProjectResourceType.TABLE,
+        tableName: FlowEntity,
+        entitySourceType: EntitySourceType.QUERY,
+        lookup: {
+            paramKey: 'flowId',
+            entityField: 'id',
+        },
+    })
+
 const ListHeldQadamPinMovesRequest = {
     config: {
-        security: securityAccess.project(
-            [PrincipalType.USER, PrincipalType.SERVICE],
-            Permission.READ_FLOW,
-            {
-                type: ProjectResourceType.TABLE,
-                tableName: FlowEntity,
-                entitySourceType: EntitySourceType.QUERY,
-                lookup: {
-                    paramKey: 'flowId',
-                    entityField: 'id',
-                },
-            }),
+        security: flowProjectReadSecurity,
     },
     schema: {
         tags: ['qadam-pin-moves'],
         querystring: ListHeldQadamPinMovesRequestQuery,
         response: {
             [StatusCodes.OK]: QadamPinMovePage,
+        },
+    },
+}
+
+const CheckQadamPinStaysRequest = {
+    config: {
+        security: flowProjectReadSecurity,
+    },
+    schema: {
+        tags: ['qadam-pin-moves'],
+        querystring: CheckQadamPinStaysRequestQuery,
+        response: {
+            [StatusCodes.OK]: QadamPinStayCheck,
         },
     },
 }

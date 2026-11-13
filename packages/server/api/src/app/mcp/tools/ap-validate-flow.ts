@@ -31,7 +31,7 @@ import { qadamMetadataService } from '../../qadams/metadata/qadam-metadata-servi
 import { qadamPinUtil } from '../../qadams/metadata/qadam-pin-util'
 import { qadamPinHold } from '../../qadams/pin-moves/qadam-pin-hold'
 import { QadamPinMove } from '../../qadams/pin-moves/qadam-pin-move.dto'
-import { qadamPinMoveService } from '../../qadams/pin-moves/qadam-pin-move.service'
+import { PinStay, qadamPinMoveService } from '../../qadams/pin-moves/qadam-pin-move.service'
 import { translationService } from '../../translation/translation.service'
 import { mcpUtils } from './mcp-utils'
 
@@ -39,7 +39,7 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
     return {
         title: 'ap_validate_flow',
         permission: Permission.READ_FLOW,
-        description: 'Validate a flow for structural issues without publishing. Checks step validity, template references, empty branches, qadam pins (including pre-release builds and held automatic pin moves), and other pre-publish defects. Returns a detailed report with all issues found. Use this before ap_lock_and_publish to catch problems early.',
+        description: 'Validate a flow for structural issues without publishing. Checks step validity, template references, empty branches, qadam pins (including pre-release builds, held automatic pin moves, pins that are unavailable and were not moved automatically, and steps an import could not move to a release), and other pre-publish defects. Returns a detailed report with all issues found. Use this before ap_lock_and_publish to catch problems early.',
         inputSchema: validateFlowInput.shape,
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         execute: async (args) => {
@@ -56,7 +56,7 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                 // A flow with no qadam step can hold none, so it costs no hold read (and no
                 // platform/ownership read inside it), the same rule `ap_flow_structure` follows.
                 const hasQadamSteps = qadamPinUtil.getQadamSteps({ trigger: flow.version.trigger }).length > 0
-                const [callFlowIssues, qadamVersionIssues, frameworkVersionIssues, concurrentLoopIssues, translationIssues, heldMoves] = await Promise.all([
+                const [callFlowIssues, qadamVersionIssues, frameworkVersionIssues, concurrentLoopIssues, translationIssues, heldMoves, pinStays] = await Promise.all([
                     validateCallFlowSteps({
                         trigger: flow.version.trigger,
                         projectId: mcp.projectId,
@@ -87,8 +87,28 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                         log,
                     }),
                     hasQadamSteps ? findHeldPinMoves({ flowId: flow.id, projectId: mcp.projectId, platformId, log }) : [],
+                    hasQadamSteps ? findPinStays({ flowId: flow.id, flowVersionId: flow.version.id, projectId: mcp.projectId, platformId, log }) : [],
                 ])
-                const allIssues = [...structural.issues, ...qadamVersionIssues, ...frameworkVersionIssues, ...validatePreReleaseBuilds({ trigger: flow.version.trigger }), ...validateFollowHeld({ trigger: flow.version.trigger, heldMoves }), ...validateAgentToolCounts({ trigger: flow.version.trigger }), ...callFlowIssues, ...concurrentLoopIssues, ...translationIssues]
+                // The version-unavailable mark is a more specific statement about the same pin
+                // than `qadam_version`'s generic "cannot resolve" (ADR-0003, #808), so the step is
+                // reported once: under `version_unavailable`, with its reason, when the check
+                // explains why it was not moved.
+                const pinStayStepNames = new Set(pinStays.map((stay) => stay.stepName))
+                // `checkUnavailablePins` resolves a pin exact-match only (`isPinAvailable`,
+                // `allowBundledFallback: false`), stricter than `qadam_version`'s own check
+                // (`resolvePins`, `allowBundledFallback: true` — the image's bundled build can
+                // stand in for an exact pin inside its caret range). So a step can be marked here
+                // (exact version missing) while `qadam_version` still finds it resolvable (served
+                // by the bundled fallback), or while `qadam_version`'s own lookup merely errored
+                // (`resolvable === undefined`, "unverified") — neither is the confirmed-missing
+                // case the destructive delete-and-re-add remedy and the blocking severity are for.
+                const { confirmedMissingStepNames } = qadamVersionIssues
+                // Only the step's OWN pin (not an agent tool's, which shares `stepName`), and only
+                // when it is ALSO confirmed missing, is replaced by the more specific mark — an
+                // "unverified" step keeps its own safe, non-destructive `qadam_version` issue
+                // alongside the new warning rather than losing it (#474).
+                const qadamVersionIssuesWithoutMarked = qadamVersionIssues.stepIssues.filter((issue) => !(pinStayStepNames.has(issue.stepName) && confirmedMissingStepNames.has(issue.stepName)))
+                const allIssues = [...structural.issues, ...qadamVersionIssuesWithoutMarked, ...qadamVersionIssues.toolIssues, ...frameworkVersionIssues, ...validatePreReleaseBuilds({ trigger: flow.version.trigger }), ...validateFollowHeld({ trigger: flow.version.trigger, heldMoves }), ...validateUnavailablePinStays({ trigger: flow.version.trigger, pinStays, confirmedMissingStepNames }), ...validateUpdateThisStep({ trigger: flow.version.trigger }), ...validateAgentToolCounts({ trigger: flow.version.trigger }), ...callFlowIssues, ...concurrentLoopIssues, ...translationIssues]
                 const result = { ...structural, issues: allIssues }
                 // A warning is reported in the output but never blocks `valid` or counts toward
                 // "invalid" in the summary — today that is exactly (and only) the translation
@@ -214,12 +234,16 @@ function validateFlow({ trigger }: { trigger: Step }): ValidationResult {
 // image upgrade drops that version and #424's bundled fallback cannot reach the replacement — a
 // caret range does not cross a minor for a 0.x package, so a `0.3.1` pin never resolves to a
 // bundled `0.4.5` — the flow stays LOCKED, valid and ENABLED and fails only when something next
-// provisions it, with the cause visible in worker logs and nowhere a flow owner looks (#432).
+// provisions it, with the cause visible in worker logs and nowhere a flow owner looks (#432). A
+// worker that already has the dead version cached locally skips re-provisioning and keeps running
+// it regardless (`mcpUtils.qadamPinIssue`'s own comment has the detail) — this category exists for
+// the opposite, more common case: a cold worker, or the first one to need this pin after the cache
+// that served it is gone.
 async function validatePinnedQadamVersions({ trigger, platformId, log }: {
     trigger: Step
     platformId: string
     log: FastifyBaseLogger
-}): Promise<ValidationIssue[]> {
+}): Promise<{ stepIssues: ValidationIssue[], toolIssues: ValidationIssue[], confirmedMissingStepNames: Set<string> }> {
     // No `skip` filter, unlike every other check here: `extractQadamPackages` in the worker
     // provisions every PIECE step in the version, and every PIECE tool of an agent step, regardless
     // of `skip`, so a dead pin on a skipped step still fails provisioning on every trigger tick and
@@ -237,8 +261,8 @@ async function validatePinnedQadamVersions({ trigger, platformId, log }: {
         const pin = qadamPinUtil.pinOf({ step })
         // Shared with `ap_flow_structure` via `mcpUtils.qadamPinIssue`, so the two tools cannot
         // give an agent contradictory accounts of the same pin — a confirmed miss (`false`) gets
-        // the assertive wording and the delete-and-re-add remedy; a lookup that merely errored
-        // (`undefined`) must not (#474).
+        // the assertive, destructive-remedy wording; a lookup that merely errored (`undefined`)
+        // must not (#474).
         const issue = mcpUtils.qadamPinIssue({ pin, resolvable: resolutions.get(pin) })
         if (isNil(issue)) {
             return []
@@ -261,7 +285,12 @@ async function validatePinnedQadamVersions({ trigger, platformId, log }: {
             message: `${mcpUtils.wrapUntrustedValue(tool.stepDisplayName)} has an agent tool (${mcpUtils.wrapUntrustedValue(tool.toolName)}) that ${issue.message}`,
         }]
     })
-    return [...stepIssues, ...toolIssues]
+    // Only a step the lookup actually confirmed missing (`resolvable === false`) — never one whose
+    // lookup merely errored (`undefined`, `resolvable` unverified) — is "confirmed missing" to a
+    // caller deciding whether to use the destructive delete-and-re-add remedy (#474): that remedy
+    // is exactly what an unverified reading must not trigger.
+    const confirmedMissingStepNames = new Set(qadamSteps.filter((step) => resolutions.get(qadamPinUtil.pinOf({ step })) === false).map((step) => step.name))
+    return { stepIssues, toolIssues, confirmedMissingStepNames }
 }
 
 // The per-agent-step cap the write path and the publish gate enforce (#879), reported here for a
@@ -306,6 +335,31 @@ function validatePreReleaseBuilds({ trigger }: { trigger: Step }): ValidationIss
     })
 }
 
+// ADR-0004: `qadamPinUtil.updateThisStepMarkOf` reads `settings.exportedUnresolvedPin`, the mark
+// an import (or export round trip) leaves when it could not confirm a released equivalent for a
+// step's own pin, or for one of its agent tools'. Unlike `validateUnavailablePinStays` this names
+// no installation-side fact about whether the pin resolves, only the importer's own note that
+// nobody has confirmed a release for it, so it never escalates past `info` — no `ap_lock_and_
+// publish` gate is warranted, matching the web counterpart (`update-this-step-label.tsx`), which
+// also never blocks. The shared helper is what keeps `ap_flow_structure` and this tool from
+// disagreeing on which steps carry the note.
+function validateUpdateThisStep({ trigger }: { trigger: Step }): ValidationIssue[] {
+    return qadamPinUtil.getQadamSteps({ trigger }).flatMap((step): ValidationIssue[] => {
+        const mark = qadamPinUtil.updateThisStepMarkOf({ step })
+        if (isNil(mark)) {
+            return []
+        }
+        const { hasSnapshotTool } = mark
+        const issue = mcpUtils.updateThisStepIssue({ hasSnapshotTool })
+        return [{
+            category: 'update_this_step' as const,
+            stepName: step.name,
+            severity: 'info' as const,
+            message: `${mcpUtils.wrapUntrustedValue(step.displayName)} ${issue.message}`,
+        }]
+    })
+}
+
 // The hold from a revert (#854, ADR-0004 "Following `main`"): like the pre-release note this is a
 // fact about the step, not a defect — the step runs the version a person restored — so it is
 // reported at `severity: 'info'` and never blocks publishing. A read that fails drops the note and
@@ -336,6 +390,57 @@ function validateFollowHeld({ trigger, heldMoves }: { trigger: Step, heldMoves: 
             stepName: step.name,
             severity: 'info' as const,
             message: `${mcpUtils.wrapUntrustedValue(step.displayName)} ${issue.message}`,
+        }]
+    })
+}
+
+// ADR-0003 "Unavailable version" / "Versions that were never published" (#808): a step whose pin
+// is unavailable and a publish or the snapshot follow pass did not move it. `checkUnavailablePins`
+// resolves a pin exact-match only (`isPinAvailable`), stricter than `qadam_version`'s own check
+// (`resolvePins`, which also accepts the image's bundled build as a stand-in inside the pin's
+// caret range) — so a step reported here is not always a step `qadam_version` also calls a
+// confirmed miss: `reverted-by-user` (the bundled fallback still serves a held step), and often
+// `props-incompatible` / `props-unverifiable` / `target-not-loaded` too, land here while still
+// resolving under the generic check. They are not guaranteed to: `checkNet`'s run-time rule is
+// stricter than `decide`'s (e.g. a release pin never moves onto a snapshot image build, a snapshot
+// pin never runs on a release instance), so one of these reasons CAN also be a confirmed miss on a
+// `-main` instance. The caller (`confirmedMissingStepNames`, built from the generic check's own
+// resolutions, never from the stay reason) decides severity per step: `error`, the same as
+// `qadam_version`, only for a step that check ALSO confirmed missing — never softening THAT case,
+// since ADR-0003's "the flow is never disabled" (#435) is the REST publish gate's and the worker's
+// concern, not this advisory report's, and `ap_validate_flow`'s whole purpose is to catch exactly
+// this before an agent calls `ap_lock_and_publish`. Every other stay is `warning`: it calls for
+// action, but something is still running the step today. A read that fails drops the issue and
+// leaves the rest of the report intact, the same as the hold read.
+async function findPinStays({ flowId, flowVersionId, projectId, platformId, log }: {
+    flowId: string
+    flowVersionId: string
+    projectId: string
+    platformId: string
+    log: FastifyBaseLogger
+}): Promise<PinStay[]> {
+    const { data, error } = await tryCatch(() => qadamPinMoveService({ log }).checkUnavailablePins({ flowId, flowVersionId, projectId, platformId }))
+    if (!isNil(error)) {
+        log.warn({ error, flowId }, '[apValidateFlow] Unavailable-pin check failed; the report omits the version-unavailable mark')
+        return []
+    }
+    return data ?? []
+}
+
+function validateUnavailablePinStays({ trigger, pinStays, confirmedMissingStepNames }: { trigger: Step, pinStays: PinStay[], confirmedMissingStepNames: Set<string> }): ValidationIssue[] {
+    const byStepName = new Map(pinStays.map((stay) => [stay.stepName, stay]))
+    return qadamPinUtil.getQadamSteps({ trigger }).flatMap((step): ValidationIssue[] => {
+        const stay = byStepName.get(step.name)
+        if (isNil(stay)) {
+            return []
+        }
+        const confirmedMissing = confirmedMissingStepNames.has(step.name)
+        const issue = mcpUtils.pinStayIssue({ detail: stay.detail, confirmedMissing })
+        return [{
+            category: 'version_unavailable' as const,
+            stepName: step.name,
+            message: `${mcpUtils.wrapUntrustedValue(step.displayName)} ${issue.message}`,
+            ...(confirmedMissing ? {} : { severity: 'warning' as const }),
         }]
     })
 }
@@ -1067,13 +1172,15 @@ const CONDITIONAL_PAUSE_EVALUATORS: Record<string, (step: QadamStep) => string |
     [`${ASSEMBLYAI_QADAM}:${ASSEMBLYAI_TRANSCRIBE_ACTION}`]: readTranscribePauseReason,
 }
 
-const CATEGORY_ORDER: ValidationIssue['category'][] = ['step_validity', 'qadam_version', 'agent_tool_limit', 'pre_release_build', 'follow_hold', 'framework_version', 'template_reference', 'translation_key', 'translation_default_locale', 'translation_locale', 'empty_branch', 'subflow_payload', 'inline_pause', 'concurrent_pause']
+const CATEGORY_ORDER: ValidationIssue['category'][] = ['step_validity', 'qadam_version', 'version_unavailable', 'agent_tool_limit', 'pre_release_build', 'follow_hold', 'update_this_step', 'framework_version', 'template_reference', 'translation_key', 'translation_default_locale', 'translation_locale', 'empty_branch', 'subflow_payload', 'inline_pause', 'concurrent_pause']
 const CATEGORY_LABELS: Record<ValidationIssue['category'], string> = {
     step_validity: 'Step Validity',
     qadam_version: 'Unavailable Qadam Versions',
+    version_unavailable: 'Version Unavailable — Update This Step',
     agent_tool_limit: 'Agent Tool Limits',
     pre_release_build: 'Pre-Release Builds',
     follow_hold: 'Held Snapshot Follow Steps',
+    update_this_step: 'Imported Pins Without A Confirmed Release',
     framework_version: 'Unsupported Framework Versions',
     template_reference: 'Template References',
     translation_key: 'Unknown Translation Keys',
@@ -1169,19 +1276,25 @@ function formatIssueGroups(issues: ValidationIssue[]): string[] {
 }
 
 type ValidationIssue = {
-    category: 'step_validity' | 'qadam_version' | 'agent_tool_limit' | 'pre_release_build' | 'follow_hold' | 'framework_version' | 'template_reference' | 'translation_key' | 'translation_locale' | 'translation_default_locale' | 'empty_branch' | 'subflow_payload' | 'inline_pause' | 'concurrent_pause'
+    category: 'step_validity' | 'qadam_version' | 'version_unavailable' | 'agent_tool_limit' | 'pre_release_build' | 'follow_hold' | 'update_this_step' | 'framework_version' | 'template_reference' | 'translation_key' | 'translation_locale' | 'translation_default_locale' | 'empty_branch' | 'subflow_payload' | 'inline_pause' | 'concurrent_pause'
     stepName: string
     message: string
     // Omitted (or 'error') blocks `structuredContent.valid` and counts toward "invalid" in the
     // summary; 'warning' is reported but never blocks. `translation_locale` (missing a non-default
-    // locale, or a `$t` nested inside `localeSource`) is always a warning. `translation_default_locale`
-    // (no usable locale for this `$t` reference) is an error for every trigger except subflows'
-    // Callable Flow, where it is a warning — that trigger can inherit a real locale from its caller
-    // at run time, which this static check cannot rule out, so it is not a guaranteed failure there
-    // the way it is for every other trigger type. 'info' is even weaker than a warning: a fact about
-    // the flow (currently the ADR-0004 pre-release build and follow-hold notes) that is neither a
-    // defect nor a risk, reported under its own "Notes" section and never counted as a warning or
-    // an issue.
+    // locale, or a `$t` nested inside `localeSource`) is always a warning. `version_unavailable`
+    // (ADR-0003, #808) keeps the default (error) severity only for a step `qadam_version` (#432)
+    // ALSO confirms missing — it replaces that issue there — and is explicitly `'warning'` for
+    // every other stay (a pin the bundled fallback still serves, or one an errored lookup could not
+    // confirm either way). ADR-0003's "the flow is never disabled" (#435) is about the REST publish
+    // gate and the worker, not this advisory report.
+    // `translation_default_locale` (no usable locale for this `$t` reference) is an error for every
+    // trigger except subflows' Callable Flow, where it is a warning — that trigger can inherit a
+    // real locale from its caller at run time, which this static check cannot rule out, so it is
+    // not a guaranteed failure there the way it is for every other trigger type. 'info' is even
+    // weaker than a warning: a fact about the flow (currently the ADR-0004 pre-release build and
+    // follow-hold notes, and `update_this_step`'s import-time mark, which names no installation-side
+    // fact at all) that is neither a defect nor a risk, reported under its own "Notes" section and
+    // never counted as a warning or an issue.
     severity?: 'error' | 'warning' | 'info'
 }
 

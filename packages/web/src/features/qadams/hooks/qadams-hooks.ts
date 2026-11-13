@@ -29,7 +29,9 @@ import {
   StepMetadataWithSuggestions,
   CategorizedStepMetadataWithSuggestions,
   FlowVersionFrameworkCensus,
+  FlowVersionPinStayCheck,
   HeldQadamPinMove,
+  QadamPinStay,
 } from '@/features/qadams/types';
 import { flagsHooks } from '@/hooks/flags-hooks';
 import { platformHooks } from '@/hooks/platform-hooks';
@@ -386,6 +388,60 @@ export const qadamsHooks = {
       heldPinMoves: query.data?.data,
       isLoading: query.isLoading,
     };
+  },
+  // ADR-0003 "Unavailable version" (#808): the open flow version's steps whose pinned qadam
+  // version is unavailable and was not moved to the image's build automatically — the
+  // "version unavailable — update this step" mark. Auxiliary, like the framework census: when the
+  // read fails the steps stay editable and only the mark is omitted, so it must not raise the
+  // global error dialog. One query per version, shared by every canvas node, the step sidebar and
+  // the run view.
+  useUnavailablePinStays: ({
+    flowId,
+    flowVersionId,
+    flowVersionUpdated,
+  }: {
+    flowId: string;
+    flowVersionId: string;
+    flowVersionUpdated: string;
+  }) => {
+    const query = useQuery<FlowVersionPinStayCheck, Error>({
+      // a draft keeps its id while edited; `updated` re-reads the mark once a step's pin is saved
+      queryKey: [
+        'qadam-pin-stays-flow-version',
+        flowId,
+        flowVersionId,
+        flowVersionUpdated,
+      ],
+      queryFn: () => qadamsApi.checkPinStays({ flowId, flowVersionId }),
+      enabled: !!flowId && !!flowVersionId,
+      staleTime: 60_000,
+      meta: { showErrorDialog: false, loadSubsetOptions: {} },
+    });
+    return {
+      pinStays: query.data?.pinStays,
+      isLoading: query.isLoading,
+    };
+  },
+  // The canvas node mark and the step-sidebar label both need just "is this one step marked, and
+  // if so with what" — sharing this instead of each re-deriving it from `useUnavailablePinStays`
+  // keeps the lookup (and a future change to it) in one place.
+  usePinStayForStep: ({
+    flowId,
+    flowVersionId,
+    flowVersionUpdated,
+    stepName,
+  }: {
+    flowId: string;
+    flowVersionId: string;
+    flowVersionUpdated: string;
+    stepName: string;
+  }): QadamPinStay | undefined => {
+    const { pinStays } = qadamsHooks.useUnavailablePinStays({
+      flowId,
+      flowVersionId,
+      flowVersionUpdated,
+    });
+    return (pinStays ?? []).find((stay) => stay.stepName === stepName);
   },
   // ADR-0002 (#803): the open flow version's steps whose framework version this release no longer
   // runs. Auxiliary, like the hold: when the read fails the steps stay editable and only the mark is

@@ -15,6 +15,7 @@ const mockGetMany = vi.fn()
 const mockResolveVersions = vi.fn()
 const mockUnsupportedPins = vi.fn()
 const mockListHeld = vi.fn()
+const mockCheckPinStays = vi.fn()
 
 vi.mock('../../../../src/app/flows/flow/flow.service', () => ({
     flowService: vi.fn(() => ({
@@ -58,6 +59,7 @@ vi.mock('../../../../src/app/qadams/census/framework-census-marking', () => ({
 vi.mock('../../../../src/app/qadams/pin-moves/qadam-pin-move.service', () => ({
     qadamPinMoveService: vi.fn(() => ({
         listHeld: mockListHeld,
+        checkUnavailablePins: mockCheckPinStays,
     })),
 }))
 
@@ -65,6 +67,7 @@ mockListHeld.mockResolvedValue({ data: [], next: null, previous: null })
 
 beforeEach(() => {
     mockListHeld.mockResolvedValue({ data: [], next: null, previous: null })
+    mockCheckPinStays.mockResolvedValue([])
 })
 
 import { apFlowStructureTool } from '../../../../src/app/mcp/tools/ap-flow-structure'
@@ -102,6 +105,7 @@ function flowWith({ firstAction }: { firstAction?: unknown }): Record<string, un
     return {
         id: 'flow-1',
         version: {
+            id: 'version-1',
             displayName: 'Structure Flow',
             notes: [],
             trigger: {
@@ -593,5 +597,232 @@ describe('ap_flow_structure — snapshot follow hold (ADR-0004, #854)', () => {
         expect(text).toContain('step_1')
         expect(text).not.toContain('[FOLLOW HELD]')
         expect(log.warn).toHaveBeenCalled()
+    })
+})
+
+// ADR-0003 "Unavailable version" / "Versions that were never published" (#808): a step whose pin
+// is unavailable and was not moved to the image's build is marked "version unavailable — update
+// this step" — a fault, unlike the pre-release and follow-hold facts.
+describe('ap_flow_structure — version unavailable, update this step (ADR-0003, #808)', () => {
+    function pinStay({ overrides }: { overrides?: Record<string, unknown> } = {}): Record<string, unknown> {
+        return {
+            stepName: 'step_1',
+            qadamName: '@aiqadam/qadam-test-email',
+            version: DEAD_VERSION,
+            reason: 'outside-caret',
+            detail: 'the image\'s version is outside the pin\'s caret range',
+            ...overrides,
+        }
+    }
+
+    beforeEach(() => {
+        vi.clearAllMocks()
+        mockUnsupportedPins.mockResolvedValue(new Map())
+        mockGetPlatformId.mockResolvedValue('platform-1')
+        mockGet.mockResolvedValue(null)
+        mockListHeld.mockResolvedValue({ data: [], next: null, previous: null })
+        mockCheckPinStays.mockResolvedValue([pinStay()])
+    })
+
+    it('marks the step in the text and the structured content', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: DEAD_VERSION }) }))
+
+        const result = await callTool()
+
+        const text = result.content?.[0]?.text
+        expect(text).toContain('[VERSION UNAVAILABLE]')
+        expect(JSON.stringify(result.structuredContent?.steps)).toContain('"pinStay":{"reason":"outside-caret"')
+    })
+
+    it('does not repeat the generic pin warning beside the specific mark', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: DEAD_VERSION }) }))
+
+        const result = await callTool()
+
+        const text = result.content?.[0]?.text
+        expect(text).toContain('[VERSION UNAVAILABLE]')
+        expect(text).not.toContain('PINNED VERSION UNAVAILABLE')
+    })
+
+    // A confirmed-missing marked step is the one case `stepPinWarning` suppresses its own generic
+    // warning for — the mark line is then the only place a remedy is said at all, so it must carry
+    // one, not just the bracket label (code-quality review, round 3).
+    it('carries the working remedy on the mark line itself, for a confirmed-missing step', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: DEAD_VERSION }) }))
+
+        const result = await callTool()
+
+        const text = result.content?.[0]?.text
+        expect(text).toContain('delete and re-add the step with ap_add_step')
+    })
+
+    it('reads the mark for the flow and its version in the caller\'s project', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: DEAD_VERSION }) }))
+
+        await callTool()
+
+        expect(mockCheckPinStays).toHaveBeenCalledWith({ flowId: 'flow-1', flowVersionId: 'version-1', projectId: 'project-1', platformId: 'platform-1' })
+    })
+
+    it('carries no mark when the step is not unavailable', async () => {
+        mockCheckPinStays.mockResolvedValue([])
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: HEALTHY_VERSION }) }))
+
+        const result = await callTool()
+
+        const text = result.content?.[0]?.text
+        expect(text).not.toContain('[VERSION UNAVAILABLE]')
+        expect(JSON.stringify(result.structuredContent?.steps)).not.toContain('pinStay')
+    })
+
+    it('still returns the structure, without the mark, when the check fails', async () => {
+        mockCheckPinStays.mockRejectedValue(new Error('connection terminated unexpectedly'))
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: DEAD_VERSION }) }))
+
+        const result = await callTool()
+
+        const text = result.content?.[0]?.text
+        expect(text).toContain('step_1')
+        expect(text).not.toContain('[VERSION UNAVAILABLE]')
+        expect(log.warn).toHaveBeenCalled()
+    })
+
+    // #474, regression: the generic pin lookup erroring (`qadamVersionResolvable === undefined`)
+    // is a DIFFERENT, independent read from `checkUnavailablePins`'s own per-pin availability check
+    // — a held step marked here must still carry the "do not delete or re-add" caution when the
+    // generic lookup could not confirm anything, not just when it confirmed the pin missing.
+    it('keeps the generic "unverified" caution beside the mark when the pin lookup errored', async () => {
+        mockGet.mockRejectedValue(new Error('ECONNRESET'))
+        mockCheckPinStays.mockResolvedValue([pinStay({ overrides: { reason: 'reverted-by-user', detail: 'a person reverted a move of this step', version: '0.9.9' } })])
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: '0.9.9' }) }))
+
+        const result = await callTool()
+
+        const text = result.content?.[0]?.text
+        expect(text).toContain('[VERSION UNAVAILABLE]')
+        expect(text).toContain('PINNED VERSION UNVERIFIED')
+        expect(text).not.toContain('delete and re-add')
+    })
+
+    // code-quality review (session 4): a held step is USUALLY still resolvable via the bundled
+    // fallback, but not guaranteed to be — an image upgrade since the revert can leave the generic
+    // check confirming it missing too. `reverted-by-user` carries no special case here: a step
+    // nothing can serve gets the destructive remedy whether or not a person chose to hold it.
+    it('carries the destructive remedy for a held step the generic check also confirms missing', async () => {
+        mockGet.mockResolvedValue(null)
+        mockCheckPinStays.mockResolvedValue([pinStay({ overrides: { reason: 'reverted-by-user', detail: 'a person reverted a move of this step' } })])
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: DEAD_VERSION }) }))
+
+        const result = await callTool()
+
+        const text = result.content?.[0]?.text
+        expect(text).toContain('[VERSION UNAVAILABLE]')
+        expect(text).toContain('delete and re-add the step with ap_add_step')
+    })
+})
+
+// ADR-0004: an import stamps a step's own exact pin onto `settings.exportedUnresolvedPin` when it
+// could not confirm a released equivalent — for the step's own pin, or for one of its agent
+// tools' (`markExportedUnresolved`, `import-flow.ts`). This mark carries no installation-side
+// fact (the pin may well resolve), unlike `pinStay` above, so the two are independent: a step can
+// carry either, both, or neither.
+describe('ap_flow_structure — update this step (ADR-0004 import mark, #808)', () => {
+    function markedStep({ qadamVersion, exportedUnresolvedPin, agentTools }: {
+        qadamVersion: string
+        exportedUnresolvedPin?: string
+        agentTools?: unknown[]
+    }): Record<string, unknown> {
+        const step = pieceStep({ name: 'step_1', qadamVersion })
+        return {
+            ...step,
+            settings: {
+                ...(step.settings as Record<string, unknown>),
+                ...(exportedUnresolvedPin !== undefined ? { exportedUnresolvedPin } : {}),
+                ...(agentTools ? { input: { agentTools } } : {}),
+            },
+        }
+    }
+
+    beforeEach(() => {
+        vi.clearAllMocks()
+        mockUnsupportedPins.mockResolvedValue(new Map())
+        mockGetPlatformId.mockResolvedValue('platform-1')
+        mockGet.mockResolvedValue({ name: '@aiqadam/qadam-test-email', version: HEALTHY_VERSION })
+        mockListHeld.mockResolvedValue({ data: [], next: null, previous: null })
+        mockCheckPinStays.mockResolvedValue([])
+    })
+
+    it('marks a step whose own pin still matches the import mark', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: markedStep({ qadamVersion: HEALTHY_VERSION, exportedUnresolvedPin: HEALTHY_VERSION }) }))
+
+        const result = await callTool()
+
+        const text = result.content?.[0]?.text
+        expect(text).toContain('[UPDATE THIS STEP]')
+        const steps = result.structuredContent?.steps as Record<string, unknown>[]
+        expect(steps.find(s => s.name === 'step_1')).toMatchObject({ updateThisStep: { hasSnapshotTool: false } })
+    })
+
+    it('carries no mark once the step\'s own pin has moved on and no agent tool is a snapshot', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: markedStep({ qadamVersion: HEALTHY_VERSION, exportedUnresolvedPin: DEAD_VERSION }) }))
+
+        const result = await callTool()
+
+        const text = result.content?.[0]?.text
+        expect(text).not.toContain('UPDATE THIS STEP')
+        expect(JSON.stringify(result.structuredContent?.steps)).not.toContain('updateThisStep')
+    })
+
+    it('marks a step for an agent tool still pinned to a snapshot, even once the step\'s own pin has moved on', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({
+            firstAction: markedStep({
+                qadamVersion: HEALTHY_VERSION,
+                exportedUnresolvedPin: DEAD_VERSION,
+                agentTools: [{ type: 'PIECE', toolName: 'lookup', qadamMetadata: { qadamName: '@aiqadam/qadam-test-tool', qadamVersion: '1.2.3-main.4', actionName: 'go' } }],
+            }),
+        }))
+
+        const result = await callTool()
+
+        const text = result.content?.[0]?.text
+        expect(text).toContain('[UPDATE THIS STEP]')
+        const steps = result.structuredContent?.steps as Record<string, unknown>[]
+        expect(steps.find(s => s.name === 'step_1')).toMatchObject({ updateThisStep: { hasSnapshotTool: true } })
+    })
+
+    it('carries no mark at all for a step that was never stamped', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: HEALTHY_VERSION }) }))
+
+        const result = await callTool()
+
+        expect(result.content?.[0]?.text).not.toContain('UPDATE THIS STEP')
+    })
+
+    // The tool wording must win when both are true at once: the step's own pin still matches the
+    // mark AND a tool is a snapshot.
+    it('reports hasSnapshotTool true when the step\'s own pin still matches the mark AND a tool is a snapshot', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({
+            firstAction: markedStep({
+                qadamVersion: HEALTHY_VERSION,
+                exportedUnresolvedPin: HEALTHY_VERSION,
+                agentTools: [{ type: 'PIECE', toolName: 'lookup', qadamMetadata: { qadamName: '@aiqadam/qadam-test-tool', qadamVersion: '1.2.3-main.4', actionName: 'go' } }],
+            }),
+        }))
+
+        const result = await callTool()
+
+        expect(result.content?.[0]?.text).toContain('[UPDATE THIS STEP]')
+        expect(JSON.stringify(result.structuredContent?.steps)).toContain('"updateThisStep":{"hasSnapshotTool":true}')
+    })
+
+    // `getExactVersion` is there precisely so a caret/tilde own pin still matches a bare mark.
+    it('marks a step whose own pin is a caret range around the marked exact version', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: markedStep({ qadamVersion: `^${HEALTHY_VERSION}`, exportedUnresolvedPin: HEALTHY_VERSION }) }))
+
+        const result = await callTool()
+
+        expect(result.content?.[0]?.text).toContain('[UPDATE THIS STEP]')
+        const steps = result.structuredContent?.steps as Record<string, unknown>[]
+        expect(steps.find(s => s.name === 'step_1')).toMatchObject({ updateThisStep: { hasSnapshotTool: false } })
     })
 })

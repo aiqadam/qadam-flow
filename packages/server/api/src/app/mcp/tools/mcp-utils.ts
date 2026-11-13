@@ -25,6 +25,9 @@ const RESOLVABLE_PROP_TYPES = new Set<PropertyType>([
     PropertyType.DYNAMIC,
 ])
 
+// Shared verbatim by `qadamPinIssue` and `pinStayIssue` (ADR-0003, #808) so a destructive-remedy
+// sentence quoted in two places can't drift into two different instructions for the same action.
+const DESTRUCTIVE_PIN_REMEDY = 'ap_update_step cannot change a step\'s pinned version — delete and re-add the step with ap_add_step at an available version, or re-create the trigger with ap_update_trigger.'
 const LOG_INPUT_HINT = 'Whether this step\'s input is written to the run log. Defaults to true. Set false when the input carries personal or secret data: the persisted log shows **REDACTED** while the step still runs on the real value.'
 const LOG_OUTPUT_HINT = 'Whether this step\'s output is written to the run log. Defaults to true. Set false when the output carries personal or secret data (e.g. tables-update-record returns the whole row): the persisted log shows **REDACTED** while the value still flows to the next step.'
 // Mirrors the engine's FILE processor (#388): anything else fails the step at run time.
@@ -573,9 +576,9 @@ function readFlowToolReference(tool: unknown): string | null {
 // Single source of the wording for a qadam pin's resolvability, shared by `ap_validate_flow` and
 // `ap_flow_structure` so the two tools cannot tell an agent contradictory things about the same
 // fact. `qadamPinUtil.resolvePins` is tri-state; `false` is a confirmed miss, and only there is the
-// destructive remedy (delete-and-re-add) warranted. `undefined` means the check itself failed —
-// this must never claim the pin definitely does not exist, and must never advise destroying the
-// step's sample data based on a reading that was never actually verified (#474).
+// assertive, destructive-remedy wording warranted. `undefined` means the check itself failed —
+// this must never claim the pin definitely does not exist, and must never advise a destructive
+// edit based on a reading that was never actually verified (#474).
 function qadamPinIssue({ pin, resolvable, subject = 'step' }: { pin: string, resolvable: boolean | undefined, subject?: 'step' | 'agent_tool' }): QadamPinIssue | null {
     if (resolvable === true) {
         return null
@@ -592,8 +595,8 @@ function qadamPinIssue({ pin, resolvable, subject = 'step' }: { pin: string, res
         return {
             severity: 'unavailable',
             message: subject === 'agent_tool'
-                ? `is pinned to ${wrapUntrustedValue(pin)}, which this installation does not have. Every run and every trigger provisioning attempt of the flow fails on it. Remove that tool from the agent step and add it again at an available version with ap_update_step.`
-                : `is pinned to ${wrapUntrustedValue(pin)}, which this installation does not have. Every run and every trigger provisioning attempt fails on it. Re-point it at an available version — delete and re-add the step with ap_add_step, or re-create the trigger with ap_update_trigger.`,
+                ? `is pinned to ${wrapUntrustedValue(pin)}, which this installation does not have. Update the tool to an available version with ap_update_step. A run fails only where the pinned version is not already cached on the worker; removing and re-adding the tool is not required.`
+                : `is pinned to ${wrapUntrustedValue(pin)}, which this installation does not have. ${DESTRUCTIVE_PIN_REMEDY} The flow is not disabled; a run fails only where the pinned version is not already cached on the worker.`,
         }
     }
     return {
@@ -610,7 +613,7 @@ function qadamPinIssue({ pin, resolvable, subject = 'step' }: { pin: string, res
 // the two pin-reporting tools state the same way: `ap_flow_structure` labels the step line with
 // `label`, and `ap_validate_flow` reports `message` at its lowest severity, informational, which
 // never blocks publishing. "Update available" remains a later slice.
-function preReleaseBuildIssue({ pin }: { pin: string }): PreReleaseBuildIssue {
+function preReleaseBuildIssue({ pin }: { pin: string }): LabeledIssue {
     return {
         label: 'PRE-RELEASE BUILD',
         message: `is pinned to ${wrapUntrustedValue(pin)}, a pre-release build from main that no released version names yet. It runs exactly that build.`,
@@ -623,10 +626,56 @@ function preReleaseBuildIssue({ pin }: { pin: string }): PreReleaseBuildIssue {
 // pre-release label this is a fact, not a fault — the step runs the version it names — so both
 // pin-reporting tools state it at their lowest severity and never block publishing. "Update
 // available" and the runs surface remain later slices.
-function followHoldIssue({ fromVersion, toVersion }: { fromVersion: string, toVersion: string }): FollowHoldIssue {
+function followHoldIssue({ fromVersion, toVersion }: { fromVersion: string, toVersion: string }): LabeledIssue {
     return {
         label: 'FOLLOW HELD',
         message: `is held at ${wrapUntrustedValue(fromVersion)} after a person reverted its automatic move to ${wrapUntrustedValue(toVersion)}. It will not be moved automatically again until its version changes.`,
+    }
+}
+
+// ADR-0003 "Unavailable version" / "Versions that were never published": a step whose pinned
+// version is unavailable and a publish or the snapshot follow pass did not move it to the image's
+// build — `detail` names why (`qadamPinFallbackDecision.StayReason`, or one `qadamPinMoveService`
+// adds for a held or edited step). Unlike `preReleaseBuildIssue`/`followHoldIssue` this is not a
+// fact to state at the lowest severity: there is no audited move behind whatever the step runs
+// today, so it is exactly the mark "version unavailable — update this step" names. The flow is
+// never disabled over it (#435). `confirmedMissing` is the caller's own, more lenient check
+// (`qadam_version`'s `resolvePins`, which also accepts the image's bundled build as a stand-in)
+// ALSO confirming nothing serves the step — only then is the destructive delete-and-re-add remedy
+// warranted, the same rule `qadamPinIssue` applies to its own `resolvable === false` case.
+// `reverted-by-user` is USUALLY still resolvable this way — the step was move-eligible once (the
+// bundled fallback and the original `decide` share the same caret-range/loaded test) — but that is
+// not a guarantee: an image upgrade since the revert, a stored version that turned `unusable`, or
+// (on a `-main` instance) `checkNet`'s stricter run-time rule can still confirm it missing, and
+// this function does not special-case the reason away from the destructive remedy when that
+// happens — a step nothing can serve needs re-pointing whether or not a person chose to hold it.
+// `ap_flow_structure`'s `pinStayWarning` passes the real `confirmedMissing` here too (not always
+// `false`) and shows `.message`, not just `.label`, for a held step this check also confirms dead.
+function pinStayIssue({ detail, confirmedMissing }: { detail: string, confirmedMissing: boolean }): LabeledIssue {
+    const action = confirmedMissing
+        ? DESTRUCTIVE_PIN_REMEDY
+        : 'Update this step.'
+    return {
+        label: 'VERSION UNAVAILABLE',
+        message: `is pinned to a version that is unavailable and was not moved to the image's build automatically: ${wrapUntrustedValue(detail)}. ${action}`,
+    }
+}
+
+// ADR-0004: an import (or export round trip) could not move this step's pin to a release, and
+// `markExportedUnresolved` recorded that on `settings.exportedUnresolvedPin` (`import-flow.ts`).
+// Unlike `pinStayIssue` this names no installation-side fact — the pin itself may well resolve —
+// it is purely the importer's own note that nobody has confirmed a released equivalent, so the
+// action is always the soft "update this step", never the destructive remedy, and both
+// pin-reporting tools state it at their lowest severity (ADR-0003/#808's web counterpart,
+// `update-this-step-label.tsx`, never blocks either). `hasSnapshotTool` distinguishes the two
+// wordings the web label already uses: the mark can describe the step's own pin, or — since a
+// tool is not a step and so cannot carry its own mark — an agent tool still pinned to a snapshot.
+function updateThisStepIssue({ hasSnapshotTool }: { hasSnapshotTool: boolean }): LabeledIssue {
+    return {
+        label: 'UPDATE THIS STEP',
+        message: hasSnapshotTool
+            ? 'was imported with an agent tool pinned to a pre-release build that could not be moved to a released version. Update that tool.'
+            : 'was imported with a pre-release build that could not be moved to a released version. Update its version.',
     }
 }
 
@@ -671,6 +720,8 @@ export const mcpUtils = {
     qadamPinIssue,
     preReleaseBuildIssue,
     followHoldIssue,
+    pinStayIssue,
+    updateThisStepIssue,
     RESOLVE_TIMEOUT_MS,
     STEP_REFERENCE_HINT,
     LOOP_COLLECT_INPUT_SCHEMA,
@@ -684,7 +735,7 @@ export const mcpUtils = {
     BRANCH_CONDITIONS_INPUT_SCHEMA,
 }
 
-export type { PropSummary, QadamPinIssue, PreReleaseBuildIssue, FollowHoldIssue }
+export type { PropSummary, QadamPinIssue, LabeledIssue }
 
 type ExtractQadamFlowErrorDetailParams = {
     err: unknown
@@ -753,12 +804,11 @@ type QadamPinIssue = {
     message: string
 }
 
-type PreReleaseBuildIssue = {
-    label: string
-    message: string
-}
-
-type FollowHoldIssue = {
+// Shared shape for every pin-reporting issue whose severity is "a fact, not a fault" or whose
+// wording a caller composes around a bracket label (`preReleaseBuildIssue`, `followHoldIssue`,
+// `pinStayIssue`, `updateThisStepIssue`) — unlike `QadamPinIssue`, which carries its own two-value
+// severity instead of a label.
+type LabeledIssue = {
     label: string
     message: string
 }
