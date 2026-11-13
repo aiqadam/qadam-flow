@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { cwd } from 'node:process'
 import { prepareQadamDistForPublish } from '../../packages/cli/src/lib/utils/prepare-qadam-utils'
 import { assertNoSemverRanges, assertNoUnresolvedWorkspaceDeps } from '../scripts/utils/publish-npm-package'
+import { isBundleFormatQadam } from '../scripts/utils/publish-qadam-bundle'
 import { stagePackageForPublish } from '../scripts/utils/stage-package-for-publish'
 
 const [, , mode, arg, bundled] = process.argv
@@ -22,6 +23,9 @@ const run = async (): Promise<void> => {
       return
     case 'assert-no-semver-ranges':
       assertNoSemverRanges(arg)
+      return
+    case 'is-bundle-format-qadam':
+      console.log('RESULT ' + String(await isBundleFormatQadam({ path: arg })))
       return
     case 'stage': {
       // The staging directory is removed once `use` returns, so its contents are copied out for the

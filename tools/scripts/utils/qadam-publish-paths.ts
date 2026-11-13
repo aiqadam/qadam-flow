@@ -10,7 +10,7 @@ import { cwd } from 'node:process'
 // FRAMEWORK_PACKAGE_PATHS by hand. When it drifts the symptom is two tarballs for the same
 // name@version in one publish manifest: the second 403s after the first has already uploaded,
 // so a stale denylist reads as a mid-publish build failure rather than as a duplicate.
-const OFFICIAL_QADAM_ROOTS = ['packages/qadams/core', 'packages/qadams/community']
+export const OFFICIAL_QADAM_ROOTS = ['packages/qadams/core', 'packages/qadams/community']
 
 // Deliberately NOT `findAllQadamsDirectoryInSource` from qadam-script-utils, for two reasons.
 // It returns the framework packages too — its callers filter them out afterwards with
