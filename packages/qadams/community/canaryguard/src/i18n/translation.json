@@ -1,0 +1,18 @@
+{
+  "CanaryGuard": "CanaryGuard",
+  "Deterministic prompt-injection firewall and AI safety sanitizer powered by CanaryGuard 402.": "Deterministic prompt-injection firewall and AI safety sanitizer powered by CanaryGuard 402.",
+  "Sanitize Text": "Sanitize Text",
+  "Scan and sanitize untrusted text, emails, or web content for prompt-injection and wallet-drain instructions.": "Scan and sanitize untrusted text, emails, or web content for prompt-injection and wallet-drain instructions.",
+  "Untrusted Content": "Untrusted Content",
+  "Paste external text, webpage extracts, email bodies, or tool outputs to inspect and sanitize before sending them to an LLM.": "Paste external text, webpage extracts, email bodies, or tool outputs to inspect and sanitize before sending them to an LLM.",
+  "Strict Mode": "Strict Mode",
+  "When enabled, detected instruction overrides return an empty sanitized string instead of partial scrubbed output.": "When enabled, detected instruction overrides return an empty sanitized string instead of partial scrubbed output.",
+  "x402 PAYMENT-SIGNATURE (Optional)": "x402 PAYMENT-SIGNATURE (Optional)",
+  "Optional Base64 x402 v2 PAYMENT-SIGNATURE header to call the paid /v1/sanitize endpoint ($0.010 USDC on Base). Leave blank to evaluate via free /v1/sanitize/preview.": "Optional Base64 x402 v2 PAYMENT-SIGNATURE header to call the paid /v1/sanitize endpoint ($0.010 USDC on Base). Leave blank to evaluate via free /v1/sanitize/preview.",
+  "Service Base URL (Optional)": "Service Base URL (Optional)",
+  "Override the CanaryGuard API URL (defaults to https://canaryguard-402.onrender.com).": "Override the CanaryGuard API URL (defaults to https://canaryguard-402.onrender.com).",
+  "Execution Mode": "Execution Mode",
+  "Run deterministic sanitization in-process (<2ms, free, zero network) or via CanaryGuard Cloud API.": "Run deterministic sanitization in-process (<2ms, free, zero network) or via CanaryGuard Cloud API.",
+  "In-Process Sub-10ms Engine (~1ms, Free)": "In-Process Sub-10ms Engine (~1ms, Free)",
+  "CanaryGuard Cloud API (HTTPS)": "CanaryGuard Cloud API (HTTPS)"
+}

@@ -101,6 +101,9 @@
       "@aiqadam/qadam-calendly": [
         "packages/qadams/community/calendly/src/index.ts"
       ],
+      "@aiqadam/qadam-canaryguard": [
+        "packages/qadams/community/canaryguard/src/index.ts"
+      ],
       "@aiqadam/qadam-canva": [
         "packages/qadams/community/canva/src/index.ts"
       ],

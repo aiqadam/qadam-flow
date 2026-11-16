@@ -463,6 +463,15 @@
         "tslib": "2.6.2",
       },
     },
+    "packages/qadams/community/canaryguard": {
+      "name": "@aiqadam/qadam-canaryguard",
+      "version": "0.0.1",
+      "dependencies": {
+        "@aiqadam/qadams-common": "workspace:*",
+        "@aiqadam/qadams-framework": "workspace:*",
+        "tslib": "2.6.2",
+      },
+    },
     "packages/qadams/community/canva": {
       "name": "@aiqadam/qadam-canva",
       "version": "0.1.0",
@@ -3329,6 +3338,8 @@
     "@aiqadam/qadam-cal-com": ["@aiqadam/qadam-cal-com@workspace:packages/qadams/community/cal-com"],
 
     "@aiqadam/qadam-calendly": ["@aiqadam/qadam-calendly@workspace:packages/qadams/community/calendly"],
+
+    "@aiqadam/qadam-canaryguard": ["@aiqadam/qadam-canaryguard@workspace:packages/qadams/community/canaryguard"],
 
     "@aiqadam/qadam-canva": ["@aiqadam/qadam-canva@workspace:packages/qadams/community/canva"],
 
