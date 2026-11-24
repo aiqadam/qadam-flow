@@ -102,6 +102,12 @@ export type ApErrorParams =
     | LdapBindAccountRejectedParams
     | LdapEmailAttributeMissingParams
     | LdapAccountCollisionParams
+    | MfaInvalidCodeParams
+    | MfaChallengeInvalidParams
+    | MfaTooManyAttemptsParams
+    | MfaAlreadyEnrolledParams
+    | MfaNotEnrolledParams
+    | MfaResetNotAllowedForOwnerParams
 
 export type TriggerExecutionFailedParams = BaseErrorParams<ErrorCode.TRIGGER_EXECUTION_FAILED, {
     flowId: FlowId
