@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { BaseModelSchema, DateOrString, Nullable } from '../../core/common/base-model'
+import { UserIdentityProvider } from '../../core/authentication/user-identity'
 import { ApId } from '../../core/common/id-generator'
 import { FederatedAuthnProviderConfig, FederatedAuthnProviderConfigWithoutSensitiveData } from '../../core/federated-authn'
 import { SsoDomainVerification } from './sso-domain-verification'
@@ -111,6 +112,10 @@ export const Platform = z.object({
     ssoDomainVerification: Nullable(SsoDomainVerification),
     federatedAuthProviders: FederatedAuthnProviderConfig,
     emailAuthEnabled: z.boolean(),
+    mfaEnforced: z.boolean(),
+    mfaEnforcementGracePeriodDays: z.number(),
+    mfaTrustedIdpProviders: z.array(z.nativeEnum(UserIdentityProvider)),
+    mfaEnforcementEnabledAt: Nullable(DateOrString),
     pinnedQadams: z.array(z.string()),
 })
 export type Platform = z.infer<typeof Platform>
@@ -138,6 +143,10 @@ export const PlatformWithoutSensitiveData = z.object({
     ssoDomain: Nullable(z.string()),
     ssoDomainVerification: Nullable(SsoDomainVerification),
     emailAuthEnabled: z.boolean(),
+    mfaEnforced: z.boolean(),
+    mfaEnforcementGracePeriodDays: z.number(),
+    mfaTrustedIdpProviders: z.array(z.nativeEnum(UserIdentityProvider)),
+    mfaEnforcementEnabledAt: Nullable(DateOrString),
     pinnedQadams: z.array(z.string()),
 })
 export type PlatformWithoutSensitiveData = z.infer<typeof PlatformWithoutSensitiveData>

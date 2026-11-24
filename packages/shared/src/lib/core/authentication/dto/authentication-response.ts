@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { User } from '../../user/user'
+import { MfaChallengeResponse } from '../mfa/mfa'
 import { UserIdentity } from '../user-identity'
 
 
@@ -15,3 +16,9 @@ export const AuthenticationResponse = UserWithoutPassword.merge(
     }),
 )
 export type AuthenticationResponse = z.infer<typeof AuthenticationResponse>
+
+// A sign-in (or sign-up on an existing platform) either produces a full session or, when a second
+// factor is still required, a challenge carrying an `mfaToken` instead of a session token. The
+// challenge variant never carries a `token`, so a client cannot mistake it for a usable session.
+export const SignInResponse = z.union([MfaChallengeResponse, AuthenticationResponse])
+export type SignInResponse = z.infer<typeof SignInResponse>

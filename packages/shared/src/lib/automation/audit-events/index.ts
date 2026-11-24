@@ -30,6 +30,12 @@ export enum ApplicationEventName {
     USER_SIGNED_IN = 'user.signed.in',
     USER_PASSWORD_RESET = 'user.password.reset',
     USER_EMAIL_VERIFIED = 'user.email.verified',
+    USER_MFA_ENROLLED = 'user.mfa.enrolled',
+    USER_MFA_DISABLED = 'user.mfa.disabled',
+    USER_MFA_RESET = 'user.mfa.reset.by.admin',
+    USER_MFA_CHALLENGE_SUCCEEDED = 'user.mfa.challenge.succeeded',
+    USER_MFA_CHALLENGE_FAILED = 'user.mfa.challenge.failed',
+    MFA_ENFORCEMENT_TOGGLED = 'platform.mfa.enforcement.toggled',
 }
 
 const BaseAuditEventProps = {
@@ -316,6 +322,7 @@ export type FlowDeactivatedEvent = z.infer<typeof FlowDeactivatedEvent>
 
 const AuthenticationEventData = z.object({
     user: UserMeta.optional(),
+    enforced: z.boolean().optional(),
 })
 
 export const AuthenticationEvent = z.object({
@@ -324,6 +331,12 @@ export const AuthenticationEvent = z.object({
         z.literal(ApplicationEventName.USER_SIGNED_IN),
         z.literal(ApplicationEventName.USER_PASSWORD_RESET),
         z.literal(ApplicationEventName.USER_EMAIL_VERIFIED),
+        z.literal(ApplicationEventName.USER_MFA_ENROLLED),
+        z.literal(ApplicationEventName.USER_MFA_DISABLED),
+        z.literal(ApplicationEventName.USER_MFA_RESET),
+        z.literal(ApplicationEventName.USER_MFA_CHALLENGE_SUCCEEDED),
+        z.literal(ApplicationEventName.USER_MFA_CHALLENGE_FAILED),
+        z.literal(ApplicationEventName.MFA_ENFORCEMENT_TOGGLED),
     ]),
     data: AuthenticationEventData,
 })

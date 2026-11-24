@@ -51,6 +51,43 @@ export const UserIdentityEntity = new EntitySchema<UserIdentity>({
             ...ApIdSchema,
             nullable: true,
         },
+        mfaEnabled: {
+            type: Boolean,
+            nullable: false,
+            default: false,
+        },
+        // AES-encrypted at rest by `encryptUtils` (same shape as the LDAP bind password) — never
+        // returned over the API, never logged.
+        mfaSecret: {
+            type: 'json',
+            nullable: true,
+        },
+        // The secret pending confirmation during enrolment. Kept separate from `mfaSecret` so a
+        // half-finished enrolment can never become the active secret, and so starting a second
+        // enrolment cannot silently replace an active one.
+        mfaPendingSecret: {
+            type: 'json',
+            nullable: true,
+        },
+        // SHA-256 hashes of the one-time recovery codes; the plaintext is shown once at enrolment.
+        mfaRecoveryCodes: {
+            type: 'json',
+            nullable: true,
+        },
+        mfaEnrolledAt: {
+            type: 'timestamp with time zone',
+            nullable: true,
+        },
+        // Highest TOTP time-step ever accepted for this identity — the replay guard. A code for a
+        // step at or below this value is refused even though it would otherwise validate.
+        mfaLastUsedStep: {
+            type: 'bigint',
+            nullable: true,
+            transformer: {
+                to: (value: number | null | undefined) => value,
+                from: (value: string | null) => (value === null ? null : Number(value)),
+            },
+        },
     },
     indices: [
         {

@@ -82,6 +82,10 @@ export const platformService = (log: FastifyBaseLogger) => ({
             pinnedQadams: [],
             allowedEmbedOrigins: [],
             googleAuthEnabled: true,
+            mfaEnforced: false,
+            mfaEnforcementGracePeriodDays: 0,
+            mfaTrustedIdpProviders: [],
+            mfaEnforcementEnabledAt: null,
         }
 
         const savedPlatform = await platformRepo(entityManager).save(newPlatform)
@@ -156,6 +160,20 @@ export const platformService = (log: FastifyBaseLogger) => ({
             ...spreadIfDefined('filteredQadamBehavior', params.filteredQadamBehavior),
             ...spreadIfDefined('googleAuthEnabled', params.googleAuthEnabled),
             ...spreadIfDefined('emailAuthEnabled', params.emailAuthEnabled),
+            ...spreadIfDefined('mfaEnforced', params.mfaEnforced),
+            ...spreadIfDefined('mfaEnforcementGracePeriodDays', params.mfaEnforcementGracePeriodDays),
+            ...spreadIfDefined('mfaTrustedIdpProviders', params.mfaTrustedIdpProviders),
+            ...spreadIfDefined(
+                'mfaEnforcementEnabledAt',
+                // Stamped the moment enforcement is switched on and cleared when it is switched
+                // off, so the grace period is measured from activation rather than from a user's
+                // account age (which would make a long-standing user exempt on rollout day).
+                params.mfaEnforced === true && !platform.mfaEnforced
+                    ? new Date().toISOString()
+                    : params.mfaEnforced === false
+                        ? null
+                        : undefined,
+            ),
             ...spreadIfDefined(
                 'enforceAllowedAuthDomains',
                 params.enforceAllowedAuthDomains,

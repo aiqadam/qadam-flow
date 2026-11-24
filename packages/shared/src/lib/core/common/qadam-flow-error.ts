@@ -226,6 +226,38 @@ ErrorCode.LDAP_ACCOUNT_COLLISION,
 }
 >
 
+// Deliberately indistinguishable from "no such enrollment" to the caller: a wrong TOTP code and
+// an expired/foreign "MFA pending" token must not let an attacker learn which one applies.
+export type MfaInvalidCodeParams = BaseErrorParams<
+ErrorCode.MFA_INVALID_CODE,
+Record<string, never>
+>
+
+export type MfaChallengeInvalidParams = BaseErrorParams<
+ErrorCode.MFA_CHALLENGE_INVALID,
+Record<string, never>
+>
+
+export type MfaTooManyAttemptsParams = BaseErrorParams<
+ErrorCode.MFA_TOO_MANY_ATTEMPTS,
+Record<string, never>
+>
+
+export type MfaAlreadyEnrolledParams = BaseErrorParams<
+ErrorCode.MFA_ALREADY_ENROLLED,
+Record<string, never>
+>
+
+export type MfaNotEnrolledParams = BaseErrorParams<
+ErrorCode.MFA_NOT_ENROLLED,
+Record<string, never>
+>
+
+export type MfaResetNotAllowedForOwnerParams = BaseErrorParams<
+ErrorCode.MFA_RESET_NOT_ALLOWED_FOR_OWNER,
+Record<string, never>
+>
+
 export type DomainIsNotAllowedErrorParams = BaseErrorParams<
 ErrorCode.DOMAIN_NOT_ALLOWED,
 {
@@ -651,5 +683,11 @@ export enum ErrorCode {
     LDAP_BIND_ACCOUNT_REJECTED = 'LDAP_BIND_ACCOUNT_REJECTED',
     LDAP_EMAIL_ATTRIBUTE_MISSING = 'LDAP_EMAIL_ATTRIBUTE_MISSING',
     LDAP_ACCOUNT_COLLISION = 'LDAP_ACCOUNT_COLLISION',
+    MFA_INVALID_CODE = 'MFA_INVALID_CODE',
+    MFA_CHALLENGE_INVALID = 'MFA_CHALLENGE_INVALID',
+    MFA_TOO_MANY_ATTEMPTS = 'MFA_TOO_MANY_ATTEMPTS',
+    MFA_ALREADY_ENROLLED = 'MFA_ALREADY_ENROLLED',
+    MFA_NOT_ENROLLED = 'MFA_NOT_ENROLLED',
+    MFA_RESET_NOT_ALLOWED_FOR_OWNER = 'MFA_RESET_NOT_ALLOWED_FOR_OWNER',
 }
 

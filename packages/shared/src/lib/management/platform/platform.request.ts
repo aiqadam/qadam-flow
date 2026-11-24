@@ -3,6 +3,7 @@ import { SAFE_STRING_PATTERN } from '../../core/common'
 import { OptionalArrayFromQuery, OptionalBooleanFromQuery } from '../../core/common/base-model'
 import { ApId } from '../../core/common/id-generator'
 import { ApMultipartFile } from '../../core/common/multipart-file'
+import { UserIdentityProvider } from '../../core/authentication/user-identity'
 import { FederatedAuthnProviderConfig } from '../../core/federated-authn'
 import { FilteredQadamBehavior } from './platform.model'
 
@@ -49,6 +50,9 @@ export const UpdatePlatformRequestBody = z.object({
     federatedAuthProviders: FederatedAuthnProviderConfig.optional(),
     googleAuthEnabled: OptionalBooleanFromQuery,
     emailAuthEnabled: OptionalBooleanFromQuery,
+    mfaEnforced: OptionalBooleanFromQuery,
+    mfaEnforcementGracePeriodDays: z.number().int().min(0).max(365).optional(),
+    mfaTrustedIdpProviders: z.array(z.nativeEnum(UserIdentityProvider)).optional(),
     allowedAuthDomains: OptionalArrayFromQuery(z.string()),
     enforceAllowedAuthDomains: OptionalBooleanFromQuery,
     pinnedQadams: OptionalArrayFromQuery(z.string()),

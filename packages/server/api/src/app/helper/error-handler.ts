@@ -56,6 +56,12 @@ export const errorHandler = async (
             [ErrorCode.LDAP_BIND_ACCOUNT_REJECTED]: StatusCodes.SERVICE_UNAVAILABLE,
             [ErrorCode.LDAP_EMAIL_ATTRIBUTE_MISSING]: StatusCodes.UNPROCESSABLE_ENTITY,
             [ErrorCode.LDAP_ACCOUNT_COLLISION]: StatusCodes.CONFLICT,
+            [ErrorCode.MFA_INVALID_CODE]: StatusCodes.UNAUTHORIZED,
+            [ErrorCode.MFA_CHALLENGE_INVALID]: StatusCodes.UNAUTHORIZED,
+            [ErrorCode.MFA_TOO_MANY_ATTEMPTS]: StatusCodes.TOO_MANY_REQUESTS,
+            [ErrorCode.MFA_ALREADY_ENROLLED]: StatusCodes.CONFLICT,
+            [ErrorCode.MFA_NOT_ENROLLED]: StatusCodes.BAD_REQUEST,
+            [ErrorCode.MFA_RESET_NOT_ALLOWED_FOR_OWNER]: StatusCodes.FORBIDDEN,
         }
         const statusCode =
             statusCodeMap[error.error.code] ?? StatusCodes.BAD_REQUEST

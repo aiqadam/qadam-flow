@@ -1,5 +1,5 @@
 import { cryptoUtils } from '@aiqadam/server-utils'
-import { apId, ErrorCode, isNil, QadamFlowError, spreadIfDefined, UserIdentity, UserIdentityProvider } from '@aiqadam/shared'
+import { apId, ErrorCode, isNil, MfaEncryptedValue, QadamFlowError, spreadIfDefined, UserIdentity, UserIdentityProvider } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { nanoid } from 'nanoid'
 import { EntityManager } from 'typeorm'
@@ -157,6 +157,14 @@ export const userIdentityService = (log: FastifyBaseLogger) => ({
     async updateLastLoggedInPlatformId({ id, lastLoggedInPlatformId }: UpdateLastLoggedInPlatformIdParams): Promise<void> {
         await userIdentityRepository().update(id, { lastLoggedInPlatformId })
     },
+    async updateMfa({ id, ...params }: UpdateMfaParams): Promise<void> {
+        await userIdentityRepository().update(id, params)
+    },
+    async rotateTokenVersion(id: string): Promise<string> {
+        const tokenVersion = nanoid()
+        await userIdentityRepository().update(id, { tokenVersion })
+        return tokenVersion
+    },
 })
 
 
@@ -190,6 +198,16 @@ type UpdateLastLoggedInPlatformIdParams = {
 type VerifyIdentityPasswordParams = {
     email: string
     password: string
+}
+
+type UpdateMfaParams = {
+    id: string
+    mfaEnabled?: boolean
+    mfaSecret?: MfaEncryptedValue | null
+    mfaPendingSecret?: MfaEncryptedValue | null
+    mfaRecoveryCodes?: string[] | null
+    mfaEnrolledAt?: string | null
+    mfaLastUsedStep?: number | null
 }
 
 type LinkToFederatedProviderParams = {

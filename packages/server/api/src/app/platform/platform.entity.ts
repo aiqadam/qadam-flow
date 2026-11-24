@@ -79,6 +79,26 @@ export const PlatformEntity = new EntitySchema<PlatformSchema>({
             type: Boolean,
             nullable: false,
         },
+        mfaEnforced: {
+            type: Boolean,
+            nullable: false,
+            default: false,
+        },
+        mfaEnforcementGracePeriodDays: {
+            type: Number,
+            nullable: false,
+            default: 0,
+        },
+        mfaTrustedIdpProviders: {
+            type: String,
+            array: true,
+            nullable: false,
+            default: [],
+        },
+        mfaEnforcementEnabledAt: {
+            type: 'timestamp with time zone',
+            nullable: true,
+        },
         federatedAuthProviders: {
             type: 'jsonb',
             select: false,
