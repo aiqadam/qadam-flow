@@ -28,7 +28,7 @@ Honest about the model, because that's the whole brand:
 
 The base is in place.
 
-- [x] Fork Activepieces v0.83.0 (MIT core)
+- [x] Fork Activepieces 0.85.2 at upstream `e010d67183` (2026-06-11) (MIT core)
 - [x] Strip enterprise-licensed code (all features available to everyone, no paid tiers)
 - [x] 238 qadams curated for the region (211 community + 27 core — kept what the region actually uses)
 - [x] Domain rename: `Piece` → `Qadam` across code, DB, API, UI, docs
