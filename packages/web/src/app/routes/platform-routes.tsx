@@ -15,6 +15,7 @@ const SSOPage = React.lazy(() =>
   import('./platform/security/sso').then((m) => ({ default: m.SSOPage })),
 );
 const ApiKeysPage = React.lazy(() => import('./platform/security/api-keys'));
+const MfaSettingsPage = React.lazy(() => import('./platform/security/mfa'));
 const AIProvidersPage = React.lazy(() => import('./platform/setup/ai'));
 const PlatformMcpPage = React.lazy(() => import('./platform/setup/mcp'));
 const BrandingPage = React.lazy(() =>
@@ -204,6 +205,18 @@ export const platformRoutes = [
         <PageTitle title="API Keys">
           <SuspenseWrapper>
             <ApiKeysPage />
+          </SuspenseWrapper>
+        </PageTitle>
+      </PlatformLayout>
+    ),
+  },
+  {
+    path: '/platform/security/mfa',
+    element: (
+      <PlatformLayout>
+        <PageTitle title="Two-Factor Authentication">
+          <SuspenseWrapper>
+            <MfaSettingsPage />
           </SuspenseWrapper>
         </PageTitle>
       </PlatformLayout>

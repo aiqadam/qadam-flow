@@ -20,6 +20,7 @@ import { PaletteIcon } from '@/components/icons/palette';
 import { PuzzleIcon } from '@/components/icons/puzzle';
 import { ServerIcon } from '@/components/icons/server';
 import { Settings2Icon } from '@/components/icons/settings2';
+import { ShieldIcon } from '@/components/icons/shield';
 import { SquareDashedBottomCodeIcon } from '@/components/icons/square-dashed-bottom-code';
 import { UnplugIcon } from '@/components/icons/unplug';
 import { UsersIcon } from '@/components/icons/users';
@@ -145,6 +146,11 @@ export function PlatformSidebar() {
           to: '/platform/security/sso',
           label: t('Single Sign On'),
           icon: LogInIcon,
+        },
+        {
+          to: '/platform/security/mfa',
+          label: t('Two-Factor Authentication'),
+          icon: ShieldIcon,
         },
         {
           to: '/platform/security/project-roles',

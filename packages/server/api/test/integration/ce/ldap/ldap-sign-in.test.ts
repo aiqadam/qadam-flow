@@ -3,6 +3,7 @@ import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { LdapStageError } from '../../../../src/app/authentication/ldap/ldap-stage-error'
+import { mfaTotp } from '../../../../src/app/authentication/mfa/totp'
 import { databaseConnection } from '../../../../src/app/database/database-connection'
 import { encryptUtils } from '../../../../src/app/helper/encryption'
 import { createMockUserIdentity, mockAndSaveBasicSetup, mockBasicUser } from '../../../helpers/mocks'
@@ -399,6 +400,43 @@ describe('LDAP sign-in', () => {
         expect(response.json().code).toBe('LDAP_ACCOUNT_COLLISION')
         const identity = await databaseConnection().getRepository('user_identity').findOneBy({ id: mockUserIdentity.id })
         expect(identity?.provider).toBe(UserIdentityProvider.EMAIL)
+    })
+
+    // LDAP sign-in never trusts the directory's own MFA (#339: a bind carries no
+    // authentication-context signal), so a directory user who has enrolled local TOTP must still
+    // clear the second factor after a successful bind, exactly like a local password sign-in does.
+    it('challenges an LDAP user that already has MFA enrolled, after a successful bind', async () => {
+        await saveLdapConfig()
+        searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
+        bindAsUser.mockResolvedValue(undefined)
+
+        const first = await signIn({ username: 'jdoe', password: 'correct-password' })
+        expect(first.statusCode).toBe(StatusCodes.OK)
+        const identityId = (await databaseConnection().getRepository('user_identity').findOneByOrFail({ email: 'jdoe@example.com' })).id
+
+        const secret = mfaTotp.generateSecret()
+        await databaseConnection().getRepository('user_identity').update(identityId, {
+            mfaEnabled: true,
+            mfaSecret: await encryptUtils.encryptString(secret),
+            mfaRecoveryCodes: [],
+            mfaEnrolledAt: new Date().toISOString(),
+        })
+
+        const challengeResponse = await signIn({ username: 'jdoe', password: 'correct-password' })
+        expect(challengeResponse.statusCode).toBe(StatusCodes.OK)
+        const challengeBody = challengeResponse.json()
+        expect(challengeBody.mfaRequired).toBe(true)
+        expect(challengeBody.mfaEnrollmentRequired).toBe(false)
+        expect(challengeBody.token).toBeUndefined()
+
+        const step = Math.floor(Date.now() / 1000 / 30)
+        const verifyResponse = await app!.inject({
+            method: 'POST',
+            url: '/api/v1/mfa/challenge/verify',
+            body: { mfaToken: challengeBody.mfaToken, code: mfaTotp.generateCode({ secret, step }) },
+        })
+        expect(verifyResponse.statusCode).toBe(StatusCodes.OK)
+        expect(verifyResponse.json().token).toBeDefined()
     })
 
     // B3: an LDAP identity with no federated row for *this* platform (the user row on this
