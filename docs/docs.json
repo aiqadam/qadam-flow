@@ -105,6 +105,7 @@
                      ]
                   },
                     "admin-guide/guides/manage-oauth2",
+                    "admin-guide/guides/mfa",
                     "admin-guide/guides/setup-ai-providers",
                     {
                       "group": "Secret Managers",
@@ -148,6 +149,12 @@
                            "admin-guide/security/audit-logs/user-signed-up",
                            "admin-guide/security/audit-logs/user-email-verified",
                            "admin-guide/security/audit-logs/user-password-reset",
+                           "admin-guide/security/audit-logs/user-mfa-enrolled",
+                           "admin-guide/security/audit-logs/user-mfa-disabled",
+                           "admin-guide/security/audit-logs/user-mfa-reset",
+                           "admin-guide/security/audit-logs/user-mfa-challenge-succeeded",
+                           "admin-guide/security/audit-logs/user-mfa-challenge-failed",
+                           "admin-guide/security/audit-logs/mfa-enforcement-toggled",
                            "admin-guide/security/audit-logs/signing-key-created"
                         ]
                      }

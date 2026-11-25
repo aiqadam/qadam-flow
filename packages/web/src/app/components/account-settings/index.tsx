@@ -24,6 +24,7 @@ import { userHooks, userMutations } from '@/hooks/user-hooks';
 
 import { DeleteAccount } from './delete-account';
 import LanguageToggle from './language-toggle';
+import { MfaSettings } from './mfa-settings';
 import ThemeToggle from './theme-toggle';
 
 export interface AccountSettingsDialogProps {
@@ -125,6 +126,7 @@ export function AccountSettingsDialog({
               <ThemeToggle />
               <LanguageToggle />
             </div>
+            <MfaSettings />
             <DeleteAccount />
           </div>
         </ScrollArea>

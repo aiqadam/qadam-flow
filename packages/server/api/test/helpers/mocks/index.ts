@@ -211,6 +211,10 @@ export const createMockPlatform = (platform?: Partial<Platform>): Platform => {
         googleAuthEnabled: platform?.googleAuthEnabled ?? true,
         ssoDomain: platform?.ssoDomain ?? null,
         ssoDomainVerification: platform?.ssoDomainVerification ?? null,
+        mfaEnforced: platform?.mfaEnforced ?? false,
+        mfaEnforcementGracePeriodDays: platform?.mfaEnforcementGracePeriodDays ?? 0,
+        mfaTrustedIdpProviders: platform?.mfaTrustedIdpProviders ?? [],
+        mfaEnforcementEnabledAt: platform?.mfaEnforcementEnabledAt ?? null,
     }
 }
 

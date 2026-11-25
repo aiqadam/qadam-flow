@@ -1,9 +1,9 @@
 import { z } from 'zod'
+import { UserIdentityProvider } from '../../core/authentication/user-identity'
 import { SAFE_STRING_PATTERN } from '../../core/common'
 import { OptionalArrayFromQuery, OptionalBooleanFromQuery } from '../../core/common/base-model'
 import { ApId } from '../../core/common/id-generator'
 import { ApMultipartFile } from '../../core/common/multipart-file'
-import { UserIdentityProvider } from '../../core/authentication/user-identity'
 import { FederatedAuthnProviderConfig } from '../../core/federated-authn'
 import { FilteredQadamBehavior } from './platform.model'
 

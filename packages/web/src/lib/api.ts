@@ -29,6 +29,11 @@ const disallowedRoutes = [
   '/v1/authn/local/reset-password',
   '/v1/user-invitations/accept',
   '/v1/webhooks',
+  // Public, mfaToken-bound continuations of a pending sign-in — authenticated by the
+  // short-lived mfaToken in the request body, never by a session principal.
+  '/v1/mfa/challenge/verify',
+  '/v1/mfa/enroll/pending/start',
+  '/v1/mfa/enroll/pending/confirm',
 ];
 //This is important to avoid redirecting to sign-in page when the user is deleted for embedding scenarios
 const ignroedGlobalErrorHandlerRoutes = ['/v1/users/me'];

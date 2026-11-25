@@ -28,15 +28,19 @@ export const ldapAuthnController: FastifyPluginAsyncZod = async (app) => {
             password: request.body.password,
         })
 
-        applicationEvents(request.log).sendUserEvent({
-            platformId,
-            userId: response.id,
-            projectId: response.projectId ?? undefined,
-            ip,
-        }, {
-            action: ApplicationEventName.USER_SIGNED_IN,
-            data: {},
-        })
+        // An MFA challenge is not a completed sign-in yet — nothing to audit as "signed in" until
+        // the second factor passes (the challenge itself is not on the audited-event list either).
+        if (!('mfaRequired' in response)) {
+            applicationEvents(request.log).sendUserEvent({
+                platformId,
+                userId: response.id,
+                projectId: response.projectId ?? undefined,
+                ip,
+            }, {
+                action: ApplicationEventName.USER_SIGNED_IN,
+                data: {},
+            })
+        }
 
         return response
     })

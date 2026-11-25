@@ -31,7 +31,10 @@ export const authenticationController: FastifyPluginAsyncZod = async (
             platformId: platformId ?? null,
         })
 
-        if (!isNil(signUpResponse.platformId)) {
+        // A challenge response carries no `platformId`/`id` of its own yet — the sign-up itself
+        // hasn't produced a usable session, so there is nothing to audit as "signed up" until the
+        // second factor (if any) passes.
+        if (!('mfaRequired' in signUpResponse) && !isNil(signUpResponse.platformId)) {
             applicationEvents(request.log).sendUserEvent({
                 platformId: signUpResponse.platformId,
                 userId: signUpResponse.id,
@@ -57,7 +60,7 @@ export const authenticationController: FastifyPluginAsyncZod = async (
             predefinedPlatformId,
         })
 
-        if (!isNil(response.platformId)) {
+        if (!('mfaRequired' in response) && !isNil(response.platformId)) {
             applicationEvents(request.log).sendUserEvent({
                 platformId: response.platformId,
                 userId: response.id,

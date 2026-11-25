@@ -7,6 +7,7 @@ import {
   FederatedAuthnLoginResponse,
   LdapSignInRequest,
   SignInRequest,
+  SignInResponse,
   SignUpRequest,
   SwitchPlatformRequest,
   ThirdPartyAuthnProviderEnum,
@@ -17,10 +18,7 @@ import { api } from '@/lib/api';
 
 export const authenticationApi = {
   signIn(request: SignInRequest) {
-    return api.post<AuthenticationResponse>(
-      '/v1/authentication/sign-in',
-      request,
-    );
+    return api.post<SignInResponse>('/v1/authentication/sign-in', request);
   },
   ldapSignIn(request: LdapSignInRequest) {
     return api.post<AuthenticationResponse>('/v1/authn/ldap/sign-in', request);

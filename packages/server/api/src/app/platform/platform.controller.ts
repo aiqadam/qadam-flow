@@ -1,9 +1,11 @@
 import {
     ApId,
+    ApplicationEventName,
     AuthenticationResponse,
     CreatePlatformRequest,
     ErrorCode,
     FileType,
+    isNil,
     PlatformWithoutSensitiveData,
     PrincipalType,
     QadamFlowError,
@@ -15,6 +17,7 @@ import { StatusCodes } from 'http-status-codes'
 import { z } from 'zod'
 import { securityAccess } from '../core/security/authorization/fastify-security'
 import { fileService } from '../file/file.service'
+import { applicationEvents } from '../helper/application-events'
 import { userIdentityHelper } from '../helper/user-identity-helper'
 import { platformService } from './platform.service'
 
@@ -47,6 +50,7 @@ export const platformController: FastifyPluginAsyncZod = async (app) => {
             })
         }
         const platformId = req.principal.platform.id
+        const beforeUpdate = await platformService(req.log).getOneOrThrow(platformId)
 
         const [logoIconUrl, fullLogoUrl, favIconUrl] = await Promise.all([
             fileService(app.log).uploadPublicAsset({
@@ -76,6 +80,15 @@ export const platformController: FastifyPluginAsyncZod = async (app) => {
             fullLogoUrl,
             favIconUrl,
         })
+        if (!isNil(req.body.mfaEnforced) && req.body.mfaEnforced !== beforeUpdate.mfaEnforced) {
+            applicationEvents(req.log).sendUserEvent({
+                platformId,
+                userId: req.principal.id,
+            }, {
+                action: ApplicationEventName.MFA_ENFORCEMENT_TOGGLED,
+                data: { enforced: req.body.mfaEnforced },
+            })
+        }
         return platformService(req.log).getOneWithPlanAndUsageOrThrow(platformId)
     })
 

@@ -1,5 +1,5 @@
 import { cryptoUtils } from '@aiqadam/server-utils'
-import { ApFlagId, assertNotNullOrUndefined, AuthenticationResponse, ErrorCode, FederatedIdentityProvider, isNil, OtpType, PlatformRole, PlatformWithoutSensitiveData, QadamFlowError, User, UserIdentity, UserIdentityProvider } from '@aiqadam/shared'
+import { ApFlagId, assertNotNullOrUndefined, ErrorCode, FederatedIdentityProvider, isNil, OtpType, PlatformRole, PlatformWithoutSensitiveData, QadamFlowError, SignInResponse, User, UserIdentity, UserIdentityProvider } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { flagService } from '../flags/flag.service'
 import { isSmtpConfigured } from '../helper/mail/email-sender/smtp-email-sender'
@@ -8,11 +8,12 @@ import { userService } from '../user/user-service'
 import { userInvitationsService } from '../user-invitations/user-invitation.service'
 import { authenticationUtils } from './authentication-utils'
 import { userFederatedIdentityService } from './federated-identity/user-federated-identity-service'
+import { mfaService } from './mfa/mfa-service'
 import { otpService } from './otp/otp-service'
 import { userIdentityService } from './user-identity/user-identity-service'
 
 export const authenticationService = (log: FastifyBaseLogger) => ({
-    async signUp(params: SignUpParams): Promise<AuthenticationResponse> {
+    async signUp(params: SignUpParams): Promise<SignInResponse> {
         const platformId = params.platformId
 
         if (!isNil(platformId)) {
@@ -39,10 +40,12 @@ export const authenticationService = (log: FastifyBaseLogger) => ({
             await userInvitationsService(log).provisionUserInvitation({ email: params.email })
 
             log.info({ email: params.email, platformId }, 'User signed up to existing platform')
-            return authenticationUtils(log).getProjectAndToken({
-                userId: user.id,
+            return mfaService(log).beginMfaGate({
+                identity: userIdentity,
+                user,
                 platformId,
                 projectId: null,
+                provider: params.provider,
             })
         }
 
@@ -90,7 +93,7 @@ export const authenticationService = (log: FastifyBaseLogger) => ({
         return authenticationUtils(log).getOnboardingResponse({ identityId: userIdentity.id })
 
     },
-    async signInWithPassword(params: SignInWithPasswordParams): Promise<AuthenticationResponse> {
+    async signInWithPassword(params: SignInWithPasswordParams): Promise<SignInResponse> {
         const identity = await userIdentityService(log).verifyIdentityPassword(params)
         const platformId = isNil(params.predefinedPlatformId) ? await getPreferredPlatformId(identity.id, log) : params.predefinedPlatformId
 
@@ -113,13 +116,15 @@ export const authenticationService = (log: FastifyBaseLogger) => ({
         })
         assertNotNullOrUndefined(user, 'User not found')
         log.info({ email: params.email, platformId }, 'User signed in with password')
-        return authenticationUtils(log).getProjectAndToken({
-            userId: user.id,
+        return mfaService(log).beginMfaGate({
+            identity,
+            user,
             platformId,
             projectId: null,
+            provider: UserIdentityProvider.EMAIL,
         })
     },
-    async federatedAuthn(params: FederatedAuthnParams): Promise<AuthenticationResponse> {
+    async federatedAuthn(params: FederatedAuthnParams): Promise<SignInResponse> {
         const platformId = isNil(params.predefinedPlatformId) ? await getPreferredPlatformIdForFederatedAuthn(params.email, log) : params.predefinedPlatformId
         const userIdentity = await userIdentityService(log).getIdentityByEmail(params.email)
 
@@ -165,13 +170,18 @@ export const authenticationService = (log: FastifyBaseLogger) => ({
             platformId,
         })
         await userInvitationsService(log).provisionUserInvitation({ email: params.email })
-        return authenticationUtils(log).getProjectAndToken({
-            userId: user.id,
+        return mfaService(log).beginMfaGate({
+            identity: userIdentity,
+            user,
             platformId,
             projectId: null,
+            provider: params.provider,
         })
     },
-    async switchPlatform(params: SwitchPlatformParams): Promise<AuthenticationResponse> {
+    // A target platform that enforces MFA, or an identity that already enrolled, still gates this
+    // reissue — the caller's current token only proves *this* identity passed a first factor
+    // somewhere; it does not prove the second factor the target platform now requires.
+    async switchPlatform(params: SwitchPlatformParams): Promise<SignInResponse> {
         const platforms = await platformService(log).listPlatformsForIdentityWithAtleastProject({ identityId: params.identityId })
         const platform = platforms.find((platform) => platform.id === params.platformId)
         await assertUserCanSwitchToPlatform(platform)
@@ -180,10 +190,12 @@ export const authenticationService = (log: FastifyBaseLogger) => ({
         const identity = await userIdentityService(log).getOneOrFail({ id: params.identityId })
         const user = await getUserForPlatform({ identity, platform, log })
         log.info({ userId: user.id, platformId: platform.id }, 'User switched platform')
-        return authenticationUtils(log).getProjectAndToken({
-            userId: user.id,
+        return mfaService(log).beginMfaGate({
+            identity,
+            user,
             platformId: platform.id,
             projectId: null,
+            provider: identity.provider,
             expiresInSeconds: getSwitchPlatformExpiresInSeconds({ identity, currentTokenExpiresAtSeconds: params.currentTokenExpiresAtSeconds }),
         })
     },

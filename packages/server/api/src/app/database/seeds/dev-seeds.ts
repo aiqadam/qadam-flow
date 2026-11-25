@@ -46,6 +46,13 @@ const seedDevUser = async (): Promise<void> => {
         provider: UserIdentityProvider.EMAIL,
     })
 
+    // Sign-up with `platformId: null` always returns the onboarding response, never an MFA
+    // challenge (that gate only runs once a platform is known) — this is a type-level narrowing
+    // for the dev seed script, not a real runtime possibility here.
+    if ('mfaRequired' in response) {
+        throw new Error('[devSeeds#seedDevUser] Unexpected MFA challenge for a platformless dev sign-up')
+    }
+
     await platformService(log).createPlatformWithProject({
         identityId: response.id,
         name: 'dev\'s Platform',

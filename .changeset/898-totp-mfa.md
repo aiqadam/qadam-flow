@@ -1,0 +1,5 @@
+---
+"@aiqadam/platform": minor
+---
+
+Platform admins can now turn on mandatory TOTP multi-factor authentication (RFC 6238, authenticator apps) for a platform, and any user — local email/password or LDAP-signed-in — can enrol a second factor voluntarily from `/v1/mfa/*` even when enforcement is off. A first-factor success no longer mints a session directly when the user is enrolled or enforcement applies: it returns a short-lived, single-use "MFA pending" token instead, exchanged for the real session only after the second factor (a TOTP code or a one-time recovery code) passes. Enforcement, with an optional grace period, is set through the existing `POST /v1/platforms/:id` (`mfaEnforced`, `mfaEnforcementGracePeriodDays`), and a platform admin can reset another user's MFA (never the platform owner's, and never another admin's unless the actor is the owner) via `POST /v1/mfa/admin/reset/:userId`. Google/SAML sign-in has no reachable callback controller in this CE repo yet, so this only covers local and LDAP sign-in for now.

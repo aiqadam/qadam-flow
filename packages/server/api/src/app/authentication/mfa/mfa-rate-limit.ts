@@ -20,7 +20,7 @@ async function assertNotRateLimited({ identityId, ip, log }: AssertNotRateLimite
         incrementWithExpiry({ redis, key: `mfa-challenge:id:${identityId}` }),
         incrementWithExpiry({ redis, key: `mfa-challenge:ip:${ip}` }),
     ]))
-    if (!isNil(result.error)) {
+    if (isNil(result.data)) {
         // Fail closed, like the LDAP limiter: a Redis outage must not remove the brute-force bound.
         log.error({ err: result.error, identityId }, '[mfaRateLimit] Redis rate-limit check failed; refusing the attempt')
         throw new QadamFlowError({ code: ErrorCode.MFA_TOO_MANY_ATTEMPTS, params: {} })

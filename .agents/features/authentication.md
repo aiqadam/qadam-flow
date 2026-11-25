@@ -3,6 +3,8 @@
 ## Summary
 The authentication feature handles user identity creation, sign-in, and JWT session management. It supports email/password credentials, federated OAuth providers (Google, SAML), invitation-only sign-up when a platform is configured, and per-platform LDAP/Active Directory sign-in (`.agents/features/ldap.md`). On first sign-up (no `platformId`), a new platform and personal project are created automatically. The token is a short-lived JWT (7 days by default; LDAP sign-ins mint a platform-configured, shorter TTL) signed with a shared secret, and sessions are invalidated by rotating the `tokenVersion` on the `UserIdentity` record.
 
+Every path below that mints a session for an existing platform (`signInWithPassword`, `federatedAuthn`, the `signUp` platform branch, `switchPlatform`) routes through `mfaService.beginMfaGate` instead of calling `getProjectAndToken` directly — see `.agents/features/mfa.md`. The gate either passes through to a normal session or returns a short-lived "MFA pending" challenge; `federatedAuthn` is gated the same way, but as of this writing nothing in the server calls it (see that file's scope note on Google/SAML).
+
 LDAP is a distinct sign-in path (`POST /v1/authn/ldap/sign-in`), not a `UserIdentityProvider` this
 file's `signInWithPassword`/`federatedAuthn` handle — see `.agents/features/ldap.md` for its own
 service, JIT provisioning and identity linking. `UserIdentityProvider.LDAP` accounts are excluded

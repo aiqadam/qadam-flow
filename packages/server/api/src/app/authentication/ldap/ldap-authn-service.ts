@@ -1,6 +1,5 @@
 import { cryptoUtils } from '@aiqadam/server-utils'
 import {
-    AuthenticationResponse,
     ErrorCode,
     FederatedIdentityProvider,
     isNil,
@@ -8,6 +7,7 @@ import {
     PlatformId,
     PlatformRole,
     QadamFlowError,
+    SignInResponse,
     tryCatch,
     UserIdentity,
     UserIdentityProvider,
@@ -19,8 +19,8 @@ import { EntityManager } from 'typeorm'
 import { transaction } from '../../core/db/transaction'
 import { platformService } from '../../platform/platform.service'
 import { userService } from '../../user/user-service'
-import { authenticationUtils } from '../authentication-utils'
 import { userFederatedIdentityService } from '../federated-identity/user-federated-identity-service'
+import { mfaService } from '../mfa/mfa-service'
 import { userIdentityService } from '../user-identity/user-identity-service'
 import { ldapAttributeUtils } from './ldap-attributes'
 import { ldapClient } from './ldap-client'
@@ -36,7 +36,7 @@ const DUMMY_BIND_RDN = 'cn=__qadam_flow_timing_oracle_dummy_bind__'
 const DUMMY_BIND_PASSWORD = 'qadam-flow-timing-oracle-defense'
 
 export const ldapAuthnService = (log: FastifyBaseLogger) => ({
-    async signIn({ platformId, username, password }: SignInParams): Promise<AuthenticationResponse> {
+    async signIn({ platformId, username, password }: SignInParams): Promise<SignInResponse> {
         // Refused before any lookup, config read, or network call — an empty password sent to an
         // unauthenticated ("simple", RFC 4513 §5.1.2) bind succeeds against most directories and
         // would otherwise let a caller who names a valid username skip authentication entirely.
@@ -88,10 +88,17 @@ export const ldapAuthnService = (log: FastifyBaseLogger) => ({
         }
 
         log.info({ platformId, userId: user.id }, 'User signed in via LDAP')
-        return authenticationUtils(log).getProjectAndToken({
-            userId: user.id,
+        // `beginMfaGate` always challenges an LDAP sign-in locally when it applies — a bind
+        // carries no authentication-context signal an IdP-trust setting could read (#339,
+        // confirmed in the ticket's own comments: LDAP is excluded from "trust the IdP" entirely).
+        const fullUser = await userService(log).getOrThrow({ id: user.id })
+        const identity = await userIdentityService(log).getOneOrFail({ id: fullUser.identityId })
+        return mfaService(log).beginMfaGate({
+            identity,
+            user: fullUser,
             platformId,
             projectId: null,
+            provider: UserIdentityProvider.LDAP,
             expiresInSeconds: resolved.config.sessionTtlSeconds,
         })
     },

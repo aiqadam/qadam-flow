@@ -1,17 +1,18 @@
 import {
   OtpType,
   ApFlagId,
-  AuthenticationResponse,
   ErrorCode,
   isNil,
+  MfaChallengeResponse,
   SignInRequest,
+  SignInResponse,
 } from '@aiqadam/shared';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation } from '@tanstack/react-query';
 import { Eye, EyeOff } from 'lucide-react';
 import { useState } from 'react';
 import { SubmitHandler, useForm } from 'react-hook-form';
-import { Link, Navigate, useNavigate } from 'react-router';
+import { Link, Navigate } from 'react-router';
 import { z } from 'zod';
 
 import { authenticationApi } from '@/api/authentication-api';
@@ -22,9 +23,9 @@ import { Label } from '@/components/ui/label';
 import { flagsHooks } from '@/hooks/flags-hooks';
 import { t } from '@/i18n';
 import { HttpError, api } from '@/lib/api';
-import { authenticationSession } from '@/lib/authentication-session';
 import { formatUtils } from '@/lib/format-utils';
-import { useRedirectAfterLogin } from '@/lib/navigation-utils';
+
+import { useCompleteSignIn } from '../hooks/auth-hooks';
 
 import { CheckEmailNote } from './check-email-note';
 
@@ -35,7 +36,11 @@ const SignInSchema = z.object({
 
 type SignInSchema = z.infer<typeof SignInSchema>;
 
-const SignInForm: React.FC = () => {
+type SignInFormProps = {
+  onMfaRequired: (challenge: MfaChallengeResponse) => void;
+};
+
+const SignInForm: React.FC<SignInFormProps> = ({ onMfaRequired }) => {
   const [showCheckYourEmailNote, setShowCheckYourEmailNote] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const form = useForm<SignInSchema>({
@@ -48,23 +53,20 @@ const SignInForm: React.FC = () => {
   });
 
   const { data: userCreated } = flagsHooks.useFlag(ApFlagId.USER_CREATED);
-  const redirectAfterLogin = useRedirectAfterLogin();
-  const navigate = useNavigate();
+  const completeSignIn = useCompleteSignIn();
 
   const { mutate, isPending } = useMutation<
-    AuthenticationResponse,
+    SignInResponse,
     HttpError,
     SignInRequest
   >({
     mutationFn: authenticationApi.signIn,
     onSuccess: (data) => {
-      authenticationSession.saveResponse(data, false);
-
-      if (isNil(data.projectId)) {
-        navigate('/create-platform');
+      if ('mfaRequired' in data) {
+        onMfaRequired(data);
         return;
       }
-      redirectAfterLogin();
+      completeSignIn(data);
     },
     onError: (error) => {
       if (api.isError(error)) {

@@ -1,4 +1,4 @@
-export { authMutations } from './hooks/auth-hooks';
+export { authMutations, useCompleteSignIn } from './hooks/auth-hooks';
 export { AuthFormTemplate, AuthLayout } from './components/auth-form-template';
 export { ChangePasswordForm } from './components/change-password';
 export { CheckEmailNote } from './components/check-email-note';

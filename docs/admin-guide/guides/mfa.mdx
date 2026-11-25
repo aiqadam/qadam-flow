@@ -1,0 +1,54 @@
+---
+title: "Multi-Factor Authentication (MFA)"
+description: "Require a second sign-in factor (TOTP) for your platform's users"
+icon: "shield-check"
+---
+
+## Overview
+
+Qadam Flow supports TOTP-based (RFC 6238) multi-factor authentication as a second sign-in factor, for both local email/password users and LDAP-directory users. Any user can enrol voluntarily from their own account settings, and a platform admin can make enrolment mandatory for everyone.
+
+<Note>
+LDAP sign-in has no equivalent of an identity provider's authentication-context signal, so Qadam Flow always performs the TOTP challenge itself for directory users — there is no way to "trust" a directory's own second factor.
+</Note>
+
+## Enrolling as a user
+
+From your account security settings, choose **Enable two-factor authentication**. Scan the QR code with an authenticator app (or enter the secret manually), then confirm with the 6-digit code it generates. You'll be shown a set of one-time recovery codes — save them somewhere safe. Each recovery code works once, as a fallback if you lose access to your authenticator app.
+
+Once enrolled, every sign-in asks for a code from your authenticator app (or a recovery code) after your password or directory sign-in succeeds.
+
+## Enforcing MFA platform-wide
+
+Open **Platform Admin → Security** and turn on **Require MFA for all users**. Once enabled:
+
+- Any user without MFA enrolled is sent straight to a forced-enrolment screen on their next sign-in — they cannot access anything else until they enrol.
+- A user who already enrolled continues being challenged as before.
+- An optional **grace period** (in days) delays when enforcement actually starts applying, measured from the moment you turn it on — useful for rolling out MFA gradually instead of locking out every unenrolled user immediately.
+
+Turning enforcement back off is immediate and does not delete any existing enrolment — a user who already enrolled keeps being challenged unless they disable it themselves.
+
+## Resetting a locked-out user
+
+If a user loses both their authenticator app and their recovery codes, a platform admin can clear their MFA enrolment so they can re-enrol from scratch, via `POST /v1/mfa/admin/reset/:userId`. This is audited, and two protections apply regardless of who is signed in as admin:
+
+- **The platform owner can never be reset by anyone else.** No admin — not even another admin acting in good faith — can clear the owner's MFA. This is deliberate: any path that could reset the owner's account without already being the owner is also a takeover path for the owner's account, and the owner is the one identity this platform must never let another admin take over.
+- **A non-owner admin cannot reset another admin's MFA** — only the owner can do that.
+
+### If the owner themself is locked out
+
+If the platform owner loses their authenticator app and all recovery codes, and has no other active session to disable MFA from (**Settings → Security → Disable** accepts the owner's password instead of a code), there is no in-app path back in — by the same reasoning as above. Recovery is a direct, operator-level database action:
+
+```sql
+UPDATE "user_identity"
+SET "mfaEnabled" = false, "mfaSecret" = NULL, "mfaPendingSecret" = NULL,
+    "mfaRecoveryCodes" = NULL, "mfaEnrolledAt" = NULL, "mfaLastUsedStep" = NULL,
+    "tokenVersion" = NULL
+WHERE "id" = (SELECT "identityId" FROM "user" WHERE "id" = (SELECT "ownerId" FROM "platform" WHERE "id" = '<platform id>'));
+```
+
+Run this only as the instance operator, with direct database access, and treat it as you would any other credential-recovery action — it is not surfaced through the API precisely because the API's job here is to make sure nothing *else* can do it.
+
+## Changing or disabling MFA
+
+Disabling MFA, regenerating recovery codes, and resetting your password all require a recent re-authentication — your password for a local account, or a current code if you already have MFA enrolled. Disabling MFA also signs out every other session on your account.

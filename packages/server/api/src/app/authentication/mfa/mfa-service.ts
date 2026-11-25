@@ -1,3 +1,4 @@
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { cryptoUtils } from '@aiqadam/server-utils'
 import {
     ApplicationEventName,
@@ -16,7 +17,6 @@ import {
     UserIdentityProvider,
     UserStatus,
 } from '@aiqadam/shared'
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { FastifyBaseLogger } from 'fastify'
 import { applicationEvents } from '../../helper/application-events'
 import { encryptUtils } from '../../helper/encryption'
@@ -143,27 +143,30 @@ export const mfaService = (log: FastifyBaseLogger) => ({
         })
     },
 
-    async startAuthenticatedEnrollment({ identity, userId, platformId, password, code }: StartAuthenticatedEnrollmentParams): Promise<MfaEnrollmentStartResponse> {
+    async startAuthenticatedEnrollment({ identity, userId, platformId, password, code, ip }: StartAuthenticatedEnrollmentParams): Promise<MfaEnrollmentStartResponse> {
         if (identity.mfaEnabled === true) {
             throw new QadamFlowError({ code: ErrorCode.MFA_ALREADY_ENROLLED, params: {} })
         }
+        await mfaRateLimit.assertNotRateLimited({ identityId: identity.id, ip, log })
         await assertReauthenticated({ identity, userId, platformId, password, code, allowOwnerPasswordBypass: false, log })
         return startEnrollment({ identity, platformId, log })
     },
 
-    async confirmAuthenticatedEnrollment({ identity, userId, platformId, code }: ConfirmAuthenticatedEnrollmentParams): Promise<MfaEnrollmentConfirmResponse> {
+    async confirmAuthenticatedEnrollment({ identity, userId, platformId, code, ip }: ConfirmAuthenticatedEnrollmentParams): Promise<MfaEnrollmentConfirmResponse> {
         if (identity.mfaEnabled === true) {
             throw new QadamFlowError({ code: ErrorCode.MFA_ALREADY_ENROLLED, params: {} })
         }
+        await mfaRateLimit.assertNotRateLimited({ identityId: identity.id, ip, log })
         const { recoveryCodes } = await confirmEnrollment({ identity, code, log })
         sendAudit({ platformId, userId, action: ApplicationEventName.USER_MFA_ENROLLED, log })
         return { recoveryCodes }
     },
 
-    async disable({ identity, user, platformId, password, code }: DisableParams): Promise<AuthenticationResponse> {
+    async disable({ identity, user, platformId, password, code, ip }: DisableParams): Promise<AuthenticationResponse> {
         if (identity.mfaEnabled !== true) {
             throw new QadamFlowError({ code: ErrorCode.MFA_NOT_ENROLLED, params: {} })
         }
+        await mfaRateLimit.assertNotRateLimited({ identityId: identity.id, ip, log })
         await assertReauthenticated({ identity, userId: user.id, platformId, password, code, allowOwnerPasswordBypass: true, log })
         await userIdentityService(log).updateMfa({
             id: identity.id,
@@ -184,10 +187,11 @@ export const mfaService = (log: FastifyBaseLogger) => ({
         })
     },
 
-    async regenerateRecoveryCodes({ identity, userId, platformId, password, code }: RegenerateRecoveryCodesParams): Promise<MfaEnrollmentConfirmResponse> {
+    async regenerateRecoveryCodes({ identity, userId, platformId, password, code, ip }: RegenerateRecoveryCodesParams): Promise<MfaEnrollmentConfirmResponse> {
         if (identity.mfaEnabled !== true) {
             throw new QadamFlowError({ code: ErrorCode.MFA_NOT_ENROLLED, params: {} })
         }
+        await mfaRateLimit.assertNotRateLimited({ identityId: identity.id, ip, log })
         await assertReauthenticated({ identity, userId, platformId, password, code, allowOwnerPasswordBypass: false, log })
         const { plaintext, hashes } = generateRecoveryCodes()
         await userIdentityService(log).updateMfa({ id: identity.id, mfaRecoveryCodes: hashes })
@@ -207,8 +211,11 @@ export const mfaService = (log: FastifyBaseLogger) => ({
         if (targetUser.platformRole === PlatformRole.ADMIN && !actorIsOwner) {
             throw new QadamFlowError({ code: ErrorCode.MFA_RESET_NOT_ALLOWED_FOR_OWNER, params: {} })
         }
+        // `targetUser` came back from a platform-scoped lookup (the data-isolation guard); this
+        // second fetch by its own trusted id is only to read `identityId`, which that DTO strips.
+        const targetUserIdentity = await userService(log).getOneOrFail({ id: targetUser.id })
         await userIdentityService(log).updateMfa({
-            id: targetUser.identityId,
+            id: targetUserIdentity.identityId,
             mfaEnabled: false,
             mfaSecret: null,
             mfaPendingSecret: null,
@@ -216,7 +223,7 @@ export const mfaService = (log: FastifyBaseLogger) => ({
             mfaEnrolledAt: null,
             mfaLastUsedStep: null,
         })
-        await userIdentityService(log).rotateTokenVersion(targetUser.identityId)
+        await userIdentityService(log).rotateTokenVersion(targetUserIdentity.identityId)
         sendAudit({ platformId, userId: targetUser.id, action: ApplicationEventName.USER_MFA_RESET, log })
         log.warn({ platformId, targetUserId, actorUserId }, 'MFA reset by an administrator')
     },
@@ -377,7 +384,7 @@ function isTrustedProvider({ platform, provider }: { platform: { mfaTrustedIdpPr
     return platform.mfaTrustedIdpProviders.includes(provider)
 }
 
-function isEnforcementActive(platform: { mfaEnforced: boolean, mfaEnforcementGracePeriodDays: number, mfaEnforcementEnabledAt: string | Date | null }): boolean {
+function isEnforcementActive(platform: { mfaEnforced: boolean, mfaEnforcementGracePeriodDays: number, mfaEnforcementEnabledAt?: string | null }): boolean {
     if (!platform.mfaEnforced) {
         return false
     }
@@ -431,6 +438,7 @@ type StartAuthenticatedEnrollmentParams = {
     platformId: string
     password?: string
     code?: string
+    ip: string
 }
 
 type ConfirmAuthenticatedEnrollmentParams = {
@@ -438,6 +446,7 @@ type ConfirmAuthenticatedEnrollmentParams = {
     userId: string
     platformId: string
     code: string
+    ip: string
 }
 
 type DisableParams = {
@@ -446,6 +455,7 @@ type DisableParams = {
     platformId: string
     password?: string
     code?: string
+    ip: string
 }
 
 type RegenerateRecoveryCodesParams = {
@@ -454,6 +464,7 @@ type RegenerateRecoveryCodesParams = {
     platformId: string
     password?: string
     code?: string
+    ip: string
 }
 
 type AdminResetParams = {

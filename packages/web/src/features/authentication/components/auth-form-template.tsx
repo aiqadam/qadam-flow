@@ -1,4 +1,8 @@
-import { ApFlagId, ThirdPartyAuthnProvidersToShowMap } from '@aiqadam/shared';
+import {
+  ApFlagId,
+  MfaChallengeResponse,
+  ThirdPartyAuthnProvidersToShowMap,
+} from '@aiqadam/shared';
 import { t } from 'i18next';
 import React, { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
@@ -10,8 +14,11 @@ import { useRedirectAfterLogin } from '@/lib/navigation-utils';
 
 import { HorizontalSeparatorWithText } from '../../../components/ui/separator';
 import { flagsHooks } from '../../../hooks/flags-hooks';
+import { useCompleteSignIn } from '../hooks/auth-hooks';
 
 import { LdapLoginForm } from './ldap-login-form';
+import { MfaChallengeScreen } from './mfa/mfa-challenge-screen';
+import { MfaForcedEnrollmentScreen } from './mfa/mfa-forced-enrollment-screen';
 import { SamlLoginForm } from './saml-login-form';
 import { SignInForm } from './sign-in-form';
 import { SignUpForm } from './sign-up-form';
@@ -169,6 +176,10 @@ const AuthFormTemplate = React.memo(
     const [showCheckYourEmailNote, setShowCheckYourEmailNote] = useState(false);
     const [showSamlLogin, setShowSamlLogin] = useState(false);
     const [showLdapLogin, setShowLdapLogin] = useState(false);
+    const [mfaChallenge, setMfaChallenge] = useState<MfaChallengeResponse | null>(
+      null,
+    );
+    const completeSignIn = useCompleteSignIn();
     const { data: isEmailAuthEnabled } = flagsHooks.useFlag<boolean>(
       ApFlagId.EMAIL_AUTH_ENABLED,
     );
@@ -222,6 +233,40 @@ const AuthFormTemplate = React.memo(
       );
     }
 
+    if (mfaChallenge?.mfaEnrollmentRequired) {
+      return (
+        <AuthLayout isSignUp={isSignUp}>
+          <div className="mb-6 text-center">
+            <h1 className="text-2xl font-bold tracking-tight font-sentient">
+              {t('Set up two-factor authentication')}
+            </h1>
+          </div>
+          <MfaForcedEnrollmentScreen
+            mfaToken={mfaChallenge.mfaToken}
+            onComplete={completeSignIn}
+            onBack={() => setMfaChallenge(null)}
+          />
+        </AuthLayout>
+      );
+    }
+
+    if (mfaChallenge) {
+      return (
+        <AuthLayout isSignUp={isSignUp}>
+          <div className="mb-6 text-center">
+            <h1 className="text-2xl font-bold tracking-tight font-sentient">
+              {t('Two-factor authentication')}
+            </h1>
+          </div>
+          <MfaChallengeScreen
+            mfaToken={mfaChallenge.mfaToken}
+            onSuccess={completeSignIn}
+            onBack={() => setMfaChallenge(null)}
+          />
+        </AuthLayout>
+      );
+    }
+
     return (
       <AuthLayout isSignUp={isSignUp}>
         {!showCheckYourEmailNote && (
@@ -251,7 +296,7 @@ const AuthFormTemplate = React.memo(
               showCheckYourEmailNote={showCheckYourEmailNote}
             />
           ) : (
-            <SignInForm />
+            <SignInForm onMfaRequired={setMfaChallenge} />
           )
         ) : null}
 
